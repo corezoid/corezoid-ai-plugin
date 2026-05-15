@@ -77,34 +77,32 @@ actor instantiated from the form. Each account definition includes:
 
 ### List All Forms in Workspace
 ```
-run_oper("GET:/forms/templates/accId",
-  query = '{"accId": "ws_xxx"}')
+get-forms-templates-accId(accId="ws_xxx")
 # Returns: [{id, title, ref, isTemplate, status, ...}, ...]
 ```
 
 ### List System Forms
 ```
-run_oper("GET:/forms/templates/system/accId?formTypes=system",
-  query = '{"accId": "ws_xxx"}')
+get-forms-templates-system-accId(accId="ws_xxx", formTypes="system")
 # Returns built-in forms: Graph, Layer, Event, Script, Account, etc.
-# Note the query parameter formTypes=system is part of the operation ID
 ```
 
 ### Get Form by ID
 ```
-run_oper("GET:/forms/formId", query='{"formId": "42"}')
+get-forms-formId(formId="42")
 ```
 
 ### Get Form by Ref
 ```
-run_oper("GET:/forms/ref/ref", query='{"ref": "car-form"}')
+get-forms-ref-ref(ref="car-form")
 ```
 
 ### Create Form
 ```
-run_oper("POST:/forms/accId/isTemplate",
-  query = '{"accId": "ws_xxx", "isTemplate": "true"}',
-  body  = '{
+post-forms-accId-isTemplate(
+  accId="ws_xxx",
+  isTemplate="true",
+  body='{
     "title": "Car",
     "description": "Form template for vehicle tracking",
     "ref": "car-form",
@@ -129,14 +127,14 @@ Returns: `{"id": 42, "title": "Car", "ref": "car-form", ...}`
 
 ### Update Form
 ```
-run_oper("PUT:/forms/formId",
-  query = '{"formId": "42"}',
-  body  = '{
+put-forms-formId(
+  formId="42",
+  body='{
     "title": "Car (Updated)",
     "data": {
       "fields": [
-        {"name": "make",  "type": "text", "required": true, "label": "Make"},
-        {"name": "model", "type": "text", "required": true, "label": "Model"},
+        {"name": "make",  "type": "text",   "required": true, "label": "Make"},
+        {"name": "model", "type": "text",   "required": true, "label": "Model"},
         {"name": "year",  "type": "number", "required": true, "label": "Year"},
         {"name": "notes", "type": "textarea", "required": false, "label": "Notes"}
       ]
@@ -146,28 +144,27 @@ run_oper("PUT:/forms/formId",
 
 ### Set Form Status
 ```
-run_oper("PUT:/forms/status/formId",
-  query = '{"formId": "42"}',
-  body  = '{"status": "active"}')    # or "inactive"
+put-forms-status-formId(
+  formId="42",
+  body='{"status": "active"}')    # or "inactive"
 ```
 
 ### Delete Form
 ```
-run_oper("DELETE:/forms/formId", query='{"formId": "42"}')
+delete-forms-formId(formId="42")
 # Note: deleting a form does NOT delete actors created from it
 ```
 
 ### Clear Item Cache (for select fields)
 ```
-run_oper("DELETE:/forms/item_cache/formId/itemId",
-  query = '{"formId": "42", "itemId": "condition"}')
+delete-forms-item_cache-formId-itemId(formId="42", itemId="condition")
 ```
 
 ### Create Account-Currency Pair
 ```
-run_oper("POST:/accounts/pair/accId",
-  query = '{"accId": "ws_xxx"}',
-  body  = '{
+post-accounts-pair-accId(
+  accId="ws_xxx",
+  body='{
     "accountName":  "Purchase Value",
     "currencyName": "USD"
   }')
@@ -178,25 +175,25 @@ run_oper("POST:/accounts/pair/accId",
 
 ### Attach Account to Form
 ```
-run_oper("POST:/form_accounts/formId",
-  query = '{"formId": "42"}',
-  body  = '{
-    "nameId":     "aname_value",
-    "currencyId": "cur_usd",
-    "accountType":       "fact",
+post-form_accounts-formId(
+  formId="42",
+  body='{
+    "nameId":      "aname_value",
+    "currencyId":  "cur_usd",
+    "accountType": "fact",
     "search": true
   }')
 ```
 
 ### List Existing Account Names in Workspace
 ```
-run_oper("GET:/account_names/accId", query='{"accId": "ws_xxx"}')
+get-account_names-accId(accId="ws_xxx")
 # Returns: [{id, title, ref, ...}, ...]
 ```
 
 ### List Existing Currencies in Workspace
 ```
-run_oper("GET:/currencies/accId", query='{"accId": "ws_xxx"}')
+get-currencies-accId(accId="ws_xxx")
 # Returns: [{id, title, symbol, decimals, ...}, ...]
 ```
 
@@ -232,8 +229,8 @@ Immediately after the form is created, produce a structured analysis:
 Run both calls in parallel to avoid extra round-trips:
 
 ```
-run_oper("GET:/account_names/accId", query='{"accId": "ws_xxx"}')
-run_oper("GET:/currencies/accId",    query='{"accId": "ws_xxx"}')
+get-account_names-accId(accId="ws_xxx")
+get-currencies-accId(accId="ws_xxx")
 ```
 
 Match existing items by `title` (case-insensitive). Keep their `id` for reuse.
@@ -307,28 +304,25 @@ Wait for user confirmation before proceeding to Step 5.
 
 Execute strictly in this order for **each** proposed account-currency pair:
 
-1. **MANDATORY: Create the account-currency pair** via `POST:/accounts/pair/accId`.
+1. **MANDATORY: Create the account-currency pair** via `post-accounts-pair-accId`.
    Pass the names as strings — the API resolves existing account names and currencies
    automatically, or creates them if they don't exist yet:
 ```
-run_oper("POST:/accounts/pair/accId",
-  query = '{"accId": "ws_xxx"}',
-  body  = '{
-    "accountName":  "Mileage",
-    "currencyName": "Km"
-  }')
+post-accounts-pair-accId(
+  accId="ws_xxx",
+  body='{"accountName": "Mileage", "currencyName": "Km"}')
 # → response contains nameId and currencyId — save both for the next step
 ```
 
-2. **Attach the pair to the form** via `POST:/form_accounts/formId`,
+2. **Attach the pair to the form** via `post-form_accounts-formId`,
    using the `nameId` and `currencyId` returned from the previous call:
 ```
-run_oper("POST:/form_accounts/formId",
-  query = '{"formId": "42"}',
-  body  = '{
-    "nameId":     "<nameId from pair response>",
-    "currencyId": "<currencyId from pair response>",
-    "accountType":       "fact",
+post-form_accounts-formId(
+  formId="42",
+  body='{
+    "nameId":      "<nameId from pair response>",
+    "currencyId":  "<currencyId from pair response>",
+    "accountType": "fact",
     "search": true
   }')
 ```
@@ -347,7 +341,7 @@ Repeat steps 1–2 for every pair in the plan.
 | Mileage | Km | ✅ pair created | ✅ attached |
 ```
 
-> Note: `POST:/accounts/pair/accId` always handles reuse vs creation internally —
+> Note: `post-accounts-pair-accId` always handles reuse vs creation internally —
 > you do not need to manually create account names or currencies beforehand.
 > The GET calls in Step 2 are only used to inform the user in the plan table.
 
@@ -359,40 +353,35 @@ Repeat steps 1–2 for every pair in the plan.
 
 ```
 # Create USD currency
-run_oper("POST:/currencies/accId",
-  query = '{"accId": "ws_xxx"}',
-  body  = '{"title": "USD", "symbol": "$", "decimals": 2}')
+post-currencies-accId(
+  accId="ws_xxx",
+  body='{"title": "USD", "symbol": "$", "decimals": 2}')
 # → currency_id = "cur_usd"
 
 # Create "Km" counter currency for mileage
-run_oper("POST:/currencies/accId",
-  query = '{"accId": "ws_xxx"}',
-  body  = '{"title": "Km", "symbol": "km", "decimals": 0}')
+post-currencies-accId(
+  accId="ws_xxx",
+  body='{"title": "Km", "symbol": "km", "decimals": 0}')
 # → currency_id = "cur_km"
 
 # Create account name definitions
-run_oper("POST:/account_names/accId",
-  query = '{"accId": "ws_xxx"}',
-  body  = '{"title": "Purchase Value"}')
+post-account_names-accId(accId="ws_xxx", body='{"title": "Purchase Value"}')
 # → name_id = "aname_value"
 
-run_oper("POST:/account_names/accId",
-  query = '{"accId": "ws_xxx"}',
-  body  = '{"title": "Maintenance"}')
+post-account_names-accId(accId="ws_xxx", body='{"title": "Maintenance"}')
 # → name_id = "aname_maint"
 
-run_oper("POST:/account_names/accId",
-  query = '{"accId": "ws_xxx"}',
-  body  = '{"title": "Mileage"}')
+post-account_names-accId(accId="ws_xxx", body='{"title": "Mileage"}')
 # → name_id = "aname_mileage"
 ```
 
 ### Step 2: Create the form with embedded account definitions
 
 ```
-run_oper("POST:/forms/accId/isTemplate",
-  query = '{"accId": "ws_xxx", "isTemplate": "true"}',
-  body  = '{
+post-forms-accId-isTemplate(
+  accId="ws_xxx",
+  isTemplate="true",
+  body='{
     "title": "Car",
     "ref":   "car",
     "data": {
@@ -434,14 +423,14 @@ run_oper("POST:/forms/accId/isTemplate",
 
 ### Step 3: Verify the form
 ```
-run_oper("GET:/forms/formId", query='{"formId": "<new-form-id>"}')
+get-forms-formId(formId="<new-form-id>")
 ```
 
 ### Step 4: Create an actor from the form
 ```
-run_oper("POST:/actors/actor/formId",
-  query = '{"formId": "<car-form-id>"}',
-  body  = '{
+post-actors-actor-formId(
+  formId="<car-form-id>",
+  body='{
     "title": "Toyota Camry 2023",
     "ref":   "car-toyota-camry-2023",
     "data": {
@@ -463,8 +452,7 @@ The `Script` system form type creates "Smart Forms" — dynamic form templates
 with custom logic. To find the Script system form ID:
 
 ```
-run_oper("GET:/forms/templates/system/accId?formTypes=system",
-  query = '{"accId": "ws_xxx"}')
+get-forms-templates-system-accId(accId="ws_xxx", formTypes="system")
 # Find the form where title contains "Script" or "CDU"
 ```
 
@@ -491,4 +479,4 @@ Use the `Read` tool to load these files when you need more detail:
 - System forms cannot be modified — use them as-is by their IDs
 - When a form has `accounts` defined, actors created from it get those accounts automatically
 - Updating a form does NOT retroactively update actors already created from it
-- Use `DELETE:/forms/item_cache/formId/itemId` to refresh `select` field options after updating
+- Use `delete-forms-item_cache-formId-itemId` to refresh `select` field options after updating

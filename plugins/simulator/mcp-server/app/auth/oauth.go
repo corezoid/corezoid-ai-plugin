@@ -12,14 +12,14 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"os"
 	"os/exec"
 	"strings"
 	"time"
 )
 
 const (
-	AuthorizeURL = "https://account.corezoid.com/oauth2/authorize"
-	TokenURL     = "https://account.corezoid.com/oauth2/token"
+	DefaultAccountURL = "https://account.corezoid.com"
 
 	// DefaultClientID is the built-in OAuth2 client ID for the Simulator Claude Code plugin.
 	DefaultClientID = "5ec679f5a2710f0da6000005"
@@ -28,11 +28,24 @@ const (
 // PKCEFlow runs the full OAuth2 PKCE authorization code flow.
 // It starts a local HTTP server to receive the callback, opens the user's browser,
 // waits for the authorization code, exchanges it for tokens, and returns Credentials.
-// If clientID is empty, DefaultClientID is used.
-func PKCEFlow(clientID string, scopes []string) (*Credentials, error) {
+// accountURL defaults to DefaultAccountURL if empty (also checks ACCOUNT_URL env var).
+// clientID defaults to DefaultClientID if empty.
+func PKCEFlow(accountURL, clientID string, scopes []string) (*Credentials, error) {
+	if accountURL == "" {
+		accountURL = os.Getenv("ACCOUNT_URL")
+	}
+	if accountURL == "" {
+		accountURL = DefaultAccountURL
+	}
+	accountURL = strings.TrimRight(accountURL, "/")
+
 	if clientID == "" {
 		clientID = DefaultClientID
 	}
+
+	authorizeURL := accountURL + "/oauth2/authorize"
+	tokenURL := accountURL + "/oauth2/token"
+
 	// Generate PKCE code verifier (random 32 bytes → base64url, no padding)
 	verifierBytes := make([]byte, 32)
 	if _, err := rand.Read(verifierBytes); err != nil {
@@ -62,9 +75,8 @@ func PKCEFlow(clientID string, scopes []string) (*Credentials, error) {
 	if len(scopes) > 0 {
 		params.Set("scope", strings.Join(scopes, " "))
 	}
-	authURL := AuthorizeURL + "?" + params.Encode()
+	authURL := authorizeURL + "?" + params.Encode()
 
-	// Channel to receive the code (or error) from the callback handler
 	codeCh := make(chan string, 1)
 	errCh := make(chan error, 1)
 
@@ -72,36 +84,44 @@ func PKCEFlow(clientID string, scopes []string) (*Credentials, error) {
 	srv := &http.Server{Handler: mux}
 
 	mux.HandleFunc("/callback", func(w http.ResponseWriter, r *http.Request) {
-		code := r.URL.Query().Get("code")
-		errParam := r.URL.Query().Get("error")
-
-		if errParam != "" {
-			desc := r.URL.Query().Get("error_description")
-			_, _ = fmt.Fprintf(w, "<html><body><h2>Authorization failed: %s</h2><p>%s</p><p>You may close this tab.</p></body></html>", errParam, desc)
-			errCh <- fmt.Errorf("OAuth error: %s – %s", errParam, desc)
+		q := r.URL.Query()
+		if errCode := q.Get("error"); errCode != "" {
+			desc := q.Get("error_description")
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+			_, _ = w.Write([]byte(oauthPageHTML("Authentication Failed", "error",
+				"Authentication failed",
+				"<strong>"+errCode+"</strong>: "+desc,
+				"You may close this tab.")))
+			errCh <- fmt.Errorf("OAuth error: %s – %s", errCode, desc)
 			return
 		}
+		code := q.Get("code")
 		if code == "" {
-			_, _ = fmt.Fprint(w, "<html><body><h2>No authorization code received.</h2><p>You may close this tab.</p></body></html>")
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+			_, _ = w.Write([]byte(oauthPageHTML("Authentication Failed", "error",
+				"Authentication failed",
+				"No authorization code received.",
+				"You may close this tab.")))
 			errCh <- fmt.Errorf("no authorization code in callback")
 			return
 		}
-		_, _ = fmt.Fprint(w, "<html><body><h2>Authorization successful!</h2><p>You may close this tab and return to your terminal.</p></body></html>")
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		_, _ = w.Write([]byte(oauthPageHTML("Authorization successful!", "success",
+			"Authorization successful!",
+			"You are now connected to Simulator.Company.",
+			"You may close this tab and return to Claude Code.")))
 		codeCh <- code
 	})
 
-	// Start callback server (non-blocking)
 	go func() {
 		if err := srv.Serve(listener); err != nil && err != http.ErrServerClosed {
 			log.Printf("OAuth callback server error: %v", err)
 		}
 	}()
 
-	// Open the browser
 	log.Printf("Opening browser for Simulator authorization...\nIf it did not open automatically, visit:\n  %s\n", authURL)
 	_ = openBrowser(authURL)
 
-	// Wait for authorization code (timeout: 5 minutes)
 	var code string
 	select {
 	case code = <-codeCh:
@@ -114,15 +134,11 @@ func PKCEFlow(clientID string, scopes []string) (*Credentials, error) {
 	}
 	_ = srv.Shutdown(context.Background())
 
-	// Exchange code for tokens
-	return exchangeCode(clientID, code, codeVerifier, redirectURI)
+	return exchangeCode(tokenURL, clientID, code, codeVerifier, redirectURI)
 }
 
 // exchangeCode exchanges an authorization code for access and refresh tokens.
-func exchangeCode(clientID, code, codeVerifier, redirectURI string) (*Credentials, error) {
-	if clientID == "" {
-		clientID = DefaultClientID
-	}
+func exchangeCode(tokenURL, clientID, code, codeVerifier, redirectURI string) (*Credentials, error) {
 	data := url.Values{}
 	data.Set("grant_type", "authorization_code")
 	data.Set("client_id", clientID)
@@ -130,7 +146,7 @@ func exchangeCode(clientID, code, codeVerifier, redirectURI string) (*Credential
 	data.Set("code_verifier", codeVerifier)
 	data.Set("redirect_uri", redirectURI)
 
-	return postTokenRequest(data)
+	return postTokenRequest(tokenURL, data)
 }
 
 // tokenResponse is the raw JSON response from the Simulator token endpoint.
@@ -140,8 +156,8 @@ type tokenResponse struct {
 	ErrorDesc      string `json:"error_description"`
 }
 
-func postTokenRequest(data url.Values) (*Credentials, error) {
-	resp, err := http.PostForm(TokenURL, data)
+func postTokenRequest(tokenURL string, data url.Values) (*Credentials, error) {
+	resp, err := http.PostForm(tokenURL, data)
 	if err != nil {
 		return nil, fmt.Errorf("token request failed: %w", err)
 	}
@@ -192,14 +208,85 @@ func jwtExpiry(token string) time.Time {
 	return time.Unix(claims.Exp, 0)
 }
 
-// openBrowser opens the given URL in the default system browser (macOS / Linux).
+// oauthPageHTML generates a styled HTML page for OAuth2 callback responses.
+// kind is "success" or "error".
+func oauthPageHTML(title, kind, heading, detail, action string) string {
+	accent := "#4f8ef7"
+	iconBg := "#e8f0fe"
+	iconColor := "#4f8ef7"
+	symbol := "✓"
+	if kind == "error" {
+		accent = "#e05252"
+		iconBg = "#fdecea"
+		iconColor = "#e05252"
+		symbol = "✕"
+	}
+	return "<!DOCTYPE html>\n" +
+		"<html lang=\"en\">\n" +
+		"<head>\n" +
+		"  <meta charset=\"utf-8\"/>\n" +
+		"  <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"/>\n" +
+		"  <title>" + title + "</title>\n" +
+		"  <style>\n" +
+		"    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }\n" +
+		"    body {\n" +
+		"      font-family: -apple-system, BlinkMacSystemFont, \"Segoe UI\", Roboto, sans-serif;\n" +
+		"      background: #f4f6fb;\n" +
+		"      display: flex; align-items: center; justify-content: center;\n" +
+		"      min-height: 100vh;\n" +
+		"      color: #1a1a2e;\n" +
+		"    }\n" +
+		"    .card {\n" +
+		"      background: #ffffff;\n" +
+		"      border-radius: 16px;\n" +
+		"      box-shadow: 0 8px 40px rgba(0,0,0,.10);\n" +
+		"      padding: 48px 56px;\n" +
+		"      max-width: 440px;\n" +
+		"      width: 100%;\n" +
+		"      text-align: center;\n" +
+		"      position: relative;\n" +
+		"    }\n" +
+		"    .icon {\n" +
+		"      width: 72px; height: 72px;\n" +
+		"      border-radius: 50%;\n" +
+		"      background: " + iconBg + ";\n" +
+		"      color: " + iconColor + ";\n" +
+		"      font-size: 32px;\n" +
+		"      line-height: 72px;\n" +
+		"      margin: 0 auto 24px;\n" +
+		"      overflow: hidden;\n" +
+		"    }\n" +
+		"    h1 { font-size: 22px; font-weight: 700; margin-bottom: 12px; }\n" +
+		"    .detail { font-size: 14px; color: #555; margin-bottom: 8px; line-height: 1.5; }\n" +
+		"    .action { font-size: 13px; color: #888; margin-top: 20px; }\n" +
+		"    .bar {\n" +
+		"      height: 4px; border-radius: 0 0 16px 16px;\n" +
+		"      background: " + accent + ";\n" +
+		"      position: absolute; bottom: 0; left: 0; right: 0;\n" +
+		"    }\n" +
+		"  </style>\n" +
+		"</head>\n" +
+		"<body>\n" +
+		"  <div class=\"card\">\n" +
+		"    <div class=\"icon\">" + symbol + "</div>\n" +
+		"    <h1>" + heading + "</h1>\n" +
+		"    <p class=\"detail\">" + detail + "</p>\n" +
+		"    <p class=\"action\">" + action + "</p>\n" +
+		"    <div class=\"bar\"></div>\n" +
+		"  </div>\n" +
+		"</body>\n" +
+		"</html>"
+}
+
+// openBrowser opens the given URL in the default system browser (macOS / Linux / Windows).
 func openBrowser(u string) error {
-	// macOS
 	if err := exec.Command("open", u).Start(); err == nil {
 		return nil
 	}
-	// Linux
 	if err := exec.Command("xdg-open", u).Start(); err == nil {
+		return nil
+	}
+	if err := exec.Command("rundll32", "url.dll,FileProtocolHandler", u).Start(); err == nil {
 		return nil
 	}
 	return fmt.Errorf("could not open browser automatically")

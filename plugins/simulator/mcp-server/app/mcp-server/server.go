@@ -16,10 +16,10 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 
 	"git.corezoid.com/mw161089sar/swagger-mcp/app/auth"
 	"git.corezoid.com/mw161089sar/swagger-mcp/app/models"
-	"git.corezoid.com/mw161089sar/swagger-mcp/app/swagger"
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
 )
@@ -180,54 +180,6 @@ func CreateServer(swaggerSpec models.SwaggerSpec, config models.Config) {
 	}
 }
 
-// CreateMultiServiceServer creates MCP server for multiple services
-func CreateMultiServiceServer(services []models.ServiceConfig, config models.Config) {
-	mcpServer := server.NewMCPServer(
-		"swagger-mcp-multi",
-		"1.0.0",
-	)
-
-	// Load all services into the MCP server
-	LoadMultipleSwaggerServices(mcpServer, services)
-
-	if config.SseCfg.SseMode {
-		// Create and start SSE server with potential headers from any service
-		sseServer := server.NewSSEServer(mcpServer, server.WithBaseURL(config.SseCfg.SseUrl), server.WithSSEContextFunc(func(ctx context.Context, r *http.Request) context.Context {
-			// Get headers from the first service that has SseHeaders configured
-			var sseHeadersConfig string
-			for _, service := range services {
-				if service.ApiCfg.SseHeaders != "" {
-					sseHeadersConfig = service.ApiCfg.SseHeaders
-					break
-				}
-			}
-
-			if sseHeadersConfig == "" {
-				return ctx
-			}
-			keys := strings.Split(sseHeadersConfig, ",")
-			sseHeaders := map[string]string{}
-			for _, key := range keys {
-				sseHeaders[key] = r.Header.Get(key)
-			}
-			return context.WithValue(ctx, sseHeadersKey, sseHeaders)
-		}))
-		endpoint, err := sseServer.CompleteSseEndpoint()
-		if err != nil {
-			log.Fatalf("Error creating SSE endpoint: %v", err)
-		}
-		log.Printf("Starting SSE server on %s, endpoint: %s", config.SseCfg.SseAddr, endpoint)
-		if err := sseServer.Start(config.SseCfg.SseAddr); err != nil {
-			log.Fatalf("Server error: %v", err)
-		}
-	} else {
-		// Run as stdio server
-		if err := server.ServeStdio(mcpServer); err != nil {
-			log.Fatalf("Server error: %v", err)
-		}
-	}
-}
-
 type Operation struct {
 	ID          string      `json:"id"`
 	Description string      `json:"description"`
@@ -253,7 +205,6 @@ type Parameter struct {
 var globalOperations []Operation
 var globalSwaggerSpec models.SwaggerSpec
 var globalApiConfig models.ApiConfig
-var globalServiceConfigs map[string]models.ApiConfig
 var globalMCPServer *server.MCPServer
 var globalOAuthClientID string
 
@@ -261,6 +212,72 @@ var globalOAuthClientID string
 type operationScore struct {
 	operation Operation
 	score     float64
+}
+
+// operationToolName converts an Operation into a valid MCP tool name: <method>-<path-segments>
+func operationToolName(op Operation) string {
+	method := strings.ToLower(op.Method)
+	path := strings.TrimPrefix(op.Path, "/")
+	path = strings.ReplaceAll(path, "/", "-")
+	return method + "-" + path
+}
+
+// registerOperationTools adds one MCP tool per API operation to the server.
+func registerOperationTools(mcpServer *server.MCPServer, operations []Operation) {
+	for _, op := range operations {
+		op := op // capture for closure
+		toolName := operationToolName(op)
+
+		var opts []mcp.ToolOption
+		desc := op.Summary
+		if desc == "" {
+			desc = op.Description
+		} else if op.Description != "" && op.Description != op.Summary {
+			desc = op.Summary + "\n" + op.Description
+		}
+		opts = append(opts, mcp.WithDescription(desc))
+
+		for _, param := range op.Parameters {
+			var propOpts []mcp.PropertyOption
+			if param.Description != "" {
+				propOpts = append(propOpts, mcp.Description(param.Description))
+			}
+			if param.Required {
+				propOpts = append(propOpts, mcp.Required())
+			}
+			opts = append(opts, mcp.WithString(param.Name, propOpts...))
+		}
+
+		if op.RequestBody != nil {
+			opts = append(opts, mcp.WithString("body", mcp.Description("Request body as JSON")))
+		}
+
+		mcpServer.AddTool(
+			mcp.NewTool(toolName, opts...),
+			func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+				if authErr := ensureAuth(ctx); authErr != nil {
+					return authErr, nil
+				}
+				args := req.GetArguments()
+				queryParams := map[string]interface{}{}
+				headerParams := map[string]interface{}{}
+				for _, p := range op.Parameters {
+					if val, ok := args[p.Name]; ok {
+						if p.TIn == "path" || p.In == "query" {
+							queryParams[p.Name] = val
+						} else if p.In == "header" {
+							headerParams[p.Name] = val
+						}
+					}
+				}
+				var bodyParams map[string]interface{}
+				if bodyStr, ok := args["body"].(string); ok && bodyStr != "" {
+					json.Unmarshal([]byte(bodyStr), &bodyParams)
+				}
+				return executeOperation(ctx, op, queryParams, headerParams, bodyParams, req)
+			},
+		)
+	}
 }
 
 func LoadSwaggerServer(mcpServer *server.MCPServer, swaggerSpec models.SwaggerSpec, apiCfg models.ApiConfig) {
@@ -286,127 +303,31 @@ func LoadSwaggerServer(mcpServer *server.MCPServer, swaggerSpec models.SwaggerSp
 		}
 	}
 
-	mcpServer.AddTool(
-		mcp.NewTool("get_oper",
-			mcp.WithString("id",
-				mcp.Description("Operation id to get the full schema"),
-				mcp.Required(),
-			),
-			mcp.WithDescription("Get the full schema of an API operation by id."),
-		),
-		handleGetOper,
-	)
-
-	mcpServer.AddTool(
-		mcp.NewTool("run_oper",
-			mcp.WithString("id",
-				mcp.Description("Operation id to execute"),
-				mcp.Required(),
-			),
-			mcp.WithString("query",
-				mcp.Description("Path and query parameters as JSON object"),
-			),
-			mcp.WithString("header",
-				mcp.Description("Header parameters as JSON object"),
-			),
-			mcp.WithString("body",
-				mcp.Description("Request body as JSON object"),
-			),
-			mcp.WithDescription("Execute an API operation with the provided parameters."),
-		),
-		handleRunOper,
-	)
-
-	mcpServer.AddTool(
-		mcp.NewTool("list_opers",
-			mcp.WithDescription("List all available API operations with their ID and summary."),
-		),
-		handleListOpers,
-	)
+	registerOperationTools(mcpServer, globalOperations)
 
 	mcpServer.AddTool(
 		mcp.NewTool("login",
-			mcp.WithDescription("Authenticate with Simulator via OAuth2 browser flow. Saves the token so it persists across sessions."),
+			mcp.WithString("account_url",
+				mcp.Description("Corezoid Account URL (default: https://account.corezoid.com). Saved to .env as ACCOUNT_URL."),
+			),
+			mcp.WithDescription("Authenticate with Simulator via OAuth2 browser flow. Saves the token to .env so it persists across sessions."),
 		),
 		handleLogin,
 	)
 
-	// Add MCP resources capability
-	initializeResources(mcpServer)
-}
-
-// LoadMultipleSwaggerServices loads multiple services into a single MCP server
-func LoadMultipleSwaggerServices(mcpServer *server.MCPServer, services []models.ServiceConfig) {
-	var allOperations []Operation
-
-	// Load and merge operations from all services
-	for _, service := range services {
-		// Load swagger spec for this service
-		swaggerSpec, err := swagger.LoadSwagger(service.SpecUrl)
-		if err != nil {
-			log.Fatalf("Failed to load swagger spec for service %s: %v", service.Name, err)
-		}
-
-		// Build operations for this service, with service name prefix
-		serviceOps := buildOperationsWithServicePrefix(service.Name, swaggerSpec, service.ApiCfg)
-		allOperations = append(allOperations, serviceOps...)
-
-		log.Printf("Loaded %d operations from service: %s", len(serviceOps), service.Name)
-	}
-
-	// Set global operations to combined list
-	globalOperations = allOperations
-
 	mcpServer.AddTool(
-		mcp.NewTool("get_oper",
-			mcp.WithString("id",
-				mcp.Description("Operation id to get the full schema (format: serviceName:METHOD:path)"),
+		mcp.NewTool("set-workspace",
+			mcp.WithString("acc_id",
+				mcp.Description("Workspace ID (accId) to use for all Simulator API calls"),
 				mcp.Required(),
 			),
-			mcp.WithDescription("Get the full schema of an API operation by id from any service."),
+			mcp.WithDescription("Save the Simulator workspace ID to .env as SIMULATOR_ACC_ID."),
 		),
-		handleGetOper,
-	)
-
-	mcpServer.AddTool(
-		mcp.NewTool("run_oper",
-			mcp.WithString("id",
-				mcp.Description("Operation id to execute (format: serviceName:METHOD:path)"),
-				mcp.Required(),
-			),
-			mcp.WithString("query",
-				mcp.Description("Path and query parameters as JSON object"),
-			),
-			mcp.WithString("header",
-				mcp.Description("Header parameters as JSON object"),
-			),
-			mcp.WithString("body",
-				mcp.Description("Request body as JSON object"),
-			),
-			mcp.WithDescription("Execute an API operation from any service with the provided parameters."),
-		),
-		handleRunOper,
-	)
-
-	mcpServer.AddTool(
-		mcp.NewTool("list_opers",
-			mcp.WithDescription("List all available API operations from all services with their ID, service name and summary."),
-		),
-		handleListOpers,
-	)
-
-	// Add service-specific information tool
-	mcpServer.AddTool(
-		mcp.NewTool("list_services",
-			mcp.WithDescription("List all configured services with their names and operation counts."),
-		),
-		handleListServices,
+		handleSetWorkspace,
 	)
 
 	// Add MCP resources capability
 	initializeResources(mcpServer)
-
-	log.Printf("Successfully loaded %d total operations from %d services", len(allOperations), len(services))
 }
 
 func buildOperations(swaggerSpec models.SwaggerSpec, apiCfg models.ApiConfig) []Operation {
@@ -550,175 +471,6 @@ func buildOperations(swaggerSpec models.SwaggerSpec, apiCfg models.ApiConfig) []
 	return operations
 }
 
-// buildOperationsWithServicePrefix builds operations with service name prefixed to operation IDs
-func buildOperationsWithServicePrefix(serviceName string, swaggerSpec models.SwaggerSpec, apiCfg models.ApiConfig) []Operation {
-	includeRegexes := compileRegexes(apiCfg.IncludePaths)
-	excludeRegexes := compileRegexes(apiCfg.ExcludePaths)
-	includedMethods := []string{}
-	if len(strings.TrimSpace(apiCfg.IncludeMethods)) > 0 {
-		includedMethods = strings.Split(apiCfg.IncludeMethods, ",")
-	}
-	excludedMethods := []string{}
-	if len(strings.TrimSpace(apiCfg.ExcludeMethods)) > 0 {
-		excludedMethods = strings.Split(apiCfg.ExcludeMethods, ",")
-	}
-
-	var operations []Operation
-	operationID := 0
-
-	for path, methods := range swaggerSpec.Paths {
-		if !shouldIncludePath(path, includeRegexes, excludeRegexes) {
-			continue
-		}
-
-		for method, details := range methods {
-			if !shouldIncludeMethod(method, includedMethods, excludedMethods) {
-				continue
-			}
-
-			var baseURL string
-			if apiCfg.Url != "" {
-				// Use the --url parameter with highest priority
-				baseURL = apiCfg.Url
-			} else if apiCfg.BaseUrl != "" {
-				// Use the --baseUrl parameter with second priority
-				baseURL = apiCfg.BaseUrl
-			} else {
-				// Fall back to extracting from Swagger spec
-				if swaggerSpec.OpenAPI != "" {
-					if len(swaggerSpec.Servers) > 0 {
-						baseURL = strings.TrimSuffix(swaggerSpec.Servers[0].URL, "/")
-					} else {
-						baseURL = "/"
-					}
-				} else {
-					baseURL = swaggerSpec.Host
-					if !strings.HasPrefix(baseURL, "http://") && !strings.HasPrefix(baseURL, "https://") {
-						baseURL = "https://" + baseURL
-					}
-					if swaggerSpec.BasePath != "" {
-						baseURL = strings.TrimSuffix(baseURL, "/") + "/" + strings.TrimPrefix(swaggerSpec.BasePath, "/")
-					}
-				}
-			}
-
-			reqURL := strings.TrimSuffix(baseURL, "/") + "/" + strings.TrimPrefix(path, "/")
-
-			var parameters []Parameter
-			for _, param := range details.Parameters {
-				// Check if this is a $ref parameter
-				if param.Ref != "" {
-					// Resolve the $ref
-					if resolvedParam, found := resolveParameterRef(swaggerSpec, param.Ref); found {
-						// Skip Authorization header parameters
-						if resolvedParam.In == "header" && strings.ToLower(resolvedParam.Name) == "authorization" {
-							continue
-						}
-
-						in := resolvedParam.In
-						if in == "path" {
-							in = "query"
-						}
-
-						// Get type from schema if not directly specified
-						paramType := resolvedParam.Type
-						if paramType == "" && resolvedParam.Schema != nil {
-							paramType = resolvedParam.Schema.Type
-						}
-
-						parameters = append(parameters, Parameter{
-							Name:        resolvedParam.Name,
-							In:          in,
-							TIn:         resolvedParam.In,
-							Required:    resolvedParam.Required,
-							Type:        paramType,
-							Description: resolvedParam.Description,
-							Schema:      resolvedParam.Schema,
-						})
-					}
-				} else {
-					// Skip Authorization header parameters
-					if param.In == "header" && strings.ToLower(param.Name) == "authorization" {
-						continue
-					}
-
-					// Regular parameter
-					in := param.In
-					if in == "path" {
-						in = "query"
-					}
-
-					// Get type from schema if not directly specified
-					paramType := param.Type
-					if paramType == "" && param.Schema != nil {
-						paramType = param.Schema.Type
-					}
-
-					parameters = append(parameters, Parameter{
-						Name:        param.Name,
-						In:          in,
-						TIn:         param.In,
-						Required:    param.Required,
-						Type:        paramType,
-						Description: param.Description,
-						Schema:      param.Schema,
-					})
-				}
-			}
-
-			var requestBody interface{}
-			if details.RequestBody != nil {
-				requestBody = details.RequestBody
-			}
-
-			operationID++
-			path1 := strings.ReplaceAll(path, "{", "")
-			path1 = strings.ReplaceAll(path1, "}", "")
-
-			// Add service name prefix to operation ID
-			operations = append(operations, Operation{
-				ID:          fmt.Sprintf("%s:%s:%s", serviceName, strings.ToUpper(method), path1),
-				Description: details.Description,
-				Method:      method,
-				Path:        path1,
-				Summary:     details.Summary,
-				URL:         reqURL,
-				Parameters:  parameters,
-				RequestBody: requestBody,
-				Responses:   details.Responses,
-			})
-		}
-	}
-
-	return operations
-}
-
-// handleListServices handles list_services tool requests
-func handleListServices(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	serviceMap := make(map[string]int)
-
-	// Count operations by service
-	for _, op := range globalOperations {
-		parts := strings.Split(op.ID, ":")
-		if len(parts) >= 3 {
-			serviceName := parts[0]
-			serviceMap[serviceName]++
-		}
-	}
-
-	// Create response
-	var services []map[string]interface{}
-	for serviceName, operationCount := range serviceMap {
-		services = append(services, map[string]interface{}{
-			"name":            serviceName,
-			"operation_count": operationCount,
-		})
-	}
-
-	result, _ := json.Marshal(services)
-	return mcp.NewToolResultText(string(result)), nil
-}
-
 // checkIfRequestBodyIsArray checks if the request body schema requires an array
 func checkIfRequestBodyIsArray(op Operation) bool {
 	log.Printf("DEBUG: checkIfRequestBodyIsArray called for operation %s", op.ID)
@@ -831,102 +583,87 @@ func checkIfRequestBodyIsArray(op Operation) bool {
 	return false
 }
 
-func handleGetOper(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	args := request.GetArguments()
-	name, ok := args["id"].(string)
-	if !ok {
-		return mcp.NewToolResultError("[Error] missing or invalid name parameter"), nil
-	}
-
-	for _, op := range globalOperations {
-		if op.ID == name {
-
-			// Create response without ID field
-			response := map[string]interface{}{
-				"id":           op.ID,
-				"description":  op.Description,
-				"method":       op.Method,
-				"path":         op.Path,
-				"summary":      op.Summary,
-				"url":          op.URL,
-				"parameters":   op.Parameters,
-				"request_body": op.RequestBody,
-				//"responses":    op.Responses,
-			}
-			result, _ := json.Marshal(response)
-			return mcp.NewToolResultText(string(result)), nil
-		}
-	}
-
-	return mcp.NewToolResultError("[Error] operation not found"), nil
+// simulatorWorkspace holds a single entry from the account workspaces API.
+type simulatorWorkspace struct {
+	ID    int    `json:"id"`
+	ExtID string `json:"ext_id"`
+	Name  string `json:"name"`
 }
 
-func handleRunOper(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	args := request.GetArguments()
-	name, ok := args["id"].(string)
-	if !ok {
-		return mcp.NewToolResultError("[Error] missing or invalid name parameter"), nil
+// fetchSimulatorWorkspaces calls account.corezoid.com to list workspaces available
+// to the authenticated user. Uses the Simulator JWT token for authorization.
+func fetchSimulatorWorkspaces(accountURL, authorization string) ([]simulatorWorkspace, error) {
+	accountURL = strings.TrimRight(accountURL, "/")
+	apiURL := accountURL + "/face/api/1/workspaces?limit=100&offset=0"
+
+	req, err := http.NewRequest("GET", apiURL, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Authorization", authorization)
+
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
 	}
 
-	// Extract combined query parameters (contains both path and query params)
-	var combinedParams map[string]interface{}
-	if queryStr, ok := args["query"].(string); ok && queryStr != "" {
-		if err := json.Unmarshal([]byte(queryStr), &combinedParams); err != nil {
-			return mcp.NewToolResultError(fmt.Sprintf("[Error] invalid JSON in query parameter: %v", err)), nil
-		}
+	var result struct {
+		Data []simulatorWorkspace `json:"data"`
 	}
-
-	// Separate path and query parameters based on operation definition
-
-	// Find the operation to get parameter definitions
-
-	// Extract header parameters
-	var headerParams map[string]interface{}
-	if headerStr, ok := args["header"].(string); ok && headerStr != "" {
-		if err := json.Unmarshal([]byte(headerStr), &headerParams); err != nil {
-			return mcp.NewToolResultError(fmt.Sprintf("[Error] invalid JSON in header parameter: %v", err)), nil
-		}
+	if err := json.Unmarshal(body, &result); err != nil {
+		return nil, fmt.Errorf("failed to parse workspace list: %w", err)
 	}
-
-	// Extract body parameters (for backwards compatibility)
-	var bodyParams map[string]interface{}
-	if bodyStr, ok := args["body"].(string); ok && bodyStr != "" {
-		// Try to unmarshal as an object for backwards compatibility
-		// The actual body processing will be handled in executeOperation
-		json.Unmarshal([]byte(bodyStr), &bodyParams)
-	}
-
-	// Ensure we have a valid auth token before executing
-	if authErr := ensureAuth(ctx); authErr != nil {
-		return authErr, nil
-	}
-
-	for _, op := range globalOperations {
-		if op.ID == name {
-			return executeOperation(ctx, op, combinedParams, headerParams, bodyParams, request)
-		}
-	}
-
-	return mcp.NewToolResultError("[Error] operation not found"), nil
+	return result.Data, nil
 }
 
-func handleListOpers(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	var operations []map[string]interface{}
-
-	for _, op := range globalOperations {
-		operations = append(operations, map[string]interface{}{
-			"id":      op.ID,
-			"summary": op.Summary,
-		})
-	}
-
-	result, _ := json.Marshal(operations)
-	return mcp.NewToolResultText(string(result)), nil
-}
-
-// handleLogin runs the OAuth2 PKCE flow, saves credentials, and updates the global auth token.
+// handleLogin runs the OAuth2 PKCE flow, saves credentials, then uses MCP elicitation
+// to let the user pick a workspace from the list fetched from the account API.
 func handleLogin(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	creds, err := auth.PKCEFlow(globalOAuthClientID, nil)
+	args := request.GetArguments()
+	accountURL, _ := args["account_url"].(string)
+
+	// If account_url not provided and not in env, ask via elicitation.
+	if accountURL == "" && os.Getenv("ACCOUNT_URL") == "" {
+		mcpSrv := server.ServerFromContext(ctx)
+		if mcpSrv != nil {
+			elicitReq := mcp.ElicitationRequest{
+				Request: mcp.Request{Method: string(mcp.MethodElicitationCreate)},
+				Params: mcp.ElicitationParams{
+					Message: "Enter your Corezoid Account URL (leave blank for the default: https://account.corezoid.com):",
+					RequestedSchema: map[string]interface{}{
+						"type": "object",
+						"properties": map[string]interface{}{
+							"account_url": map[string]interface{}{
+								"type":    "string",
+								"title":   "Account URL",
+								"default": auth.DefaultAccountURL,
+							},
+						},
+					},
+				},
+			}
+			result, err := mcpSrv.RequestElicitation(ctx, elicitReq)
+			if err == nil && result != nil && result.Action == mcp.ElicitationResponseActionAccept {
+				content, _ := result.Content.(map[string]interface{})
+				accountURL, _ = content["account_url"].(string)
+			}
+		}
+	}
+
+	if accountURL != "" {
+		if err := auth.SaveAccountURL(accountURL); err != nil {
+			log.Printf("Warning: failed to save ACCOUNT_URL: %v", err)
+		}
+	}
+
+	creds, err := auth.PKCEFlow(accountURL, globalOAuthClientID, nil)
 	if err != nil {
 		return mcp.NewToolResultError(fmt.Sprintf("[Error] OAuth2 login failed: %v", err)), nil
 	}
@@ -936,7 +673,92 @@ func handleLogin(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToo
 	}
 
 	globalApiConfig.Authorization = creds.AuthorizationHeader()
-	return mcp.NewToolResultText("Authorization successful! Token saved. You can now use Simulator tools."), nil
+
+	// Fetch workspaces and present a selection if WORKSPACE_ID is not yet set.
+	if os.Getenv("WORKSPACE_ID") == "" {
+		acctURL := os.Getenv("ACCOUNT_URL")
+		if acctURL == "" {
+			acctURL = auth.DefaultAccountURL
+		}
+
+		workspaces, fetchErr := fetchSimulatorWorkspaces(acctURL, globalApiConfig.Authorization)
+		if fetchErr != nil {
+			log.Printf("Warning: failed to fetch workspace list: %v", fetchErr)
+		}
+
+		mcpSrv := server.ServerFromContext(ctx)
+		if mcpSrv != nil && fetchErr == nil && len(workspaces) > 0 {
+			// Build enum labels and a reverse map to ext_id.
+			enumVals := make([]string, len(workspaces))
+			wsIDByLabel := make(map[string]string, len(workspaces))
+			for i, ws := range workspaces {
+				label := ws.Name + " (" + ws.ExtID + ")"
+				enumVals[i] = label
+				wsIDByLabel[label] = ws.ExtID
+			}
+
+			elicitReq := mcp.ElicitationRequest{
+				Request: mcp.Request{Method: string(mcp.MethodElicitationCreate)},
+				Params: mcp.ElicitationParams{
+					Message: "Authentication successful! Select the Simulator workspace to use:",
+					RequestedSchema: map[string]interface{}{
+						"type": "object",
+						"properties": map[string]interface{}{
+							"workspace": map[string]interface{}{
+								"type":  "string",
+								"title": "Workspace",
+								"enum":  enumVals,
+							},
+						},
+						"required": []string{"workspace"},
+					},
+				},
+			}
+
+			result, err := mcpSrv.RequestElicitation(ctx, elicitReq)
+			if err == nil && result != nil && result.Action == mcp.ElicitationResponseActionAccept {
+				content, _ := result.Content.(map[string]interface{})
+				if selected, _ := content["workspace"].(string); selected != "" {
+					accID := wsIDByLabel[selected]
+					if accID == "" {
+						accID = selected
+					}
+					if saveErr := auth.SaveWorkspaceID(accID); saveErr != nil {
+						log.Printf("Warning: failed to save workspace ID: %v", saveErr)
+					}
+					return mcp.NewToolResultText(fmt.Sprintf("Setup complete! Workspace %q saved to .env. You can now use all Simulator tools.", accID)), nil
+				}
+			}
+		}
+
+		// Elicitation not supported or failed — return workspace list as text for Claude to handle.
+		if fetchErr == nil && len(workspaces) > 0 {
+			var sb strings.Builder
+			sb.WriteString("Authentication successful! Token saved to .env.\n\nAvailable workspaces:\n")
+			for _, ws := range workspaces {
+				sb.WriteString(fmt.Sprintf("  %s — %s\n", ws.ExtID, ws.Name))
+			}
+			sb.WriteString("\nCall set-workspace(acc_id=<ext_id>) with the workspace you want to use.")
+			return mcp.NewToolResultText(sb.String()), nil
+		}
+	}
+
+	return mcp.NewToolResultText("Authentication successful! Token saved to .env. You can now use Simulator tools."), nil
+}
+
+// handleSetWorkspace saves the workspace ID (accId) to .env as SIMULATOR_ACC_ID.
+func handleSetWorkspace(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	args := request.GetArguments()
+	accID, ok := args["acc_id"].(string)
+	if !ok || accID == "" {
+		return mcp.NewToolResultError("[Error] missing or invalid acc_id parameter"), nil
+	}
+
+	if err := auth.SaveWorkspaceID(accID); err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("[Error] failed to save workspace ID: %v", err)), nil
+	}
+
+	return mcp.NewToolResultText(fmt.Sprintf("Workspace saved: WORKSPACE_ID=%s", accID)), nil
 }
 
 // ensureAuth checks that globalApiConfig.Authorization is set.
@@ -980,7 +802,7 @@ func ensureAuth(ctx context.Context) *mcp.CallToolResult {
 
 		result, err := mcpSrv.RequestElicitation(ctx, elicitReq)
 		if err == nil && result != nil && result.Action == mcp.ElicitationResponseActionAccept {
-			if creds, err := auth.PKCEFlow(globalOAuthClientID, nil); err == nil {
+			if creds, err := auth.PKCEFlow("", globalOAuthClientID, nil); err == nil {
 				_ = auth.Save(creds)
 				globalApiConfig.Authorization = creds.AuthorizationHeader()
 				return nil
@@ -988,7 +810,7 @@ func ensureAuth(ctx context.Context) *mcp.CallToolResult {
 		}
 	}
 
-	return mcp.NewToolResultError("[Error] Not authenticated. Set SIMULATOR_TOKEN env var, or run the 'login' tool to authenticate via OAuth2.")
+	return mcp.NewToolResultError("[Error] Not authenticated. Set ACCESS_TOKEN env var, or run the 'login' tool to authenticate via OAuth2.")
 }
 
 func executeOperation(ctx context.Context, op Operation, queryParams, headerParams, bodyParams map[string]interface{}, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -1160,8 +982,6 @@ func executeOperation(ctx context.Context, op Operation, queryParams, headerPara
 	if err != nil {
 		return mcp.NewToolResultError(fmt.Sprintf("[Error] failed to read HTTP response: %v", err)), nil
 	}
-
-
 
 	return mcp.NewToolResultText(string(body)), nil
 }

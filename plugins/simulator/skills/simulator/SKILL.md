@@ -7,23 +7,23 @@ description: >
   Also use when the user asks to "use simulator", "call the simulator API", or
   needs to manage business processes in Simulator. This skill provides deep
   knowledge of the platform model and guides you to use the simulator MCP tools
-  (list_opers, get_oper, run_oper) correctly.
+  correctly.
 ---
 
 # Simulator.Company Assistant
 
 You are an expert on the Simulator.Company business process management platform.
-You have access to the Simulator API via the `simulator` MCP server which exposes
-three tools: `list_opers`, `get_oper`, and `run_oper`.
+You have access to the Simulator API via the `simulator` MCP server. Each API
+operation is exposed as its own MCP tool named `<method>-<path-segments>`.
 
 ## Workspace Context Check (MANDATORY FIRST STEP)
 
 **Before doing anything else**, verify the WorkspaceID (`accId`) is known:
 
-1. Check whether the user already specified `accId` (in the current message, conversation history, or session context).
+1. Check whether `accId` is already known: current message, conversation history, or `WORKSPACE_ID` env var / `.env` file in the project directory.
 2. If `accId` is **not** provided, immediately ask:
 
-   > "В каком воркспейсе нужно работать? Укажите, пожалуйста, Workspace ID (`accId`)."
+   > "В каком воркспейсе нужно работать? Укажите, пожалуйста, Workspace ID (`accId`). Если вы ещё не настроили окружение — запустите `/simulator-init`."
 
    Do **not** call any MCP tools until the user provides `accId`.
 3. Once `accId` is known, proceed normally and use it in all subsequent API calls.
@@ -32,18 +32,24 @@ three tools: `list_opers`, `get_oper`, and `run_oper`.
 
 ## MCP Tool Usage
 
-**Always follow this sequence for API calls:**
-1. Use `list_opers` to discover or confirm operation IDs (or consult the reference below)
-2. Use `get_oper` with the operation ID to see the full schema and required parameters
-3. Use `run_oper` to execute the operation
+Each API operation is a dedicated MCP tool. The tool name is derived from the
+HTTP method and path: `<method>-<path-segments-separated-by-dashes>`.
 
-**`run_oper` parameter format:**
-- `id` — operation ID string (e.g. `POST:/actors/actor/formId`)
-- `query` — JSON string with path AND query parameters: `{"formId": "123", "limit": 50}`
-- `body` — JSON string with request body: `{"title": "My Actor", "data": {}}`
-- `header` — JSON string with additional headers (rarely needed)
+Path parameters (e.g. `{accId}`, `{formId}`) become named arguments. The MCP
+server substitutes them into the URL path automatically.
 
-Path parameters go into `query` (the MCP server substitutes them into the URL path).
+**Examples:**
+
+| API | MCP tool call |
+|-----|---------------|
+| `GET /forms/{formId}` | `get-forms-formId(formId="42")` |
+| `POST /forms/{accId}/{isTemplate}` | `post-forms-accId-isTemplate(accId="ws_xxx", isTemplate="true", body='...')` |
+| `GET /actors/{actorId}` | `get-actors-actorId(actorId="actor_xxx")` |
+| `POST /transactions/{accountId}` | `post-transactions-accountId(accountId="acc_xxx", body='...')` |
+
+**Parameter rules:**
+- Path and query parameters → individual named string arguments
+- Request body → `body` argument as a JSON string
 
 ## Platform Architecture
 
@@ -122,64 +128,57 @@ Movement of funds between two accounts (debit one, credit another):
 ### 1. Explore the Workspace
 
 ```
-# Find the workspace accId first (it's in the user's token/context)
 # List available forms to understand the data model
-run_oper("GET:/forms/templates/accId", query={"accId": "<accId>"})
+get-forms-templates-accId(accId="<accId>")
 
 # List system forms to get Graph, Layer, etc. IDs
-run_oper("GET:/forms/templates/system/accId?formTypes=system", query={"accId": "<accId>"})
+get-forms-templates-system-accId(accId="<accId>", formTypes="system")
 ```
 
 ### 2. Create an Actor
 
 ```
-# Step 1: get form details to know what data fields to provide
-get_oper("POST:/actors/actor/formId")
-
-# Step 2: create the actor
-run_oper("POST:/actors/actor/formId",
-  query={"formId": "42"},
-  body={"title": "My Actor", "description": "...", "data": {"field1": "value"}})
+# Create the actor
+post-actors-actor-formId(
+  formId="42",
+  body='{"title": "My Actor", "description": "...", "data": {"field1": "value"}}')
 ```
 
 ### 3. Build a Graph Structure
 
 ```
 # Create graph actor (use Graph system form ID)
-run_oper("POST:/actors/actor/formId", query={"formId": "<graph-form-id>"}, body={"title": "My Graph"})
+post-actors-actor-formId(formId="<graph-form-id>", body='{"title": "My Graph"}')
 
 # Create layer actor (use Layer system form ID)
-run_oper("POST:/actors/actor/formId", query={"formId": "<layer-form-id>"}, body={"title": "Main View"})
+post-actors-actor-formId(formId="<layer-form-id>", body='{"title": "Main View"}')
 
 # Link layer to graph
-run_oper("POST:/actors/link/accId", query={"accId": "<accId>"},
-  body={"fromActorId": "<graph-id>", "toActorId": "<layer-id>", "typeId": <edge-type-id>})
+post-actors-link-accId(accId="<accId>",
+  body='{"fromActorId": "<graph-id>", "toActorId": "<layer-id>", "typeId": <edge-type-id>}')
 
 # Add actors to layer
-run_oper("POST:/graph_layers/actors/layerId", query={"layerId": "<layer-id>"},
-  body={"actors": [{"actorId": "<actor-id>", "x": 0, "y": 0}]})
+post-graph_layers-actors-layerId(layerId="<layer-id>",
+  body='{"actors": [{"actorId": "<actor-id>", "x": 0, "y": 0}]}')
 ```
 
 ### 4. Manage Financial Accounts
 
 ```
 # Create currency and account name first if needed
-run_oper("POST:/currencies/accId", query={"accId": "<accId>"}, body={"title": "USD", "symbol": "$"})
-run_oper("POST:/account_names/accId", query={"accId": "<accId>"}, body={"title": "Budget"})
+post-currencies-accId(accId="<accId>", body='{"title": "USD", "symbol": "$"}')
+post-account_names-accId(accId="<accId>", body='{"title": "Budget"}')
 
 # Create account for actor
-run_oper("POST:/accounts/actorId", query={"actorId": "<actor-id>"},
-  body={"nameId": "<name-id>", "currencyId": "<currency-id>", "type": "asset", "incomeType": "credit"})
+post-accounts-actorId(actorId="<actor-id>",
+  body='{"nameId": "<name-id>", "currencyId": "<currency-id>", "type": "asset", "incomeType": "credit"}')
 
 # Record a transaction
-run_oper("POST:/transactions/accountId", query={"accountId": "<account-id>"},
-  body={"amount": 1000, "description": "Initial funding"})
+post-transactions-accountId(accountId="<account-id>",
+  body='{"amount": 1000, "description": "Initial funding"}')
 ```
 
 ## Reference
-
-For the complete list of operation IDs and their parameters, read:
-`references/api-operations.md`
 
 For domain-specific workflows use the specialized skills:
 - `/simulator-graph` — actors, links, layers, graph building
@@ -208,10 +207,9 @@ Use the `Read` tool to load these files when you need deeper detail:
 
 ## Tips & Best Practices
 
-- Always `get_oper` before `run_oper` if you're unsure about required fields
 - The `accId` (workspace ID) is required for most list/create operations — confirm it with the user
 - Actor `ref` fields must be unique within a workspace — use slugified names
-- System form IDs change per workspace — always look them up with `GET:/forms/templates/system/accId`
+- System form IDs change per workspace — always look them up with `get-forms-templates-system-accId`
 - When creating accounts, you need both a `currencyId` AND a `nameId` — create them if they don't exist
-- Use `POST:/actors/mass_links/accId` for creating multiple links at once (much more efficient)
+- Use `post-actors-mass_links-accId` for creating multiple links at once (much more efficient)
 - Transactions are permanent — use 2-step (authorize → complete/cancel) for reversible operations

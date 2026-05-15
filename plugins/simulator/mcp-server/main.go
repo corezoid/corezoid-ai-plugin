@@ -1,9 +1,7 @@
 package main
 
 import (
-	"encoding/json"
 	"flag"
-	"fmt"
 	"log"
 	"net/url"
 	"os"
@@ -59,11 +57,42 @@ func getSseUrlAddr(sseUrl, sseAddr string) (string, string) {
 	return "", ""
 }
 
+// loadDotEnv reads key=value pairs from path and sets them as env vars (does not overwrite existing).
+func loadDotEnv(path string) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		parts := strings.SplitN(line, "=", 2)
+		if len(parts) != 2 {
+			continue
+		}
+		key := strings.TrimSpace(parts[0])
+		val := strings.TrimSpace(parts[1])
+		if os.Getenv(key) == "" {
+			os.Setenv(key, val)
+		}
+	}
+}
+
 func main() {
+	if workDir := os.Getenv("SIMULATOR_WORK_DIR"); workDir != "" {
+		_ = os.Chdir(workDir)
+	}
+
+	// Load .env from CWD so ACCESS_TOKEN, ACCOUNT_URL, etc. are available.
+	if cwd, err := os.Getwd(); err == nil {
+		loadDotEnv(cwd + "/.env")
+	}
+
 	var finalSseUrl, finalSseAddr string
 	specUrl := flag.String("specUrl", "", "URL of the Swagger JSON specification")
 	spec := flag.String("spec", "", "Built-in spec name (e.g. 'simulator')")
-	configFile := flag.String("config", "", "Path to configuration file for multiple services")
 	sseMode := flag.Bool("sse", false, "Run in SSE mode instead of stdio mode")
 	sseAddr := flag.String("sseAddr", "", "SSE server listen address in :Port or IP:Port format")
 	sseUrl := flag.String("sseUrl", "", "Base URL for the SSE server")
@@ -83,13 +112,9 @@ func main() {
 
 	flag.Parse()
 
-	// Validate that either specUrl, spec, or config file is provided
-	if *specUrl == "" && *spec == "" && *configFile == "" {
-		log.Fatal("Please provide --specUrl, --spec, or --config flag")
-	}
-
-	if *specUrl != "" && *configFile != "" {
-		log.Fatal("Please provide either --specUrl OR --config flag, not both")
+	// Validate that either specUrl or spec is provided
+	if *specUrl == "" && *spec == "" {
+		log.Fatal("Please provide --specUrl or --spec flag")
 	}
 
 	// Validate specUrl if provided
@@ -202,47 +227,5 @@ func main() {
 		log.Printf("Starting single service server with specUrl: %s, SSE mode: %v, SSE URL: %s, SSE Addr: %s, URL: %s, Base URL: %s, Include Paths: %s, Exclude Paths: %s, Include Methods: %s, Exclude Methods: %s, Security: %s, BasicAuth: %s, ApiKeyAuth: %s, Authorization: %s, Headers: %s, SSE Headers: %s\n",
 			config.SpecUrl, config.SseCfg.SseMode, config.SseCfg.SseUrl, config.SseCfg.SseAddr, config.ApiCfg.Url, config.ApiCfg.BaseUrl, config.ApiCfg.IncludePaths, config.ApiCfg.ExcludePaths, config.ApiCfg.IncludeMethods, config.ApiCfg.ExcludeMethods, config.ApiCfg.Security, config.ApiCfg.BasicAuth, config.ApiCfg.ApiKeyAuth, config.ApiCfg.Authorization, config.ApiCfg.Headers, config.ApiCfg.SseHeaders)
 		mcpserver.CreateServer(swaggerSpec, config)
-	} else if *configFile != "" {
-		// Multi-service mode using configuration file
-		services, err := loadServicesFromConfig(*configFile)
-		if err != nil {
-			log.Fatalf("Failed to load services configuration: %v", err)
-		}
-
-		config := models.Config{
-			Services: services,
-			SseCfg: models.SseConfig{
-				SseMode: *sseMode,
-				SseAddr: finalSseAddr,
-				SseUrl:  finalSseUrl,
-			},
-		}
-
-		log.Printf("Starting multi-service server with %d services from config: %s, SSE mode: %v, SSE URL: %s, SSE Addr: %s\n",
-			len(services), *configFile, config.SseCfg.SseMode, config.SseCfg.SseUrl, config.SseCfg.SseAddr)
-
-		mcpserver.CreateMultiServiceServer(services, config)
 	}
-}
-
-// loadServicesFromConfig loads service configurations from JSON file
-func loadServicesFromConfig(configPath string) ([]models.ServiceConfig, error) {
-	data, err := os.ReadFile(configPath)
-	if err != nil {
-		return nil, err
-	}
-
-	var configData struct {
-		Services []models.ServiceConfig `json:"services"`
-	}
-
-	if err := json.Unmarshal(data, &configData); err != nil {
-		return nil, err
-	}
-
-	if len(configData.Services) == 0 {
-		return nil, fmt.Errorf("no services found in configuration file")
-	}
-
-	return configData.Services, nil
 }

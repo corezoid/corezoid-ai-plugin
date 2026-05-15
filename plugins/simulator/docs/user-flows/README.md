@@ -42,7 +42,7 @@ All API requests require a Bearer token:
 Authorization: Simulator <your_token>
 ```
 
-The token is set via the `SIMULATOR_TOKEN` environment variable and passed automatically by the MCP server.
+The token is set via the `ACCESS_TOKEN` environment variable and passed automatically by the MCP server.
 
 ## API Documentation
 

@@ -1,6 +1,6 @@
 {
   "name": "simulator",
-  "version": "1.2.0",
+  "version": "1.3.0",
   "description": "Simulator.Company platform assistant. Exposes the Simulator REST API as an MCP server and provides skills for managing actors, forms, graph structures, and financial accounts.",
   "author": {
     "name": "Simulator.Company",

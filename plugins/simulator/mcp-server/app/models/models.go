@@ -141,17 +141,9 @@ type ApiConfig struct {
 	OAuthClientID  string `json:"oauthClientId"`  // OAuth2 client ID for PKCE flow
 }
 
-// ServiceConfig contains configuration for a single service
-type ServiceConfig struct {
-	Name    string    `json:"name"`    // Service name/identifier
-	SpecUrl string    `json:"specUrl"` // URL of the Swagger JSON specification
-	ApiCfg  ApiConfig `json:"apiCfg"`  // API related configuration for this service
-}
-
 // Config stores all command line parameters
 type Config struct {
-	SpecUrl  string          `json:"specUrl,omitempty"`  // Single spec URL (legacy support)
-	Services []ServiceConfig `json:"services,omitempty"` // Multiple services configuration
-	SseCfg   SseConfig       `json:"sseCfg"`             // SSE related configuration
-	ApiCfg   ApiConfig       `json:"apiCfg,omitempty"`   // Global API configuration (legacy)
+	SpecUrl string    `json:"specUrl,omitempty"` // Spec URL
+	SseCfg  SseConfig `json:"sseCfg"`            // SSE related configuration
+	ApiCfg  ApiConfig `json:"apiCfg,omitempty"`  // API configuration
 }
