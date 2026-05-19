@@ -193,6 +193,7 @@ type Operation struct {
 	Parameters  []Parameter `json:"parameters"`
 	RequestBody interface{} `json:"request_body"`
 	Responses   interface{} `json:"responses"`
+	Invisible   bool        `json:"invisible,omitempty"`
 }
 
 type Parameter struct {
@@ -627,6 +628,27 @@ func LoadSwaggerServer(mcpServer *server.MCPServer, swaggerSpec models.SwaggerSp
 	globalApiConfig = apiCfg
 	globalMCPServer = mcpServer
 
+	// Build a set of tool names marked x-invisible in the swagger spec.
+	// These tools are still registered (so they can be called internally) but
+	// are filtered out of the tools/list response so they don't clutter the LLM's context.
+	invisibleTools := map[string]struct{}{}
+	for _, op := range globalOperations {
+		if op.Invisible {
+			invisibleTools[operationToolName(op)] = struct{}{}
+		}
+	}
+	if len(invisibleTools) > 0 {
+		server.WithToolFilter(func(_ context.Context, tools []mcp.Tool) []mcp.Tool {
+			visible := tools[:0]
+			for _, t := range tools {
+				if _, hidden := invisibleTools[t.Name]; !hidden {
+					visible = append(visible, t)
+				}
+			}
+			return visible
+		})(mcpServer)
+	}
+
 	// Resolve OAuth client ID: flag > env var > built-in default
 	globalOAuthClientID = apiCfg.OAuthClientID
 	if globalOAuthClientID == "" {
@@ -821,6 +843,7 @@ func buildOperations(swaggerSpec models.SwaggerSpec, apiCfg models.ApiConfig) []
 				Parameters:  parameters,
 				RequestBody: requestBody,
 				Responses:   details.Responses,
+				Invisible:   details.Invisible,
 			})
 		}
 	}
@@ -1111,11 +1134,19 @@ func fetchAndSaveSystemForms(ctx context.Context, accID string) error {
 	childrenOf := map[int][]SysFormItem{}
 	var roots []SysFormItem
 
-	allowedRootTitles := map[string]bool{
-		"Graphs":        true,
-		"Layers":        true,
-		"FlowchartBlock": true,
-	}
+	//allowedRootTitles := map[string]bool{
+	//	"Graphs":         true,
+	//	"Layers":         true,
+	//	"FlowchartBlock": true,
+	//	"Actor":          true,
+	//	"SmartTags":      true,
+	//	"Events":         true,
+	//	"Reactions":      true,
+	//	"Dashboards":     true,
+	//	"Tags":           true,
+	//	"Snippets":       true,
+	//	"Default": true,
+	//}
 
 	for _, item := range apiResult.Data {
 		form := SysFormItem{
@@ -1124,9 +1155,9 @@ func fetchAndSaveSystemForms(ctx context.Context, accID string) error {
 			Description: item.Description,
 		}
 		if item.ParentID == nil {
-			if allowedRootTitles[item.Title] {
-				roots = append(roots, form)
-			}
+			//if allowedRootTitles[item.Title] {
+			roots = append(roots, form)
+			//}
 		} else {
 			childrenOf[*item.ParentID] = append(childrenOf[*item.ParentID], form)
 		}

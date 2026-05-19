@@ -24,7 +24,7 @@ Simulator.Company using the `simulator` MCP server.
 
 ## Step 0a — Read sys-forms.yaml (MANDATORY FIRST ACTION)
 
-Before doing **anything** else, read the system forms catalog from the current working directory:
+Before doing **anything** else, read the system forms catalog from the current working directory (not plugin directory):
 
 ```
 Read: sys-forms.yaml
@@ -36,6 +36,7 @@ This file is a list of system forms. From it, extract and remember:
 |---|---|---|
 | `graphFormId` | root entry where `title == "Graphs"` → `id` | Creating Graph actors |
 | `layerFormId` | root entry where `title == "Layers"` → `id` | Creating Layer actors |
+| `defaultFormId` | root entry where `title == "Default"` → `id` | Creating plain-text labels on a graph |
 | Block template ids | entry where `title == "FlowchartBlock"` → `childs[]` → match by `title` → `id` | Creating flowchart nodes |
 
 **Block template lookup** (find `id` in `FlowchartBlock.childs` by matching `title`):
@@ -50,6 +51,7 @@ This file is a list of system forms. From it, extract and remember:
 | "API Call" | `"API Call"` | `#9c27b0` (purple) |
 | Corezoid Start node | `"Corezoid Start"` | `#4caf50` (green) |
 | AWS Lambda icon | `"Lambda"` | `#ff9800` (orange) |
+| Plain text / label on graph | use `defaultFormId` (root entry `title == "Default"`) | _(no color needed)_ |
 
 > **Rule:** Use the **child** form's `id` as `formId`, never the parent `FlowchartBlock` id.
 >
@@ -143,6 +145,28 @@ deleteActor(actorId="<actorId>")
 deleteBulk(body='{"actorIds": ["<a1>", "<a2>"]}')
 ```
 
+### Create a Plain-Text Label on a Graph
+
+When the user wants to place free text (a label, annotation, comment) directly on the canvas — not a flowchart block — use the **Default** form (`defaultFormId`) and put the visible text in the `description` field. Do **not** pass `data`.
+
+```
+// formId = id from sys-forms.yaml where title == "Default" (root-level entry)
+createActor(
+  formId=<defaultFormId>,
+  body='{
+    "title":       "",
+    "description": "This is the label text shown on the graph"
+  }')
+# → returns { "id": "<actorId>", ... }
+
+// Place on layer as usual
+manageLayer(
+  layerId="<layerActorId>",
+  body='[{"action":"create","data":{"id":"<actorId>","type":"node","position":{"x":<X>,"y":<Y>}}}]')
+```
+
+> **Rule:** The `description` field carries the visible text. `title` can be left empty or omitted.
+> Do not pass `data` — the server auto-injects the rendering view from the Default form definition.
 
 ---
 
@@ -507,35 +531,12 @@ swagger-generated server:
 
 ---
 
-## Old → New Tool Mapping Reference
-
-| Old name | New (operationId) |
-|---|---|
-| `simulator_get_system_forms` | `getSystemForms` |
-| `simulator_get_forms` | `getForms` |
-| `simulator_create_actor` | `createActor` |
-| `simulator_get_actor` | `getActor` |
-| `simulator_update_actor` | `updateActor` |
-| `simulator_delete_actor` | `deleteActor` |
-| `simulator_search_actors` | `searchActors` |
-| `simulator_filter_actors` | `filterActors` |
-| `simulator_create_link` | `createLink` |
-| `simulator_mass_link` | `massLink` |
-| `simulator_validate_link` | `existLink` *(existence only)* |
-| `simulator_get_layer` | `getLayer` |
-| `simulator_add_node_to_layer` / `simulator_add_edge_to_layer` | `manageLayer` (with `action:"create"`) |
-| `simulator_save_layer_positions` | `layerActorsPosition` |
-| `simulator_search_layer_actors` | `searchLayerActors` |
-| `simulator_get_accounts` | `getAccounts` |
-| `simulator_create_accounts` | `createAccounts` |
-| `simulator_create_transaction` | `createTransaction` |
-| `simulator_get_currencies` | `getCurrencies` |
-
 ---
 
 ## Key Rules
 
 - **Always read `sys-forms.yaml` from the current working directory first** (Step 0a) to look up all form ids by title. Never hardcode numeric form ids.
+- **For plain text / labels on a graph** use `formId = defaultFormId` (root entry `title == "Default"`) and put the visible text in `description`. Do **not** pass `data`; do **not** use a FlowchartBlock child form.
 - **If `layerId` is already known** (from user message, conversation history, or session context) → **use it directly, never create a new layer**. Call `getLayer(layerId=<known>)` to read current state and continue from there.
 - **For system forms (anything in `sys-forms.yaml`), do NOT pass `data`** — the server auto-injects shape/view/blockId from the form definition. Pass only `title`, `description`, `color`, etc.
 - **Always pass `color`** (hex string) when creating an actor — use the default from the title→color table in Step 0a or apply the user's requested color.

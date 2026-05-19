@@ -52,6 +52,7 @@ type Endpoint struct {
 	Responses   map[string]Response `json:"responses"`
 	Consumes    []string            `json:"consumes"` // Swagger 2.0 only
 	Produces    []string            `json:"produces"` // Swagger 2.0 only
+	Invisible   bool                `json:"x-invisible,omitempty"` // When true, tool is hidden from tools/list but still callable
 }
 
 type RequestBody struct {

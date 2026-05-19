@@ -284,6 +284,7 @@
         "summary": "Get list of system forms",
         "description": "This API is used to get system forms:\n* Graphs\n* Layers\n* Streams\n* Events\n* Widgets\n* Scripts\n* Locations\n* Tags\n* Reactions\n\nScopes [control.events:forms.readonly]\n",
         "operationId": "getSystemForms",
+        "x-invisible": true,
         "parameters": [
           {
             "name": "Authorization",
@@ -2111,6 +2112,7 @@
         "summary": "Get layer",
         "description": "Scopes [control.events:actors.readonly]\n\nA layer is an actor created with system form [Layers](api.html#operation/getSystemForms).\nThis API retrieves all layer actor data together with it's nodes and links.\n",
         "operationId": "getLayer",
+        "x-invisible": true,
         "parameters": [
           {
             "name": "Authorization",
@@ -6556,6 +6558,7 @@
         "summary": "Get link types list",
         "description": "Scopes [control.events:actors.readonly]\n\nLink type is an attribute of every link between actors.\nE.g., on the Economics layer - a link type with the name `calculatedTree` is used, on other layers - a hierarchical link (with the name `hierarchy`).\n\nThere is a set of specific link types used for links between actors in the accounts tree.\nFor every existing actor's account (unique pair of name and currency), there is a dedicated link type.<br/>\nSuch link type name is a concatenation of two ID fields: `<nameId>_<currencyId>` (Learn more about [account names](../#operation/getAccountNames), [currencies](../#operation/getCurrencies))\n",
         "operationId": "getEdgeTypes",
+        "x-invisible": true,
         "parameters": [
           {
             "name": "Authorization",
