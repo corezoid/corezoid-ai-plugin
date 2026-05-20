@@ -38,6 +38,10 @@ Call MCP tool **`create-process`** with:
 
 This creates an empty process in Corezoid and saves the file as `<ID>_<Name>.conv.json` inside `folder_path`. The returned file path is `PROCESS_PATH` — all subsequent steps use it.
 
+> ⚠️ Always verify `folder_path` points to the intended target folder. Omitting it places the process in the project root, which may not be the correct location.
+
+> ⚠️ After `create-process`, Corezoid may create default template nodes (Start, a placeholder process node, Final) even with `create_mode: without_nodes`. Before generating the full JSON, check the current `scheme.nodes` array in the created file. If a Start node already exists, do **not** add another — doing so will cause a validation error.
+
 If the process type is **business logic** and it needs to call existing processes, find their `conv_id` values by browsing the already-exported `.conv.json` files in the project folder.
 
 ---
@@ -111,6 +115,7 @@ Produce a valid `.conv.json` file.
   3. Reference in logic: `{{env_var[@variable-name]}}`
 - Use descriptive `title` values (e.g., "Call Payment Process", not "RPC")
 - Position nodes top-to-bottom, incrementing `y` by 200–250px; place error nodes to the right (`x + 300`)
+- Place each Reply Error node at the **same `y`** as the Call/API node it handles — this creates a straight horizontal connector line for the error path
 
 ### Common pitfalls
 

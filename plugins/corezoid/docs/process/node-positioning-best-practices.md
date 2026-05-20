@@ -24,13 +24,21 @@ Corezoid nodes have specific dimensions that should be considered when positioni
    - Actual height varies based on node content
    - Pivot Point: Top-left corner
 
-3. **Nodes with Escalation or Error Links**
+3. **Nodes with a Timer (Semaphor / Delay)**
+
+   - Width: 200px
+   - Height: approximately **2× the standard height** of the same node type
+   - A timer semaphor adds a visible timer block below the node body, roughly doubling the rendered height
+   - Account for this when calculating vertical spacing to the next node — increase the Y gap accordingly
+   - Pivot Point: Top-left corner
+
+4. **Nodes with Escalation or Error Links**
 
    - Width: 200px
    - Minimum Height: 125px
    - Pivot Point: Top-left corner
 
-4. **Condition Nodes**
+5. **Condition Nodes**
    - With single rule:
      - Width: 200px
      - Minimum Height: 110px
