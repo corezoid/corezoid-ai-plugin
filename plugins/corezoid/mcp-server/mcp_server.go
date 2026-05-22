@@ -899,51 +899,82 @@ func handleToolCall(name string, args map[string]interface{}) (result string, is
 	case "login":
 		envPath := envFilePath()
 
-		// Re-read .env so that ACCESS_TOKEN (and other vars) added after server
-		// startup are honoured — prevents triggering OAuth when the token is
-		// already present in .env.
+		// Re-read .env so that values updated since server startup are honoured.
+		// This matters when the user swaps `.env` to switch between environments
+		// (e.g. dev <-> prod) within a single session: the values in the new
+		// file must override the in-memory state captured at startup, not the
+		// other way around. Otherwise every subsequent API call keeps hitting
+		// the host that was active when the MCP process first started.
 		findAndLoadDotEnv()
+		accountURL = os.Getenv("ACCOUNT_URL")
+		workspaceID = os.Getenv("WORKSPACE_ID")
+		stageID, _ = strconv.Atoi(os.Getenv("COREZOID_STAGE_ID"))
+		apiURL = os.Getenv("COREZOID_API_URL")
+		// apiToken keeps its conditional refresh: if a token is already in
+		// memory we want to *reuse* it (and skip OAuth) rather than overwrite
+		// from .env, which may have just been cleared by `logout`.
 		if apiToken == "" {
 			apiToken = os.Getenv("ACCESS_TOKEN")
-		}
-		if accountURL == "" {
-			accountURL = os.Getenv("ACCOUNT_URL")
-		}
-		if workspaceID == "" {
-			workspaceID = os.Getenv("WORKSPACE_ID")
-		}
-		if stageID == 0 {
-			stageID, _ = strconv.Atoi(os.Getenv("COREZOID_STAGE_ID"))
-		}
-		if apiURL == "" {
-			apiURL = os.Getenv("COREZOID_API_URL")
 		}
 
 		// Record initial stageID to detect if it gets set during this call.
 		stageIDAtStart := stageID
 
-		// Apply any values passed directly as arguments (bypasses elicitation).
-		if v := optStrArg(args, "account_url"); v != "" && accountURL == "" {
+		// Apply any values passed directly as arguments. These represent the
+		// caller's explicit intent and override values previously loaded from
+		// `.env` or captured at startup — this is what makes login args a
+		// viable path to switch environments mid-session.
+		if v := optStrArg(args, "account_url"); v != "" {
+			if v != accountURL {
+				// The account URL changed — the previously derived API URL is
+				// no longer valid for the new host. Clear it so it gets
+				// re-derived (or re-elicited) for the new account.
+				apiURL = ""
+				os.Unsetenv("COREZOID_API_URL")
+				if err := removeEnvKey(envPath, "COREZOID_API_URL"); err != nil {
+					logger.Warn("login: could not clear stale COREZOID_API_URL: %v", err)
+				}
+			}
 			accountURL = v
 			os.Setenv("ACCOUNT_URL", v)
 			if err := updateEnvFile(envPath, "ACCOUNT_URL", v); err != nil {
 				logger.Warn("login: could not save ACCOUNT_URL from arg: %v", err)
 			}
 		}
-		if v := optStrArg(args, "workspace_id"); v != "" && workspaceID == "" {
+		if v := optStrArg(args, "workspace_id"); v != "" {
 			workspaceID = v
 			os.Setenv("WORKSPACE_ID", v)
 			if err := updateEnvFile(envPath, "WORKSPACE_ID", v); err != nil {
 				logger.Warn("login: could not save WORKSPACE_ID from arg: %v", err)
 			}
 		}
-		if v := optStrArg(args, "stage_id"); v != "" && stageID == 0 {
+		if v := optStrArg(args, "stage_id"); v != "" {
 			if id, err := strconv.Atoi(v); err == nil && id != 0 {
 				stageID = id
 				os.Setenv("COREZOID_STAGE_ID", v)
 				if err := updateEnvFile(envPath, "COREZOID_STAGE_ID", v); err != nil {
 					logger.Warn("login: could not save COREZOID_STAGE_ID from arg: %v", err)
 				}
+			}
+		}
+
+		// If we already have a token but no derived API URL (e.g. ACCESS_TOKEN
+		// was supplied directly in `.env` without going through the OAuth flow,
+		// or the account just changed via the `account_url` arg above), derive
+		// the corezoid host now so subsequent API calls hit the right server.
+		// Without this, requests fall back to the stale apiURL captured at
+		// startup and either time out or hit the wrong environment.
+		if apiToken != "" && apiURL == "" && accountURL != "" {
+			corezoidURL, fetchErr := fetchCorezoidAPIURL(accountURL, apiToken)
+			if fetchErr != nil {
+				logger.Warn("login: fetchCorezoidAPIURL failed: %v", fetchErr)
+			} else {
+				apiURL = corezoidURL
+				os.Setenv("COREZOID_API_URL", corezoidURL)
+				if err := updateEnvFile(envPath, "COREZOID_API_URL", corezoidURL); err != nil {
+					logger.Warn("login: could not save COREZOID_API_URL: %v", err)
+				}
+				logger.Info("login: derived COREZOID_API_URL=%q from clients API", corezoidURL)
 			}
 		}
 
@@ -1269,7 +1300,18 @@ func handleToolCall(name string, args map[string]interface{}) (result string, is
 		if err := deleteCredentials(); err != nil {
 			return fmt.Sprintf("Failed to remove credentials: %v", err), true
 		}
+		// Clear all session-scoped state, not just the token. Without this,
+		// `accountURL`, `workspaceID`, `stageID` and `apiURL` remain pinned to
+		// the values captured at server startup — so a follow-up `login` call
+		// with different args (or a refreshed `.env`) cannot actually switch
+		// environments, and tools keep hitting the previous host. The .env
+		// file keeps its non-credential keys intact: `login` re-reads them on
+		// the next call.
 		apiToken = ""
+		accountURL = ""
+		workspaceID = ""
+		stageID = 0
+		apiURL = ""
 		return fmt.Sprintf("Logged out. ACCESS_TOKEN removed from %s.", envFilePath()), false
 
 	case "pull-process":
