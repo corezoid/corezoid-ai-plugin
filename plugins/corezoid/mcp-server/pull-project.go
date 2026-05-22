@@ -132,7 +132,22 @@ func moveContents(src, dst string) error {
 }
 
 func downloadStageRecursively(e *Executor, folderID int, filePath string) error {
-	data, err := e.PullZip(folderID, "stage")
+	// `pull-folder` accepts any container ID — either a stage (root
+	// folder, `obj_type=stage`) or a regular sub-folder
+	// (`obj_type=folder`). On the server these are distinct object types
+	// and the wrong one is rejected: passing a sub-folder ID with
+	// `obj_type=stage` returns `proc:error, "Object stage with id N does
+	// not exist"`, and passing a stage ID with `obj_type=folder` returns
+	// "This object does not exist or is in the trash". Either rejection
+	// surfaces from `PullZip` as the generic "no download_url in
+	// response" error, which historically made `pull-folder` look broken
+	// for every sub-folder ID. Try the more common `folder` type first
+	// and fall back to `stage`, so callers can keep using a single tool
+	// for IDs at any level of the project tree.
+	data, err := e.PullZip(folderID, "folder")
+	if err != nil {
+		data, err = e.PullZip(folderID, "stage")
+	}
 	if err != nil {
 		return fmt.Errorf("failed to PullZip: %w", err)
 	}
