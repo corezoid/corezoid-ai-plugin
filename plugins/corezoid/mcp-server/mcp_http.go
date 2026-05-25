@@ -30,7 +30,7 @@ func runHTTPServer(addr string) error {
 	}
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("/mcp", corsWrap(authWrap(httpMCPEndpoint)))
+	mux.HandleFunc("/mcp", corsWrap(httpMCPEndpoint))
 	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		fmt.Fprintln(w, `{"status":"ok"}`)
@@ -68,23 +68,6 @@ func corsWrap(next http.HandlerFunc) http.HandlerFunc {
 		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Mcp-Session-Id, Accept, Authorization")
 		if r.Method == http.MethodOptions {
 			w.WriteHeader(http.StatusNoContent)
-			return
-		}
-		next(w, r)
-	}
-}
-
-// authWrap enforces bearer-token auth when COREZOID_HTTP_AUTH_TOKEN is set.
-// OPTIONS pre-flight requests are always allowed so CORS negotiation works.
-func authWrap(next http.HandlerFunc) http.HandlerFunc {
-	token := os.Getenv("COREZOID_HTTP_AUTH_TOKEN")
-	if token == "" {
-		return next
-	}
-	expected := "Bearer " + token
-	return func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodOptions && r.Header.Get("Authorization") != expected {
-			http.Error(w, "Unauthorized", http.StatusUnauthorized)
 			return
 		}
 		next(w, r)
