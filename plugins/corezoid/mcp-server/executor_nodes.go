@@ -20,20 +20,21 @@ func (v *Executor) CreateNodesFromJSON(nodes []any) error {
 		}
 		nodeID, _ := nodeMap["id"].(string)
 		nodeTitle, _ := nodeMap["title"].(string)
-		nodeType := int(nodeMap["obj_type"].(float64))
+		objTypeF, _ := nodeMap["obj_type"].(float64)
+		nodeType := int(objTypeF)
 		nodeIcon := ""
 		extraStr, _ := nodeMap["extra"].(string)
 		var extra map[string]interface{}
 		if extraStr != "" {
 			json.Unmarshal([]byte(extraStr), &extra)
 		}
-		if icon1, ok := extra["icon"]; ok {
-			nodeIcon = icon1.(string)
+		if icon1, ok := extra["icon"].(string); ok {
+			nodeIcon = icon1
 		}
 
 		if existed, _ := nodeMap["existed"].(bool); existed {
-			v.NodeIDMap[nodeMap["id"].(string)] = NodeInfo{
-				Type: nodeType, Name: nodeTitle, Icon: nodeIcon, ServerID: nodeMap["id"].(string),
+			v.NodeIDMap[nodeID] = NodeInfo{
+				Type: nodeType, Name: nodeTitle, Icon: nodeIcon, ServerID: nodeID,
 			}
 			continue
 		}
@@ -52,7 +53,7 @@ func (v *Executor) CreateNodesFromJSON(nodes []any) error {
 			"obj_type":    nodeMap["obj_type"],
 			"version":     v.Version,
 		}
-		v.NodeIDMap[nodeMap["id"].(string)] = NodeInfo{Type: nodeType, Name: nodeTitle, Icon: nodeIcon}
+		v.NodeIDMap[nodeID] = NodeInfo{Type: nodeType, Name: nodeTitle, Icon: nodeIcon}
 		ops = append(ops, op)
 	}
 
@@ -64,7 +65,10 @@ func (v *Executor) CreateNodesFromJSON(nodes []any) error {
 		logger.Debug("Created operations for nodes, operationCount=%d", len(ops))
 	}
 
-	response, _ := v.req("create_nodes", ops)
+	response, err := v.req("create_nodes", ops)
+	if err != nil {
+		return fmt.Errorf("failed to create nodes: %w", err)
+	}
 	if response == nil {
 		logger.Error("Failed to create nodes: no response from server")
 		return fmt.Errorf("failed to create nodes: no response from server")
@@ -161,7 +165,8 @@ func (v *Executor) ModifyNodes(nodes []any) error {
 					}
 				}
 				if len(logicsArray) > 0 && !isGo {
-					return fmt.Errorf("error in the %s node, Each node in the condition.logics array must always have a logic with \"type\": \"go\" at the end. This is necessary in case none of the conditions are met, so the request is redirected by default to the specified node.", nodeMap["id"].(string))
+					nodeIDStr, _ := nodeMap["id"].(string)
+					return fmt.Errorf("error in the %s node, Each node in the condition.logics array must always have a logic with \"type\": \"go\" at the end. This is necessary in case none of the conditions are met, so the request is redirected by default to the specified node.", nodeIDStr)
 				}
 				if actionCount > 1 {
 					return fmt.Errorf("error in the %s node (%s): condition.logics must not contain more than one action logic (types other than \"go\" and \"go_if_const\"). Found %d action logics.", objID, title, actionCount)
@@ -220,7 +225,10 @@ func (v *Executor) ModifyNodes(nodes []any) error {
 		return fmt.Errorf("no valid nodes found to modify")
 	}
 
-	response, _ := v.req("modify_nodes", ops)
+	response, err := v.req("modify_nodes", ops)
+	if err != nil {
+		return fmt.Errorf("failed to modify nodes: %w", err)
+	}
 	if response == nil {
 		return fmt.Errorf("failed to modify nodes: no response from server")
 	}
@@ -234,7 +242,9 @@ func (v *Executor) ModifyNodes(nodes []any) error {
 			if opMap, ok := op.(map[string]interface{}); ok {
 				if proc, ok := opMap["proc"].(string); !ok || proc != "ok" {
 					nodeInfo := fmt.Sprintf("Operation %d", i+1)
-					nodeInfo = ops[i]["obj_id"].(string)
+					if id, ok := ops[i]["obj_id"].(string); ok {
+						nodeInfo = id
+					}
 					if objID, ok := opMap["obj_id"].(string); ok {
 						nodeInfo = fmt.Sprintf("Node with obj_id %s", objID)
 					}
@@ -314,7 +324,10 @@ func (v *Executor) CompileAPICode(nodes []interface{}) error {
 									"env":     "sandbox",
 								},
 							}
-							loadResponse, _ := v.req("load_api_code", loadOps)
+							loadResponse, err := v.req("load_api_code", loadOps)
+							if err != nil {
+								return fmt.Errorf("failed to load API code: %w", err)
+							}
 							if loadResponse == nil {
 								return fmt.Errorf("failed to load API code: no response from server")
 							}
@@ -361,7 +374,10 @@ func (v *Executor) CompileAPICode(nodes []interface{}) error {
 									"src":     src,
 								},
 							}
-							compileResponse, _ := v.req("compile_api_code", compileOps)
+							compileResponse, err := v.req("compile_api_code", compileOps)
+							if err != nil {
+								return fmt.Errorf("failed to compile API code: %w", err)
+							}
 							if compileResponse == nil {
 								return fmt.Errorf("failed to compile API code: no response from server")
 							}
@@ -409,13 +425,26 @@ func (v *Executor) CompileAPICode(nodes []interface{}) error {
 // DeleteNotUsedNodes compares old server nodes with the new JSON nodes and deletes any orphans.
 func (v *Executor) DeleteNotUsedNodes(oldNodes []any, newNodes []any) []any {
 	for _, oldNode := range oldNodes {
-		if int(oldNode.(map[string]interface{})["obj_type"].(float64)) == 1 {
+		oldNodeMap, ok := oldNode.(map[string]interface{})
+		if !ok {
 			continue
 		}
-		id := oldNode.(map[string]interface{})["obj_id"].(string)
+		objTypeF, _ := oldNodeMap["obj_type"].(float64)
+		if int(objTypeF) == 1 {
+			continue
+		}
+		id, ok := oldNodeMap["obj_id"].(string)
+		if !ok || id == "" {
+			continue
+		}
 		foundID := -1
 		for newNodeID, newNode := range newNodes {
-			if newNode.(map[string]interface{})["id"].(string) == id {
+			newNodeMap, ok := newNode.(map[string]interface{})
+			if !ok {
+				continue
+			}
+			nodeID, _ := newNodeMap["id"].(string)
+			if nodeID == id {
 				foundID = newNodeID
 				break
 			}
@@ -424,9 +453,11 @@ func (v *Executor) DeleteNotUsedNodes(oldNodes []any, newNodes []any) []any {
 			logger.Debug("Deleting node %s", id)
 			v.DeleteNode(id)
 		} else {
-			nn := newNodes[foundID].(map[string]interface{})
-			nn["existed"] = true
-			newNodes[foundID] = nn
+			nn, ok := newNodes[foundID].(map[string]interface{})
+			if ok {
+				nn["existed"] = true
+				newNodes[foundID] = nn
+			}
 		}
 	}
 	return newNodes
@@ -447,7 +478,11 @@ func (v *Executor) DeleteNode(id string) {
 	if v.Debug {
 		logger.Debug("Sending delete node request")
 	}
-	response, _ := v.req("delete_node", ops)
+	response, err := v.req("delete_node", ops)
+	if err != nil {
+		logger.Error("Failed to delete node: %v", err)
+		return
+	}
 	if response == nil {
 		logger.Error("Failed to delete node: no response from server")
 	} else if v.Debug {

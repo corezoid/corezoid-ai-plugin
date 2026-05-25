@@ -20,7 +20,10 @@ func (v *Executor) createTask(ref string, taskData map[string]interface{}) error
 	if v.Debug {
 		logger.Debug("Sending create task request")
 	}
-	response, _ := v.req("create_task", ops)
+	response, err := v.req("create_task", ops)
+	if err != nil {
+		return fmt.Errorf("failed to create task: %w", err)
+	}
 	if opsArray, ok := response["ops"].([]interface{}); ok {
 		for _, op := range opsArray {
 			if opMap, ok := op.(map[string]interface{}); ok {
@@ -51,7 +54,10 @@ func (v *Executor) showTask(ref string) (data map[string]interface{}, err error)
 	if v.Debug {
 		logger.Debug("Sending create task request")
 	}
-	response, _ := v.req("show_task", ops)
+	response, err := v.req("show_task", ops)
+	if err != nil {
+		return nil, fmt.Errorf("failed to show task: %w", err)
+	}
 	if opsArray, ok := response["ops"].([]interface{}); ok {
 		for _, op := range opsArray {
 			if opMap, ok := op.(map[string]interface{}); ok {

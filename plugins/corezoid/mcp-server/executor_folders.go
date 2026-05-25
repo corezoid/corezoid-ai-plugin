@@ -163,7 +163,10 @@ func (v *Executor) CreateVariable(rootFolderIDBin, name, description, value stri
 	if v.Debug {
 		logger.Debug("Sending create variable request")
 	}
-	response, _ := v.req("create-variable", ops)
+	response, err := v.req("create-variable", ops)
+	if err != nil {
+		return fmt.Errorf("failed to create variable: %w", err)
+	}
 	if response["request_proc"] != "ok" {
 		return fmt.Errorf("failed to create variable: %v", response)
 	}
@@ -180,7 +183,7 @@ func (v *Executor) CreateVariable(rootFolderIDBin, name, description, value stri
 			}
 		}
 	}
-	err := v.updateVariablesFile(name, description, value)
+	err = v.updateVariablesFile(name, description, value)
 	if err != nil {
 		logger.Error("Failed to update local variables file: %v", err)
 	}

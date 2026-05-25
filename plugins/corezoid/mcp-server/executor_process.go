@@ -24,24 +24,25 @@ func (v *Executor) PullZip(id int, objType string) ([]byte, error) {
 			"format":     "zip",
 		},
 	}
-	response, _ := v.req("export_process", ops)
+	response, err := v.req("export_process", ops)
+	if err != nil {
+		return nil, fmt.Errorf("failed to export process: %w", err)
+	}
 	if response["request_proc"] != "ok" {
 		return nil, fmt.Errorf("failed to export process: %v, %v, %v", response, workspaceID, id)
 	}
-	if response["ops"] == nil {
+	ops1, ok := response["ops"].([]any)
+	if !ok || len(ops1) == 0 {
 		return nil, fmt.Errorf("failed to export process: no ops in response")
 	}
-	ops1 := response["ops"].([]any)
-	if len(ops1) == 0 {
-		return nil, fmt.Errorf("failed to export process: no ops in response")
+	firstOp, ok := ops1[0].(map[string]any)
+	if !ok {
+		return nil, fmt.Errorf("failed to export process: unexpected ops format")
 	}
-	downloadURL := ops1[0].(map[string]any)["download_url"]
-	if downloadURL == nil {
-		fmt.Println("rsp", ops1)
-		fmt.Println("req", ops)
+	downloadURL1, ok := firstOp["download_url"].(string)
+	if !ok || downloadURL1 == "" {
 		return nil, fmt.Errorf("failed to export process: no download_url in response")
 	}
-	downloadURL1 := downloadURL.(string)
 
 	req, err := http.NewRequest("GET", downloadURL1, nil)
 	if err != nil {
@@ -77,22 +78,25 @@ func (v *Executor) PullFolder(id int, objType string) ([]any, error) {
 			"format":     "json",
 		},
 	}
-	response, _ := v.req("export_process", ops)
+	response, err := v.req("export_process", ops)
+	if err != nil {
+		return nil, fmt.Errorf("failed to export process: %w", err)
+	}
 	if response["request_proc"] != "ok" {
 		return nil, fmt.Errorf("failed to export process: %v", response)
 	}
-	if response["ops"] == nil {
+	ops1, ok := response["ops"].([]any)
+	if !ok || len(ops1) == 0 {
 		return nil, fmt.Errorf("failed to export process: no ops in response")
 	}
-	ops1 := response["ops"].([]any)
-	if len(ops1) == 0 {
-		return nil, fmt.Errorf("failed to export process: no ops in response")
+	firstOp, ok := ops1[0].(map[string]any)
+	if !ok {
+		return nil, fmt.Errorf("failed to export process: unexpected ops format")
 	}
-	downloadURL := ops1[0].(map[string]any)["download_url"]
-	if downloadURL == nil {
+	downloadURL1, ok := firstOp["download_url"].(string)
+	if !ok || downloadURL1 == "" {
 		return nil, fmt.Errorf("failed to export process: no download_url in response")
 	}
-	downloadURL1 := downloadURL.(string)
 
 	req, err := http.NewRequest("GET", downloadURL1, nil)
 	if err != nil {
@@ -133,22 +137,25 @@ func (v *Executor) ExportProcess() (any, error) {
 			"format":     "json",
 		},
 	}
-	response, _ := v.req("export_process", ops)
+	response, err := v.req("export_process", ops)
+	if err != nil {
+		return nil, fmt.Errorf("failed to export process: %w", err)
+	}
 	if response["request_proc"] != "ok" {
 		return nil, fmt.Errorf("failed to export process: %v", response)
 	}
-	if response["ops"] == nil {
+	ops1, ok := response["ops"].([]any)
+	if !ok || len(ops1) == 0 {
 		return nil, fmt.Errorf("failed to export process: no ops in response")
 	}
-	ops1 := response["ops"].([]any)
-	if len(ops1) == 0 {
-		return nil, fmt.Errorf("failed to export process: no ops in response")
+	firstOp, ok := ops1[0].(map[string]any)
+	if !ok {
+		return nil, fmt.Errorf("failed to export process: unexpected ops format")
 	}
-	downloadURL := ops1[0].(map[string]any)["download_url"]
-	if downloadURL == nil {
+	downloadURL1, ok := firstOp["download_url"].(string)
+	if !ok || downloadURL1 == "" {
 		return nil, fmt.Errorf("failed to export process: no download_url in response")
 	}
-	downloadURL1 := downloadURL.(string)
 
 	req, err := http.NewRequest("GET", downloadURL1, nil)
 	if err != nil {
@@ -170,7 +177,6 @@ func (v *Executor) ExportProcess() (any, error) {
 	var process []any
 	err = json.Unmarshal(body, &process)
 	if err != nil {
-		fmt.Println(string(body))
 		return nil, fmt.Errorf("failed to unmarshal process: %v", err)
 	}
 	return process, nil
@@ -204,7 +210,8 @@ func (validator *Executor) ProcessJSON(filePath, jsonContent string) (newProcess
 	}
 	if validator.ProcessID == 0 {
 		validator.NewProc = true
-		validator.ProcessID = validator.CreateEmptyProcess(0, processDataOfAI["title"].(string), "")
+		title, _ := processDataOfAI["title"].(string)
+		validator.ProcessID = validator.CreateEmptyProcess(0, title, "")
 		if validator.ProcessID == 0 {
 			err = fmt.Errorf("failed to create process")
 			return nil, err
@@ -216,46 +223,62 @@ func (validator *Executor) ProcessJSON(filePath, jsonContent string) (newProcess
 			return nil, fmt.Errorf("error getting process: %v", err)
 		}
 		if commits, ok := oldProcessData["commits"].(map[string]interface{}); ok && commits != nil {
-			if oldVer, ok := commits["version"]; ok && oldVer != nil {
-				oldVer1 := int(oldVer.(float64))
-				if oldVer1 > 0 {
-					validator.DeleteVersion(oldVer1)
-				}
+			if oldVer, ok := commits["version"].(float64); ok && oldVer > 0 {
+				validator.DeleteVersion(int(oldVer))
 			}
 		}
 
 		oldNodes, ok := oldProcessData["list"].([]interface{})
 		if !ok {
 			oldProcessDataBin, _ := json.Marshal(oldProcessData)
-			fmt.Printf("COREZOID_PROC_ID: %d, server error rsp: %s\n", validator.ProcessID, oldProcessDataBin)
+			logger.Error("COREZOID_PROC_ID: %d, server error rsp: %s", validator.ProcessID, oldProcessDataBin)
 			err = fmt.Errorf("error getting nodes")
 			return nil, err
 		}
 		nodes = validator.DeleteNotUsedNodes(oldNodes, nodes)
 		for _, oldNode := range oldNodes {
-			if int(oldNode.(map[string]interface{})["obj_type"].(float64)) == 1 {
-				oldNodeID := oldNode.(map[string]interface{})["obj_id"].(string)
-				newNodeID := ""
-				for i, newNode := range nodes {
-					if int(newNode.(map[string]interface{})["obj_type"].(float64)) == 1 {
-						newNodeID = newNode.(map[string]interface{})["id"].(string)
-						newNode.(map[string]interface{})["existed"] = true
-						newNode.(map[string]interface{})["id"] = oldNodeID
-						validator.NodeIDMap[newNodeID] = NodeInfo{
-							Type:     1,
-							Name:     "Start",
-							Icon:     "",
-							ServerID: oldNodeID,
-						}
-						nodes[i] = newNode
-						break
-					}
+			oldNodeMap, ok := oldNode.(map[string]interface{})
+			if !ok {
+				continue
+			}
+			objTypeF, _ := oldNodeMap["obj_type"].(float64)
+			if int(objTypeF) != 1 {
+				continue
+			}
+			oldNodeID, ok := oldNodeMap["obj_id"].(string)
+			if !ok || oldNodeID == "" {
+				continue
+			}
+			newNodeID := ""
+			for i, newNode := range nodes {
+				newNodeMap, ok := newNode.(map[string]interface{})
+				if !ok {
+					continue
 				}
-				if newNodeID == "" {
-					return nil, fmt.Errorf("no start node found in process %d", validator.ProcessID)
+				newObjTypeF, _ := newNodeMap["obj_type"].(float64)
+				if int(newObjTypeF) != 1 {
+					continue
 				}
+				id, ok := newNodeMap["id"].(string)
+				if !ok {
+					continue
+				}
+				newNodeID = id
+				newNodeMap["existed"] = true
+				newNodeMap["id"] = oldNodeID
+				validator.NodeIDMap[newNodeID] = NodeInfo{
+					Type:     1,
+					Name:     "Start",
+					Icon:     "",
+					ServerID: oldNodeID,
+				}
+				nodes[i] = newNodeMap
 				break
 			}
+			if newNodeID == "" {
+				return nil, fmt.Errorf("no start node found in process %d", validator.ProcessID)
+			}
+			break
 		}
 	}
 
@@ -376,7 +399,10 @@ func (v *Executor) GetProcessByID(id int) (rsp map[string]any, err error) {
 	if v.Debug {
 		logger.Debug("Sending get process request")
 	}
-	response, _ := v.req("get_process", ops)
+	response, err := v.req("get_process", ops)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get process: %w", err)
+	}
 	if response != nil && response["ops"] != nil {
 		if opsArray, ok := response["ops"].([]interface{}); ok && len(opsArray) > 0 {
 			if firstOp, ok := opsArray[0].(map[string]interface{}); ok {
@@ -410,7 +436,6 @@ func (v *Executor) CreateEmptyProcess(folderID int, title, desc string) int {
 	}
 	response, err := v.req("create_process", ops)
 	if err != nil {
-		fmt.Println(response)
 		logger.Error("Failed to create empty process: %v", err)
 		return 0
 	}
@@ -443,7 +468,10 @@ func (v *Executor) SetParams(params []interface{}) error {
 	if v.Debug {
 		logger.Debug("Sending set params request")
 	}
-	response, _ := v.req("set_params", ops)
+	response, err := v.req("set_params", ops)
+	if err != nil {
+		return fmt.Errorf("failed to set params: %w", err)
+	}
 	if response == nil {
 		return fmt.Errorf("failed to set params: no response from server")
 	}
@@ -466,7 +494,11 @@ func (v *Executor) Commit() map[string]interface{} {
 	if v.Debug {
 		logger.Debug("Sending commit request")
 	}
-	response, _ := v.req("commit_process", ops)
+	response, err := v.req("commit_process", ops)
+	if err != nil {
+		logger.Error("Failed to commit changes: %v", err)
+		return nil
+	}
 	if response == nil {
 		logger.Error("Failed to commit changes: no response from server")
 	} else if v.Debug {
@@ -488,12 +520,16 @@ func (v *Executor) DeleteVersion(ver int) {
 			"version":    ver,
 		},
 	}
-	response, _ := v.req("delete_version", ops)
+	response, err := v.req("delete_version", ops)
+	if err != nil {
+		logger.Error("Failed to delete version: %v", err)
+		return
+	}
 	if response == nil {
-		logger.Error("Failed to commit changes: no response from server")
+		logger.Error("Failed to delete version: no response from server")
 	} else if v.Debug {
 		if requestProc, ok := response["request_proc"].(string); ok {
-			logger.Debug("Commit response received, request_proc=%s", requestProc)
+			logger.Debug("Delete version response received, request_proc=%s", requestProc)
 		}
 	}
 	logger.Debug("Delete Changes, processID=%d", v.ProcessID)
@@ -520,7 +556,11 @@ func (v *Executor) Share(userID, convID int) map[string]interface{} {
 	if v.Debug {
 		logger.Debug("Sending share request, privileges=all")
 	}
-	response, _ := v.req("share_process", ops)
+	response, err := v.req("share_process", ops)
+	if err != nil {
+		logger.Error("Failed to share process: %v", err)
+		return nil
+	}
 	if response == nil {
 		logger.Error("Failed to share process: no response from server")
 	} else if v.Debug {
