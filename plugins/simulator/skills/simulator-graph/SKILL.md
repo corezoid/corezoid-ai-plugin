@@ -37,14 +37,14 @@ Simulator.Company using the `simulator` MCP server.
 
 ## Core Concepts & Glossary
 
-| Term | Description |
-|---|---|
-| **Actor** | Graph node. Created from a Form template. Has id, title, color, data fields. |
-| **Form** | Actor template/type. Defines shape and behavior. All system form names are in the catalog below. |
-| **Graph actor** | An actor with `formName="Graphs"` — the logical container for a diagram. |
-| **Layer actor** | An actor with `formName="Layers"` — the visual canvas where nodes are placed at (x, y). |
-| **Graph file** | A YAML file named `<layerId>.yaml` in the current working directory describing the full layer state. |
-| **laId** | Layer Actor ID. Assigned by `manageLayer` when an actor is placed on a layer. |
+| Term            | Description                                                                                          |
+|-----------------|------------------------------------------------------------------------------------------------------|
+| **Actor**       | Graph node. Created from a Form template. Has id, title, color, data fields.                         |
+| **Form**        | Actor template/type. Defines shape and behavior. All system form names are in the catalog below.     |
+| **Graph actor** | An actor with `formName="Graphs"` — the logical container for a diagram.                             |
+| **Layer actor** | An actor with `formName="Layers"` — the visual canvas where nodes are placed at (x, y).              |
+| **Graph file**  | A YAML file named `<layerId>.yaml` in the current working directory describing the full layer state. |
+| **laId**        | Layer Actor ID. Assigned by `manageLayer` when an actor is placed on a layer.                        |
 
 ---
 
@@ -128,7 +128,9 @@ pushGraphFile(layerId="<layerId>")
 ```
 
 The server will:
-- **Create** actors whose `id` is a local name (e.g. `start`, `process1`) → replaces local ids with server UUIDs in the file
+
+- **Create** actors whose `id` is a local name (e.g. `start`, `process1`) → replaces local ids with server UUIDs in the
+  file
 - **Update** actors whose `id` is already a UUID — if title/color/description changed
 - **Delete from layer** actors present on server but missing from file
 - **Create** missing edges (links + layer placement)
@@ -177,6 +179,7 @@ edges:
 ```
 
 **Rules:**
+
 - `id` values are local references used only within the file for edge wiring.
   After `pushGraphFile` all local ids are replaced with server UUIDs.
 - Do **not** include `data` for system forms — the server auto-injects shape/view.
@@ -316,134 +319,134 @@ The server resolves the name to ID automatically.
 
 ### Graph & Layer
 
-| formName | Usage |
-|---|---|
-| `"Graphs"` | Graph container actor |
+| formName   | Usage                       |
+|------------|-----------------------------|
+| `"Graphs"` | Graph container actor       |
 | `"Layers"` | Layer (visual canvas) actor |
 
 ### Flowchart Blocks
 
 > Always set `color` (hex string) for flowchart blocks.
 
-| formName               | Description |
-|------------------------|---|
-| `"Start / Stop"`       | Start or end node |
-| `"Process"`            | Process step |
-| `"Decision"`           | Decision diamond |
+| formName               | Description                     |
+|------------------------|---------------------------------|
+| `"Start / Stop"`       | Start or end node               |
+| `"Process"`            | Process step                    |
+| `"Decision"`           | Decision diamond                |
 | `"Predefined Process"` | Predefined / subroutine process |
-| `"Document"`           | Document shape |
-| `"Data"`               | Data parallelogram |
-| `"Documents"`          | Multi-document stack |
-| `"Stored Data"`        | Stored data shape |
-| `"Off-page Reference"` | Off-page connector |
-| `"Preparation"`        | Preparation / initialization |
-| `"API Call"`           | API call block |
-| `"Manual Input"`       | Manual input |
-| `"Delay"`              | Delay block |
-| `"Database"`           | Database cylinder |
-| `"Manual Operation"`   | Manual operation |
-| `"Terminator"`         | Oval terminator |
-| `"Root Node"`          | Root node |
-| `"Null"`               | Universal generic node |
-| `"Flowchart"`          | Nested flowchart reference |
+| `"Document"`           | Document shape                  |
+| `"Data"`               | Data parallelogram              |
+| `"Documents"`          | Multi-document stack            |
+| `"Stored Data"`        | Stored data shape               |
+| `"Off-page Reference"` | Off-page connector              |
+| `"Preparation"`        | Preparation / initialization    |
+| `"API Call"`           | API call block                  |
+| `"Manual Input"`       | Manual input                    |
+| `"Delay"`              | Delay block                     |
+| `"Database"`           | Database cylinder               |
+| `"Manual Operation"`   | Manual operation                |
+| `"Terminator"`         | Oval terminator                 |
+| `"Root Node"`          | Root node                       |
+| `"Null"`               | Universal generic node          |
+| `"Flowchart"`          | Nested flowchart reference      |
 
 ### Diagram Types
 
-| formName | Description |
-|---|---|
-| `"Petri Net"` | Petri net diagram |
-| `"Sequence Diagram"` | Sequence diagram |
-| `"Actor Graph"` | Actor graph |
-| `"Mind Map"` | Mind map |
-| `"Corezoid"` | Corezoid process diagram |
+| formName             | Description              |
+|----------------------|--------------------------|
+| `"Petri Net"`        | Petri net diagram        |
+| `"Sequence Diagram"` | Sequence diagram         |
+| `"Actor Graph"`      | Actor graph              |
+| `"Mind Map"`         | Mind map                 |
+| `"Corezoid"`         | Corezoid process diagram |
 
 ### Corezoid Nodes
 
-| formName | Description |
-|---|---|
-| `"Corezoid Start"` | Entry point |
-| `"Corezoid API Call"` | External API call |
-| `"Corezoid Condition"` | Condition / routing |
-| `"Corezoid Code"` | Code execution |
-| `"Corezoid Copy Task"` | Copy task |
-| `"Corezoid Modify Task"` | Modify task |
-| `"Corezoid Sum"` | Aggregation / sum |
-| `"Corezoid Delay"` | Time delay |
-| `"Corezoid Database Call"` | DB call |
-| `"Corezoid Waiting for Callback"` | Async wait |
-| `"Corezoid Call a Process"` | Sub-process call |
-| `"Corezoid Reply to Process"` | Reply to caller |
-| `"Corezoid Queue"` | Queue node |
-| `"Corezoid Get from Queue"` | Dequeue |
-| `"Corezoid Set Parameters"` | Set task parameters |
-| `"Corezoid End: Success"` | Success terminal |
-| `"Corezoid End: Error"` | Error terminal |
-| `"Corezoid GIT Call"` | GIT call |
+| formName                          | Description         |
+|-----------------------------------|---------------------|
+| `"Corezoid Start"`                | Entry point         |
+| `"Corezoid API Call"`             | External API call   |
+| `"Corezoid Condition"`            | Condition / routing |
+| `"Corezoid Code"`                 | Code execution      |
+| `"Corezoid Copy Task"`            | Copy task           |
+| `"Corezoid Modify Task"`          | Modify task         |
+| `"Corezoid Sum"`                  | Aggregation / sum   |
+| `"Corezoid Delay"`                | Time delay          |
+| `"Corezoid Database Call"`        | DB call             |
+| `"Corezoid Waiting for Callback"` | Async wait          |
+| `"Corezoid Call a Process"`       | Sub-process call    |
+| `"Corezoid Reply to Process"`     | Reply to caller     |
+| `"Corezoid Queue"`                | Queue node          |
+| `"Corezoid Get from Queue"`       | Dequeue             |
+| `"Corezoid Set Parameters"`       | Set task parameters |
+| `"Corezoid End: Success"`         | Success terminal    |
+| `"Corezoid End: Error"`           | Error terminal      |
+| `"Corezoid GIT Call"`             | GIT call            |
 
 ### AWS Services
 
-| formName | formName | formName |
-|---|---|---|
-| `"EC2"` | `"Lambda"` | `"RDS"` |
-| `"App Runner"` | `"EKS Cloud"` | `"EKS Distro"` |
-| `"EFS"` | `"Client VPN"` | `"Elastic Container Registry"` |
-| `"Certificate Manager"` | `"Simple Queue Service"` | `"Inspector"` |
-| `"GuardDuty"` | `"Data Pipeline"` | `"Kinesis"` |
-| `"Key Management Service"` | `"DynamoDB"` | `"Elastic Kubernetes Service"` |
-| `"Secrets Manager"` | `"Elastic Load Balancing"` | `"Route 53"` |
-| `"ElastiCache"` | `"CloudWatch"` | `"Transfer Family"` |
-| `"Managed Streaming for Apache Kafka"` | `"Amplify"` | `"Budgets"` |
-| `"Simple Storage Service"` | `"Transit Gateway"` | `"Network Firewall"` |
-| `"OpenSearch Service"` | `"WAF"` | `"Virtual Private Cloud"` |
-| `"Simple Notification Service"` | `"API Gateway"` | `"Transcribe"` |
-| `"Athena"` | `"QuickSight"` | `"CloudFront"` |
-| `"Global Accelerator"` | `"Backup"` | `"DocumentDB"` |
-| `"Glue"` | `"RDS on VMware"` | |
+| formName                               | formName                   | formName                       |
+|----------------------------------------|----------------------------|--------------------------------|
+| `"EC2"`                                | `"Lambda"`                 | `"RDS"`                        |
+| `"App Runner"`                         | `"EKS Cloud"`              | `"EKS Distro"`                 |
+| `"EFS"`                                | `"Client VPN"`             | `"Elastic Container Registry"` |
+| `"Certificate Manager"`                | `"Simple Queue Service"`   | `"Inspector"`                  |
+| `"GuardDuty"`                          | `"Data Pipeline"`          | `"Kinesis"`                    |
+| `"Key Management Service"`             | `"DynamoDB"`               | `"Elastic Kubernetes Service"` |
+| `"Secrets Manager"`                    | `"Elastic Load Balancing"` | `"Route 53"`                   |
+| `"ElastiCache"`                        | `"CloudWatch"`             | `"Transfer Family"`            |
+| `"Managed Streaming for Apache Kafka"` | `"Amplify"`                | `"Budgets"`                    |
+| `"Simple Storage Service"`             | `"Transit Gateway"`        | `"Network Firewall"`           |
+| `"OpenSearch Service"`                 | `"WAF"`                    | `"Virtual Private Cloud"`      |
+| `"Simple Notification Service"`        | `"API Gateway"`            | `"Transcribe"`                 |
+| `"Athena"`                             | `"QuickSight"`             | `"CloudFront"`                 |
+| `"Global Accelerator"`                 | `"Backup"`                 | `"DocumentDB"`                 |
+| `"Glue"`                               | `"RDS on VMware"`          |                                |
 
 ### AI / ML
 
-| formName | Description |
-|---|---|
-| `"GPT"` | GPT model node |
-| `"Anthropic"` | Anthropic model node |
-| `"Grok"` | Grok model node |
-| `"SLM"` | Small language model |
-| `"Devin"` | Devin AI agent |
-| `"Black box (Mind)"` | Opaque mind component |
-| `"Black box (LLM)"` | Opaque LLM component |
-| `"Black box (Actor)"` | Opaque actor component |
-| `"Black box (Seq)"` | Opaque sequence component |
-| `"Grey box (Actor)"` | Semi-transparent actor |
-| `"Grey box (Mind)"` | Semi-transparent mind |
-| `"Grey box (LLM)"` | Semi-transparent LLM |
-| `"Grey box (Seq)"` | Semi-transparent sequence |
+| formName              | Description               |
+|-----------------------|---------------------------|
+| `"GPT"`               | GPT model node            |
+| `"Anthropic"`         | Anthropic model node      |
+| `"Grok"`              | Grok model node           |
+| `"SLM"`               | Small language model      |
+| `"Devin"`             | Devin AI agent            |
+| `"Black box (Mind)"`  | Opaque mind component     |
+| `"Black box (LLM)"`   | Opaque LLM component      |
+| `"Black box (Actor)"` | Opaque actor component    |
+| `"Black box (Seq)"`   | Opaque sequence component |
+| `"Grey box (Actor)"`  | Semi-transparent actor    |
+| `"Grey box (Mind)"`   | Semi-transparent mind     |
+| `"Grey box (LLM)"`    | Semi-transparent LLM      |
+| `"Grey box (Seq)"`    | Semi-transparent sequence |
 
 ### UML / OOP
 
-| formName | Description |
-|---|---|
-| `"Class"` | UML class |
+| formName      | Description   |
+|---------------|---------------|
+| `"Class"`     | UML class     |
 | `"Interface"` | UML interface |
 | `"Component"` | UML component |
-| `"Package"` | UML package |
-| `"Artifact"` | UML artifact |
+| `"Package"`   | UML package   |
+| `"Artifact"`  | UML artifact  |
 
 ### Other
 
-| formName | Description |
-|---|---|
-| `"Human"` | Human participant |
-| `"Node"` | Generic network node |
-| `"Branch Node"` | Branch point |
-| `"White box"` | Transparent white container |
-| `"Place"` | Physical location |
-| `"Token"` | Token / badge |
-| `"Flag"` | Flag marker |
-| `"Program"` | Program block |
-| `"Current Position"` | Current position marker |
-| `"Transition"` | State transition |
-| `"Stubnet"` | Stub network |
-| `"Marketplace"` | Marketplace node |
+| formName             | Description                 |
+|----------------------|-----------------------------|
+| `"Human"`            | Human participant           |
+| `"Node"`             | Generic network node        |
+| `"Branch Node"`      | Branch point                |
+| `"White box"`        | Transparent white container |
+| `"Place"`            | Physical location           |
+| `"Token"`            | Token / badge               |
+| `"Flag"`             | Flag marker                 |
+| `"Program"`          | Program block               |
+| `"Current Position"` | Current position marker     |
+| `"Transition"`       | State transition            |
+| `"Stubnet"`          | Stub network                |
+| `"Marketplace"`      | Marketplace node            |
 
 ---
 
@@ -530,7 +533,8 @@ createAccountName(body='{"name":"Balance","abbreviation":"BAL"}')
 - **`formName` takes priority over `formId`** in the YAML file and in `createActor` calls.
 - **Do NOT include `data`** in the YAML for system forms — the server auto-injects shape/view/blockId.
 - **Always set `color`** (hex string) for flowchart blocks.
-- **Local `id` values** in the YAML are replaced with server UUIDs after `pushGraphFile`. Use short readable names (`start`, `validate`, `end`) for new actors.
+- **Local `id` values** in the YAML are replaced with server UUIDs after `pushGraphFile`. Use short readable names (
+  `start`, `validate`, `end`) for new actors.
 - **`pullGraphFile` → edit → `pushGraphFile`** is the standard edit cycle for existing layers.
 - `laId` ≠ `actorId`. The file workflow handles laId management automatically.
 - Space actors ~200–300 px apart; use the layout algorithm for coordinates.
@@ -539,10 +543,10 @@ createAccountName(body='{"name":"Balance","abbreviation":"BAL"}')
 
 ## Reference Documents
 
-| Path | When to read |
-|---|---|
-| `$CLAUDE_PLUGIN_ROOT/docs/entities/actors.md` | Full actor property list and types |
-| `$CLAUDE_PLUGIN_ROOT/docs/entities/links.md` | Link/edge properties and type system |
-| `$CLAUDE_PLUGIN_ROOT/docs/entities/layers.md` | Layer types and behavior |
-| `$CLAUDE_PLUGIN_ROOT/docs/user-flows/graph-functionality.md` | Graph building walkthrough with test scenarios |
+| Path                                                            | When to read                                   |
+|-----------------------------------------------------------------|------------------------------------------------|
+| `$CLAUDE_PLUGIN_ROOT/docs/entities/actors.md`                   | Full actor property list and types             |
+| `$CLAUDE_PLUGIN_ROOT/docs/entities/links.md`                    | Link/edge properties and type system           |
+| `$CLAUDE_PLUGIN_ROOT/docs/entities/layers.md`                   | Layer types and behavior                       |
+| `$CLAUDE_PLUGIN_ROOT/docs/user-flows/graph-functionality.md`    | Graph building walkthrough with test scenarios |
 | `$CLAUDE_PLUGIN_ROOT/docs/user-flows/actor-graph-management.md` | Managing actors on graphs — practical patterns |

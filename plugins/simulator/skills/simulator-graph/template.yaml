@@ -1,6 +1,7 @@
 layerId: "123"
 actors:
   - id: id1
+    action: del|set
     title: "asdfaaa"
     description: "asdf"
     formId: ""
@@ -15,6 +16,7 @@ actors:
 edges:
   - source: id1
     target: id2
+    action: del|set
     source_title: Actor Start
     target_title: Actor End
 

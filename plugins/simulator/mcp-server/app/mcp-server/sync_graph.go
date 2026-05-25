@@ -28,6 +28,7 @@ type GraphFile struct {
 
 type GraphActor struct {
 	ID          string                 `yaml:"id"`
+	Action      string                 `yaml:"action,omitempty"`
 	Title       string                 `yaml:"title"`
 	Description string                 `yaml:"description,omitempty"`
 	FormID      int                    `yaml:"formId,omitempty"`
@@ -44,6 +45,7 @@ type GraphActor struct {
 type GraphEdge struct {
 	Source      string `yaml:"source"`
 	Target      string `yaml:"target"`
+	Action      string `yaml:"action,omitempty"`
 	SourceTitle string `yaml:"source_title,omitempty"`
 	TargetTitle string `yaml:"target_title,omitempty"`
 }

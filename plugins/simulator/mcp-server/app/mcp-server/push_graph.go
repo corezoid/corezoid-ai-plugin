@@ -841,6 +841,24 @@ func (s *GraphSyncer) pushGraph(ctx context.Context, graph GraphFile, layerID st
 	}
 	result.LayerID = graph.LayerID
 
+	// Partial update mode: triggered when any actor or edge has an explicit action field.
+	// In this mode server elements not listed in the file are left untouched.
+	partialMode := false
+	for _, a := range graph.Actors {
+		if a.Action != "" {
+			partialMode = true
+			break
+		}
+	}
+	if !partialMode {
+		for _, e := range graph.Edges {
+			if e.Action != "" {
+				partialMode = true
+				break
+			}
+		}
+	}
+
 	serverActors, err := s.fetchLayerActors(ctx, graph.LayerID)
 	if err != nil {
 		return result, fmt.Errorf("fetch layer actors: %w", err)
@@ -870,6 +888,21 @@ func (s *GraphSyncer) pushGraph(ctx context.Context, graph GraphFile, layerID st
 	for i := range graph.Actors {
 		a := &graph.Actors[i]
 		origID := a.ID
+
+		if partialMode && a.Action == "del" {
+			if isUUID(origID) {
+				if sa, onLayer := serverActorByUUID[origID]; onLayer {
+					var item manageLayerItem
+					item.Action = "delete"
+					item.Data.ID = origID
+					item.Data.Type = "node"
+					item.Data.LaID = sa.LaID
+					nodeManageItems = append(nodeManageItems, item)
+					result.ActorsDeleted++
+				}
+			}
+			continue
+		}
 
 		if isUUID(origID) {
 			idMap[origID] = origID
@@ -960,15 +993,18 @@ func (s *GraphSyncer) pushGraph(ctx context.Context, graph GraphFile, layerID st
 		}
 	}
 
-	for _, sa := range serverActors {
-		if !fileUUIDs[sa.ID] && !replacedUUIDs[sa.ID] {
-			var item manageLayerItem
-			item.Action = "delete"
-			item.Data.ID = sa.ID
-			item.Data.Type = "node"
-			item.Data.LaID = sa.LaID
-			nodeManageItems = append(nodeManageItems, item)
-			result.ActorsDeleted++
+	// In full sync mode delete server actors not present in the file.
+	if !partialMode {
+		for _, sa := range serverActors {
+			if !fileUUIDs[sa.ID] && !replacedUUIDs[sa.ID] {
+				var item manageLayerItem
+				item.Action = "delete"
+				item.Data.ID = sa.ID
+				item.Data.Type = "node"
+				item.Data.LaID = sa.LaID
+				nodeManageItems = append(nodeManageItems, item)
+				result.ActorsDeleted++
+			}
 		}
 	}
 
@@ -1018,6 +1054,20 @@ func (s *GraphSyncer) pushGraph(ctx context.Context, graph GraphFile, layerID st
 			tgtUUID = e.Target
 		}
 		pair := edgePair{srcUUID, tgtUUID}
+
+		if partialMode && e.Action == "del" {
+			if se, exists := serverEdgeByPair[pair]; exists {
+				var item manageLayerItem
+				item.Action = "delete"
+				item.Data.ID = se.ID
+				item.Data.Type = "edge"
+				item.Data.LaID = se.LaID
+				edgeManageItems = append(edgeManageItems, item)
+				result.EdgesDeleted++
+			}
+			continue
+		}
+
 		fileEdgePairs[pair] = true
 
 		if _, exists := serverEdgeByPair[pair]; !exists {
@@ -1040,16 +1090,19 @@ func (s *GraphSyncer) pushGraph(ctx context.Context, graph GraphFile, layerID st
 		}
 	}
 
-	for _, se := range serverEdges {
-		pair := edgePair{se.Source, se.Target}
-		if !fileEdgePairs[pair] {
-			var item manageLayerItem
-			item.Action = "delete"
-			item.Data.ID = se.ID
-			item.Data.Type = "edge"
-			item.Data.LaID = se.LaID
-			edgeManageItems = append(edgeManageItems, item)
-			result.EdgesDeleted++
+	// In full sync mode delete server edges not present in the file.
+	if !partialMode {
+		for _, se := range serverEdges {
+			pair := edgePair{se.Source, se.Target}
+			if !fileEdgePairs[pair] {
+				var item manageLayerItem
+				item.Action = "delete"
+				item.Data.ID = se.ID
+				item.Data.Type = "edge"
+				item.Data.LaID = se.LaID
+				edgeManageItems = append(edgeManageItems, item)
+				result.EdgesDeleted++
+			}
 		}
 	}
 
