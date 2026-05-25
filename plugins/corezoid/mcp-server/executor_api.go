@@ -5,7 +5,7 @@ import (
 	"crypto/tls"
 	"encoding/json"
 	"fmt"
-	"io/ioutil"
+	"io"
 	"net/http"
 	"strings"
 )
@@ -57,10 +57,7 @@ func (v *Executor) req(method string, ops []map[string]any) (map[string]interfac
 	req.Header.Set("Authorization", fmt.Sprintf("Simulator %s", v.Token))
 	logger.Debug("Header: %v", req.Header)
 
-	transport := &http.Transport{
-		TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
-	}
-	client := &http.Client{Transport: transport}
+	client := newHTTPClient()
 	resp, err := client.Do(req)
 	if err != nil {
 		logger.Error("Error making request: %v", err)
@@ -68,7 +65,7 @@ func (v *Executor) req(method string, ops []map[string]any) (map[string]interfac
 	}
 	defer resp.Body.Close()
 
-	body, err := ioutil.ReadAll(resp.Body)
+	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		logger.Error("Error reading response: %v", err)
 		return nil, err
@@ -94,6 +91,20 @@ func (v *Executor) req(method string, ops []map[string]any) (map[string]interfac
 		return response, err
 	}
 	return response, nil
+}
+
+// newHTTPClient returns an http.Client. TLS certificate verification is
+// disabled only when COREZOID_INSECURE_TLS=1 is set in the environment.
+func newHTTPClient() *http.Client {
+	if !insecureTLS {
+		return &http.Client{}
+	}
+	logger.Warn("TLS certificate verification disabled (COREZOID_INSECURE_TLS=1) — do not use in production")
+	return &http.Client{
+		Transport: &http.Transport{
+			TLSClientConfig: &tls.Config{InsecureSkipVerify: true}, //nolint:gosec
+		},
+	}
 }
 
 func (v *Executor) checkError(rsp map[string]interface{}) error {

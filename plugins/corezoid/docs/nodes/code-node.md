@@ -202,7 +202,7 @@ significant CPU or memory resources.
 
 - [Code Node Libraries and Usage](code-node-libraries.md) - Detailed documentation of available
   libraries and usage patterns
-- [Best Practices for Building Fast and Effective Processes](../process/best-practices.md) -
+- [Best Practices for Building Fast and Effective Processes](../process/process-development-guide.md) -
   Optimization techniques for processes
 - [Set Parameters Node](set-parameters-node.md) - When to use Set Parameters vs. Code nodes
 

@@ -56,8 +56,8 @@ func TestBeforeValidation_TaskDataMissingParam(t *testing.T) {
 	}
 	executor := &Executor{ProcessID: 0}
 	taskData := map[string]interface{}{
-		"email":    "test@example.com",
-		"phone":    "+1234567890", // not declared in params
+		"email": "test@example.com",
+		"phone": "+1234567890", // not declared in params
 	}
 	err = executor.BeforeValidation(string(data), taskData)
 	if err == nil {

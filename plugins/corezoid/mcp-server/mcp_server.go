@@ -2104,4 +2104,3 @@ func handleToolCall(name string, args map[string]interface{}) (result string, is
 		return fmt.Sprintf("Unknown tool: %s", name), true
 	}
 }
-

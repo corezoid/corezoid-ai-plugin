@@ -1,11 +1,11 @@
 package main
 
 import (
-	"crypto/tls"
 	"encoding/json"
 	"fmt"
-	"io/ioutil"
+	"io"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 )
@@ -43,7 +43,6 @@ func (v *Executor) PullZip(id int, objType string) ([]byte, error) {
 	}
 	downloadURL1 := downloadURL.(string)
 
-	http.DefaultTransport.(*http.Transport).TLSClientConfig = &tls.Config{InsecureSkipVerify: true}
 	req, err := http.NewRequest("GET", downloadURL1, nil)
 	if err != nil {
 		return nil, err
@@ -52,12 +51,12 @@ func (v *Executor) PullZip(id int, objType string) ([]byte, error) {
 	if v.Token != "" {
 		req.Header.Set("Authorization", fmt.Sprintf("Simulator %s", v.Token))
 	}
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := newHTTPClient().Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("failed to download process: %v", err)
 	}
 	defer resp.Body.Close()
-	body, err := ioutil.ReadAll(resp.Body)
+	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read process: %v", err)
 	}
@@ -95,7 +94,6 @@ func (v *Executor) PullFolder(id int, objType string) ([]any, error) {
 	}
 	downloadURL1 := downloadURL.(string)
 
-	http.DefaultTransport.(*http.Transport).TLSClientConfig = &tls.Config{InsecureSkipVerify: true}
 	req, err := http.NewRequest("GET", downloadURL1, nil)
 	if err != nil {
 		return nil, err
@@ -104,12 +102,12 @@ func (v *Executor) PullFolder(id int, objType string) ([]any, error) {
 	if v.Token != "" {
 		req.Header.Set("Authorization", fmt.Sprintf("Simulator %s", v.Token))
 	}
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := newHTTPClient().Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("failed to download process: %v", err)
 	}
 	defer resp.Body.Close()
-	body, err := ioutil.ReadAll(resp.Body)
+	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read process: %v", err)
 	}
@@ -152,7 +150,6 @@ func (v *Executor) ExportProcess() (any, error) {
 	}
 	downloadURL1 := downloadURL.(string)
 
-	http.DefaultTransport.(*http.Transport).TLSClientConfig = &tls.Config{InsecureSkipVerify: true}
 	req, err := http.NewRequest("GET", downloadURL1, nil)
 	if err != nil {
 		return nil, err
@@ -161,12 +158,12 @@ func (v *Executor) ExportProcess() (any, error) {
 	if v.Token != "" {
 		req.Header.Set("Authorization", fmt.Sprintf("Simulator %s", v.Token))
 	}
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := newHTTPClient().Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("failed to download process: %v", err)
 	}
 	defer resp.Body.Close()
-	body, err := ioutil.ReadAll(resp.Body)
+	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read process: %v", err)
 	}
@@ -255,7 +252,7 @@ func (validator *Executor) ProcessJSON(filePath, jsonContent string) (newProcess
 					}
 				}
 				if newNodeID == "" {
-					panic("No start node found")
+					return nil, fmt.Errorf("no start node found in process %d", validator.ProcessID)
 				}
 				break
 			}
@@ -281,7 +278,7 @@ func (validator *Executor) ProcessJSON(filePath, jsonContent string) (newProcess
 		jsonContent = strings.Replace(jsonContent, "\""+inID+"\"", "\""+extInfo.ServerID+"\"", -1)
 	}
 	if changed {
-		err = ioutil.WriteFile(filePath, []byte(jsonContent), 0644)
+		err = os.WriteFile(filePath, []byte(jsonContent), 0644)
 		if err != nil {
 			return nil, fmt.Errorf("failed to write file: %v", err)
 		}

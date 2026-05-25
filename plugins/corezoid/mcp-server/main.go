@@ -27,6 +27,7 @@ var workspaceID string
 var debug bool
 var apigwURL string
 var stageID int
+var insecureTLS bool
 
 func loadDotEnv(filename string) {
 	data, err := os.ReadFile(filename)
@@ -111,6 +112,7 @@ func loadConfig() {
 		apigwURL = "https://api-apigw.corezoid.com"
 	}
 	stageID, _ = strconv.Atoi(os.Getenv("COREZOID_STAGE_ID"))
+	insecureTLS = os.Getenv("COREZOID_INSECURE_TLS") != ""
 }
 
 // runCLI executes a single MCP tool from the command line and exits.
@@ -524,7 +526,8 @@ func fixStruct(dataBin string, inProcessID int) (string, []string) {
 					condition, ok := nodeMap["condition"].(map[string]interface{})
 					if !ok {
 						nodeBin, _ := json.Marshal(nodeMap)
-						log.Fatalf("ERROR: condition block not found, node: %s", string(nodeBin))
+						messages = append(messages, fmt.Sprintf("WARNING: condition block not found in node %s, skipping", string(nodeBin)))
+						continue
 					}
 					if logics, ok := condition["logics"].([]interface{}); ok {
 						for _, logic := range logics {

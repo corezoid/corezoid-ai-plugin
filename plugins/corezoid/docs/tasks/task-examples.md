@@ -12,7 +12,7 @@ use them in processes, see [Task Metadata](task-metadata.md).
 For documentation on built-in functions available in Set Parameters nodes (such as
 $.math(),
 $.random(), $.date(), etc.), see
-[Set Parameters Built-in Functions](../../nodes/set-parameters-built-in-functions.md).
+[Set Parameters Built-in Functions](../nodes/set-parameters-built-in-functions.md).
 
 ## Basic Task Structure
 
