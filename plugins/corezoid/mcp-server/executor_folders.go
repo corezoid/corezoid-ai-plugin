@@ -386,6 +386,7 @@ func (v *Executor) GetProjectIDByStageID(folderID int) int {
 		info, err := v.ShowFolder(currentID)
 		if err != nil {
 			logger.Error("GetProjectIDByStageID: error showing folder %d: %v", currentID, err)
+			return 0
 		}
 		if info.ObjID == folderID {
 			return info.ParentObjID
