@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -83,7 +82,7 @@ func unzipFile(src, destDir string) error {
 // findStageDir looks for a directory named *.stage up to maxDepth levels deep inside root.
 func findStageDir(root string, maxDepth int) (string, error) {
 	var found string
-	err := walkDepth(root, 0, maxDepth, func(path string, d os.FileInfo) bool {
+	err := walkDepth(root, 0, maxDepth, func(path string, d os.DirEntry) bool {
 		if d.IsDir() && strings.HasSuffix(d.Name(), ".stage") {
 			found = path
 			return true // stop
@@ -93,11 +92,11 @@ func findStageDir(root string, maxDepth int) (string, error) {
 	return found, err
 }
 
-func walkDepth(dir string, depth, maxDepth int, fn func(string, os.FileInfo) bool) error {
+func walkDepth(dir string, depth, maxDepth int, fn func(string, os.DirEntry) bool) error {
 	if depth > maxDepth {
 		return nil
 	}
-	entries, err := ioutil.ReadDir(dir)
+	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return err
 	}
@@ -117,7 +116,7 @@ func walkDepth(dir string, depth, maxDepth int, fn func(string, os.FileInfo) boo
 
 // moveContents moves all entries from src directory into dst directory.
 func moveContents(src, dst string) error {
-	entries, err := ioutil.ReadDir(src)
+	entries, err := os.ReadDir(src)
 	if err != nil {
 		return err
 	}
@@ -137,7 +136,7 @@ func downloadStageRecursively(e *Executor, folderID int, filePath string) error 
 		return fmt.Errorf("failed to PullZip: %w", err)
 	}
 	zipPath := filePath + "/stage.zip"
-	err = ioutil.WriteFile(zipPath, data, 0644)
+	err = os.WriteFile(zipPath, data, 0644)
 	if err != nil {
 		return fmt.Errorf("failed to write file: %v", err)
 	}
@@ -149,7 +148,7 @@ func downloadStageRecursively(e *Executor, folderID int, filePath string) error 
 	// Unzip any inner zip files: stage_<id>_<id>.zip (may be nested)
 	innerZipRe := regexp.MustCompile(`^stage_\d+_\d+\.zip$`)
 	for {
-		files, err := ioutil.ReadDir(filePath)
+		files, err := os.ReadDir(filePath)
 		if err != nil {
 			return fmt.Errorf("failed to read directory: %v", err)
 		}
@@ -233,7 +232,7 @@ func downloadStageRecursively(e *Executor, folderID int, filePath string) error 
 	//	} else {
 	//		title = title + "." + objID
 	//	}
-	//	err = ioutil.WriteFile(filePath+"/"+title+".json", data, 0644)
+	//	err = os.WriteFile(filePath+"/"+title+".json", data, 0644)
 	//	if err != nil {
 	//		logger.Error("Failed to write file: %v", err)
 	//		return
@@ -244,7 +243,7 @@ func downloadStageRecursively(e *Executor, folderID int, filePath string) error 
 
 func renameFiles2Folders(filePath string) error {
 	// теперь везде где json файлы форматировать их через MarshalIndent
-	files, err := ioutil.ReadDir(filePath)
+	files, err := os.ReadDir(filePath)
 	if err != nil {
 		return fmt.Errorf("Failed to read directory2: %v", err)
 	}
@@ -294,7 +293,7 @@ func renameFiles2Folders(filePath string) error {
 
 func formatJSON(filePath string) error {
 	// теперь везде где json файлы форматировать их через MarshalIndent
-	files, err := ioutil.ReadDir(filePath)
+	files, err := os.ReadDir(filePath)
 	if err != nil {
 		return fmt.Errorf("Failed to read directory2: %v", err)
 	}
@@ -311,7 +310,7 @@ func formatJSON(filePath string) error {
 			continue
 		}
 		filePath1 := filepath.Join(filePath, f.Name())
-		dataJson, err := ioutil.ReadFile(filePath1)
+		dataJson, err := os.ReadFile(filePath1)
 		if err != nil {
 			return fmt.Errorf("Failed to read file: %v", err)
 		}
@@ -342,7 +341,7 @@ func formatJSON(filePath string) error {
 		if err != nil {
 			return fmt.Errorf("failed to marshal file: %v", err)
 		}
-		err = ioutil.WriteFile(filePath1, dataRspBin, 0644)
+		err = os.WriteFile(filePath1, dataRspBin, 0644)
 		if err != nil {
 			return fmt.Errorf("failed to write file: %v", err)
 		}

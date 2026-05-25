@@ -3,7 +3,6 @@ package main
 import (
 	"encoding/json"
 	"fmt"
-	"io/ioutil"
 	"os"
 	"strconv"
 	"strings"
@@ -198,7 +197,7 @@ func (v *Executor) updateVariablesFile(name, description, value string) error {
 	}
 	variablesPath := ".processes/variables.json"
 	var variables []map[string]string
-	if data, err := ioutil.ReadFile(variablesPath); err == nil {
+	if data, err := os.ReadFile(variablesPath); err == nil {
 		err = json.Unmarshal(data, &variables)
 		if err != nil {
 			return fmt.Errorf("failed to parse existing variables.json: %v", err)
@@ -219,7 +218,7 @@ func (v *Executor) updateVariablesFile(name, description, value string) error {
 	if err != nil {
 		return fmt.Errorf("failed to marshal variables: %v", err)
 	}
-	err = ioutil.WriteFile(variablesPath, data, 0644)
+	err = os.WriteFile(variablesPath, data, 0644)
 	if err != nil {
 		return fmt.Errorf("failed to write variables.json: %v", err)
 	}

@@ -47,14 +47,37 @@ func TestCORSWrap_SetsHeaders(t *testing.T) {
 	inner := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	})
-	handler := corsWrap(inner)
 
+	// wildcard mode
+	t.Setenv("COREZOID_HTTP_ALLOWED_ORIGINS", "*")
+	handler := corsWrap(inner)
 	req := httptest.NewRequest(http.MethodGet, "/mcp", nil)
 	w := httptest.NewRecorder()
 	handler(w, req)
-
 	if w.Header().Get("Access-Control-Allow-Origin") != "*" {
-		t.Errorf("expected CORS origin header, got %q", w.Header().Get("Access-Control-Allow-Origin"))
+		t.Errorf("wildcard: expected *, got %q", w.Header().Get("Access-Control-Allow-Origin"))
+	}
+
+	// whitelist mode — matching origin
+	t.Setenv("COREZOID_HTTP_ALLOWED_ORIGINS", "https://example.com")
+	handler = corsWrap(inner)
+	req = httptest.NewRequest(http.MethodGet, "/mcp", nil)
+	req.Header.Set("Origin", "https://example.com")
+	w = httptest.NewRecorder()
+	handler(w, req)
+	if w.Header().Get("Access-Control-Allow-Origin") != "https://example.com" {
+		t.Errorf("whitelist: expected https://example.com, got %q", w.Header().Get("Access-Control-Allow-Origin"))
+	}
+
+	// no env var — no CORS header
+	t.Setenv("COREZOID_HTTP_ALLOWED_ORIGINS", "")
+	handler = corsWrap(inner)
+	req = httptest.NewRequest(http.MethodGet, "/mcp", nil)
+	req.Header.Set("Origin", "https://evil.com")
+	w = httptest.NewRecorder()
+	handler(w, req)
+	if got := w.Header().Get("Access-Control-Allow-Origin"); got != "" {
+		t.Errorf("no env: expected no CORS header, got %q", got)
 	}
 }
 

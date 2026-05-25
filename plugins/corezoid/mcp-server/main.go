@@ -152,21 +152,19 @@ func main() {
 		return
 	}
 
-	// MCP server mode — configure debug log file so all output avoids stdout.
-	// Respect COREZOID_DEBUG_LOG if the user has already set it; otherwise fall
-	// back to /tmp/corezoid.log so debug output never leaks onto MCP stdout.
-	if os.Getenv("COREZOID_DEBUG_LOG") == "" {
-		os.Setenv("COREZOID_DEBUG_LOG", filepath.Join(os.TempDir(), "corezoid.log")) //nolint:errcheck
+	// MCP server mode — route all log output to a file so it never leaks onto
+	// MCP stdout (which carries JSON-RPC messages).
+	// Debug level is opt-in: set COREZOID_DEBUG=1 to enable.
+	logPath := os.Getenv("COREZOID_DEBUG_LOG")
+	if logPath == "" {
+		logPath = filepath.Join(os.TempDir(), "corezoid.log")
 	}
-	if logPath := os.Getenv("COREZOID_DEBUG_LOG"); logPath != "" {
-		f, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
-		if err == nil {
-			logger.writer = f
-			logger.IsDebug = true
-		} else {
-			fmt.Fprintf(os.Stderr, "[corezoid-mcp] WARNING: cannot open debug log %s: %v\n", logPath, err)
-		}
+	if f, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0600); err == nil {
+		logger.writer = f
+	} else {
+		fmt.Fprintf(os.Stderr, "[corezoid-mcp] WARNING: cannot open log file %s: %v\n", logPath, err)
 	}
+	logger.IsDebug = os.Getenv("COREZOID_DEBUG") != ""
 
 	cwd, _ := os.Getwd()
 	logger.Debug("Starting corezoid-mcp server, cwd=%s", cwd)
@@ -181,7 +179,15 @@ func main() {
 	}
 
 	if port := os.Getenv("COREZOID_HTTP_PORT"); port != "" {
-		if err := runHTTPServer(":" + port); err != nil {
+		addr := "127.0.0.1:" + port
+		if os.Getenv("COREZOID_HTTP_BIND_ALL") != "" {
+			addr = ":" + port
+			logger.Warn("HTTP server bound to all interfaces (COREZOID_HTTP_BIND_ALL set) — ensure a reverse proxy enforces auth")
+		}
+		if os.Getenv("COREZOID_HTTP_AUTH_TOKEN") == "" {
+			logger.Warn("COREZOID_HTTP_AUTH_TOKEN is not set — MCP HTTP endpoint is unauthenticated")
+		}
+		if err := runHTTPServer(addr); err != nil {
 			fmt.Fprintf(os.Stderr, "[corezoid-mcp] HTTP server error: %v\n", err)
 			os.Exit(1)
 		}
