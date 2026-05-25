@@ -107,6 +107,7 @@ export ACCESS_TOKEN=your_token_here
 | `COREZOID_STAGE_ID`        | No       | Default stage ID                                  |
 | `COREZOID_APIGW_URL`       | No       | Override the API Gateway URL                      |
 | `COREZOID_OAUTH_CLIENT_ID` | No       | OAuth2 client ID — on-prem deployments with a custom authorization server should set this to their own client ID; cloud (account.corezoid.com) users do not need it |
+| `COREZOID_HTTP_PORT`       | No       | Activate the Streamable HTTP transport on this port (e.g. `8080`). When set the server listens for MCP over HTTP instead of stdio — intended for hosted marketplace deployments. Credentials must be pre-configured via env vars; the browser OAuth login flow is not available in HTTP mode |
 
 ## Usage
 

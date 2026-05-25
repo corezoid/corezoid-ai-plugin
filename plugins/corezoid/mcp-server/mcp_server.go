@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -68,6 +69,9 @@ var reqCounter int64
 
 // clientSupportsElicitation is set during initialize based on the client's declared capabilities.
 var clientSupportsElicitation bool
+
+// activeCancels maps in-progress tools/call request IDs to their cancel functions.
+var activeCancels sync.Map
 
 // serverSend marshals msg to JSON and writes it to stdout, thread-safe.
 func serverSend(msg interface{}) {
@@ -208,7 +212,9 @@ func runMCPServer() {
 				Result: map[string]interface{}{
 					"protocolVersion": "2025-03-26",
 					"capabilities": map[string]interface{}{
-						"tools": map[string]interface{}{},
+						"tools":     map[string]interface{}{},
+						"resources": map[string]interface{}{},
+						"prompts":   map[string]interface{}{},
 					},
 					"serverInfo": map[string]interface{}{
 						"name":    "convctl-mcp",
@@ -241,7 +247,11 @@ func runMCPServer() {
 
 			// Run in a goroutine so the scanner loop can continue reading —
 			// this is required to route elicitation responses back to the handler.
-			go func(reqID interface{}, name string, args map[string]interface{}) {
+			ctx, cancel := context.WithCancel(context.Background())
+			activeCancels.Store(req.ID, cancel)
+			go func(reqID interface{}, name string, args map[string]interface{}, _ context.Context) {
+				defer activeCancels.Delete(reqID)
+				defer cancel()
 				result, isErr := handleToolCall(name, args)
 				serverSend(mcpResponse{
 					JSONRPC: "2.0",
@@ -251,7 +261,76 @@ func runMCPServer() {
 						IsError: isErr,
 					},
 				})
-			}(req.ID, params.Name, params.Arguments)
+			}(req.ID, params.Name, params.Arguments, ctx)
+
+		case "notifications/cancelled":
+			var cancelParams struct {
+				RequestID interface{} `json:"requestId"`
+			}
+			if err := json.Unmarshal(req.Params, &cancelParams); err == nil && cancelParams.RequestID != nil {
+				if cancel, ok := activeCancels.LoadAndDelete(cancelParams.RequestID); ok {
+					cancel.(context.CancelFunc)()
+				}
+			}
+			// notifications require no response
+
+		case "resources/list":
+			resources, err := listResources()
+			if err != nil {
+				sendError(req.ID, -32603, err.Error())
+				continue
+			}
+			serverSend(mcpResponse{
+				JSONRPC: "2.0",
+				ID:      req.ID,
+				Result:  map[string]interface{}{"resources": resources},
+			})
+
+		case "resources/read":
+			var rParams struct {
+				URI string `json:"uri"`
+			}
+			if err := json.Unmarshal(req.Params, &rParams); err != nil {
+				sendError(req.ID, -32602, "invalid params: "+err.Error())
+				continue
+			}
+			content, err := readResource(rParams.URI)
+			if err != nil {
+				sendError(req.ID, -32603, err.Error())
+				continue
+			}
+			serverSend(mcpResponse{
+				JSONRPC: "2.0",
+				ID:      req.ID,
+				Result:  map[string]interface{}{"contents": []interface{}{content}},
+			})
+
+		case "prompts/list":
+			serverSend(mcpResponse{
+				JSONRPC: "2.0",
+				ID:      req.ID,
+				Result:  map[string]interface{}{"prompts": builtinPrompts},
+			})
+
+		case "prompts/get":
+			var pParams struct {
+				Name      string            `json:"name"`
+				Arguments map[string]string `json:"arguments"`
+			}
+			if err := json.Unmarshal(req.Params, &pParams); err != nil {
+				sendError(req.ID, -32602, "invalid params: "+err.Error())
+				continue
+			}
+			prompt, err := getPrompt(pParams.Name, pParams.Arguments)
+			if err != nil {
+				sendError(req.ID, -32603, err.Error())
+				continue
+			}
+			serverSend(mcpResponse{
+				JSONRPC: "2.0",
+				ID:      req.ID,
+				Result:  prompt,
+			})
 
 		default:
 			sendError(req.ID, -32601, "method not found: "+req.Method)

@@ -180,6 +180,14 @@ func main() {
 		fmt.Fprintf(os.Stderr, "[corezoid-mcp] Credentials will be saved to: %s\n", filepath.Join(cwd, ".env"))
 	}
 
+	if port := os.Getenv("COREZOID_HTTP_PORT"); port != "" {
+		if err := runHTTPServer(":" + port); err != nil {
+			fmt.Fprintf(os.Stderr, "[corezoid-mcp] HTTP server error: %v\n", err)
+			os.Exit(1)
+		}
+		return
+	}
+
 	runMCPServer()
 }
 
