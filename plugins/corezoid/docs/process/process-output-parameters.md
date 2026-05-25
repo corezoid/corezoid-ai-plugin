@@ -213,7 +213,7 @@ Here's an example of a process with various output parameter types:
 
 ## Related Documentation
 
-- [Reply to Process Node](../../nodes/reply-to-process-node.md) - Documentation for the node that
+- [Reply to Process Node](../nodes/reply-to-process-node.md) - Documentation for the node that
   returns data from a process
 - [Process with Input Parameters](process-with-parameters.md) - Documentation for defining input
   parameters

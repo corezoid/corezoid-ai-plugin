@@ -597,9 +597,8 @@ This indicates your task exceeds the maximum allowed size. Optimize your task da
 
 ## Related Documentation
 
-- [Process Schema](process-schema.json) - JSON schema for Corezoid processes
 - [Process README](README.md) - Overview of Corezoid processes
-- [Best Practices for Building Fast and Effective Processes](best-practices.md) - Optimization
+- [Node Positioning and Optimization](node-positioning-best-practices.md) - Optimization
   techniques
 - [Execution Algorithm](execution-algorithm.md) - How processes are executed
-- [Task Creation](task-creation.md) - Guidelines for creating tasks
+- [Task Examples](../tasks/README.md) - Guidelines for creating tasks

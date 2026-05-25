@@ -1,0 +1,38 @@
+{
+  "obj_type": 1,
+  "obj_id": 0,
+  "title": "Valid Process",
+  "params": [
+    {"name": "user_id", "type": "string", "descr": "User ID", "flags": ["required", "input"]}
+  ],
+  "scheme": {
+    "nodes": [
+      {
+        "id": "bbccddaabbccddaabbcc0001",
+        "obj_type": 1,
+        "condition": {
+          "logics": [
+            {"type": "go", "to_node_id": "bbccddaabbccddaabbcc0002"}
+          ],
+          "semaphors": []
+        },
+        "title": "Start",
+        "x": 0, "y": 0,
+        "extra": "{\"modeForm\":\"collapse\",\"icon\":\"\"}",
+        "options": null
+      },
+      {
+        "id": "bbccddaabbccddaabbcc0002",
+        "obj_type": 2,
+        "condition": {
+          "logics": [],
+          "semaphors": []
+        },
+        "title": "Final",
+        "x": 300, "y": 0,
+        "extra": "{\"modeForm\":\"collapse\",\"icon\":\"success\"}",
+        "options": null
+      }
+    ]
+  }
+}

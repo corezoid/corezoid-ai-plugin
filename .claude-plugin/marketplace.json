@@ -19,23 +19,9 @@
       },
       "homepage": "https://corezoid.com",
       "repository": "https://github.com/corezoid/corezoid-ai-plugin",
-      "license": "ISC",
+      "license": "MIT",
       "keywords": ["corezoid", "process", "bpm", "workflow", "automation", "mcp"],
       "category": "Developer Tools"
-    },
-    {
-      "name": "simulator",
-      "source": "./plugins/simulator",
-      "description": "Simulator.Company platform assistant. Exposes the Simulator REST API as an MCP server and provides skills for managing actors, forms, graph structures, and financial accounts.",
-      "version": "1.2.0",
-      "author": {
-        "name": "Simulator.Company",
-        "url": "https://simulator.company"
-      },
-      "homepage": "https://doc.simulator.company",
-      "license": "MIT",
-      "keywords": ["simulator", "bpm", "business-process", "graph", "financial", "actors", "forms", "mcp"],
-      "category": "Productivity"
     }
   ]
 }

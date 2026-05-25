@@ -236,7 +236,7 @@ limiting strategies.
 
 ## Related Documentation
 
-- [Best Practices for Building Fast and Effective Processes](../process/best-practices.md) -
+- [Best Practices for Building Fast and Effective Processes](../process/process-development-guide.md) -
   Optimization techniques for processes
 
 ## Implementation Example

@@ -1,0 +1,40 @@
+{
+  "obj_type": 1,
+  "obj_id": 0,
+  "title": "Noop Condition Process",
+  "scheme": {
+    "nodes": [
+      {
+        "id": "ccddaabbccddeeff00112201",
+        "obj_type": 1,
+        "title": "Start",
+        "condition": {
+          "logics": [{"type": "go", "to_node_id": "ccddaabbccddeeff00112202"}],
+          "semaphors": []
+        },
+        "x": 0, "y": 0
+      },
+      {
+        "id": "ccddaabbccddeeff00112202",
+        "obj_type": 0,
+        "title": "NoopCheck",
+        "condition": {
+          "logics": [
+            {"type": "go_if_const", "to_node_id": "ccddaabbccddeeff00112203"},
+            {"type": "go_if_const", "to_node_id": "ccddaabbccddeeff00112203"},
+            {"type": "go", "to_node_id": "ccddaabbccddeeff00112203"}
+          ],
+          "semaphors": []
+        },
+        "x": 200, "y": 0
+      },
+      {
+        "id": "ccddaabbccddeeff00112203",
+        "obj_type": 2,
+        "title": "Final",
+        "condition": {"logics": [], "semaphors": []},
+        "x": 400, "y": 0
+      }
+    ]
+  }
+}

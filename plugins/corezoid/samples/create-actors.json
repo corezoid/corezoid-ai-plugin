@@ -18,8 +18,12 @@
       "name": "prefix_name",
       "type": "string",
       "descr": "Prefix for actor names",
-      "flags": ["required", "input"],
-      "regex": "",
+      "flags": [
+        "required",
+        "input"
+      ],
+      "regex": ""
+    }
   ],
   "ref_mask": true,
   "conv_type": "process",

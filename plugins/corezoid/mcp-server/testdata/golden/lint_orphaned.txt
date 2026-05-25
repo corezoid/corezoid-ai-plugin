@@ -1,0 +1,14 @@
+Lint results for: Orphaned Node Process
+Total nodes: 3
+
+=== JSON SCHEMA VALIDATION FAILED ===
+  JSON schema validation failed:
+jsonschema validation failed with 'mem:///combined.json#'
+- at '': validation failed
+  - at '': missing properties 'status', 'params', 'ref_mask', 'conv_type'
+  - at '/scheme': missing property 'web_settings'
+
+=== ORPHANED NODES (1 / 2 reachable from Start) ===
+  [aabbccddeeff00112233aa03] Orphaned  (type: standard)
+
+Total issues: 2

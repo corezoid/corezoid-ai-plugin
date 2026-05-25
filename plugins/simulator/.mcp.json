@@ -1,6 +1,0 @@
-{
-  "simulator": {
-    "command": "sh",
-    "args": ["-c", "export SIMULATOR_WORK_DIR=\"$PWD\"; cd \"$CLAUDE_PLUGIN_ROOT/mcp-server\" && exec go run . --spec simulator"]
-  }
-}

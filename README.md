@@ -1,6 +1,8 @@
 # Corezoid — Claude Code & Codex Plugin
 
-A plugin for [Claude Code](https://claude.ai/code) and [Codex](https://openai.com/codex) that connects the [Corezoid](https://corezoid.com) BPM platform to Claude via MCP. Claude gets direct access to Corezoid processes and deep platform knowledge to create, edit, review, and deploy workflows through natural conversation.
+> **Status:** stable — released, actively maintained. Supported clients: Claude Code ≥ 1.x, Codex. Go 1.24+ required. macOS and Linux tested.
+
+A plugin for [Claude Code](https://claude.ai/code) and [Codex](https://codex.openai.com) that connects the [Corezoid](https://corezoid.com) BPM platform to Claude via MCP. Claude gets direct access to Corezoid processes and deep platform knowledge to create, edit, review, and deploy workflows through natural conversation.
 
 ## What it does
 
@@ -19,8 +21,8 @@ The plugin bundles a Go MCP server that exposes Corezoid operations as MCP tools
 
 ## Requirements
 
-- [Claude Code](https://claude.ai/code) or [Codex](https://openai.com/codex) installed
-- [Go 1.21+](https://go.dev/dl/) available in `PATH` (the MCP server runs via `go run`, no build step needed)
+- [Claude Code](https://claude.ai/code) or [Codex](https://codex.openai.com) installed
+- [Go 1.24+](https://go.dev/dl/) available in `PATH` (the MCP server runs via `go run`, no build step needed)
   ```bash
   brew install golang        # macOS
   sudo apt install golang    # Ubuntu/Debian
@@ -98,11 +100,13 @@ export ACCESS_TOKEN=your_token_here
 
 | Environment variable       | Required | Description                                       |
 |----------------------------|----------|---------------------------------------------------|
-| `ACCESS_TOKEN`          | No       | Static token — overrides OAuth2 saved credentials |
+| `ACCESS_TOKEN`             | No       | Static token — overrides OAuth2 saved credentials |
 | `COREZOID_API_URL`         | No       | Override the default Corezoid API base URL        |
-| `WORKSPACE_ID`    | No       | Default workspace ID                              |
+| `WORKSPACE_ID`             | No       | Default workspace ID                              |
 | `COREZOID_STAGE_ID`        | No       | Default stage ID                                  |
 | `COREZOID_APIGW_URL`       | No       | Override the API Gateway URL                      |
+| `COREZOID_OAUTH_CLIENT_ID` | No       | OAuth2 client ID — on-prem deployments with a custom authorization server should set this to their own client ID; cloud (account.corezoid.com) users do not need it |
+| `COREZOID_HTTP_PORT`       | No       | Activate the Streamable HTTP transport on this port (e.g. `8080`). When set the server listens for MCP over HTTP instead of stdio — intended for hosted marketplace deployments. Credentials must be pre-configured via env vars; the browser OAuth login flow is not available in HTTP mode |
 
 ## Usage
 
@@ -224,11 +228,49 @@ corezoid-ai-plugin/
 │   └── samples/                 # Example .conv.json processes
 ```
 
+## Debugging
+
+The MCP server always writes debug output to `/tmp/corezoid.log` when running in MCP mode. View it with:
+
+```bash
+tail -f /tmp/corezoid.log
+```
+
+In CLI mode, enable verbose output with:
+
+```bash
+COREZOID_DEBUG=1 go run . pull-process process_id=123
+```
+
+## Troubleshooting
+
+See [docs/Troubleshooting.md](docs/Troubleshooting.md) for solutions to common problems:
+
+- Browser did not open during `login`
+- Expired or missing `ACCESS_TOKEN`
+- `push-process` validation errors
+- MCP server startup failures
+- Common Corezoid API error codes
+
+## Compatibility
+
+| Component         | Supported versions            | Notes |
+|-------------------|-------------------------------|-------|
+| Claude Code       | ≥ 1.x                         | MCP protocol 2025-03-26 |
+| Codex             | current stable                | Same MCP server, same skills |
+| Go toolchain      | 1.24.x – 1.24+                | Required to run the MCP server via `go run` |
+| macOS             | 13 Ventura and later          | Tested on arm64 and amd64 |
+| Linux             | Ubuntu 22.04+, Debian 12+     | amd64 tested in CI |
+| Windows           | not tested                    | Likely works; PRs welcome |
+
+> **Note:** If your Go installation is older than 1.24, the toolchain manager will try to download `go1.24.0` from `proxy.golang.org`. In air-gapped environments set `GOTOOLCHAIN=local` and install Go 1.24+ manually. See [Troubleshooting](docs/Troubleshooting.md) for details.
+
 ## Links
 
 - [Corezoid](https://corezoid.com)
 - [Claude Code](https://claude.ai/code)
+- [Changelog](CHANGELOG.md)
 
 ## License
 
-ISC
+MIT

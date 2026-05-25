@@ -1,0 +1,54 @@
+{
+  "obj_type": 1,
+  "obj_id": 123,
+  "title": "Self-Copy Test",
+  "params": [],
+  "scheme": {
+    "nodes": [
+      {
+        "id": "aabbccddaabbccddaabb0001",
+        "obj_type": 1,
+        "condition": {
+          "logics": [
+            {"type": "go", "to_node_id": "aabbccddaabbccddaabb0002"}
+          ],
+          "semaphors": []
+        },
+        "title": "Start",
+        "x": 0, "y": 0,
+        "extra": "{\"modeForm\":\"collapse\",\"icon\":\"\"}",
+        "options": null
+      },
+      {
+        "id": "aabbccddaabbccddaabb0002",
+        "obj_type": 0,
+        "condition": {
+          "logics": [
+            {
+              "type": "api_copy",
+              "conv_id": 123
+            },
+            {"type": "go", "to_node_id": "aabbccddaabbccddaabb0003"}
+          ],
+          "semaphors": []
+        },
+        "title": "Copy to Self",
+        "x": 300, "y": 0,
+        "extra": "{\"modeForm\":\"expand\",\"icon\":\"\"}",
+        "options": null
+      },
+      {
+        "id": "aabbccddaabbccddaabb0003",
+        "obj_type": 2,
+        "condition": {
+          "logics": [],
+          "semaphors": []
+        },
+        "title": "Final",
+        "x": 600, "y": 0,
+        "extra": "{\"modeForm\":\"collapse\",\"icon\":\"error\"}",
+        "options": null
+      }
+    ]
+  }
+}

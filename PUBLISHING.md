@@ -57,8 +57,6 @@ Restart Codex, open Plugin Directory, select **Corezoid**, and confirm the plugi
 2. Add a section to `CHANGELOG.md` for the new version.
 3. Commit the changes.
 
-> `package.json` version does **not** need to be bumped by hand — the GitHub Actions workflow sets it from the git tag before publishing.
-
 ## 5. Push to GitHub and Tag
 
 ```bash
@@ -67,7 +65,7 @@ git tag v1.x.x
 git push origin v1.x.x
 ```
 
-The `publish-npm.yml` workflow fires automatically on any `v*` tag and publishes the package to the GitHub Package Registry under `@corezoid/corezoid-ai-plugin`.
+The `release.yml` workflow fires automatically on any `v*` tag and creates a GitHub Release with the corresponding `CHANGELOG.md` section as release notes.
 
 ## 6. Install from GitHub
 

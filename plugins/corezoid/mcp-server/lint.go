@@ -41,6 +41,39 @@ type OrphanedNode struct {
 	ObjType string
 }
 
+// processNode is the typed representation of a Corezoid node used throughout lint checks.
+type processNode struct {
+	id      string
+	title   string
+	objType float64
+	logics  []map[string]interface{}
+	sems    []map[string]interface{}
+}
+
+// parseProcessNodes decodes raw node interfaces into typed processNode values.
+// Fields missing or of the wrong type are silently zeroed — no type assertion panics.
+func parseProcessNodes(rawNodes []interface{}) []processNode {
+	nodes := make([]processNode, 0, len(rawNodes))
+	for _, raw := range rawNodes {
+		n, ok := raw.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		id, _ := n["id"].(string)
+		title, _ := n["title"].(string)
+		objType, _ := n["obj_type"].(float64)
+		cond, _ := n["condition"].(map[string]interface{})
+		nodes = append(nodes, processNode{
+			id:      id,
+			title:   title,
+			objType: objType,
+			logics:  toMapSlice(cond["logics"]),
+			sems:    toMapSlice(cond["semaphors"]),
+		})
+	}
+	return nodes
+}
+
 // lintProcess loads a process JSON file and runs lint checks
 func lintProcess(filePath string) (*LintResult, error) {
 	data, err := os.ReadFile(filePath)
@@ -62,8 +95,9 @@ func lintProcess(filePath string) (*LintResult, error) {
 
 	result := &LintResult{ProcessTitle: title, TotalNodes: len(nodes)}
 
-	result.NoopConditions, result.UnusedSetParams = findNoopNodes(nodes)
-	result.OrphanedNodes, result.ReachableCount = findOrphanedNodes(nodes)
+	typed := parseProcessNodes(nodes)
+	result.NoopConditions, result.UnusedSetParams = findNoopNodes(typed)
+	result.OrphanedNodes, result.ReachableCount = findOrphanedNodes(typed)
 
 	schemaErr := ValidateJSONSchema(filePath, debug)
 	if schemaErr != nil {
@@ -79,30 +113,10 @@ func lintProcess(filePath string) (*LintResult, error) {
 // findNoopNodes detects functionally useless nodes:
 // 1. No-op conditions: all routing branches go to the same destination
 // 2. Unused set_param: variables set but never referenced downstream
-func findNoopNodes(rawNodes []interface{}) ([]NoopCondition, []UnusedSetParam) {
-	type nodeData struct {
-		id     string
-		title  string
-		logics []map[string]interface{}
-		sems   []map[string]interface{}
-	}
-
-	nodes := make([]nodeData, 0, len(rawNodes))
-	nodeMap := make(map[string]map[string]interface{})
-
-	for _, raw := range rawNodes {
-		n, ok := raw.(map[string]interface{})
-		if !ok {
-			continue
-		}
-		id, _ := n["id"].(string)
-		title, _ := n["title"].(string)
-		nodeMap[id] = n
-
-		cond, _ := n["condition"].(map[string]interface{})
-		logics := toMapSlice(cond["logics"])
-		sems := toMapSlice(cond["semaphors"])
-		nodes = append(nodes, nodeData{id: id, title: title, logics: logics, sems: sems})
+func findNoopNodes(nodes []processNode) ([]NoopCondition, []UnusedSetParam) {
+	nodeMap := make(map[string]processNode, len(nodes))
+	for _, n := range nodes {
+		nodeMap[n.id] = n
 	}
 
 	// --- Pattern 1: No-op conditions ---
@@ -132,7 +146,7 @@ func findNoopNodes(rawNodes []interface{}) ([]NoopCondition, []UnusedSetParam) {
 			}
 			destTitle := ""
 			if dn, ok := nodeMap[dest]; ok {
-				destTitle, _ = dn["title"].(string)
+				destTitle = dn.title
 				if destTitle == "" {
 					destTitle = "(untitled)"
 				}
@@ -210,39 +224,17 @@ func findNoopNodes(rawNodes []interface{}) ([]NoopCondition, []UnusedSetParam) {
 }
 
 // findOrphanedNodes does a BFS from the Start node and returns unreachable nodes
-func findOrphanedNodes(rawNodes []interface{}) ([]OrphanedNode, int) {
+func findOrphanedNodes(nodes []processNode) ([]OrphanedNode, int) {
 	typeLabels := map[float64]string{0: "standard", 1: "start", 2: "final", 3: "escalation"}
 
-	type nodeEntry struct {
-		id      string
-		title   string
-		objType float64
-		logics  []map[string]interface{}
-		sems    []map[string]interface{}
-	}
-
-	entries := make([]nodeEntry, 0, len(rawNodes))
-	nodeMap := make(map[string]nodeEntry)
-
-	for _, raw := range rawNodes {
-		n, ok := raw.(map[string]interface{})
-		if !ok {
-			continue
-		}
-		id, _ := n["id"].(string)
-		title, _ := n["title"].(string)
-		objType, _ := n["obj_type"].(float64)
-		cond, _ := n["condition"].(map[string]interface{})
-		logics := toMapSlice(cond["logics"])
-		sems := toMapSlice(cond["semaphors"])
-		e := nodeEntry{id: id, title: title, objType: objType, logics: logics, sems: sems}
-		entries = append(entries, e)
-		nodeMap[id] = e
+	nodeMap := make(map[string]processNode, len(nodes))
+	for _, e := range nodes {
+		nodeMap[e.id] = e
 	}
 
 	// Build adjacency list
 	adj := make(map[string][]string)
-	for _, e := range entries {
+	for _, e := range nodes {
 		adj[e.id] = nil
 		for _, lg := range e.logics {
 			if tid, ok := lg["to_node_id"].(string); ok && tid != "" {
@@ -261,7 +253,7 @@ func findOrphanedNodes(rawNodes []interface{}) ([]OrphanedNode, int) {
 
 	// Find start node (obj_type == 1)
 	startID := ""
-	for _, e := range entries {
+	for _, e := range nodes {
 		if e.objType == 1 {
 			startID = e.id
 			break
@@ -289,7 +281,7 @@ func findOrphanedNodes(rawNodes []interface{}) ([]OrphanedNode, int) {
 	}
 
 	var orphaned []OrphanedNode
-	for _, e := range entries {
+	for _, e := range nodes {
 		if !visited[e.id] {
 			label, ok := typeLabels[e.objType]
 			if !ok {
@@ -310,6 +302,61 @@ func findOrphanedNodes(rawNodes []interface{}) ([]OrphanedNode, int) {
 	return orphaned, len(visited)
 }
 
+// FormatLintResult renders a LintResult as human-readable text suitable for MCP tool output.
+func FormatLintResult(result *LintResult) string {
+	var sb strings.Builder
+	sb.WriteString(fmt.Sprintf("Lint results for: %s\n", result.ProcessTitle))
+	sb.WriteString(fmt.Sprintf("Total nodes: %d\n", result.TotalNodes))
+
+	hasIssues := false
+
+	if !result.SchemaValid {
+		hasIssues = true
+		sb.WriteString("\n=== JSON SCHEMA VALIDATION FAILED ===\n")
+		sb.WriteString(fmt.Sprintf("  %s\n", result.SchemaError))
+	}
+
+	if len(result.NoopConditions) > 0 {
+		hasIssues = true
+		sb.WriteString(fmt.Sprintf("\n=== NOOP CONDITIONS (%d) ===\n", len(result.NoopConditions)))
+		for _, nc := range result.NoopConditions {
+			sb.WriteString(fmt.Sprintf("  [%s] %s\n", nc.ID, nc.Title))
+			sb.WriteString(fmt.Sprintf("  Issue: %s\n", nc.Issue))
+		}
+	}
+
+	if len(result.UnusedSetParams) > 0 {
+		hasIssues = true
+		sb.WriteString(fmt.Sprintf("\n=== UNUSED SET_PARAM (%d) ===\n", len(result.UnusedSetParams)))
+		for _, up := range result.UnusedSetParams {
+			sb.WriteString(fmt.Sprintf("  [%s] %s\n", up.ID, up.Title))
+			sb.WriteString(fmt.Sprintf("  Issue: %s\n", up.Issue))
+		}
+	}
+
+	if len(result.OrphanedNodes) > 0 {
+		hasIssues = true
+		sb.WriteString(fmt.Sprintf("\n=== ORPHANED NODES (%d / %d reachable from Start) ===\n",
+			len(result.OrphanedNodes), result.ReachableCount))
+		for _, on := range result.OrphanedNodes {
+			sb.WriteString(fmt.Sprintf("  [%s] %s  (type: %s)\n", on.ID, on.Title, on.ObjType))
+		}
+	}
+
+	if !hasIssues {
+		sb.WriteString("\nNo issues found.")
+	} else {
+		schemaIssues := 0
+		if !result.SchemaValid {
+			schemaIssues = 1
+		}
+		total := len(result.NoopConditions) + len(result.UnusedSetParams) + len(result.OrphanedNodes) + schemaIssues
+		sb.WriteString(fmt.Sprintf("\nTotal issues: %d\n", total))
+	}
+
+	return sb.String()
+}
+
 // toMapSlice safely converts an interface{} to []map[string]interface{}
 func toMapSlice(v interface{}) []map[string]interface{} {
 	arr, ok := v.([]interface{})
@@ -324,4 +371,3 @@ func toMapSlice(v interface{}) []map[string]interface{} {
 	}
 	return result
 }
-

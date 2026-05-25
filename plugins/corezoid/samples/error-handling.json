@@ -1,0 +1,271 @@
+{
+  "obj_type": 1,
+  "obj_id": 0,
+  "title": "Multi-Level Error Handling",
+  "description": "Full error-handling pattern: validate input, call external API, handle hardware and software errors, reply to caller",
+  "status": "active",
+  "params": [
+    {
+      "name": "order_id",
+      "type": "string",
+      "descr": "Order ID",
+      "flags": ["required", "input"],
+      "regex": "^[A-Z0-9-]{6,32}$",
+      "regex_error_text": "order_id must be 6-32 uppercase alphanumeric characters"
+    },
+    {
+      "name": "amount",
+      "type": "number",
+      "descr": "Order amount in cents",
+      "flags": ["required", "input"],
+      "regex": "",
+      "regex_error_text": ""
+    }
+  ],
+  "ref_mask": true,
+  "conv_type": "process",
+  "scheme": {
+    "nodes": [
+      {
+        "id": "erh0000000000000000000001",
+        "obj_type": 1,
+        "condition": {
+          "logics": [
+            {"type": "go", "to_node_id": "erh0000000000000000000002"}
+          ],
+          "semaphors": []
+        },
+        "title": "Start",
+        "description": "",
+        "x": 400, "y": -52,
+        "extra": "{\"modeForm\":\"collapse\",\"icon\":\"\"}",
+        "options": null
+      },
+      {
+        "id": "erh0000000000000000000002",
+        "obj_type": 0,
+        "condition": {
+          "logics": [
+            {
+              "type": "go_if_const",
+              "to_node_id": "erh0000000000000000000009",
+              "conditions": [
+                {
+                  "param": "amount",
+                  "const": "0",
+                  "fun": "<=",
+                  "cast": "number"
+                }
+              ]
+            },
+            {"type": "go", "to_node_id": "erh0000000000000000000003"}
+          ],
+          "semaphors": []
+        },
+        "title": "Validate Amount",
+        "description": "Rejects zero or negative amounts before calling the payment API",
+        "x": 400, "y": 100,
+        "extra": "{\"modeForm\":\"expand\",\"icon\":\"\"}",
+        "options": null
+      },
+      {
+        "id": "erh0000000000000000000003",
+        "obj_type": 0,
+        "condition": {
+          "logics": [
+            {
+              "type": "api",
+              "url": "{{env_var[@payment-api-url]}}/charge",
+              "method": "POST",
+              "content_type": "application/json",
+              "extra": {
+                "order_id": "{{order_id}}",
+                "amount": "{{amount}}"
+              },
+              "extra_type": {
+                "order_id": "string",
+                "amount": "number"
+              },
+              "err_node_id": "erh0000000000000000000004"
+            },
+            {"type": "go", "to_node_id": "erh0000000000000000000008"}
+          ],
+          "semaphors": [
+            {
+              "type": "time",
+              "value": 60,
+              "dimension": "sec",
+              "to_node_id": "erh0000000000000000000004"
+            }
+          ]
+        },
+        "title": "Charge Payment API",
+        "description": "POST to payment gateway. Passes order_id and amount. 60s timeout.",
+        "x": 400, "y": 280,
+        "extra": "{\"modeForm\":\"expand\",\"icon\":\"\"}",
+        "options": null
+      },
+      {
+        "id": "erh0000000000000000000004",
+        "obj_type": 0,
+        "condition": {
+          "logics": [
+            {
+              "type": "go_if_const",
+              "to_node_id": "erh0000000000000000000005",
+              "conditions": [
+                {
+                  "param": "__conveyor_api_return_type_error__",
+                  "const": "hardware",
+                  "fun": "eq",
+                  "cast": "string"
+                }
+              ]
+            },
+            {"type": "go", "to_node_id": "erh0000000000000000000010"}
+          ],
+          "semaphors": []
+        },
+        "title": "Check API Error Type",
+        "description": "Hardware errors (network/timeout) go to retry delay; software errors (4xx) go to error reply",
+        "x": 700, "y": 280,
+        "extra": "{\"modeForm\":\"expand\",\"icon\":\"\"}",
+        "options": null
+      },
+      {
+        "id": "erh0000000000000000000005",
+        "obj_type": 0,
+        "condition": {
+          "logics": [],
+          "semaphors": [
+            {
+              "type": "time",
+              "value": 30,
+              "dimension": "sec",
+              "to_node_id": "erh0000000000000000000003"
+            }
+          ]
+        },
+        "title": "Wait 30s Before Retry",
+        "description": "Holds task 30 seconds after a hardware error before retrying the payment call",
+        "x": 700, "y": 460,
+        "extra": "{\"modeForm\":\"expand\",\"icon\":\"\"}",
+        "options": null
+      },
+      {
+        "id": "erh0000000000000000000008",
+        "obj_type": 0,
+        "condition": {
+          "logics": [
+            {
+              "type": "api_rpc_reply",
+              "mode": "key_value",
+              "res_data": {
+                "status": "ok",
+                "order_id": "{{order_id}}",
+                "charge_id": "{{charge_id}}"
+              },
+              "res_data_type": {
+                "status": "string",
+                "order_id": "string",
+                "charge_id": "string"
+              },
+              "throw_exception": false
+            },
+            {"type": "go", "to_node_id": "erh000000000000000000000b"}
+          ],
+          "semaphors": []
+        },
+        "title": "Reply Success",
+        "description": "Returns charge_id and order_id to the caller process",
+        "x": 400, "y": 460,
+        "extra": "{\"modeForm\":\"expand\",\"icon\":\"\"}",
+        "options": null
+      },
+      {
+        "id": "erh0000000000000000000009",
+        "obj_type": 0,
+        "condition": {
+          "logics": [
+            {
+              "type": "api_rpc_reply",
+              "mode": "key_value",
+              "res_data": {
+                "status": "error",
+                "description": "amount must be greater than zero"
+              },
+              "res_data_type": {
+                "status": "string",
+                "description": "string"
+              },
+              "throw_exception": false
+            },
+            {"type": "go", "to_node_id": "erh000000000000000000000a"}
+          ],
+          "semaphors": []
+        },
+        "title": "Reply Validation Error",
+        "description": "Returns validation error to the caller when amount is invalid",
+        "x": 700, "y": 100,
+        "extra": "{\"modeForm\":\"expand\",\"icon\":\"\"}",
+        "options": null
+      },
+      {
+        "id": "erh0000000000000000000010",
+        "obj_type": 0,
+        "condition": {
+          "logics": [
+            {
+              "type": "api_rpc_reply",
+              "mode": "key_value",
+              "res_data": {
+                "status": "error",
+                "description": "{{__conveyor_api_return_description__}}"
+              },
+              "res_data_type": {
+                "status": "string",
+                "description": "string"
+              },
+              "throw_exception": false
+            },
+            {"type": "go", "to_node_id": "erh000000000000000000000a"}
+          ],
+          "semaphors": []
+        },
+        "title": "Reply API Error",
+        "description": "Returns the payment API software error message to the caller",
+        "x": 1000, "y": 280,
+        "extra": "{\"modeForm\":\"expand\",\"icon\":\"\"}",
+        "options": null
+      },
+      {
+        "id": "erh000000000000000000000a",
+        "obj_type": 2,
+        "condition": {
+          "logics": [],
+          "semaphors": []
+        },
+        "title": "Final",
+        "description": "",
+        "x": 700, "y": -52,
+        "extra": "{\"modeForm\":\"collapse\",\"icon\":\"error\"}",
+        "options": null
+      },
+      {
+        "id": "erh000000000000000000000b",
+        "obj_type": 2,
+        "condition": {
+          "logics": [],
+          "semaphors": []
+        },
+        "title": "Final",
+        "description": "",
+        "x": 400, "y": 640,
+        "extra": "{\"modeForm\":\"collapse\",\"icon\":\"success\"}",
+        "options": "{\"save_task\":true}"
+      }
+    ],
+    "web_settings": [[], []]
+  },
+  "uuid": "error-handling-pattern-example-001"
+}

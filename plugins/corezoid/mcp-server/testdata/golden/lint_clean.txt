@@ -1,0 +1,11 @@
+Lint results for: Valid Process
+Total nodes: 2
+
+=== JSON SCHEMA VALIDATION FAILED ===
+  JSON schema validation failed:
+jsonschema validation failed with 'mem:///combined.json#'
+- at '': validation failed
+  - at '': missing properties 'status', 'ref_mask', 'conv_type'
+  - at '/scheme': missing property 'web_settings'
+
+Total issues: 1
