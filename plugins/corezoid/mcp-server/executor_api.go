@@ -55,7 +55,11 @@ func (v *Executor) req(method string, ops []map[string]any) (map[string]interfac
 
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", fmt.Sprintf("Simulator %s", v.Token))
-	logger.Debug("Header: %v", req.Header)
+	if v.Debug {
+		safeHeaders := req.Header.Clone()
+		safeHeaders.Set("Authorization", "Simulator ***")
+		logger.Debug("Header: %v", safeHeaders)
+	}
 
 	client := newHTTPClient()
 	resp, err := client.Do(req)
