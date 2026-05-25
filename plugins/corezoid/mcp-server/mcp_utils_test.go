@@ -1,0 +1,209 @@
+package main
+
+import (
+	"os"
+	"path/filepath"
+	"testing"
+)
+
+// ---- intArg ----------------------------------------------------------------
+
+func TestIntArg_Float64(t *testing.T) {
+	args := map[string]interface{}{"n": float64(42)}
+	v, err := intArg(args, "n")
+	if err != nil || v != 42 {
+		t.Errorf("got (%d, %v), want (42, nil)", v, err)
+	}
+}
+
+func TestIntArg_Int(t *testing.T) {
+	args := map[string]interface{}{"n": 7}
+	v, err := intArg(args, "n")
+	if err != nil || v != 7 {
+		t.Errorf("got (%d, %v), want (7, nil)", v, err)
+	}
+}
+
+func TestIntArg_StringNumeric(t *testing.T) {
+	args := map[string]interface{}{"n": "99"}
+	v, err := intArg(args, "n")
+	if err != nil || v != 99 {
+		t.Errorf("got (%d, %v), want (99, nil)", v, err)
+	}
+}
+
+func TestIntArg_StringInvalid(t *testing.T) {
+	args := map[string]interface{}{"n": "abc"}
+	_, err := intArg(args, "n")
+	if err == nil {
+		t.Error("expected error for non-numeric string, got nil")
+	}
+}
+
+func TestIntArg_Missing(t *testing.T) {
+	_, err := intArg(map[string]interface{}{}, "n")
+	if err == nil {
+		t.Error("expected error for missing key, got nil")
+	}
+}
+
+func TestIntArg_WrongType(t *testing.T) {
+	args := map[string]interface{}{"n": []int{1, 2}}
+	_, err := intArg(args, "n")
+	if err == nil {
+		t.Error("expected error for unexpected type, got nil")
+	}
+}
+
+// ---- strArg ----------------------------------------------------------------
+
+func TestStrArg_OK(t *testing.T) {
+	args := map[string]interface{}{"k": "hello"}
+	v, err := strArg(args, "k")
+	if err != nil || v != "hello" {
+		t.Errorf("got (%q, %v), want (\"hello\", nil)", v, err)
+	}
+}
+
+func TestStrArg_Missing(t *testing.T) {
+	_, err := strArg(map[string]interface{}{}, "k")
+	if err == nil {
+		t.Error("expected error for missing key, got nil")
+	}
+}
+
+func TestStrArg_WrongType(t *testing.T) {
+	args := map[string]interface{}{"k": 42}
+	_, err := strArg(args, "k")
+	if err == nil {
+		t.Error("expected error for non-string value, got nil")
+	}
+}
+
+// ---- optStrArg -------------------------------------------------------------
+
+func TestOptStrArg_Present(t *testing.T) {
+	args := map[string]interface{}{"k": "val"}
+	if got := optStrArg(args, "k"); got != "val" {
+		t.Errorf("got %q, want %q", got, "val")
+	}
+}
+
+func TestOptStrArg_Absent(t *testing.T) {
+	if got := optStrArg(map[string]interface{}{}, "k"); got != "" {
+		t.Errorf("got %q, want empty string", got)
+	}
+}
+
+func TestOptStrArg_WrongType(t *testing.T) {
+	args := map[string]interface{}{"k": 123}
+	if got := optStrArg(args, "k"); got != "" {
+		t.Errorf("got %q, want empty string for non-string value", got)
+	}
+}
+
+// ---- resolveDirPath --------------------------------------------------------
+
+func TestResolveDirPath_Empty(t *testing.T) {
+	if got := resolveDirPath(map[string]interface{}{}, "path"); got != "." {
+		t.Errorf("got %q, want \".\"", got)
+	}
+}
+
+func TestResolveDirPath_Provided(t *testing.T) {
+	args := map[string]interface{}{"path": "/tmp/foo"}
+	if got := resolveDirPath(args, "path"); got != "/tmp/foo" {
+		t.Errorf("got %q, want \"/tmp/foo\"", got)
+	}
+}
+
+// ---- resolveFolderIDFromDir ------------------------------------------------
+
+func TestResolveFolderIDFromDir_Found(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "12345_my-stage.stage.json"), []byte("{}"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	id, err := resolveFolderIDFromDir(dir)
+	if err != nil || id != 12345 {
+		t.Errorf("got (%d, %v), want (12345, nil)", id, err)
+	}
+}
+
+func TestResolveFolderIDFromDir_FolderJSON(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "999_my-folder.folder.json"), []byte("{}"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	id, err := resolveFolderIDFromDir(dir)
+	if err != nil || id != 999 {
+		t.Errorf("got (%d, %v), want (999, nil)", id, err)
+	}
+}
+
+func TestResolveFolderIDFromDir_NotFound(t *testing.T) {
+	dir := t.TempDir()
+	_, err := resolveFolderIDFromDir(dir)
+	if err == nil {
+		t.Error("expected error when no folder/stage json present, got nil")
+	}
+}
+
+func TestResolveFolderIDFromDir_BadDir(t *testing.T) {
+	_, err := resolveFolderIDFromDir("/nonexistent_dir_xyz_abc")
+	if err == nil {
+		t.Error("expected error for non-existent directory, got nil")
+	}
+}
+
+// ---- resolveProcessPath ----------------------------------------------------
+
+func TestResolveProcessPath_ExplicitArg(t *testing.T) {
+	args := map[string]interface{}{"process_path": "/some/path.conv.json"}
+	p, err := resolveProcessPath(args, "process_path")
+	if err != nil || p != "/some/path.conv.json" {
+		t.Errorf("got (%q, %v)", p, err)
+	}
+}
+
+func TestResolveProcessPath_AutoDiscoverSingle(t *testing.T) {
+	dir := t.TempDir()
+	orig, _ := os.Getwd()
+	os.Chdir(dir) //nolint:errcheck
+	t.Cleanup(func() { os.Chdir(orig) }) //nolint:errcheck
+
+	os.WriteFile(filepath.Join(dir, "123_proc.conv.json"), []byte("{}"), 0644) //nolint:errcheck
+	p, err := resolveProcessPath(map[string]interface{}{}, "process_path")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if p != "123_proc.conv.json" {
+		t.Errorf("got %q, want %q", p, "123_proc.conv.json")
+	}
+}
+
+func TestResolveProcessPath_AutoDiscoverMultiple(t *testing.T) {
+	dir := t.TempDir()
+	orig, _ := os.Getwd()
+	os.Chdir(dir) //nolint:errcheck
+	t.Cleanup(func() { os.Chdir(orig) }) //nolint:errcheck
+
+	os.WriteFile(filepath.Join(dir, "1_a.conv.json"), []byte("{}"), 0644) //nolint:errcheck
+	os.WriteFile(filepath.Join(dir, "2_b.conv.json"), []byte("{}"), 0644) //nolint:errcheck
+	_, err := resolveProcessPath(map[string]interface{}{}, "process_path")
+	if err == nil {
+		t.Error("expected error for multiple .conv.json files, got nil")
+	}
+}
+
+func TestResolveProcessPath_AutoDiscoverNone(t *testing.T) {
+	dir := t.TempDir()
+	orig, _ := os.Getwd()
+	os.Chdir(dir) //nolint:errcheck
+	t.Cleanup(func() { os.Chdir(orig) }) //nolint:errcheck
+
+	_, err := resolveProcessPath(map[string]interface{}{}, "process_path")
+	if err == nil {
+		t.Error("expected error when no .conv.json present, got nil")
+	}
+}

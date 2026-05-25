@@ -284,7 +284,7 @@ positioning script:
 
 - [Process Overview](README.md) - Definition, operational mechanics, and key features of Corezoid
   processes
-- [Best Practices for Building Fast and Effective Processes](best-practices.md) - Detailed
+- [Node Positioning and Optimization](node-positioning-best-practices.md) - Detailed
   optimization techniques
 - [Node Positioning Best Practices](node-positioning-best-practices.md) - Guidelines for visual
   process layout

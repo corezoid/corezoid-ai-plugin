@@ -152,3 +152,4 @@ The server appends `/api/2/json` or `/api/2/download` automatically.
 | `ACCESS_TOKEN` | login step 2 — OAuth2 (or manually for on-prem) |
 | `WORKSPACE_ID` | login step 3 — workspace selection |
 | `COREZOID_STAGE_ID` | login step 4 — stage selection |
+| `COREZOID_OAUTH_CLIENT_ID` | pre-login (on-prem only) — OAuth2 client ID for deployments with a custom authorization server; cloud users do not need this |

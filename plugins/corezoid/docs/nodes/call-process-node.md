@@ -483,9 +483,6 @@ Process-2 uses a Reply to Process node to return data back to Process-1:
 
 - [Reply to Process Node](reply-to-process-node.md) - For implementing the response side
 - [Error Handling](../process/error-handling.md) - Comprehensive error handling strategies
-- [Folders Overview](../folders/README.md) - Documentation for organizing processes in folders
-- [ZIP Format](../folders/zip-format.md) - Documentation for the recommended ZIP format for
-  packaging folders and processes
 
 ## Node Patterns
 

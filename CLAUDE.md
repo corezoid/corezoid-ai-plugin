@@ -78,6 +78,21 @@ Processes are stored as `.conv.json` files named `<ID>_<name>.conv.json`.
 **obj_type values for process-level objects:** 1=process, 0=folder  
 **obj_type values for nodes:** 0=code/api, 1=start, 2=end, 3=condition
 
+## Simulator Plugin
+
+A second plugin lives at `plugins/simulator/` with its own manifest, MCP server, skills, and docs.
+
+```
+plugins/simulator/
+  .mcp.json                       — MCP server config (separate from corezoid)
+  mcp-server/                     — Go MCP server source
+  skills/
+    simulator-graph/              — Skill for managing actor graphs (template.yaml = YAML format)
+  docs/
+    entities/                     — Per-entity docs (actors, forms, layers, accounts, etc.)
+    user-flows/                   — User-facing workflow guides
+```
+
 ## Adding Documentation
 
 When adding a new node type, follow the template at `plugins/corezoid/docs/nodes/node-documentation-template.md` and add a corresponding JSON schema example to `plugins/corezoid/docs/node-structures.md`.

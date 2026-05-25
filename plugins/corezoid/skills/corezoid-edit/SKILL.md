@@ -58,7 +58,7 @@ All constants (URLs, tokens, endpoints, hosts) must be stored as variables — n
 2. Create a new variable if needed: call MCP tool **`create-variable`** with `name`, `description`, `value`
 3. Reference in logic using `{{env_var[@variable-name]}}`
 
-See `${CLAUDE_PLUGIN_ROOT}/plugins/corezoid/docs/variables-guide.md` for details.
+See `${CLAUDE_PLUGIN_ROOT}/docs/variables-guide.md` for details.
 
 ### Node type quick reference
 
@@ -71,7 +71,7 @@ See `${CLAUDE_PLUGIN_ROOT}/plugins/corezoid/docs/variables-guide.md` for details
 | Reply to Process | 0 | `api_rpc_reply` |
 | End / Error | 2 | _(no logics)_ |
 
-For complete JSON structures see `${CLAUDE_PLUGIN_ROOT}/plugins/corezoid/docs/node-structures.md`.
+For complete JSON structures see `${CLAUDE_PLUGIN_ROOT}/docs/node-structures.md`.
 
 ### Common pitfalls
 
@@ -102,26 +102,26 @@ Use the `Read` tool to load these files when specific node or validation details
 
 | Path | When to read |
 |---|---|
-| `${CLAUDE_PLUGIN_ROOT}/plugins/corezoid/docs/node-structures.md` | JSON schemas for all node types (canonical reference) |
-| `${CLAUDE_PLUGIN_ROOT}/plugins/corezoid/docs/nodes/code-node.md` | Code node details and available JS libraries |
-| `${CLAUDE_PLUGIN_ROOT}/plugins/corezoid/docs/nodes/call-process-node.md` | Call a Process node, semaphores, cross-folder calls |
-| `${CLAUDE_PLUGIN_ROOT}/plugins/corezoid/docs/nodes/reply-to-process-node.md` | Reply formats, object stringification |
-| `${CLAUDE_PLUGIN_ROOT}/plugins/corezoid/docs/nodes/api-call-node.md` | HTTP API call configuration |
-| `${CLAUDE_PLUGIN_ROOT}/plugins/corezoid/docs/nodes/end-node.md` | End node success/error configuration |
-| `${CLAUDE_PLUGIN_ROOT}/plugins/corezoid/docs/nodes/condition-node.md` | Condition node (branching logic) |
-| `${CLAUDE_PLUGIN_ROOT}/plugins/corezoid/docs/nodes/delay-node.md` | Delay node (timers and waiting) |
-| `${CLAUDE_PLUGIN_ROOT}/plugins/corezoid/docs/nodes/copy-task-node.md` | Copy Task node (task duplication) |
-| `${CLAUDE_PLUGIN_ROOT}/plugins/corezoid/docs/process/process-json-validation.md` | Validation rules and common errors |
-| `${CLAUDE_PLUGIN_ROOT}/plugins/corezoid/docs/process/error-handling.md` | Error handling patterns (hardware vs software errors) |
-| `${CLAUDE_PLUGIN_ROOT}/plugins/corezoid/docs/process/node-positioning-best-practices.md` | Coordinate system and layout guidelines |
-| `${CLAUDE_PLUGIN_ROOT}/plugins/corezoid/docs/variables-guide.md` | Variable naming rules, creation workflow, usage examples |
+| `${CLAUDE_PLUGIN_ROOT}/docs/node-structures.md` | JSON schemas for all node types (canonical reference) |
+| `${CLAUDE_PLUGIN_ROOT}/docs/nodes/code-node.md` | Code node details and available JS libraries |
+| `${CLAUDE_PLUGIN_ROOT}/docs/nodes/call-process-node.md` | Call a Process node, semaphores, cross-folder calls |
+| `${CLAUDE_PLUGIN_ROOT}/docs/nodes/reply-to-process-node.md` | Reply formats, object stringification |
+| `${CLAUDE_PLUGIN_ROOT}/docs/nodes/api-call-node.md` | HTTP API call configuration |
+| `${CLAUDE_PLUGIN_ROOT}/docs/nodes/end-node.md` | End node success/error configuration |
+| `${CLAUDE_PLUGIN_ROOT}/docs/nodes/condition-node.md` | Condition node (branching logic) |
+| `${CLAUDE_PLUGIN_ROOT}/docs/nodes/delay-node.md` | Delay node (timers and waiting) |
+| `${CLAUDE_PLUGIN_ROOT}/docs/nodes/copy-task-node.md` | Copy Task node (task duplication) |
+| `${CLAUDE_PLUGIN_ROOT}/docs/process/process-json-validation.md` | Validation rules and common errors |
+| `${CLAUDE_PLUGIN_ROOT}/docs/process/error-handling.md` | Error handling patterns (hardware vs software errors) |
+| `${CLAUDE_PLUGIN_ROOT}/docs/process/node-positioning-best-practices.md` | Coordinate system and layout guidelines |
+| `${CLAUDE_PLUGIN_ROOT}/docs/variables-guide.md` | Variable naming rules, creation workflow, usage examples |
 
 ## Example Processes
 
 | Path | Description |
 |---|---|
-| `${CLAUDE_PLUGIN_ROOT}/plugins/corezoid/samples/stripe-checkout.json` | Stripe payment checkout flow |
-| `${CLAUDE_PLUGIN_ROOT}/plugins/corezoid/samples/create-actors.json` | Creating actors/users |
-| `${CLAUDE_PLUGIN_ROOT}/plugins/corezoid/samples/create-user.json` | User creation process |
-| `${CLAUDE_PLUGIN_ROOT}/plugins/corezoid/samples/gpt-calculator.json` | GPT integration example |
-| `${CLAUDE_PLUGIN_ROOT}/plugins/corezoid/samples/api-post.json` | HTTP POST API call example |
+| `${CLAUDE_PLUGIN_ROOT}/samples/stripe-checkout.json` | Stripe payment checkout flow |
+| `${CLAUDE_PLUGIN_ROOT}/samples/create-actors.json` | Creating actors/users |
+| `${CLAUDE_PLUGIN_ROOT}/samples/create-user.json` | User creation process |
+| `${CLAUDE_PLUGIN_ROOT}/samples/gpt-calculator.json` | GPT integration example |
+| `${CLAUDE_PLUGIN_ROOT}/samples/api-post.json` | HTTP POST API call example |

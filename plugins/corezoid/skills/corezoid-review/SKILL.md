@@ -70,7 +70,7 @@ cond_nodes  = [n for n in nodes for lg in n['condition']['logics'] if lg['type']
 - **`api_rpc` / `api_copy`** — check `conv_id` values; numeric IDs instead of `@alias` are a flag
 - **`api_rpc` extra fields** — check for hardcoded values that should be variables
 
-Flag each hardcoded value for extraction to env_var (see `${CLAUDE_PLUGIN_ROOT}/plugins/corezoid/docs/variables-guide.md`).
+Flag each hardcoded value for extraction to env_var (see `${CLAUDE_PLUGIN_ROOT}/docs/variables-guide.md`).
 
 ### Root-level process metadata — do NOT flag as hardcoded
 
@@ -352,8 +352,8 @@ Use the `Read` tool to load these files when specific node or validation details
 
 | Path | When to read |
 |---|---|
-| `${CLAUDE_PLUGIN_ROOT}/plugins/corezoid/docs/nodes/code-node.md` | Code node details and available JS libraries |
-| `${CLAUDE_PLUGIN_ROOT}/plugins/corezoid/docs/nodes/call-process-node.md` | Call a Process node, semaphores |
-| `${CLAUDE_PLUGIN_ROOT}/plugins/corezoid/docs/nodes/api-call-node.md` | HTTP API call configuration |
-| `${CLAUDE_PLUGIN_ROOT}/plugins/corezoid/docs/process/error-handling.md` | Error handling patterns |
-| `${CLAUDE_PLUGIN_ROOT}/plugins/corezoid/docs/process/process-json-validation.md` | Validation rules and common errors |
+| `${CLAUDE_PLUGIN_ROOT}/docs/nodes/code-node.md` | Code node details and available JS libraries |
+| `${CLAUDE_PLUGIN_ROOT}/docs/nodes/call-process-node.md` | Call a Process node, semaphores |
+| `${CLAUDE_PLUGIN_ROOT}/docs/nodes/api-call-node.md` | HTTP API call configuration |
+| `${CLAUDE_PLUGIN_ROOT}/docs/process/error-handling.md` | Error handling patterns |
+| `${CLAUDE_PLUGIN_ROOT}/docs/process/process-json-validation.md` | Validation rules and common errors |

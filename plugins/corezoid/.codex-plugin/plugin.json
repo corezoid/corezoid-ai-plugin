@@ -1,13 +1,13 @@
 {
   "name": "corezoid",
-  "version": "2.2.0",
+  "version": "2.3.4",
   "description": "Corezoid BPM platform assistant. Exposes Corezoid operations as an MCP server and provides skills for creating, editing, reviewing, and deploying business processes.",
   "author": {
     "name": "Corezoid",
     "url": "https://corezoid.com"
   },
   "homepage": "https://github.com/corezoid/corezoid-ai-plugin",
-  "license": "ISC",
+  "license": "MIT",
   "keywords": ["corezoid", "bpm", "process", "workflow", "automation", "mcp"],
   "skills": "./skills/",
   "mcpServers": "./.mcp.json",

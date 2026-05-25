@@ -1,0 +1,137 @@
+{
+  "obj_type": 1,
+  "obj_id": 0,
+  "title": "API Call With Retry",
+  "description": "Demonstrates retry pattern using Delay node after hardware errors",
+  "status": "active",
+  "params": [
+    {
+      "name": "url",
+      "type": "string",
+      "descr": "Target URL",
+      "flags": ["required", "input"],
+      "regex": "",
+      "regex_error_text": ""
+    }
+  ],
+  "ref_mask": true,
+  "conv_type": "process",
+  "scheme": {
+    "nodes": [
+      {
+        "id": "aabc000000000000000000001",
+        "obj_type": 1,
+        "condition": {
+          "logics": [
+            {"type": "go", "to_node_id": "aabc000000000000000000002"}
+          ],
+          "semaphors": []
+        },
+        "title": "Start",
+        "description": "",
+        "x": 400, "y": -52,
+        "extra": "{\"modeForm\":\"collapse\",\"icon\":\"\"}",
+        "options": null
+      },
+      {
+        "id": "aabc000000000000000000002",
+        "obj_type": 0,
+        "condition": {
+          "logics": [
+            {
+              "type": "api",
+              "url": "{{url}}",
+              "method": "GET",
+              "content_type": "application/json",
+              "err_node_id": "aabc000000000000000000003",
+              "extra": {},
+              "extra_type": {}
+            },
+            {"type": "go", "to_node_id": "aabc000000000000000000007"}
+          ],
+          "semaphors": []
+        },
+        "title": "Call External API",
+        "description": "Make HTTP request to the target URL",
+        "x": 400, "y": 100,
+        "extra": "{\"modeForm\":\"expand\",\"icon\":\"\"}",
+        "options": null
+      },
+      {
+        "id": "aabc000000000000000000003",
+        "obj_type": 0,
+        "condition": {
+          "logics": [
+            {
+              "type": "go_if_const",
+              "to_node_id": "aabc000000000000000000004",
+              "conditions": [
+                {
+                  "param": "__conveyor_api_return_type_error__",
+                  "const": "hardware",
+                  "fun": "eq",
+                  "cast": "string"
+                }
+              ]
+            },
+            {"type": "go", "to_node_id": "aabc000000000000000000006"}
+          ],
+          "semaphors": []
+        },
+        "title": "Check Error Type",
+        "description": "Route hardware errors to retry, software errors to failure",
+        "x": 700, "y": 100,
+        "extra": "{\"modeForm\":\"expand\",\"icon\":\"\"}",
+        "options": null
+      },
+      {
+        "id": "aabc000000000000000000004",
+        "obj_type": 0,
+        "condition": {
+          "logics": [],
+          "semaphors": [
+            {
+              "type": "time",
+              "value": 30,
+              "dimension": "sec",
+              "to_node_id": "aabc000000000000000000002"
+            }
+          ]
+        },
+        "title": "Wait 30s Before Retry",
+        "description": "Holds task 30 seconds before retrying after a hardware error",
+        "x": 700, "y": 300,
+        "extra": "{\"modeForm\":\"expand\",\"icon\":\"\"}",
+        "options": null
+      },
+      {
+        "id": "aabc000000000000000000006",
+        "obj_type": 2,
+        "condition": {
+          "logics": [],
+          "semaphors": []
+        },
+        "title": "Final",
+        "description": "",
+        "x": 1000, "y": 100,
+        "extra": "{\"modeForm\":\"collapse\",\"icon\":\"error\"}",
+        "options": null
+      },
+      {
+        "id": "aabc000000000000000000007",
+        "obj_type": 2,
+        "condition": {
+          "logics": [],
+          "semaphors": []
+        },
+        "title": "Final",
+        "description": "",
+        "x": 400, "y": 300,
+        "extra": "{\"modeForm\":\"collapse\",\"icon\":\"success\"}",
+        "options": "{\"save_task\":true}"
+      }
+    ],
+    "web_settings": [[], []]
+  },
+  "uuid": "delay-retry-pattern-example-0001"
+}

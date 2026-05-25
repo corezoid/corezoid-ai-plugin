@@ -38,6 +38,10 @@ Call MCP tool **`create-process`** with:
 
 This creates an empty process in Corezoid and saves the file as `<ID>_<Name>.conv.json` inside `folder_path`. The returned file path is `PROCESS_PATH` — all subsequent steps use it.
 
+> ⚠️ Always verify `folder_path` points to the intended target folder. Omitting it places the process in the project root, which may not be the correct location.
+
+> ⚠️ After `create-process`, Corezoid may create default template nodes (Start, a placeholder process node, Final) even with `create_mode: without_nodes`. Before generating the full JSON, check the current `scheme.nodes` array in the created file. If a Start node already exists, do **not** add another — doing so will cause a validation error.
+
 If the process type is **business logic** and it needs to call existing processes, find their `conv_id` values by browsing the already-exported `.conv.json` files in the project folder.
 
 ---
@@ -70,7 +74,7 @@ Every process follows this base structure:
 | Reply to Process | 0 | `api_rpc_reply` |
 | End / Error | 2 | _(no logics)_ |
 
-For complete JSON schemas see `${CLAUDE_PLUGIN_ROOT}/plugins/corezoid/docs/node-structures.md`.
+For complete JSON schemas see `${CLAUDE_PLUGIN_ROOT}/docs/node-structures.md`.
 
 ---
 
@@ -98,7 +102,7 @@ Produce a valid `.conv.json` file.
 }
 ```
 
-`params` — declare all input parameters the caller must pass. See `${CLAUDE_PLUGIN_ROOT}/plugins/corezoid/docs/process/process-with-parameters.md`.
+`params` — declare all input parameters the caller must pass. See `${CLAUDE_PLUGIN_ROOT}/docs/process/process-with-parameters.md`.
 
 ### Core rules
 
@@ -111,6 +115,7 @@ Produce a valid `.conv.json` file.
   3. Reference in logic: `{{env_var[@variable-name]}}`
 - Use descriptive `title` values (e.g., "Call Payment Process", not "RPC")
 - Position nodes top-to-bottom, incrementing `y` by 200–250px; place error nodes to the right (`x + 300`)
+- Place each Reply Error node at the **same `y`** as the Call/API node it handles — this creates a straight horizontal connector line for the error path
 
 ### Common pitfalls
 
@@ -148,23 +153,23 @@ Use the `Read` tool to load these files when specific node or validation details
 
 | Path | When to read |
 |---|---|
-| `${CLAUDE_PLUGIN_ROOT}/plugins/corezoid/docs/node-structures.md` | JSON schemas for all node types (canonical reference) |
-| `${CLAUDE_PLUGIN_ROOT}/plugins/corezoid/docs/nodes/code-node.md` | Code node details and available JS libraries |
-| `${CLAUDE_PLUGIN_ROOT}/plugins/corezoid/docs/nodes/call-process-node.md` | Call a Process node, semaphores, cross-folder calls |
-| `${CLAUDE_PLUGIN_ROOT}/plugins/corezoid/docs/nodes/reply-to-process-node.md` | Reply formats, object stringification |
-| `${CLAUDE_PLUGIN_ROOT}/plugins/corezoid/docs/nodes/api-call-node.md` | HTTP API call configuration |
-| `${CLAUDE_PLUGIN_ROOT}/plugins/corezoid/docs/nodes/end-node.md` | End node success/error configuration |
-| `${CLAUDE_PLUGIN_ROOT}/plugins/corezoid/docs/process/process-json-validation.md` | Validation rules and common errors |
-| `${CLAUDE_PLUGIN_ROOT}/plugins/corezoid/docs/process/error-handling.md` | Error handling patterns |
-| `${CLAUDE_PLUGIN_ROOT}/plugins/corezoid/docs/process/node-positioning-best-practices.md` | Coordinate system and layout guidelines |
-| `${CLAUDE_PLUGIN_ROOT}/plugins/corezoid/docs/variables-guide.md` | Variable naming rules, creation workflow, usage examples |
+| `${CLAUDE_PLUGIN_ROOT}/docs/node-structures.md` | JSON schemas for all node types (canonical reference) |
+| `${CLAUDE_PLUGIN_ROOT}/docs/nodes/code-node.md` | Code node details and available JS libraries |
+| `${CLAUDE_PLUGIN_ROOT}/docs/nodes/call-process-node.md` | Call a Process node, semaphores, cross-folder calls |
+| `${CLAUDE_PLUGIN_ROOT}/docs/nodes/reply-to-process-node.md` | Reply formats, object stringification |
+| `${CLAUDE_PLUGIN_ROOT}/docs/nodes/api-call-node.md` | HTTP API call configuration |
+| `${CLAUDE_PLUGIN_ROOT}/docs/nodes/end-node.md` | End node success/error configuration |
+| `${CLAUDE_PLUGIN_ROOT}/docs/process/process-json-validation.md` | Validation rules and common errors |
+| `${CLAUDE_PLUGIN_ROOT}/docs/process/error-handling.md` | Error handling patterns |
+| `${CLAUDE_PLUGIN_ROOT}/docs/process/node-positioning-best-practices.md` | Coordinate system and layout guidelines |
+| `${CLAUDE_PLUGIN_ROOT}/docs/variables-guide.md` | Variable naming rules, creation workflow, usage examples |
 
 ## Example Processes
 
 | Path | Description |
 |---|---|
-| `${CLAUDE_PLUGIN_ROOT}/plugins/corezoid/samples/api-post.json` | HTTP POST API call (connector pattern) |
-| `${CLAUDE_PLUGIN_ROOT}/plugins/corezoid/samples/stripe-checkout.json` | Stripe payment checkout flow |
-| `${CLAUDE_PLUGIN_ROOT}/plugins/corezoid/samples/create-actors.json` | Business logic with multiple process calls |
-| `${CLAUDE_PLUGIN_ROOT}/plugins/corezoid/samples/gpt-calculator.json` | GPT integration example |
-| `${CLAUDE_PLUGIN_ROOT}/plugins/corezoid/samples/create-user.json` | User creation process |
+| `${CLAUDE_PLUGIN_ROOT}/samples/api-post.json` | HTTP POST API call (connector pattern) |
+| `${CLAUDE_PLUGIN_ROOT}/samples/stripe-checkout.json` | Stripe payment checkout flow |
+| `${CLAUDE_PLUGIN_ROOT}/samples/create-actors.json` | Business logic with multiple process calls |
+| `${CLAUDE_PLUGIN_ROOT}/samples/gpt-calculator.json` | GPT integration example |
+| `${CLAUDE_PLUGIN_ROOT}/samples/create-user.json` | User creation process |

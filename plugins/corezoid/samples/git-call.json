@@ -1,0 +1,143 @@
+{
+  "obj_type": 1,
+  "obj_id": 0,
+  "title": "Run Script From Git",
+  "description": "Demonstrates api_git node with timeout semaphore and error escalation",
+  "status": "active",
+  "params": [
+    {
+      "name": "input_data",
+      "type": "string",
+      "descr": "Data to pass to the script",
+      "flags": ["required", "input"],
+      "regex": "",
+      "regex_error_text": ""
+    }
+  ],
+  "ref_mask": true,
+  "conv_type": "process",
+  "scheme": {
+    "nodes": [
+      {
+        "id": "gitc000000000000000000001",
+        "obj_type": 1,
+        "condition": {
+          "logics": [
+            {"type": "go", "to_node_id": "gitc000000000000000000002"}
+          ],
+          "semaphors": []
+        },
+        "title": "Start",
+        "description": "",
+        "x": 400, "y": -52,
+        "extra": "{\"modeForm\":\"collapse\",\"icon\":\"\"}",
+        "options": null
+      },
+      {
+        "id": "gitc000000000000000000002",
+        "obj_type": 0,
+        "condition": {
+          "logics": [
+            {
+              "type": "api_git",
+              "version": 2,
+              "lang": "js",
+              "repo": "{{env_var[@git-repo-url]}}",
+              "commit": "main",
+              "err_node_id": "gitc000000000000000000003"
+            },
+            {"type": "go", "to_node_id": "gitc000000000000000000007"}
+          ],
+          "semaphors": [
+            {
+              "type": "time",
+              "value": 10,
+              "dimension": "min",
+              "to_node_id": "gitc000000000000000000003"
+            }
+          ]
+        },
+        "title": "Execute Risk Score Script",
+        "description": "Pulls and runs the risk-scoring algorithm from the main branch. Returns risk_score and risk_factors.",
+        "x": 400, "y": 100,
+        "extra": "{\"modeForm\":\"expand\",\"icon\":\"\"}",
+        "options": null
+      },
+      {
+        "id": "gitc000000000000000000003",
+        "obj_type": 0,
+        "condition": {
+          "logics": [
+            {
+              "type": "go_if_const",
+              "to_node_id": "gitc000000000000000000004",
+              "conditions": [
+                {
+                  "param": "__conveyor_git_call_return_type_error__",
+                  "const": "hardware",
+                  "fun": "eq",
+                  "cast": "string"
+                }
+              ]
+            },
+            {"type": "go", "to_node_id": "gitc000000000000000000006"}
+          ],
+          "semaphors": []
+        },
+        "title": "Check Git Error Type",
+        "description": "Routes network/access errors to retry, code runtime errors to failure node",
+        "x": 700, "y": 100,
+        "extra": "{\"modeForm\":\"expand\",\"icon\":\"\"}",
+        "options": null
+      },
+      {
+        "id": "gitc000000000000000000004",
+        "obj_type": 0,
+        "condition": {
+          "logics": [],
+          "semaphors": [
+            {
+              "type": "time",
+              "value": 30,
+              "dimension": "sec",
+              "to_node_id": "gitc000000000000000000002"
+            }
+          ]
+        },
+        "title": "Wait 30s Before Retry",
+        "description": "Waits 30 seconds after a Git access or network error before retrying",
+        "x": 700, "y": 300,
+        "extra": "{\"modeForm\":\"expand\",\"icon\":\"\"}",
+        "options": null
+      },
+      {
+        "id": "gitc000000000000000000006",
+        "obj_type": 2,
+        "condition": {
+          "logics": [],
+          "semaphors": []
+        },
+        "title": "Final",
+        "description": "",
+        "x": 1000, "y": 100,
+        "extra": "{\"modeForm\":\"collapse\",\"icon\":\"error\"}",
+        "options": null
+      },
+      {
+        "id": "gitc000000000000000000007",
+        "obj_type": 2,
+        "condition": {
+          "logics": [],
+          "semaphors": []
+        },
+        "title": "Final",
+        "description": "",
+        "x": 400, "y": 300,
+        "extra": "{\"modeForm\":\"collapse\",\"icon\":\"success\"}",
+        "options": "{\"save_task\":true}"
+      }
+    ],
+    "web_settings": [[], []]
+  },
+  "uuid": "git-call-example-0000000000000001"
+}

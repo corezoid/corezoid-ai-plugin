@@ -319,7 +319,7 @@ For detailed documentation on defining and using output parameters, see
   request
 - [Process Output Parameters](../process/process-output-parameters.md) - Documentation for defining
   output parameters
-- [Best Practices for Building Fast and Effective Processes](../process/best-practices.md) -
+- [Best Practices for Building Fast and Effective Processes](../process/process-development-guide.md) -
   Optimization techniques for processes
 
 ## Configuration Example

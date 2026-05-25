@@ -1,0 +1,141 @@
+{
+  "obj_type": 1,
+  "obj_id": 0,
+  "title": "Database Query With Error Handling",
+  "description": "Demonstrates db_call node with hardware/software error routing",
+  "status": "active",
+  "params": [
+    {
+      "name": "user_id",
+      "type": "number",
+      "descr": "User ID to look up",
+      "flags": ["required", "input"],
+      "regex": "",
+      "regex_error_text": ""
+    }
+  ],
+  "ref_mask": true,
+  "conv_type": "process",
+  "scheme": {
+    "nodes": [
+      {
+        "id": "dbca000000000000000000001",
+        "obj_type": 1,
+        "condition": {
+          "logics": [
+            {"type": "go", "to_node_id": "dbca000000000000000000002"}
+          ],
+          "semaphors": []
+        },
+        "title": "Start",
+        "description": "",
+        "x": 400, "y": -52,
+        "extra": "{\"modeForm\":\"collapse\",\"icon\":\"\"}",
+        "options": null
+      },
+      {
+        "id": "dbca000000000000000000002",
+        "obj_type": 0,
+        "condition": {
+          "logics": [
+            {
+              "type": "db_call",
+              "instance_id": 227,
+              "query": "SELECT id, name, email FROM \"public\".\"users\" WHERE id = {{user_id}} LIMIT 1",
+              "err_node_id": "dbca000000000000000000003"
+            },
+            {"type": "go", "to_node_id": "dbca000000000000000000007"}
+          ],
+          "semaphors": [
+            {
+              "type": "time",
+              "value": 120,
+              "dimension": "sec",
+              "to_node_id": "dbca000000000000000000003"
+            }
+          ]
+        },
+        "title": "Fetch User Profile",
+        "description": "Queries users table by user_id. Returns name and email on success.",
+        "x": 400, "y": 100,
+        "extra": "{\"modeForm\":\"expand\",\"icon\":\"\"}",
+        "options": null
+      },
+      {
+        "id": "dbca000000000000000000003",
+        "obj_type": 0,
+        "condition": {
+          "logics": [
+            {
+              "type": "go_if_const",
+              "to_node_id": "dbca000000000000000000004",
+              "conditions": [
+                {
+                  "param": "__conveyor_db_call_return_type_error__",
+                  "const": "hardware",
+                  "fun": "eq",
+                  "cast": "string"
+                }
+              ]
+            },
+            {"type": "go", "to_node_id": "dbca000000000000000000006"}
+          ],
+          "semaphors": []
+        },
+        "title": "Check DB Error Type",
+        "description": "Routes hardware errors (connection issues) to retry, software errors (SQL) to failure",
+        "x": 700, "y": 100,
+        "extra": "{\"modeForm\":\"expand\",\"icon\":\"\"}",
+        "options": null
+      },
+      {
+        "id": "dbca000000000000000000004",
+        "obj_type": 0,
+        "condition": {
+          "logics": [],
+          "semaphors": [
+            {
+              "type": "time",
+              "value": 30,
+              "dimension": "sec",
+              "to_node_id": "dbca000000000000000000002"
+            }
+          ]
+        },
+        "title": "Wait 30s Before Retry",
+        "description": "Waits 30 seconds after a database connection error before retrying the query",
+        "x": 700, "y": 300,
+        "extra": "{\"modeForm\":\"expand\",\"icon\":\"\"}",
+        "options": null
+      },
+      {
+        "id": "dbca000000000000000000006",
+        "obj_type": 2,
+        "condition": {
+          "logics": [],
+          "semaphors": []
+        },
+        "title": "Final",
+        "description": "",
+        "x": 1000, "y": 100,
+        "extra": "{\"modeForm\":\"collapse\",\"icon\":\"error\"}",
+        "options": null
+      },
+      {
+        "id": "dbca000000000000000000007",
+        "obj_type": 2,
+        "condition": {
+          "logics": [],
+          "semaphors": []
+        },
+        "title": "Final",
+        "description": "",
+        "x": 400, "y": 300,
+        "extra": "{\"modeForm\":\"collapse\",\"icon\":\"success\"}",
+        "options": "{\"save_task\":true}"
+      }
+    ],
+    "web_settings": [[], []]
+  },
+  "uuid": "database-call-example-000000000001"
+}

@@ -8,7 +8,7 @@
   },
   "homepage": "https://github.com/corezoid/corezoid-ai-plugin",
   "repository": "https://github.com/corezoid/corezoid-ai-plugin",
-  "license": "ISC",
+  "license": "MIT",
   "keywords": ["corezoid", "process", "bpm", "workflow", "automation", "mcp"],
   "skills": "./skills/",
   "mcpServers": "./.mcp.json"

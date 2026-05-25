@@ -379,7 +379,7 @@ This dedicated error node pattern is the standard practice for error handling in
 
 ## Related Documentation
 
-- [Process Best Practices](best-practices.md) - Optimization techniques for processes
+- [Process Best Practices](node-positioning-best-practices.md) - Optimization techniques for processes
 - [API Call Node](../nodes/api-call-node.md) - Documentation for API Call nodes
 - [Code Node](../nodes/code-node.md) - Documentation for Code nodes
 - [Database Call Node](../nodes/database-call-node.md) - Documentation for Database Call nodes

@@ -1,19 +1,20 @@
 package main
 
 import (
+	"bytes"
+	"context"
 	"embed"
 	"encoding/json"
 	"fmt"
 	"io"
-	"io/ioutil"
-	"log"
-	"log/slog"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
+
+	"github.com/santhosh-tekuri/jsonschema/v6"
 )
 
 //go:embed json-schema
@@ -21,6 +22,18 @@ var schemaFS embed.FS
 
 // Global logger instance
 var logger = &Logger{}
+
+// authStateMu guards the mutable auth-state globals below. Reads happen on
+// many goroutines (one per MCP request in HTTP mode, plus tool-call goroutines
+// in stdio mode); writes happen during login/logout, credential loading at
+// startup, and the env-default block at the top of each handler. Without the
+// mutex the race detector flags every concurrent access — and HTTP mode
+// genuinely races because net/http dispatches handlers concurrently.
+//
+// Read paths take RLock (see authSnapshot). Write paths take Lock. Long-running
+// operations (OAuth, elicitation, API calls) must NOT be performed while
+// holding the lock; snapshot or release first.
+var authStateMu sync.RWMutex
 var apiURL string
 var accountURL string
 var apiToken string
@@ -28,6 +41,26 @@ var workspaceID string
 var debug bool
 var apigwURL string
 var stageID int
+var insecureTLS bool
+
+// authSnapshot returns a coherent snapshot of the auth-state globals taken
+// under the read lock. Callers that subsequently need to mutate state must
+// acquire authStateMu.Lock() (not upgrade — Go's RWMutex doesn't support that).
+func authSnapshot() (apiURLv, tokenv, workspaceIDv, accountURLv string, stageIDv int) {
+	authStateMu.RLock()
+	defer authStateMu.RUnlock()
+	return apiURL, apiToken, workspaceID, accountURL, stageID
+}
+
+// withAuthLock runs fn while holding the auth-state write lock. Use for
+// composite read-then-write operations (e.g. "set X only if empty") that must
+// be atomic with respect to other readers and writers. fn must not perform
+// long-running I/O — that would block every concurrent request.
+func withAuthLock(fn func()) {
+	authStateMu.Lock()
+	defer authStateMu.Unlock()
+	fn()
+}
 
 func loadDotEnv(filename string) {
 	data, err := os.ReadFile(filename)
@@ -112,6 +145,7 @@ func loadConfig() {
 		apigwURL = "https://api-apigw.corezoid.com"
 	}
 	stageID, _ = strconv.Atoi(os.Getenv("COREZOID_STAGE_ID"))
+	insecureTLS = os.Getenv("COREZOID_INSECURE_TLS") != ""
 }
 
 // runCLI executes a single MCP tool from the command line and exits.
@@ -128,7 +162,10 @@ func runCLI(toolName string, rawArgs []string) {
 	if _, ok := args["folder_id"]; !ok && stageID != 0 {
 		args["folder_id"] = stageID
 	}
-	result, isError := handleToolCall(toolName, args)
+	// CLI mode runs to completion or until the user kills the process; we
+	// don't have a richer cancellation source than the process itself, so
+	// context.Background() is fine here.
+	result, isError := handleToolCall(context.Background(), toolName, args)
 	if isError {
 		fmt.Fprintln(os.Stderr, result)
 		os.Exit(1)
@@ -152,26 +189,25 @@ func main() {
 		return
 	}
 
-	// MCP server mode — configure debug log file so all output avoids stdout.
-	err := os.Setenv("COREZOID_DEBUG_LOG", "/tmp/corezoid.log")
-	if err != nil {
-		log.Fatal(err)
+	// MCP server mode — route all log output to a file so it never leaks onto
+	// MCP stdout (which carries JSON-RPC messages).
+	// Debug level is opt-in: set COREZOID_DEBUG=1 to enable.
+	logPath := os.Getenv("COREZOID_DEBUG_LOG")
+	if logPath == "" {
+		logPath = filepath.Join(os.TempDir(), "corezoid.log")
 	}
-	if logPath := os.Getenv("COREZOID_DEBUG_LOG"); logPath != "" {
-		f, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
-		if err == nil {
-			logger.writer = f
-			logger.IsDebug = true
-		} else {
-			fmt.Fprintf(os.Stderr, "[corezoid-mcp] WARNING: cannot open debug log %s: %v\n", logPath, err)
-		}
+	if f, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0600); err == nil {
+		logger.writer = f
+	} else {
+		fmt.Fprintf(os.Stderr, "[corezoid-mcp] WARNING: cannot open log file %s: %v\n", logPath, err)
 	}
+	logger.IsDebug = os.Getenv("COREZOID_DEBUG") != ""
 
 	cwd, _ := os.Getwd()
 	logger.Debug("Starting corezoid-mcp server, cwd=%s", cwd)
 
 	loadConfig()
-	logger.Debug("Loaded configuration", "apiURL", apiURL, "workspaceID", workspaceID, "apigwURL", apigwURL, "hasToken", apiToken != "")
+	logger.Debug("Loaded configuration: apiURL=%s workspaceID=%s apigwURL=%s hasToken=%v", apiURL, workspaceID, apigwURL, apiToken != "")
 
 	if apiToken == "" {
 		fmt.Fprintln(os.Stderr, "[corezoid-mcp] NOTICE: No credentials found in .env.")
@@ -179,247 +215,113 @@ func main() {
 		fmt.Fprintf(os.Stderr, "[corezoid-mcp] Credentials will be saved to: %s\n", filepath.Join(cwd, ".env"))
 	}
 
+	if port := os.Getenv("COREZOID_HTTP_PORT"); port != "" {
+		addr := "127.0.0.1:" + port
+		if err := runHTTPServer(addr); err != nil {
+			fmt.Fprintf(os.Stderr, "[corezoid-mcp] HTTP server error: %v\n", err)
+			os.Exit(1)
+		}
+		return
+	}
+
 	runMCPServer()
 }
 
-// ValidateJSONSchema validates a JSON file against the combined schema
-// Returns nil if validation passes, error otherwise
-func ValidateJSONSchema(filePath string, debug bool) error {
-	// Create a temporary directory for schema files
-	tmpDir, err := os.MkdirTemp("", "json-schema-validation")
-	if err != nil {
-		return fmt.Errorf("failed to create temporary directory: %v", err)
-	}
-	defer os.RemoveAll(tmpDir) // Clean up when done
+var (
+	compiledSchemaOnce sync.Once
+	compiledSchema     *jsonschema.Schema
+	compiledSchemaErr  error
+)
 
-	if debug {
-		slog.Debug("Created temporary directory for schema validation", "dir", tmpDir)
-	}
+// schemaDefinitions maps the keys used in the combined schema's "definitions"
+// block to their embedded source paths under schemaFS.
+var schemaDefinitions = []struct{ name, path string }{
+	{"process", "json-schema/process.json"},
+	{"node", "json-schema/node.json"},
+	{"condition", "json-schema/logics/condition.json"},
+	{"logics", "json-schema/logics.json"},
+	{"semaphors", "json-schema/logics/semaphors.json"},
+	{"go", "json-schema/logics/go.json"},
+	{"go_if_const", "json-schema/logics/go_if_const.json"},
+	{"set_param", "json-schema/logics/set_param.json"},
+	{"api", "json-schema/logics/api.json"},
+	{"api_callback", "json-schema/logics/api_callback.json"},
+	{"api_sum", "json-schema/logics/api_sum.json"},
+	{"api_code", "json-schema/logics/api_code.json"},
+	{"api_copy", "json-schema/logics/api_copy.json"},
+	{"api_rpc", "json-schema/logics/api_rpc.json"},
+	{"api_rpc_reply", "json-schema/logics/api_rpc_reply.json"},
+	{"api_queue", "json-schema/logics/api_queue.json"},
+	{"api_get_task", "json-schema/logics/api_get_task.json"},
+	{"api_form", "json-schema/logics/api_form.json"},
+	{"api_git", "json-schema/logics/api_git.json"},
+	{"db_call", "json-schema/logics/db_call.json"},
+	{"semaphore_time", "json-schema/logics/semaphore_time.json"},
+	{"semaphore_count", "json-schema/logics/semaphore_count.json"},
+}
 
-	// Extract embedded schema files to tmpDir
-	logicsDir := filepath.Join(tmpDir, "logics")
-	if err := os.MkdirAll(logicsDir, 0755); err != nil {
-		return fmt.Errorf("failed to create logics directory: %v", err)
-	}
-
-	copyEmbedded := func(src, dst string) error {
-		data, err := schemaFS.ReadFile(src)
+// loadCompiledSchema parses the embedded schema files and compiles the
+// combined draft-07 schema. The result is cached for the lifetime of the
+// process — schemas are static, so we pay the parsing cost exactly once.
+func loadCompiledSchema() (*jsonschema.Schema, error) {
+	compiledSchemaOnce.Do(func() {
+		defs := make(map[string]any, len(schemaDefinitions))
+		for _, d := range schemaDefinitions {
+			data, err := schemaFS.ReadFile(d.path)
+			if err != nil {
+				compiledSchemaErr = fmt.Errorf("failed to read embedded %s: %v", d.path, err)
+				return
+			}
+			doc, err := jsonschema.UnmarshalJSON(bytes.NewReader(data))
+			if err != nil {
+				compiledSchemaErr = fmt.Errorf("failed to parse %s: %v", d.path, err)
+				return
+			}
+			defs[d.name] = doc
+		}
+		combined := map[string]any{
+			"$schema":     "http://json-schema.org/draft-07/schema#",
+			"title":       "Combined Schema",
+			"description": "Combined schema for validation",
+			"definitions": defs,
+			"$ref":        "#/definitions/process",
+		}
+		c := jsonschema.NewCompiler()
+		if err := c.AddResource("mem:///combined.json", combined); err != nil {
+			compiledSchemaErr = fmt.Errorf("failed to register combined schema: %v", err)
+			return
+		}
+		sch, err := c.Compile("mem:///combined.json")
 		if err != nil {
-			return fmt.Errorf("failed to read embedded %s: %v", src, err)
+			compiledSchemaErr = fmt.Errorf("failed to compile combined schema: %v", err)
+			return
 		}
-		return os.WriteFile(dst, data, 0644)
-	}
+		compiledSchema = sch
+	})
+	return compiledSchema, compiledSchemaErr
+}
 
-	// Top-level schema files
-	for _, name := range []string{"process.json", "node.json", "logics.json"} {
-		if err := copyEmbedded("json-schema/"+name, filepath.Join(tmpDir, name)); err != nil {
-			return err
-		}
-	}
-
-	// logics/ schema files
-	logicsFiles := []string{
-		"condition.json", "semaphors.json", "go.json", "go_if_const.json",
-		"set_param.json", "api.json", "api_callback.json", "api_sum.json",
-		"api_code.json", "api_copy.json", "api_rpc.json", "api_rpc_reply.json",
-		"api_queue.json", "api_get_task.json", "api_form.json", "api_git.json",
-		"db_call.json", "semaphore_time.json", "semaphore_count.json",
-	}
-	for _, name := range logicsFiles {
-		if err := copyEmbedded("json-schema/logics/"+name, filepath.Join(logicsDir, name)); err != nil {
-			return err
-		}
-	}
-
-	// Create the combined schema file
-	combinedSchemaPath := filepath.Join(tmpDir, "combined_schema.json")
-	combinedSchemaContent := `{
-	"$schema": "http://json-schema.org/draft-07/schema#",
-	"title": "Combined Schema",
-	"description": "Combined schema for validation",
-	"definitions": {
-		"process": %s,
-		"node": %s,
-		"condition": %s,
-		"logics": %s,
-		"semaphors": %s,
-		"go": %s,
-		"go_if_const": %s,
-		"set_param": %s,
-		"api": %s,
-		"api_callback": %s,
-		"api_sum": %s,
-		"api_code": %s,
-		"api_copy": %s,
-		"api_rpc": %s,
-		"api_rpc_reply": %s,
-		"api_queue": %s,
-		"api_get_task": %s,
-		"api_form": %s,
-		"api_git": %s,
-		"db_call": %s,
-		"semaphore_time": %s,
-		"semaphore_count": %s
-	},
-	"$ref": "#/definitions/process"
-}`
-
-	// Read all the schema files
-	processSchema, err := ioutil.ReadFile(filepath.Join(tmpDir, "process.json"))
+// ValidateJSONSchema validates a JSON file against the combined schema.
+// Returns nil if validation passes, an error otherwise.
+func ValidateJSONSchema(filePath string, debug bool) error {
+	sch, err := loadCompiledSchema()
 	if err != nil {
-		return fmt.Errorf("failed to read process.json: %v", err)
+		return err
 	}
-	nodeSchema, err := ioutil.ReadFile(filepath.Join(tmpDir, "node.json"))
-	if err != nil {
-		return fmt.Errorf("failed to read node.json: %v", err)
-	}
-	conditionSchema, err := ioutil.ReadFile(filepath.Join(logicsDir, "condition.json"))
-	if err != nil {
-		return fmt.Errorf("failed to read logics/condition.json: %v", err)
-	}
-	logicsSchema, err := ioutil.ReadFile(filepath.Join(tmpDir, "logics.json"))
-	if err != nil {
-		return fmt.Errorf("failed to read logics.json: %v", err)
-	}
-	semaphorsSchema, err := ioutil.ReadFile(filepath.Join(logicsDir, "semaphors.json"))
-	if err != nil {
-		return fmt.Errorf("failed to read logics/semaphors.json: %v", err)
-	}
-	goSchema, err := ioutil.ReadFile(filepath.Join(logicsDir, "go.json"))
-	if err != nil {
-		return fmt.Errorf("failed to read logics/go.json: %v", err)
-	}
-	goIfConstSchema, err := ioutil.ReadFile(filepath.Join(logicsDir, "go_if_const.json"))
-	if err != nil {
-		return fmt.Errorf("failed to read logics/go_if_const.json: %v", err)
-	}
-	setParamSchema, err := ioutil.ReadFile(filepath.Join(logicsDir, "set_param.json"))
-	if err != nil {
-		return fmt.Errorf("failed to read logics/set_param.json: %v", err)
-	}
-	apiSchema, err := ioutil.ReadFile(filepath.Join(logicsDir, "api.json"))
-	if err != nil {
-		return fmt.Errorf("failed to read logics/api.json: %v", err)
-	}
-	apiCallbackSchema, err := ioutil.ReadFile(filepath.Join(logicsDir, "api_callback.json"))
-	if err != nil {
-		return fmt.Errorf("failed to read logics/api_callback.json: %v", err)
-	}
-	apiSumSchema, err := ioutil.ReadFile(filepath.Join(logicsDir, "api_sum.json"))
-	if err != nil {
-		return fmt.Errorf("failed to read logics/api_sum.json: %v", err)
-	}
-	apiCodeSchema, err := ioutil.ReadFile(filepath.Join(logicsDir, "api_code.json"))
-	if err != nil {
-		return fmt.Errorf("failed to read logics/api_code.json: %v", err)
-	}
-	apiCopySchema, err := ioutil.ReadFile(filepath.Join(logicsDir, "api_copy.json"))
-	if err != nil {
-		return fmt.Errorf("failed to read logics/api_copy.json: %v", err)
-	}
-	apiRpcSchema, err := ioutil.ReadFile(filepath.Join(logicsDir, "api_rpc.json"))
-	if err != nil {
-		return fmt.Errorf("failed to read logics/api_rpc.json: %v", err)
-	}
-	apiRpcReplySchema, err := ioutil.ReadFile(filepath.Join(logicsDir, "api_rpc_reply.json"))
-	if err != nil {
-		return fmt.Errorf("failed to read logics/api_rpc_reply.json: %v", err)
-	}
-	apiQueueSchema, err := ioutil.ReadFile(filepath.Join(logicsDir, "api_queue.json"))
-	if err != nil {
-		return fmt.Errorf("failed to read logics/api_queue.json: %v", err)
-	}
-	apiGetTaskSchema, err := ioutil.ReadFile(filepath.Join(logicsDir, "api_get_task.json"))
-	if err != nil {
-		return fmt.Errorf("failed to read logics/api_get_task.json: %v", err)
-	}
-	apiFormSchema, err := ioutil.ReadFile(filepath.Join(logicsDir, "api_form.json"))
-	if err != nil {
-		return fmt.Errorf("failed to read logics/api_form.json: %v", err)
-	}
-	apiGitSchema, err := ioutil.ReadFile(filepath.Join(logicsDir, "api_git.json"))
-	if err != nil {
-		return fmt.Errorf("failed to read logics/api_git.json: %v", err)
-	}
-	dbCallSchema, err := ioutil.ReadFile(filepath.Join(logicsDir, "db_call.json"))
-	if err != nil {
-		return fmt.Errorf("failed to read logics/db_call.json: %v", err)
-	}
-	semaphoreTimeSchema, err := ioutil.ReadFile(filepath.Join(logicsDir, "semaphore_time.json"))
-	if err != nil {
-		return fmt.Errorf("failed to read logics/semaphore_time.json: %v", err)
-	}
-	semaphoreCountSchema, err := ioutil.ReadFile(filepath.Join(logicsDir, "semaphore_count.json"))
-	if err != nil {
-		return fmt.Errorf("failed to read logics/semaphore_count.json: %v", err)
-	}
-
-	// Format the combined schema
-	combinedSchema := fmt.Sprintf(
-		combinedSchemaContent,
-		string(processSchema),
-		string(nodeSchema),
-		string(conditionSchema),
-		string(logicsSchema),
-		string(semaphorsSchema),
-		string(goSchema),
-		string(goIfConstSchema),
-		string(setParamSchema),
-		string(apiSchema),
-		string(apiCallbackSchema),
-		string(apiSumSchema),
-		string(apiCodeSchema),
-		string(apiCopySchema),
-		string(apiRpcSchema),
-		string(apiRpcReplySchema),
-		string(apiQueueSchema),
-		string(apiGetTaskSchema),
-		string(apiFormSchema),
-		string(apiGitSchema),
-		string(dbCallSchema),
-		string(semaphoreTimeSchema),
-		string(semaphoreCountSchema),
-	)
-
-	// Write the combined schema to a file
-	err = ioutil.WriteFile(combinedSchemaPath, []byte(combinedSchema), 0644)
-	if err != nil {
-		return fmt.Errorf("failed to write combined schema: %v", err)
-	}
-
-	if debug {
-		logger.Debug("Created combined schema file, path=%s", combinedSchemaPath)
-	}
-
-	// Run the validation command
-	// Copy the input file to the temporary directory
-	inputFileName := filepath.Base(filePath)
-	tmpFilePath := filepath.Join(tmpDir, inputFileName)
-	inputContent, err := ioutil.ReadFile(filePath)
+	data, err := os.ReadFile(filePath)
 	if err != nil {
 		return fmt.Errorf("failed to read input file: %v", err)
 	}
-	err = ioutil.WriteFile(tmpFilePath, inputContent, 0644)
+	instance, err := jsonschema.UnmarshalJSON(bytes.NewReader(data))
 	if err != nil {
-		return fmt.Errorf("failed to copy input file to temporary directory: %v", err)
+		return fmt.Errorf("failed to parse input JSON: %v", err)
 	}
-
-	// Run the validation command
-	cmd := exec.Command("ajv", "validate", "-s", "combined_schema.json", "-d", inputFileName, "--allow-union-types")
-	cmd.Dir = tmpDir // Set working directory to the temporary directory
+	if err := sch.Validate(instance); err != nil {
+		return fmt.Errorf("JSON schema validation failed:\n%v", err)
+	}
 	if debug {
-		logger.Debug("Running validation command, command=%s, dir=%s", cmd.String(), tmpDir)
+		logger.Debug("JSON schema validation passed, file=%s", filePath)
 	}
-
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-		return fmt.Errorf("JSON schema validation failed:\n%s", string(output))
-	}
-
-	if debug {
-		logger.Debug("JSON schema validation passed, output=%s", string(output))
-	}
-
 	return nil
 }
 
@@ -490,7 +392,7 @@ type NodeInfo struct {
 // LoadBinFromFile loads a JSON file and returns its content as a string
 func LoadBinFromFile(filePath string) (string, error) {
 	// Read the file
-	fileContent, err := ioutil.ReadFile(filePath)
+	fileContent, err := os.ReadFile(filePath)
 	if err != nil {
 		return "", fmt.Errorf("error reading file: %v", err)
 	}
@@ -512,15 +414,18 @@ func fixStruct(dataBin string, inProcessID int) (string, []string) {
 		data["obj_id"] = processID
 	}
 	// loop by nodes, найти поле options, если это поле объект превратить в строку
-	if nodes, ok := data["scheme"].(map[string]interface{})["nodes"].([]interface{}); ok {
+	schemeMap, _ := data["scheme"].(map[string]interface{})
+	if nodes, ok := schemeMap["nodes"].([]interface{}); ok {
 		for _, node := range nodes {
 			if nodeMap, ok := node.(map[string]interface{}); ok {
-				if objType := int(nodeMap["obj_type"].(float64)); objType == 0 {
+				objTypeF, _ := nodeMap["obj_type"].(float64)
+				if int(objTypeF) == 0 {
 					//	for by logics
 					condition, ok := nodeMap["condition"].(map[string]interface{})
 					if !ok {
 						nodeBin, _ := json.Marshal(nodeMap)
-						log.Fatalf("ERROR: condition block not found, node: %s", string(nodeBin))
+						messages = append(messages, fmt.Sprintf("WARNING: condition block not found in node %s, skipping", string(nodeBin)))
+						continue
 					}
 					if logics, ok := condition["logics"].([]interface{}); ok {
 						for _, logic := range logics {

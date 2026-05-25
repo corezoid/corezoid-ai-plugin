@@ -1,0 +1,38 @@
+{
+  "obj_type": 1,
+  "obj_id": 0,
+  "title": "Process With Params",
+  "params": [
+    {"name": "email", "type": "string", "descr": "Email", "flags": ["required", "input"]}
+  ],
+  "scheme": {
+    "nodes": [
+      {
+        "id": "ccddaabbccddaabbccdd0001",
+        "obj_type": 1,
+        "condition": {
+          "logics": [
+            {"type": "go", "to_node_id": "ccddaabbccddaabbccdd0002"}
+          ],
+          "semaphors": []
+        },
+        "title": "Start",
+        "x": 0, "y": 0,
+        "extra": "{\"modeForm\":\"collapse\",\"icon\":\"\"}",
+        "options": null
+      },
+      {
+        "id": "ccddaabbccddaabbccdd0002",
+        "obj_type": 2,
+        "condition": {
+          "logics": [],
+          "semaphors": []
+        },
+        "title": "Final",
+        "x": 300, "y": 0,
+        "extra": "{\"modeForm\":\"collapse\",\"icon\":\"success\"}",
+        "options": null
+      }
+    ]
+  }
+}

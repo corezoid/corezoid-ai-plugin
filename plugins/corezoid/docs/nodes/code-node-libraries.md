@@ -347,4 +347,3 @@ Set an appropriate timeout value based on the complexity of your code:
 ## Related Documentation
 
 - [Code Node](code-node.md) - Basic information about Code nodes
-- [Node Examples](examples/node-examples.md) - JSON examples of different node types

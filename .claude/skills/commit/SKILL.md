@@ -35,9 +35,34 @@ Update the `"version"` field in **both** files to the new version:
 - `plugins/corezoid/.claude-plugin/plugin.json`
 - `.claude-plugin/marketplace.json`
 
+## Step 3.5 — Update CHANGELOG.md
+
+Prepend a new entry at the top of `CHANGELOG.md` (right after the `# Changelog` heading) following the existing format:
+
+```
+## [<new_version>]
+
+- <bullet summarising what changed — one line per logical change>
+```
+
+Derive the bullets from the staged diff: group related changes into a single readable line each. Keep it concise — one sentence per item.
+
+## Step 3.6 — Update README.md
+
+Review the diff for changes that affect README content and update the relevant sections in `README.md`:
+
+| What changed | What to update in README.md |
+|---|---|
+| New or removed skill (`SKILL.md` added/deleted) | **What it does** table — add/remove the row |
+| New or removed MCP tool | **MCP Tools** table — add/remove the row; **Architecture** code block if the tool group changes |
+| New plugin directory or top-level file | **Project structure** code block |
+| Breaking change to install/config | **Installation** or **Configuration** section |
+
+If none of the above apply (e.g. pure bug fix, refactor, doc-only change inside an existing skill), skip this step — do not touch README.md.
+
 ## Step 4 — Stage and commit
 
-Stage all modified files (including the two version files) and create a commit.
+Stage all modified files (including the two version files and `CHANGELOG.md`) and create a commit.
 
 Follow the project's commit message convention:
 ```

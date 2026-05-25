@@ -1,0 +1,62 @@
+{
+  "obj_type": 1,
+  "obj_id": 0,
+  "title": "Multi Action Node",
+  "params": [],
+  "scheme": {
+    "nodes": [
+      {
+        "id": "ddaabbccddaabbccddaa0001",
+        "obj_type": 1,
+        "condition": {
+          "logics": [
+            {"type": "go", "to_node_id": "ddaabbccddaabbccddaa0002"}
+          ],
+          "semaphors": []
+        },
+        "title": "Start",
+        "x": 0, "y": 0,
+        "extra": "{\"modeForm\":\"collapse\",\"icon\":\"\"}",
+        "options": null
+      },
+      {
+        "id": "ddaabbccddaabbccddaa0002",
+        "obj_type": 0,
+        "condition": {
+          "logics": [
+            {
+              "type": "set_param",
+              "params": [{"name": "x", "value": "1", "type": "string"}],
+              "err_node_id": "ddaabbccddaabbccddaa0003"
+            },
+            {
+              "type": "api_rpc_reply",
+              "mode": "key_value",
+              "res_data": {"status": "ok"},
+              "res_data_type": {"status": "string"},
+              "throw_exception": false
+            },
+            {"type": "go", "to_node_id": "ddaabbccddaabbccddaa0003"}
+          ],
+          "semaphors": []
+        },
+        "title": "Two Actions",
+        "x": 300, "y": 0,
+        "extra": "{\"modeForm\":\"expand\",\"icon\":\"\"}",
+        "options": null
+      },
+      {
+        "id": "ddaabbccddaabbccddaa0003",
+        "obj_type": 2,
+        "condition": {
+          "logics": [],
+          "semaphors": []
+        },
+        "title": "Final",
+        "x": 600, "y": 0,
+        "extra": "{\"modeForm\":\"collapse\",\"icon\":\"error\"}",
+        "options": null
+      }
+    ]
+  }
+}

@@ -1,0 +1,33 @@
+{
+  "obj_type": 1,
+  "obj_id": 0,
+  "title": "Orphaned Node Process",
+  "scheme": {
+    "nodes": [
+      {
+        "id": "aabbccddeeff00112233aa01",
+        "obj_type": 1,
+        "title": "Start",
+        "condition": {
+          "logics": [{"type": "go", "to_node_id": "aabbccddeeff00112233aa02"}],
+          "semaphors": []
+        },
+        "x": 0, "y": 0
+      },
+      {
+        "id": "aabbccddeeff00112233aa02",
+        "obj_type": 2,
+        "title": "Final",
+        "condition": {"logics": [], "semaphors": []},
+        "x": 300, "y": 0
+      },
+      {
+        "id": "aabbccddeeff00112233aa03",
+        "obj_type": 0,
+        "title": "Orphaned",
+        "condition": {"logics": [], "semaphors": []},
+        "x": 600, "y": 0
+      }
+    ]
+  }
+}

@@ -10,6 +10,8 @@ Use this before tagging a public release.
 - [ ] `.agents/plugins/marketplace.json` is present and valid JSON.
 - [ ] No TODO or placeholder values remain in any manifest.
 - [ ] Manifest asset and skill paths resolve under `plugins/corezoid/`.
+- [ ] Both `plugin.json` manifests have `"license": "MIT"` (not ISC).
+- [ ] All plugin `source` paths listed in marketplace manifests exist on disk.
 
 ## MCP Server
 
@@ -43,5 +45,5 @@ python3 -m json.tool plugins/corezoid/.mcp.json >/dev/null
 ## Git
 
 - [ ] All changes are committed on `main` (or merged from a feature branch).
-- [ ] Release tag matches the manifest version, e.g. `v1.3.1`.
+- [ ] Release tag matches the manifest version, e.g. `v2.3.4`.
 - [ ] Tag is pushed to `origin`.
