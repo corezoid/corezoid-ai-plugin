@@ -156,7 +156,7 @@ func main() {
 	// Respect COREZOID_DEBUG_LOG if the user has already set it; otherwise fall
 	// back to /tmp/corezoid.log so debug output never leaks onto MCP stdout.
 	if os.Getenv("COREZOID_DEBUG_LOG") == "" {
-		os.Setenv("COREZOID_DEBUG_LOG", "/tmp/corezoid.log") //nolint:errcheck
+		os.Setenv("COREZOID_DEBUG_LOG", filepath.Join(os.TempDir(), "corezoid.log")) //nolint:errcheck
 	}
 	if logPath := os.Getenv("COREZOID_DEBUG_LOG"); logPath != "" {
 		f, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
@@ -518,10 +518,12 @@ func fixStruct(dataBin string, inProcessID int) (string, []string) {
 		data["obj_id"] = processID
 	}
 	// loop by nodes, найти поле options, если это поле объект превратить в строку
-	if nodes, ok := data["scheme"].(map[string]interface{})["nodes"].([]interface{}); ok {
+	schemeMap, _ := data["scheme"].(map[string]interface{})
+	if nodes, ok := schemeMap["nodes"].([]interface{}); ok {
 		for _, node := range nodes {
 			if nodeMap, ok := node.(map[string]interface{}); ok {
-				if objType := int(nodeMap["obj_type"].(float64)); objType == 0 {
+				objTypeF, _ := nodeMap["obj_type"].(float64)
+				if int(objTypeF) == 0 {
 					//	for by logics
 					condition, ok := nodeMap["condition"].(map[string]interface{})
 					if !ok {

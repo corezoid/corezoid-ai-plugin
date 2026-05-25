@@ -48,6 +48,10 @@ type mcpToolResult struct {
 	IsError bool         `json:"isError,omitempty"`
 }
 
+// mcpServerVersion is the version reported in MCP initialize responses.
+// Keep this in sync with .claude-plugin/plugin.json.
+const mcpServerVersion = "2.3.4"
+
 // oauthClientID is the OAuth2 client ID used for PKCE flow.
 // Resolved from COREZOID_OAUTH_CLIENT_ID env var, falling back to the built-in default.
 var oauthClientID string
@@ -126,6 +130,9 @@ func elicitValues(message string, schema map[string]interface{}) (content map[st
 // runMCPServer starts an MCP server over stdin/stdout using newline-delimited JSON-RPC 2.0.
 func runMCPServer() {
 	oauthClientID = oauthDefaultClientID
+	if v := os.Getenv("COREZOID_OAUTH_CLIENT_ID"); v != "" {
+		oauthClientID = v
+	}
 	serverWriter = bufio.NewWriter(os.Stdout)
 
 	// Auto-load saved credentials if no token is configured via env.
@@ -205,7 +212,7 @@ func runMCPServer() {
 					},
 					"serverInfo": map[string]interface{}{
 						"name":    "convctl-mcp",
-						"version": "1.0.4",
+						"version": mcpServerVersion,
 					},
 				},
 			})
@@ -251,4 +258,3 @@ func runMCPServer() {
 		}
 	}
 }
-

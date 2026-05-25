@@ -7,6 +7,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"html"
 	"io"
 	"net"
 	"net/http"
@@ -78,6 +79,12 @@ func oauthPKCEFlow(accountURL, clientID string) (*PKCEResult, error) {
 	}
 	challenge := generateChallenge(verifier)
 
+	stateBytes := make([]byte, 16)
+	if _, err := rand.Read(stateBytes); err != nil {
+		return nil, fmt.Errorf("failed to generate OAuth state: %w", err)
+	}
+	state := base64.RawURLEncoding.EncodeToString(stateBytes)
+
 	port, err := findFreePort()
 	if err != nil {
 		return nil, fmt.Errorf("failed to find free port for callback: %w", err)
@@ -91,6 +98,7 @@ func oauthPKCEFlow(accountURL, clientID string) (*PKCEResult, error) {
 		"redirect_uri":          {redirectURI},
 		"code_challenge":        {challenge},
 		"code_challenge_method": {"S256"},
+		"state":                 {state},
 	}
 	authorizeURL := accountURL + "/oauth2/authorize"
 	tokenURL := accountURL + "/oauth2/token"
@@ -101,18 +109,28 @@ func oauthPKCEFlow(accountURL, clientID string) (*PKCEResult, error) {
 
 	mux := http.NewServeMux()
 	srv := &http.Server{
-		Addr:    fmt.Sprintf("localhost:%d", port),
-		Handler: mux,
+		Addr:              fmt.Sprintf("localhost:%d", port),
+		Handler:           mux,
+		ReadHeaderTimeout: 5 * time.Second,
 	}
 
 	mux.HandleFunc("/callback", func(w http.ResponseWriter, r *http.Request) {
 		q := r.URL.Query()
+		if got := q.Get("state"); got != state {
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+			_, _ = w.Write([]byte(oauthPageHTML("Authentication Failed", "error",
+				"Authentication failed",
+				"State parameter mismatch.",
+				"You may close this window.")))
+			errCh <- fmt.Errorf("OAuth state mismatch: possible CSRF")
+			return
+		}
 		if errCode := q.Get("error"); errCode != "" {
 			desc := q.Get("error_description")
 			w.Header().Set("Content-Type", "text/html; charset=utf-8")
 			_, _ = w.Write([]byte(oauthPageHTML("Authentication Failed", "error",
 				"Authentication failed",
-				"<strong>"+errCode+"</strong>: "+desc,
+				"<strong>"+html.EscapeString(errCode)+"</strong>: "+html.EscapeString(desc),
 				"You may close this window.")))
 			errCh <- fmt.Errorf("OAuth error: %s — %s", errCode, desc)
 			return
