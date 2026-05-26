@@ -183,6 +183,8 @@ func (v *Executor) ExportProcess() (any, error) {
 }
 
 // ProcessJSON is the main orchestrator: parses JSON, creates/updates nodes, compiles code, commits.
+// Cancellation is checked at the top and between major API-heavy steps so a
+// client-side cancel doesn't have to wait for the entire deploy to finish.
 func (validator *Executor) ProcessJSON(filePath, jsonContent string) (newProcessData map[string]interface{}, err error) {
 	defer func() {
 		if err != nil {
@@ -191,6 +193,10 @@ func (validator *Executor) ProcessJSON(filePath, jsonContent string) (newProcess
 			}
 		}
 	}()
+
+	if err = validator.checkCancel(); err != nil {
+		return nil, err
+	}
 
 	var processDataOfAI map[string]interface{}
 	err = json.Unmarshal([]byte(jsonContent), &processDataOfAI)
@@ -290,6 +296,9 @@ func (validator *Executor) ProcessJSON(filePath, jsonContent string) (newProcess
 	err = validator.CreateNodesFromJSON(nodes)
 	if err != nil {
 		err = fmt.Errorf("error creating nodes: %v", err)
+		return nil, err
+	}
+	if err = validator.checkCancel(); err != nil {
 		return nil, err
 	}
 	changed := false

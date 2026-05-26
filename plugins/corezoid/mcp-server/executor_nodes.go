@@ -9,6 +9,9 @@ import (
 // CreateNodesFromJSON creates node stubs on the server for each node in the process JSON.
 // After creation it populates NodeIDMap with the server-assigned obj_ids.
 func (v *Executor) CreateNodesFromJSON(nodes []any) error {
+	if err := v.checkCancel(); err != nil {
+		return err
+	}
 	var ops []map[string]any
 	for i, node := range nodes {
 		nodeMap, ok := node.(map[string]interface{})
@@ -112,6 +115,9 @@ func (v *Executor) CreateNodesFromJSON(nodes []any) error {
 
 // ModifyNodes updates the nodes with their content after they've been created.
 func (v *Executor) ModifyNodes(nodes []any) error {
+	if err := v.checkCancel(); err != nil {
+		return err
+	}
 	var ops []map[string]any
 	for _, node := range nodes {
 		nodeMap, ok := node.(map[string]interface{})
@@ -285,8 +291,17 @@ func (v *Executor) ModifyNodes(nodes []any) error {
 }
 
 // CompileAPICode loads and compiles all api_code logic nodes on the server.
+// Each api_code node costs two API calls (load + compile), so for a process
+// with many code nodes the loop can be long-running. Check cancellation per
+// iteration to abort promptly when the client sends notifications/cancelled.
 func (v *Executor) CompileAPICode(nodes []interface{}) error {
+	if err := v.checkCancel(); err != nil {
+		return err
+	}
 	for _, node := range nodes {
+		if err := v.checkCancel(); err != nil {
+			return err
+		}
 		nodeMap, ok := node.(map[string]interface{})
 		if !ok {
 			continue

@@ -285,6 +285,34 @@ func errorIsCanceledOrTimeout(err error) bool {
 	return strings.Contains(s, "canceled") || strings.Contains(s, "deadline")
 }
 
+func TestExecutorCheckCancel(t *testing.T) {
+	// nil executor — defensive, must not panic
+	var v *Executor
+	if err := v.checkCancel(); err != nil {
+		t.Errorf("nil receiver should return nil, got %v", err)
+	}
+
+	// Executor with no ctx
+	v = &Executor{}
+	if err := v.checkCancel(); err != nil {
+		t.Errorf("nil Ctx should return nil, got %v", err)
+	}
+
+	// Live ctx — no error
+	v = &Executor{Ctx: context.Background()}
+	if err := v.checkCancel(); err != nil {
+		t.Errorf("live ctx should return nil, got %v", err)
+	}
+
+	// Cancelled ctx — returns ctx.Err()
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	v = &Executor{Ctx: ctx}
+	if err := v.checkCancel(); err == nil {
+		t.Error("cancelled ctx should return error")
+	}
+}
+
 func TestParseRetryAfter(t *testing.T) {
 	cases := []struct {
 		in   string

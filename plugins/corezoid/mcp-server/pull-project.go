@@ -131,6 +131,9 @@ func moveContents(src, dst string) error {
 }
 
 func downloadStageRecursively(e *Executor, folderID int, filePath string) error {
+	if err := e.checkCancel(); err != nil {
+		return err
+	}
 	data, err := e.PullZip(folderID, "stage")
 	if err != nil {
 		return fmt.Errorf("failed to PullZip: %w", err)

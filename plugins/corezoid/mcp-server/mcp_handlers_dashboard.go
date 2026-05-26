@@ -37,9 +37,17 @@ func handleCreateDashboard(ctx context.Context, args map[string]interface{}) (st
 	tzOffset, _ := argInt(args, "timezone_offset")
 
 	v := NewValidator(ctx, 0)
+	// Preserve the original semantics: when folder_id is supplied as a
+	// malformed string we explicitly overwrite folderID (Atoi falls back to
+	// 0), instead of silently falling back to the configured stage. argInt's
+	// "missing or unparseable" semantics would have been a behavior change.
 	folderID := v.StageID
-	if id, ok := argInt(args, "folder_id"); ok {
-		folderID = id
+	if fid, ok := args["folder_id"]; ok {
+		if fidFloat, ok := fid.(float64); ok {
+			folderID = int(fidFloat)
+		} else if fidStr, ok := fid.(string); ok {
+			folderID, _ = strconv.Atoi(fidStr)
+		}
 	}
 
 	projectID := v.GetProjectIDByStageID(folderID)

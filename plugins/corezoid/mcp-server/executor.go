@@ -27,6 +27,19 @@ type Executor struct {
 	NewProc       bool
 }
 
+// checkCancel returns v.Ctx.Err() if the executor's context has been
+// cancelled, nil otherwise. Call it at the top of long-running methods and
+// inside loops over many sub-calls so cancellation is observed between API
+// calls — not only mid-flight inside doWithRetry. The HTTP layer already
+// honours ctx, but non-HTTP work (file IO, JSON parsing, response post-
+// processing) would otherwise run to completion after a cancel signal.
+func (v *Executor) checkCancel() error {
+	if v == nil || v.Ctx == nil {
+		return nil
+	}
+	return v.Ctx.Err()
+}
+
 // NewValidator constructs an Executor with a snapshot of the current auth
 // state. Snapshotting at construction means the rest of the executor methods
 // can read v.WorkspaceID/v.StageID/v.Token without any further locking — the
