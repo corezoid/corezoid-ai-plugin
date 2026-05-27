@@ -98,12 +98,58 @@ Then call `login` — it will skip already-set values and only prompt for what's
 
 ---
 
+## Exception: OAuth fails on private on-prem instances
+
+On private Corezoid installations, the OAuth2 browser flow may time out because `localhost` is not registered as an allowed `redirect_uri` (see issue #7). Symptom: browser opens the workspace UI instead of redirecting back.
+
+**Workaround — populate `.env` manually before calling `login`:**
+
+1. Get `ACCESS_TOKEN` from the account UI at `https://<host>/access_tokens` (create a token manually)
+2. Write `.env` in `COREZOID_WORK_DIR` (the directory where Claude Code was opened):
+
+```
+ACCOUNT_URL=https://<host>
+COREZOID_API_URL=https://<host>
+WORKSPACE_ID=<company_id>
+ACCESS_TOKEN=<token>
+COREZOID_STAGE_ID=<stage_id>
+```
+
+3. Restart the MCP server so it picks up the new `.env`:
+```bash
+ps aux | grep "go run\|convctl" | grep -v grep | awk '{print $2}' | xargs kill
+```
+
+4. Call `login` — it will detect `ACCESS_TOKEN` in `.env`, skip OAuth, and complete setup.
+
+---
+
+## `.env` file location
+
+The Go MCP server reads `.env` from `COREZOID_WORK_DIR` — the directory where Claude Code was opened when the server started (typically `$HOME`). This is **not** the `mcp-server/` source directory.
+
+---
+
+## `COREZOID_API_URL` format
+
+⚠️ `COREZOID_API_URL` must be the **base URL only** — no path suffix:
+
+```
+✅ COREZOID_API_URL=https://your-corezoid-host.example.com
+❌ COREZOID_API_URL=https://your-corezoid-host.example.com/api/2/json
+```
+
+The server appends `/api/2/json` or `/api/2/download` automatically.
+
+---
+
 ## Variables reference
 
 | Variable | Set during |
 |---|---|
 | `ACCOUNT_URL` | login step 1 — API URL prompt |
-| `ACCESS_TOKEN` | login step 2 — OAuth2 |
+| `COREZOID_API_URL` | login step 2.5 — derived from account clients API |
+| `ACCESS_TOKEN` | login step 2 — OAuth2 (or manually for on-prem) |
 | `WORKSPACE_ID` | login step 3 — workspace selection |
 | `COREZOID_STAGE_ID` | login step 4 — stage selection |
 | `COREZOID_OAUTH_CLIENT_ID` | pre-login (on-prem only) — OAuth2 client ID for deployments with a custom authorization server; cloud users do not need this |

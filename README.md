@@ -1,8 +1,6 @@
 # Corezoid — Claude Code & Codex Plugin
 
-> **Status:** stable — released, actively maintained. Supported clients: Claude Code ≥ 1.x, Codex. Go 1.24+ required. macOS and Linux tested.
-
-A plugin for [Claude Code](https://claude.ai/code) and [Codex](https://codex.openai.com) that connects the [Corezoid](https://corezoid.com) BPM platform to Claude via MCP. Claude gets direct access to Corezoid processes and deep platform knowledge to create, edit, review, and deploy workflows through natural conversation.
+A plugin for [Claude Code](https://claude.ai/code) and [Codex](https://openai.com/codex) that connects the [Corezoid](https://corezoid.com) BPM platform to Claude via MCP. Claude gets direct access to Corezoid processes and deep platform knowledge to create, edit, review, and deploy workflows through natural conversation.
 
 ## What it does
 
@@ -21,8 +19,8 @@ The plugin bundles a Go MCP server that exposes Corezoid operations as MCP tools
 
 ## Requirements
 
-- [Claude Code](https://claude.ai/code) or [Codex](https://codex.openai.com) installed
-- [Go 1.24+](https://go.dev/dl/) available in `PATH` (the MCP server runs via `go run`, no build step needed)
+- [Claude Code](https://claude.ai/code) or [Codex](https://openai.com/codex) installed
+- [Go 1.21+](https://go.dev/dl/) available in `PATH` (the MCP server runs via `go run`, no build step needed)
   ```bash
   brew install golang        # macOS
   sudo apt install golang    # Ubuntu/Debian
