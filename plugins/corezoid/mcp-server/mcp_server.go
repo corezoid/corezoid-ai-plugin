@@ -51,7 +51,7 @@ type mcpToolResult struct {
 
 // mcpServerVersion is the version reported in MCP initialize responses.
 // Keep this in sync with .claude-plugin/plugin.json.
-const mcpServerVersion = "2.3.4"
+const mcpServerVersion = "2.3.5"
 
 // oauthClientID is the OAuth2 client ID used for PKCE flow.
 // Resolved from COREZOID_OAUTH_CLIENT_ID env var, falling back to the built-in default.

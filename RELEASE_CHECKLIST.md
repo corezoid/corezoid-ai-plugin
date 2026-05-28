@@ -46,5 +46,5 @@ python3 -m json.tool plugins/corezoid/.mcp.json >/dev/null
 ## Git
 
 - [ ] All changes are committed on `main` (or merged from a feature branch).
-- [ ] Release tag matches the manifest version, e.g. `v2.3.4`.
+- [ ] Release tag matches the manifest version, e.g. `v2.3.5`.
 - [ ] Tag is pushed to `origin`.
