@@ -112,7 +112,7 @@ Every process in the dependency tree must be either:
 
 For each process in `project_inventory[]`, pull its definition:
 ```
-pull-process conv_id:<conv_id>
+pull-process process_id:<conv_id>
 ```
 
 From each process, extract all outbound references: `api_rpc`, `api_copy`,
@@ -215,7 +215,7 @@ concatenation are not caught by static analysis. Always add to report:
 
 ## Phase 4 — Security Hardening Check
 
-Scan all processes via `pull-process` for each `conv_id` in `project_inventory[]`.
+Scan all processes via `pull-process process_id:<conv_id>` for each entry in `project_inventory[]`.
 
 ### Step 4.1: Token / Secret Exposure
 
@@ -370,10 +370,10 @@ because private dependencies are the most common hard blocker.
 | Step                          | MCP call                                                 |
 |-------------------------------|----------------------------------------------------------|
 | 0.2 Load process inventory    | `list folder filter:"conveyor" obj_id:<folder_id>`       |
-| 2.1 Pull process definition   | `pull-process conv_id:<conv_id>`                         |
+| 2.1 Pull process definition   | `pull-process process_id:<conv_id>`                      |
 | 2.2 Get system processes      | `list folder filter:"system" obj_id:<stage_id>`          |
 | 2.4 Resolve state alias       | `show conv with alias`                                   |
 | 3.1 Get env_var declarations  | `get project_env obj_id:<folder_id>`                     |
-| 4–5 Scan code / api nodes     | `pull-process conv_id:<conv_id>` then filter node types  |
+| 4–5 Scan code / api nodes     | `pull-process process_id:<conv_id>` then filter node types |
 
 Phase 1 requires NO MCP calls — all metadata comes from user context.

@@ -195,7 +195,7 @@ Perform a **1-level deep** review of all unique outbound dependencies. Review ea
 For each dependency:
 
 1. Collect all unique `conv_id` values from the main process
-2. Pull the dependency process using MCP tool **`pull-process`** with the `conv_id`, then read the resulting `.conv.json`
+2. Pull the dependency process using MCP tool **`pull-process`** with `process_id` set to the `conv_id` value, then read the resulting `.conv.json`
 3. Run a lightweight review covering:
    - Node count and type distribution
    - Untitled node count

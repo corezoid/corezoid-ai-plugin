@@ -97,7 +97,7 @@ lint-process(process_path="./folder/12345_MyProcess.conv.json")
 
 ### Pull a process by ID
 ```
-pull-process(conv_id=12345678)
+pull-process(process_id=12345678)
 ```
 
 ## Specialized Skills

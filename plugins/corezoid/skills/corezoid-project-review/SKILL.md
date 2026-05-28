@@ -51,7 +51,7 @@ Process all sizes automatically without confirmation. Stream progress in batches
 
 For each process in `process_inventory[]`:
 
-1. Pull the process with MCP tool **`pull-process`** using `conv_id`
+1. Pull the process with MCP tool **`pull-process`** using `process_id`
 2. Run the full per-process audit (same steps as `corezoid-review` skill):
    - **Step 1** Structural lint (`lint-process`)
    - **Step 2** Load and parse nodes
@@ -249,7 +249,7 @@ Cross-process finding example:
 | Step | MCP call |
 |------|----------|
 | 0.1 List processes | `list folder filter:"conveyor" obj_id:<COREZOID_STAGE_ID>` |
-| 1 Pull process | `pull-process conv_id:<conv_id>` |
+| 1 Pull process | `pull-process process_id:<conv_id>` |
 | 1 Lint process | `lint-process process_path:<path>` |
 | 2.1 Resolve alias | `show conv` with alias |
 
