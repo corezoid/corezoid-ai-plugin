@@ -1,5 +1,16 @@
 # Changelog
 
+## [2.3.6]
+
+- Feat: prebuilt MCP server binaries (darwin/linux × amd64/arm64) distributed via GitHub Releases; run.sh downloads and caches the binary on first start, falls back to `go run .` when unavailable.
+- Security: SHA256 checksum verification against release checksums.txt before executing a downloaded binary.
+- Security: remove workspace_id and stage_id from anonymous telemetry events.
+- Fix: logout confirmation message now shows `~/.corezoid/credentials` instead of project `.env`.
+- Fix: mid-session environment switching — login/logout now correctly reload and persist changed account URL, workspace ID, and stage ID.
+- Docs: add Telemetry section to README with opt-out instructions (`COREZOID_ANALYTICS_DISABLED=1`).
+- Docs: clarify Go 1.24+ is required only as a fallback, not when a prebuilt binary is available.
+- CI: attach per-platform SHA256 `checksums.txt` to every GitHub Release.
+
 ## [2.3.5]
 
 - Feat: store ACCESS_TOKEN in ~/.corezoid/credentials instead of project .env to prevent accidental git leaks.
