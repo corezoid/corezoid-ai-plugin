@@ -20,7 +20,9 @@ The plugin bundles a Go MCP server that exposes Corezoid operations as MCP tools
 ## Requirements
 
 - [Claude Code](https://claude.ai/code) or [Codex](https://openai.com/codex) installed
-- [Go 1.24+](https://go.dev/dl/) available in `PATH` (the MCP server runs via `go run`, no build step needed)
+- [Go 1.24+](https://go.dev/dl/) available in `PATH` — required only as a fallback if no prebuilt binary
+  is available for your platform (the MCP server downloads a prebuilt binary on first run; `go run` is
+  used automatically when no binary exists)
   ```bash
   brew install golang        # macOS
   sudo apt install golang    # Ubuntu/Debian
@@ -192,7 +194,7 @@ validation errors, and summarize what each process does.
 
 ```
 Claude Code / Codex
-  └── corezoid MCP server (go run .)
+  └── corezoid MCP server (prebuilt binary, or go run . as fallback)
         ├── Auth          login, logout
         ├── Workspace     list-workspaces, list-stages, list-projects
         ├── Processes     pull-process, pull-folder, push-process, lint-process
@@ -262,12 +264,15 @@ See [docs/Troubleshooting.md](docs/Troubleshooting.md) for solutions to common p
 |-------------------|-------------------------------|-------|
 | Claude Code       | ≥ 1.x                         | MCP protocol 2025-03-26 |
 | Codex             | current stable                | Same MCP server, same skills |
-| Go toolchain      | 1.24.x – 1.24+                | Required to run the MCP server via `go run` |
+| Go toolchain      | 1.24.x – 1.24+                | Fallback only — used when no prebuilt binary exists for the platform |
 | macOS             | 13 Ventura and later          | Tested on arm64 and amd64 |
 | Linux             | Ubuntu 22.04+, Debian 12+     | amd64 tested in CI |
 | Windows           | not tested                    | Likely works; PRs welcome |
 
-> **Note:** If your Go installation is older than 1.24, the toolchain manager will try to download `go1.24.0` from `proxy.golang.org`. In air-gapped environments set `GOTOOLCHAIN=local` and install Go 1.24+ manually. See [Troubleshooting](docs/Troubleshooting.md) for details.
+> **Note:** Go is only needed when no prebuilt binary is cached for your platform. If your Go installation
+> is older than 1.24, the toolchain manager will try to download `go1.24.0` from `proxy.golang.org`.
+> In air-gapped environments set `GOTOOLCHAIN=local` and install Go 1.24+ manually.
+> See [Troubleshooting](docs/Troubleshooting.md) for details.
 
 ## Links
 
