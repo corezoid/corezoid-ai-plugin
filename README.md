@@ -22,7 +22,7 @@ The plugin bundles a Go MCP server that exposes Corezoid operations as MCP tools
 ## Design philosophy
 
 This plugin is not simply an MCP wrapper over the Corezoid API. It is an attempt to
-build an AI-Native management layer — one where Claude understands process structure,
+build an AI-Native management layer — one that understands process structure,
 validation rules, and platform conventions deeply enough to create, audit, and deploy
 workflows through natural conversation.
 
