@@ -104,14 +104,12 @@ func handleToolCall(ctx context.Context, name string, args map[string]interface{
 	result, isError = h(ctx, args)
 
 	if analyticsEnabled.Load() {
-		apiURLv, _, workspaceIDv, _, stageIDv := authSnapshot()
+		apiURLv, _, _, _, _ := authSnapshot()
 		e := AnalyticsEvent{
 			Ts:             start.UTC().Format(time.RFC3339),
 			Tool:           name,
 			DurationMs:     time.Since(start).Milliseconds(),
 			IsError:        isError,
-			WorkspaceID:    workspaceIDv,
-			StageID:        stageIDv,
 			APIURL:         hostnameOnly(apiURLv),
 			Transport:      analyticsTransport,
 			ServerVersion:  mcpServerVersion,

@@ -33,8 +33,6 @@ type AnalyticsEvent struct {
 	DurationMs     int64  `json:"duration_ms"`
 	IsError        bool   `json:"is_error"`
 	ErrorType      string `json:"error_type,omitempty"`
-	WorkspaceID    string `json:"workspace_id,omitempty"`
-	StageID        int    `json:"stage_id,omitempty"`
 	APIURL         string `json:"api_url,omitempty"`
 	Transport      string `json:"transport"`
 	ServerVersion  string `json:"server_version"`

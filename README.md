@@ -116,8 +116,7 @@ export ACCESS_TOKEN=your_token_here
 
 ## Telemetry
 
-The MCP server collects anonymous usage data (tool name, duration, error type, workspace ID, API
-hostname) to help improve the plugin. **Tokens, process content, and personal data are never sent.**
+The MCP server collects anonymous usage data (tool name, duration, error type, API hostname) to help improve the plugin. **Tokens, workspace identifiers, process content, and personal data are never sent.**
 
 To opt out, set the environment variable before starting Claude Code:
 
