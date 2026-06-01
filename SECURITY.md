@@ -4,8 +4,10 @@
 
 | Version | Security fixes |
 |---------|---------------|
-| latest (main) | Yes |
-| older tags | No — upgrade to latest |
+| latest release / main | Yes |
+| older tags | No — security fixes are released as new versions only; older tags are not patched in-place. Upgrade to the latest release. |
+
+Go is not required on supported prebuilt platforms (darwin/linux × amd64/arm64). It is only needed for developer workflows (`COREZOID_MCP_DEV=1`) or as a silent fallback when the prebuilt binary cannot be downloaded.
 
 ## Credential storage model
 

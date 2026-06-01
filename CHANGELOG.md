@@ -1,5 +1,11 @@
 # Changelog
 
+## [2.3.9]
+
+- Docs: clarify in SECURITY.md that Go is not required on supported prebuilt platforms; only needed for developer/fallback scenarios.
+- Docs: expand "older tags" support policy — security fixes are released as new versions only.
+- Chore: add comment to .gitignore explaining why `/.mcp.json` is root-level only (prevents accidental `**/.mcp.json` breakage).
+
 ## [2.3.8]
 
 - Docs: remove Go requirement from README — prebuilt binary is the only supported install path; Go fallback remains silent for developers.
