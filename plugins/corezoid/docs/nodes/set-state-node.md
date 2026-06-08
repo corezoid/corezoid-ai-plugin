@@ -183,6 +183,8 @@ you can retrieve the task's data (or specific parameters within it) from other p
   ```
   {{conv[@user-states].ref[{{my_task_ref}}]}}
   ```
+  Here `@user-states` is a Corezoid alias pointing to the State Diagram process. Aliases are
+  managed via the `corezoid-alias-manager` skill.
 
 This syntax allows other parts of your system to interact with and retrieve data persisted within
 State Diagrams.

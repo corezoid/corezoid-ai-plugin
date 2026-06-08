@@ -17,7 +17,10 @@ Variables store constants (URLs, tokens, endpoints, credentials) that should nev
 
 ### 1. Check if variable already exists
 
-Read `_ENV_VARS_.json` before creating anything. If the variable exists, reuse it.
+Check both local cache files before creating anything. If the variable exists, reuse it:
+
+- `_ENV_VARS_.json` — created by `pull-folder` (contains all variables exported from Corezoid)
+- `.processes/variables.json` — created by the MCP `create-variable` tool during the current session
 
 ### 2. Create a new variable
 
@@ -92,6 +95,6 @@ var url = data.baseUrl + "/endpoint";
 ## Important Notes
 
 - Variables are resolved **at runtime** — the value `{{env_var[@name]}}` is replaced with the actual variable value before the node executes
-- Variables are **workspace-scoped** — shared across all processes in the workspace
+- Variables are **stage-scoped** — shared across all processes within the same stage
 - Changes to variable values take effect immediately without redeploying processes
 - Never store secrets directly in process JSON — always use variables

@@ -94,9 +94,9 @@ Flag:
 
 Aggregate only normalized `hardcode.*` findings from per-process reports. Do **not** aggregate dynamic Corezoid expressions, `dependency.state_store_ref`, or values fully wrapped in `{{...}}` as shared hardcodes.
 
-- Same URL in > 2 processes → recommend shared `env_var`
+- Same URL in > 2 processes → recommend shared `env_var` (use `/corezoid-variable-manager` to create)
 - Same numeric `conv_id` in > 1 process → one alias fix resolves all
-- Same token/key fragment in > 1 process → security risk, centralize immediately
+- Same token/key fragment in > 1 process → security risk, centralize immediately via `/corezoid-variable-manager` as `secret` variable
 - Same status string in > 2 processes → recommend shared constant or `env_var`
 - Same error text in > 1 process → recommend shared text constant
 
@@ -111,6 +111,9 @@ Flag:
 - Same alias used with both `create` and `modify` in different processes → race condition risk
 - Alias defined in one process but used with numeric `conv_id` in another → inconsistency
 - Aliases referenced in processes but absent from project inventory → undocumented external dependency
+
+To fix alias issues found here (create missing aliases, rename, repoint, delete conflicts),
+use the `/corezoid-alias-manager` skill.
 
 ### Step 2.5: Naming Consistency
 
@@ -251,7 +254,7 @@ Cross-process finding example:
 | 0.1 List processes | `list folder filter:"conveyor" obj_id:<COREZOID_STAGE_ID>` |
 | 1 Pull process | `pull-process process_id:<conv_id>` |
 | 1 Lint process | `lint-process process_path:<path>` |
-| 2.1 Resolve alias | `show conv` with alias |
+| 2.1 List & resolve aliases | `/corezoid-alias-manager` → "Workflow: List aliases" |
 
 ---
 
