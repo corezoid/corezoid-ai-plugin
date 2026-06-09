@@ -51,6 +51,23 @@ var toolHandlers = map[string]toolHandler{
 	"modify-chart":         handleModifyChart,
 	"get-chart":            handleGetChart,
 	"set-dashboard-layout": handleSetDashboardLayout,
+
+	// access control (share, groups, api keys, invites)
+	"share-object":       handleShareObject,
+	"list-shares":        handleListShares,
+	"create-group":       handleCreateGroup,
+	"modify-group":       handleModifyGroup,
+	"list-group-objects": handleListGroupObjects,
+	"delete-group":       handleDeleteGroup,
+	"add-to-group":       handleAddToGroup,
+	"remove-from-group":  handleRemoveFromGroup,
+	"list-groups":        handleListGroups,
+	"create-api-key":     handleCreateAPIKey,
+	"modify-api-key":     handleModifyAPIKey,
+	"delete-api-key":     handleDeleteAPIKey,
+	"list-api-keys":      handleListAPIKeys,
+	"find-principal":     handleFindPrincipal,
+	"invite-user":        handleInviteUser,
 }
 
 // noAuthTools don't need any credentials. lint runs entirely on local files;

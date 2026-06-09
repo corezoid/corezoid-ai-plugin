@@ -208,6 +208,21 @@ validation errors, and summarize what each process does.
 | `modify-chart`      | Modify an existing chart (full series replace)     |
 | `get-chart`         | Get a single chart with its series data            |
 | `set-dashboard-layout` | Save chart positions on a dashboard grid        |
+| `share-object`      | Grant or revoke access on a process/folder/stage/project for a user, API key or group (use privs="none" to revoke) |
+| `list-shares`       | List principals with access to a shared object     |
+| `create-group`      | Create a new user group (optional description)     |
+| `modify-group`      | Rename a group or update its description           |
+| `list-group-objects`| List processes currently shared with a group       |
+| `delete-group`      | Delete a user group (refuses by default if shares active; force=true to override) |
+| `add-to-group`      | Add a user or API key to a group                   |
+| `remove-from-group` | Remove a user or API key from a group              |
+| `list-groups`       | List user groups in the workspace                  |
+| `create-api-key`    | Create a new API key (secret written to ~/.corezoid/api-keys/, never printed in chat) |
+| `modify-api-key`    | Rename or re-describe an API key                   |
+| `delete-api-key`    | Delete an API key (invalidates secret immediately) |
+| `list-api-keys`     | List API keys in the workspace                     |
+| `find-principal`    | Resolve user / group / API-key name to obj_id      |
+| `invite-user`       | Invite an external email and share an object in one call |
 
 ## Architecture
 
@@ -220,8 +235,13 @@ Claude Code / Codex
         │                 create-process, create-folder, create-alias, create-variable
         ├── Tasks         run-task, list-node-tasks, list-task-history
         │                 modify-task, delete-task
-        └── Dashboards    create-dashboard, get-dashboard, add-chart,
-                          modify-chart, get-chart, set-dashboard-layout
+        ├── Dashboards    create-dashboard, get-dashboard, add-chart,
+        │                 modify-chart, get-chart, set-dashboard-layout
+        └── Access        share-object, list-shares,
+                          create-group, modify-group, delete-group, list-group-objects,
+                          add-to-group, remove-from-group, list-groups,
+                          create-api-key, modify-api-key, delete-api-key, list-api-keys,
+                          find-principal, invite-user
 ```
 
 ## Project structure

@@ -36,6 +36,18 @@ You have access to the Corezoid API via the `corezoid` MCP server.
 | `get-chart` | Get a single chart with its series data |
 | `modify-chart` | Modify an existing chart (full series required) |
 | `set-dashboard-layout` | Save chart positions on the grid (required to make charts visible) |
+| `share-object` | Grant or revoke access on a process / folder / stage / project (use privs="none" to revoke — same wire op as share with empty privs) |
+| `list-shares` | Audit who currently has access to an object |
+| `create-group` / `modify-group` / `delete-group` | Manage workspace user groups (delete refuses if group has active shares unless force=true) |
+| `list-group-objects` | List processes currently shared with a group (used to audit impact before delete) |
+| `add-to-group` / `remove-from-group` | Manage group membership |
+| `list-groups` | List groups in the workspace |
+| `create-api-key` | Create an API key. Secret is written to ~/.corezoid/api-keys/<file>.json (chmod 600) — never printed in chat |
+| `modify-api-key` | Rename or re-describe an API key |
+| `delete-api-key` | Delete an API key (invalidates the secret immediately) |
+| `list-api-keys` | List API keys in the workspace |
+| `find-principal` | Resolve user / group / API-key name → obj_id (call before share-object) |
+| `invite-user` | Invite an external email AND share an object in one call |
 
 ## Platform Architecture
 
