@@ -63,10 +63,10 @@
 2. **conv_id** (Number or String)
 
    - ID of the process to call
-   - Can be a static value or a dynamic value from the process task
-   - Example: `"conv_id": 9876543` or `"conv_id": "{{process_id}}"`
-   - Dynamic example: `"conv_id": "{{param1}}"` (with quotes for JSON format)
-   - Validation: Must be a valid process ID or reference
+   - Can be a static numeric ID, an alias string, or a dynamic value from the task
+   - Example: `"conv_id": 9876543` (numeric) or `"conv_id": "@payment-checkout"` (alias, if one exists)
+   - Dynamic example: `"conv_id": "{{process_id}}"` (with quotes for JSON format)
+   - Validation: Must be a valid process ID, `@alias`, or dynamic reference
 
 3. **extra** (Object)
 

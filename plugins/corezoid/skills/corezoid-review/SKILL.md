@@ -66,7 +66,7 @@ cond_nodes  = [n for n in nodes for lg in n['condition']['logics'] if lg['type']
 ## Step 3: Hardcode Check
 
 - **`code` nodes** — look for hardcoded IDs, URLs, tokens
-- **`api` nodes** — check URLs; must use `{{env_var_name}}` or `{{variable}}`, not literals
+- **`api` nodes** — check URLs; must use `{{env_var[@name]}}`, not literals
 - **`api_rpc` / `api_copy`** — check `conv_id` values; numeric IDs instead of `@alias` are a flag
 - **`api_rpc` extra fields** — check for hardcoded values that should be variables
 
@@ -176,10 +176,7 @@ Scan all nodes and collect every outbound reference:
 3. **State reads** — `conv[@alias]` references inside `set_param` extra values or condition parameters
 
 Flag:
-- ⚠️ Numeric `conv_id` without `@alias` — suggest creating an alias:
-  1. Derive `short_name`: lowercase, spaces/underscores → hyphens, strip special chars
-  2. Call MCP tool **`create-alias`** with `process_path` and `short_name`
-  3. Include suggested alias names in the report for team approval before applying
+- ⚠️ Numeric `conv_id` without `@alias` — flag in the report; suggest a `short_name` derived from the process title (lowercase, hyphens). Do **not** call `create-alias` automatically — only create aliases when the user explicitly requests it.
 - ⚠️ Same alias called with both create and modify modes
 - ⚠️ More than 5 unique dependencies — note coupling risk
 - ⚠️ `conv[@alias]` state reads — implicit dependencies that break if the referenced process changes schema

@@ -372,7 +372,7 @@ because private dependencies are the most common hard blocker.
 | 0.2 Load process inventory    | `list folder filter:"conveyor" obj_id:<folder_id>`       |
 | 2.1 Pull process definition   | `pull-process process_id:<conv_id>`                      |
 | 2.2 Get system processes      | `list folder filter:"system" obj_id:<stage_id>`          |
-| 2.4 Resolve state alias       | `show conv with alias`                                   |
+| 2.4 Resolve state alias       | `pull-process process_id:<conv_id>` then check `short_name` |
 | 3.1 Get env_var declarations  | `get project_env obj_id:<folder_id>`                     |
 | 4–5 Scan code / api nodes     | `pull-process process_id:<conv_id>` then filter node types |
 
