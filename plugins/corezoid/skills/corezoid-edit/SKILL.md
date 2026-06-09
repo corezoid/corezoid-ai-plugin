@@ -54,7 +54,7 @@ Apply changes to `PROCESS_PATH`.
 
 All constants (URLs, tokens, endpoints, hosts) must be stored as variables — never hardcoded:
 
-1. Check `_ENV_VARS_.json` for existing variables
+1. Check `_ENV_VARS_.json` (from `pull-folder`) or `.processes/variables.json` (from this session) for existing variables
 2. Create a new variable if needed: call MCP tool **`create-variable`** with `name`, `description`, `value`
 3. Reference in logic using `{{env_var[@variable-name]}}`
 

@@ -156,6 +156,34 @@ the full array manipulation approach:
 "my_array": "{{JSON.stringify(my_array.map((item, idx) => idx === {{target_index}} ? {...item, updated: true} : item))}}"
 ```
 
+## Environment Variables
+
+Environment variables store stage-scoped constants (URLs, tokens, API keys) that must
+not be hardcoded. They are resolved at runtime before the node executes.
+
+**Syntax:** `{{env_var[@variable-short-name]}}`
+
+```json
+{
+  "type": "set_param",
+  "extra": {
+    "baseUrl": "{{env_var[@payment-api-url]}}",
+    "token":   "{{env_var[@payment-api-token]}}"
+  },
+  "extra_type": {
+    "baseUrl": "string",
+    "token":   "string"
+  },
+  "err_node_id": "<error_node_id>"
+}
+```
+
+Environment variable references can be used anywhere a dynamic value is accepted:
+in `extra` values, in condition `arg`/`val` fields, in API Call URLs and headers.
+
+To manage environment variables (create, list, modify, delete), see
+`${CLAUDE_PLUGIN_ROOT}/skills/corezoid-variable-manager/SKILL.md`.
+
 ## System Variables
 
 The following system variables are available in Set Parameters nodes:

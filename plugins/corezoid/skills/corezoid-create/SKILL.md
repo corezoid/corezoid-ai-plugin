@@ -110,7 +110,7 @@ Produce a valid `.conv.json` file.
 - Connect nodes only through the `go` field
 - Every node that can fail must have `err_node_id` pointing to a dedicated error node
 - All constants (URLs, tokens, IDs) must be Corezoid variables — never hardcoded:
-  1. Check for existing variables: read `_ENV_VARS_.json` in the project folder
+  1. Check for existing variables: read `_ENV_VARS_.json` (from `pull-folder`) or `.processes/variables.json` (from this session)
   2. Create a new variable if needed: call MCP tool **`create-variable`** with `name`, `description`, `value`
   3. Reference in logic: `{{env_var[@variable-name]}}`
 - Use descriptive `title` values (e.g., "Call Payment Process", not "RPC")
