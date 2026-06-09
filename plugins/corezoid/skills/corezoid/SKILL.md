@@ -112,6 +112,7 @@ For domain-specific workflows use the specialized skills:
 - `/corezoid-process-tech-writer` — documenting a process (Markdown + enriched JSON)
 - `/corezoid-alias-manager` — creating, listing, modifying, deleting, and using aliases
 - `/corezoid-variable-manager` — creating, listing, modifying, deleting variables (visible/secret, raw/json)
+- `/corezoid-process-optimizer` — reduce tacts (merge nodes), clean data flow, fill names, add semaphors
 
 ## Reference Documents
 
