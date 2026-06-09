@@ -196,6 +196,7 @@ validation errors, and summarize what each process does.
 | `run-task`          | Send a task to a deployed process                  |
 | `list-node-tasks`   | List tasks currently sitting in a node             |
 | `list-task-history` | Show task execution history                        |
+| `get-node-stat`     | Return time-series in/out statistics for a node   |
 | `delete-task`       | Remove a task from a node                          |
 | `modify-task`       | Update task parameters                             |
 | `create-process`    | Create a new empty process in a folder             |

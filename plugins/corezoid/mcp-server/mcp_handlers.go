@@ -41,6 +41,7 @@ var toolHandlers = map[string]toolHandler{
 	// tasks
 	"list-task-history": handleListTaskHistory,
 	"list-node-tasks":   handleListNodeTasks,
+	"get-node-stat":     handleGetNodeStat,
 	"modify-task":       handleModifyTask,
 	"delete-task":       handleDeleteTask,
 

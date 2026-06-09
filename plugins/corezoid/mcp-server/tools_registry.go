@@ -408,6 +408,40 @@ var toolRegistry = []mcpTool{
 		},
 	},
 	{
+		Name:        "get-node-stat",
+		Description: "Return time-series statistics (in/out counts) for a node over a time range. node_id is the ID shown in the Corezoid UI archive URL (/diagram/{node_id}/archive). ops[0]['data'] contains [{\"date\":\"YYYY-MM-DD\",\"in\":N,\"out\":M}] for non-zero buckets. ops[0]['title'] is the node title.",
+		InputSchema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"process_id": map[string]interface{}{
+					"type":        "integer",
+					"description": "Corezoid process (conv) ID",
+				},
+				"node_id": map[string]interface{}{
+					"type":        "string",
+					"description": "Node ID from the Corezoid UI archive URL",
+				},
+				"start": map[string]interface{}{
+					"type":        "integer",
+					"description": "Unix timestamp — start of the period",
+				},
+				"end": map[string]interface{}{
+					"type":        "integer",
+					"description": "Unix timestamp — end of the period",
+				},
+				"interval": map[string]interface{}{
+					"type":        "string",
+					"description": "Aggregation bucket: 'day' or 'hour' (default: 'day')",
+				},
+				"timezone_offset": map[string]interface{}{
+					"type":        "integer",
+					"description": "UTC offset in minutes, negative westward (e.g. -180 for UTC+3, default: 0)",
+				},
+			},
+			"required": []string{"process_id", "node_id", "start", "end"},
+		},
+	},
+	{
 		Name:        "modify-task",
 		Description: "Modify an existing task's data. The task will continue from the node where it was paused with the updated data. At least one of task_id or ref must be provided.",
 		InputSchema: map[string]interface{}{

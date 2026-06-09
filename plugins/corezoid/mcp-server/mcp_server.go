@@ -235,6 +235,7 @@ func runMCPServer() {
 				ID:      req.ID,
 				Result: map[string]interface{}{
 					"tools": toolRegistry,
+
 				},
 			})
 
