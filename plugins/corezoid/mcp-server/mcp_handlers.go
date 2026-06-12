@@ -23,15 +23,16 @@ var toolHandlers = map[string]toolHandler{
 	"logout": handleLogout,
 
 	// process / folder / alias
-	"pull-process":    handlePullProcess,
-	"pull-folder":     handlePullFolder,
-	"create-variable": handleCreateVariable,
-	"push-process":    handlePushProcess,
-	"lint-process":    handleLintProcess,
-	"run-task":        handleRunTask,
-	"create-process":  handleCreateProcess,
-	"create-folder":   handleCreateFolder,
-	"create-alias":    handleCreateAlias,
+	"pull-process":         handlePullProcess,
+	"pull-folder":          handlePullFolder,
+	"create-variable":      handleCreateVariable,
+	"push-process":         handlePushProcess,
+	"lint-process":         handleLintProcess,
+	"run-task":             handleRunTask,
+	"create-process":       handleCreateProcess,
+	"create-state-diagram": handleCreateStateDiagram,
+	"create-folder":        handleCreateFolder,
+	"create-alias":         handleCreateAlias,
 
 	// discovery
 	"list-workspaces": handleListWorkspaces,

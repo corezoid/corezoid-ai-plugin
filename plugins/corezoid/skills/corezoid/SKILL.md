@@ -26,7 +26,8 @@ You have access to the Corezoid API via the `corezoid` MCP server.
 | `push-process` | Validate and deploy a `.conv.json` file |
 | `lint-process` | Validate process structure locally (no API needed) |
 | `run-task` | Run a task on an already-deployed process |
-| `create-process` | Create a new empty process in a folder |
+| `create-process` | Create a new empty process (`conv_type: "process"`) in a folder |
+| `create-state-diagram` | Create a new empty state diagram (`conv_type: "state"`) in a folder |
 | `create-folder` | Create a new subfolder |
 | `create-alias` | Create a short alias for a process |
 | `create-variable` | Create a Corezoid environment variable |
@@ -68,6 +69,7 @@ Workspace
 - **Nodes** — processing units connected via `go` transitions
 - **Tasks** — data objects that flow through process nodes
 - **Variables** — workspace-scoped constants referenced as `{{env_var[@name]}}`
+- **State Diagrams** — a special object (`conv_type: "state"`) that stores long-lived tasks keyed by `ref`. Other processes read with `{{conv[<id>].ref[<ref>].<field>}}` and write with `api_copy mode: "create"/"modify"`. Allowed node set is restricted to 10 logics (Start, Condition, Code, Set Parameters, Copy Task, Modify Task, Set State, Delay, Queue, End). Use `/corezoid-state-diagram-create` and `/corezoid-state-diagram-edit`.
 
 ## Node Types
 
@@ -118,6 +120,8 @@ For domain-specific workflows use the specialized skills:
 - `/corezoid-init` — setting up environment and pulling from Corezoid
 - `/corezoid-create` — creating a new process from scratch
 - `/corezoid-edit` — modifying an existing process
+- `/corezoid-state-diagram-create` — creating a new state diagram (`conv_type: "state"`) from scratch
+- `/corezoid-state-diagram-edit` — modifying an existing state diagram
 - `/corezoid-review` — auditing and analyzing a single process
 - `/corezoid-project-review` — auditing an entire project or folder (cross-process analysis)
 - `/corezoid-dashboard-manager` — creating dashboards and charts for process metrics
@@ -141,6 +145,9 @@ Use the `Read` tool to load these files when you need deeper detail:
 | `${CLAUDE_PLUGIN_ROOT}/docs/nodes/end-node.md` | End node success/error configuration |
 | `${CLAUDE_PLUGIN_ROOT}/docs/process/process-json-validation.md` | Validation rules and common errors |
 | `${CLAUDE_PLUGIN_ROOT}/docs/process/error-handling.md` | Error handling patterns |
+| `${CLAUDE_PLUGIN_ROOT}/docs/state-diagrams/state-diagram-overview.md` | State diagram concepts and allowed nodes |
+| `${CLAUDE_PLUGIN_ROOT}/docs/state-diagrams/state-diagram-node-structures.md` | JSON schemas for nodes inside a state diagram |
+| `${CLAUDE_PLUGIN_ROOT}/docs/state-diagrams/state-diagram-process-interaction.md` | How driver processes read / create / modify state tasks |
 | `${CLAUDE_PLUGIN_ROOT}/docs/variables-guide.md` | Variable naming rules, creation workflow, usage examples |
 
 ## Tips

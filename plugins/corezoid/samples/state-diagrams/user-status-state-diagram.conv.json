@@ -1,0 +1,110 @@
+{
+  "obj_type": 1,
+  "obj_id": 1863140,
+  "parent_id": 679861,
+  "title": "New State Diagram",
+  "description": "",
+  "status": "active",
+  "params": [],
+  "ref_mask": true,
+  "conv_type": "state",
+  "scheme": {
+    "nodes": [
+      {
+        "id": "6a29164bb677ac77705463fb",
+        "obj_type": 0,
+        "condition": {
+          "logics": [
+            {
+              "type": "api_callback"
+            },
+            {
+              "type": "go_if_const",
+              "to_node_id": "6a29164bb677ac77705463ff",
+              "conditions": [
+                {
+                  "param": "status",
+                  "const": "active",
+                  "fun": "eq",
+                  "cast": "string"
+                }
+              ]
+            },
+            {
+              "type": "go",
+              "to_node_id": "6a29164bb677ac77705463fb"
+            }
+          ],
+          "semaphors": []
+        },
+        "title": "Inactive users",
+        "description": "",
+        "x": 1108,
+        "y": 400,
+        "uuid": "9dbff1c7-eba8-487f-9220-63e3f0f65b4b",
+        "extra": "{\"modeForm\":\"expand\",\"icon\":\"state\"}",
+        "options": null
+      },
+      {
+        "id": "6a29164bb677ac77705463ff",
+        "obj_type": 0,
+        "condition": {
+          "logics": [
+            {
+              "type": "api_callback"
+            },
+            {
+              "type": "go_if_const",
+              "to_node_id": "6a29164bb677ac77705463fb",
+              "conditions": [
+                {
+                  "param": "status",
+                  "const": "inactive",
+                  "fun": "eq",
+                  "cast": "string"
+                }
+              ]
+            },
+            {
+              "type": "go",
+              "to_node_id": "6a29164bb677ac77705463ff"
+            }
+          ],
+          "semaphors": []
+        },
+        "title": "Active users",
+        "description": "",
+        "x": 740,
+        "y": 400,
+        "uuid": "e92992aa-d65d-4b98-9088-9a7f421472f2",
+        "extra": "{\"modeForm\":\"expand\",\"icon\":\"state\"}",
+        "options": null
+      },
+      {
+        "id": "6a29164bb677ac77705463f5",
+        "obj_type": 1,
+        "condition": {
+          "logics": [
+            {
+              "type": "go",
+              "to_node_id": "6a29164bb677ac77705463ff"
+            }
+          ],
+          "semaphors": []
+        },
+        "title": "Start",
+        "description": "",
+        "x": 880,
+        "y": 100,
+        "uuid": "05db9d20-5c29-47b1-b449-1e45b699f3a1",
+        "extra": "{\"modeForm\":\"collapse\",\"icon\":\"\"}",
+        "options": null
+      }
+    ],
+    "web_settings": [
+      [],
+      []
+    ]
+  },
+  "uuid": "ef790e06-a6dc-472b-bb86-4f1e52196634"
+}

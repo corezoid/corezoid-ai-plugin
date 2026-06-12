@@ -199,6 +199,7 @@ validation errors, and summarize what each process does.
 | `delete-task`       | Remove a task from a node                          |
 | `modify-task`       | Update task parameters                             |
 | `create-process`    | Create a new empty process in a folder             |
+| `create-state-diagram` | Create a new empty state diagram (conv_type "state") in a folder |
 | `create-folder`     | Create a new subfolder                             |
 | `create-alias`      | Create a short alias for a process                 |
 | `create-variable`   | Create a Corezoid environment variable             |

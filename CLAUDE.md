@@ -41,6 +41,8 @@ plugins/corezoid/
     corezoid-init/                  — Sub-skill: environment setup and workspace pull
     corezoid-create/                — Sub-skill: create a new process from scratch
     corezoid-edit/                  — Sub-skill: modify an existing process
+    corezoid-state-diagram-create/  — Sub-skill: create a new state diagram (conv_type "state") from scratch
+    corezoid-state-diagram-edit/    — Sub-skill: modify an existing state diagram
     corezoid-review/                — Sub-skill: audit and analyze a single process
     corezoid-project-review/        — Sub-skill: audit a whole project / multiple processes
     corezoid-dashboard-manager/     — Sub-skill: create and edit Corezoid dashboards
@@ -50,9 +52,10 @@ plugins/corezoid/
   docs/
     nodes/                        — Per-node-type documentation (24 node types)
     process/                      — Process structure, validation rules, error handling
+    state-diagrams/               — State diagram concepts, node structures, process interaction
     tasks/                        — Task metadata and examples
     node-structures.md            — JSON schemas for all node types (canonical reference)
-  samples/                        — Example .conv.json processes
+  samples/                        — Example .conv.json processes (state-diagrams/ holds state-diagram samples)
 ```
 
 ### How skills work

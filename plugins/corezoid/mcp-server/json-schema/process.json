@@ -89,9 +89,10 @@
     "conv_type": {
       "type": "string",
       "enum": [
-        "process"
+        "process",
+        "state"
       ],
-      "description": "Conveyor type"
+      "description": "Conveyor type: 'process' for regular processes, 'state' for state diagrams"
     },
     "scheme": {
       "type": "object",
