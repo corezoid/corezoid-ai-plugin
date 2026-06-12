@@ -1,5 +1,20 @@
 # Changelog
 
+## [2.4.0]
+
+- Feat: corezoid-access skill and MCP tools for user groups, API keys, and object/folder sharing.
+- Feat: corezoid-state-diagram-create and corezoid-state-diagram-edit skills with a create-state-diagram MCP tool for building and modifying state-diagram processes.
+- Feat: corezoid-process-optimizer skill for auditing existing processes for performance and structural issues.
+- Feat: corezoid-alias-manager and corezoid-variable-manager skills for working with aliases and environment variables.
+- Feat: get-node-stat MCP tool exposing node archive statistics.
+- Feat: AI discovery files — llms.txt and .well-known/skills/index.json — with a generator script under scripts/.
+- Feat: context7 integration for live documentation lookups.
+- Docs: full state-diagram documentation set under plugins/corezoid/docs/state-diagrams/ (overview, node structures, process interaction).
+- Docs: clarifications in call-process, copy-task, set-state, set-parameters dynamic values, and variables-guide nodes.
+- Docs: bundle docs/corezoid-swagger.json as a canonical Corezoid REST API reference.
+- Chore: unit tests for mcp-server analytics, access, config, and helpers.
+- CI: minor tweak to release.yml.
+
 ## [2.3.9]
 
 - Docs: clarify in SECURITY.md that Go is not required on supported prebuilt platforms; only needed for developer/fallback scenarios.
