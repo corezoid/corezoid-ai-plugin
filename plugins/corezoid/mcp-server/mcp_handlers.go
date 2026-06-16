@@ -38,6 +38,10 @@ var toolHandlers = map[string]toolHandler{
 	"list-workspaces": handleListWorkspaces,
 	"list-projects":   handleListProjects,
 	"list-stages":     handleListStages,
+	"create-project":  handleCreateProject,
+	"modify-project":  handleModifyProject,
+	"delete-project":  handleDeleteProject,
+	"show-project":    handleShowProject,
 
 	// tasks
 	"list-task-history": handleListTaskHistory,
@@ -86,6 +90,10 @@ var tokenOnlyTools = map[string]struct{}{
 	"list-workspaces": {},
 	"list-projects":   {},
 	"list-stages":     {},
+	"create-project":  {},
+	"modify-project":  {},
+	"delete-project":  {},
+	"show-project":    {},
 }
 
 // handleToolCall dispatches an MCP tool invocation. ctx must be non-nil — it

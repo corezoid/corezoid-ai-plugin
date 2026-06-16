@@ -189,6 +189,10 @@ validation errors, and summarize what each process does.
 | `list-workspaces`   | List available workspaces and stages               |
 | `list-stages`       | List stages in a workspace                         |
 | `list-projects`     | List folders and processes in a stage              |
+| `create-project`    | Create a new project (with optional stages) in a workspace |
+| `modify-project`    | Update a project's title, short_name and/or description |
+| `delete-project`    | Move a project to the recycle bin (Trash)          |
+| `show-project`      | Show a project's stages and parent folder          |
 | `pull-folder`       | Export an entire folder/stage to local files       |
 | `pull-process`      | Export a single process to a `.conv.json` file     |
 | `push-process`      | Validate and deploy a `.conv.json` to Corezoid     |
@@ -232,7 +236,8 @@ validation errors, and summarize what each process does.
 Claude Code / Codex
   └── corezoid MCP server (prebuilt binary)
         ├── Auth          login, logout
-        ├── Workspace     list-workspaces, list-stages, list-projects
+        ├── Workspace     list-workspaces, list-stages, list-projects,
+        │                 create-project, modify-project, delete-project, show-project
         ├── Processes     pull-process, pull-folder, push-process, lint-process
         │                 create-process, create-folder, create-alias, create-variable
         ├── Tasks         run-task, list-node-tasks, list-task-history
