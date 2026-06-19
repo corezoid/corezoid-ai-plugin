@@ -1,0 +1,292 @@
+{
+  "conv_type": "process",
+  "description": "Calls the Corezoid API to retrieve the list of nodes for a given process (conv_id)",
+  "obj_id": 1866481,
+  "obj_type": 1,
+  "params": [
+    {
+      "descr": "",
+      "flags": ["required", "input"],
+      "name": "api_login",
+      "regex": "",
+      "regex_error_text": "",
+      "type": "string"
+    },
+    {
+      "descr": "",
+      "flags": ["required", "input"],
+      "name": "api_secret",
+      "regex": "",
+      "regex_error_text": "",
+      "type": "string"
+    },
+    {
+      "descr": "",
+      "flags": ["required", "input"],
+      "name": "limit",
+      "regex": "",
+      "regex_error_text": "",
+      "type": "string"
+    },
+    {
+      "descr": "",
+      "flags": ["required", "input"],
+      "name": "nodeId",
+      "regex": "",
+      "regex_error_text": "",
+      "type": "string"
+    },
+    {
+      "descr": "",
+      "flags": ["required", "input"],
+      "name": "offset",
+      "regex": "",
+      "regex_error_text": "",
+      "type": "string"
+    },
+    {
+      "descr": "Process ID to retrieve nodes for",
+      "flags": ["required", "input"],
+      "name": "processId",
+      "regex": "",
+      "regex_error_text": "",
+      "type": "number"
+    },
+    {
+      "descr": "",
+      "flags": ["required", "input"],
+      "name": "workspaceId",
+      "regex": "",
+      "regex_error_text": "",
+      "type": "string"
+    }
+  ],
+  "parent_id": 637570,
+  "ref_mask": true,
+  "scheme": {
+    "nodes": [
+      {
+        "condition": {
+          "logics": [
+            {
+              "to_node_id": "6a33e2cde552e8da3dcb1602",
+              "type": "go"
+            }
+          ],
+          "semaphors": []
+        },
+        "description": "",
+        "extra": "{\"modeForm\":\"collapse\",\"icon\":\"\"}",
+        "id": "6a33e27eb677ac7770ca750f",
+        "obj_type": 1,
+        "options": null,
+        "title": "Start",
+        "x": 1100,
+        "y": 612
+      },
+      {
+        "condition": {
+          "logics": [
+            {
+              "api_secret_outer": "{{api_secret}}",
+              "cert_pem": "",
+              "content_type": "application/json",
+              "customize_response": false,
+              "debug_info": false,
+              "err_node_id": "6a33e2cde552e8da3dcb1617",
+              "extra": {
+                "ops": "[{\"limit\":\"{{limit}}\",\"offset\":\"{{offset}}\",\"type\":\"list\",\"obj\":\"node\",\"company_id\":\"{{workspaceId}}\",\"conv_id\":\"{{processId}}\",\"obj_id\":\"{{nodeId}}\"}]"
+              },
+              "extra_headers": {
+                "content-type": "application/json; charset=utf-8"
+              },
+              "extra_type": {
+                "ops": "array"
+              },
+              "format": "",
+              "is_migrate": true,
+              "max_threads": 5,
+              "method": "POST",
+              "response": {
+                "body": "{{body}}",
+                "header": "{{header}}"
+              },
+              "response_type": {
+                "body": "object",
+                "header": "object"
+              },
+              "rfc_format": true,
+              "send_sys": true,
+              "type": "api",
+              "url": "https://api.corezoid.com/api/2/json/{{api_login}}",
+              "version": 2
+            },
+            {
+              "to_node_id": "6a33e2cde552e8da3dcb1607",
+              "type": "go"
+            }
+          ],
+          "semaphors": [
+            {
+              "dimension": "sec",
+              "to_node_id": "6a33e2cde552e8da3dcb161b",
+              "type": "time",
+              "value": 30
+            }
+          ]
+        },
+        "description": "POST request to Corezoid API to retrieve the list of nodes for the given processId",
+        "extra": "{\"modeForm\":\"expand\",\"icon\":\"\"}",
+        "id": "6a33e2cde552e8da3dcb1602",
+        "obj_type": 0,
+        "options": null,
+        "title": "Corezoid API - Get Node List",
+        "x": 1000,
+        "y": 700
+      },
+      {
+        "condition": {
+          "logics": [
+            {
+              "mode": "key_value",
+              "res_data": {
+                "response": "{{ops[0]}}",
+                "result": "success"
+              },
+              "res_data_type": {
+                "response": "object",
+                "result": "string"
+              },
+              "throw_exception": false,
+              "type": "api_rpc_reply"
+            },
+            {
+              "to_node_id": "6a33e2cde552e8da3dcb160c",
+              "type": "go"
+            }
+          ],
+          "semaphors": []
+        },
+        "description": "Returns the first op result containing the node list to the calling process",
+        "extra": "{\"modeForm\":\"expand\",\"icon\":\"\"}",
+        "id": "6a33e2cde552e8da3dcb1607",
+        "obj_type": 0,
+        "options": null,
+        "title": "Reply Success",
+        "x": 1000,
+        "y": 900
+      },
+      {
+        "condition": {
+          "logics": [],
+          "semaphors": []
+        },
+        "description": "",
+        "extra": "{\"icon\":\"success\",\"modeForm\":\"collapse\"}",
+        "id": "6a33e2cde552e8da3dcb160c",
+        "obj_type": 2,
+        "options": "{\"save_task\":true}",
+        "title": "Done",
+        "x": 1100,
+        "y": 1100
+      },
+      {
+        "condition": {
+          "logics": [
+            {
+              "exception_reason": "Corezoid API call failed",
+              "mode": "key_value",
+              "res_data": {
+                "description": "{{__conveyor_api_return_description__}}",
+                "result": "error"
+              },
+              "res_data_type": {
+                "description": "string",
+                "result": "string"
+              },
+              "throw_exception": true,
+              "type": "api_rpc_reply"
+            },
+            {
+              "to_node_id": "6a33e2cde552e8da3dcb161a",
+              "type": "go"
+            }
+          ],
+          "semaphors": []
+        },
+        "description": "Returns error when the Corezoid API call fails",
+        "extra": "{\"modeForm\":\"expand\",\"icon\":\"\"}",
+        "id": "6a33e2cde552e8da3dcb1617",
+        "obj_type": 3,
+        "options": null,
+        "title": "Error - API Call",
+        "x": 1300,
+        "y": 700
+      },
+      {
+        "condition": {
+          "logics": [],
+          "semaphors": []
+        },
+        "description": "",
+        "extra": "{\"modeForm\":\"collapse\",\"icon\":\"error\"}",
+        "id": "6a33e2cde552e8da3dcb161a",
+        "obj_type": 2,
+        "options": "{\"save_task\":true}",
+        "title": "Error",
+        "x": 1300,
+        "y": 900
+      },
+      {
+        "condition": {
+          "logics": [
+            {
+              "exception_reason": "Corezoid API call timed out",
+              "mode": "key_value",
+              "res_data": {
+                "description": "Corezoid API call timed out after 30 seconds",
+                "result": "error"
+              },
+              "res_data_type": {
+                "description": "string",
+                "result": "string"
+              },
+              "throw_exception": true,
+              "type": "api_rpc_reply"
+            },
+            {
+              "to_node_id": "6a33e2cde552e8da3dcb161d",
+              "type": "go"
+            }
+          ],
+          "semaphors": []
+        },
+        "description": "Returns error when the API call exceeds the 30-second timeout",
+        "extra": "{\"modeForm\":\"expand\",\"icon\":\"\"}",
+        "id": "6a33e2cde552e8da3dcb161b",
+        "obj_type": 3,
+        "options": null,
+        "title": "Error - Timeout",
+        "x": 700,
+        "y": 700
+      },
+      {
+        "condition": {
+          "logics": [],
+          "semaphors": []
+        },
+        "description": "",
+        "extra": "{\"modeForm\":\"collapse\",\"icon\":\"error\"}",
+        "id": "6a33e2cde552e8da3dcb161d",
+        "obj_type": 2,
+        "options": "{\"save_task\":true}",
+        "title": "Timeout",
+        "x": 700,
+        "y": 900
+      }
+    ],
+    "web_settings": [[], []]
+  },
+  "status": "active",
+  "title": "Corezoid API - Node List"
+}

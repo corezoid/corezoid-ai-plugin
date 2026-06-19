@@ -129,6 +129,7 @@ For domain-specific workflows use the specialized skills:
 - `/corezoid-alias-manager` — creating, listing, modifying, deleting, and using aliases
 - `/corezoid-variable-manager` — creating, listing, modifying, deleting variables (visible/secret, raw/json)
 - `/corezoid-process-optimizer` — reduce tacts (merge nodes), clean data flow, fill names, add semaphors
+- `/corezoid-api-connector` — build processes that call the Corezoid public API (`/api/2/json/`) using `api_secret_outer`
 
 ## Reference Documents
 
