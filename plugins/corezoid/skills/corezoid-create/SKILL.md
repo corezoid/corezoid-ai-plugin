@@ -108,7 +108,7 @@ Produce a valid `.conv.json` file.
 
 ### Core rules
 
-- Node IDs must be unique 24-character hex strings: `^[0-9a-f]{24}$`
+- Node IDs must be unique 24-character hex strings: `^[0-9a-f]{24}$`. These are **temporary placeholders** for new nodes — on `push-process` Corezoid reassigns its own canonical IDs (and rewires references within the push). Run `pull-process` after pushing to get the canonical IDs before any further edits. See [Node ID Lifecycle](${CLAUDE_PLUGIN_ROOT}/docs/process/process-development-guide.md#node-id-lifecycle-server-assignment--stability-on-push).
 - Connect nodes only through the `go` field
 - Every node that can fail must have `err_node_id` pointing to a dedicated error node
 - All constants (URLs, tokens, IDs) must be Corezoid variables — never hardcoded:

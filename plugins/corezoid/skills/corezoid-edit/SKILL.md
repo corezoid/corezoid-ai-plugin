@@ -45,7 +45,7 @@ Apply changes to `PROCESS_PATH`.
 
 - Connect nodes only through the `go` field
 - Every node that can fail must have `err_node_id` pointing to a dedicated error node
-- Node IDs must be unique 24-character hex strings: `^[0-9a-f]{24}$`
+- Node IDs must be unique 24-character hex strings: `^[0-9a-f]{24}$`. **Always `pull-process` before editing** and reference only canonical, server-assigned IDs — IDs you invented in a previous push were reassigned by the server and no longer exist. New nodes added now get placeholder IDs that the server will likewise reassign on push. Existing nodes' IDs are preserved. See [Node ID Lifecycle](${CLAUDE_PLUGIN_ROOT}/docs/process/process-development-guide.md#node-id-lifecycle-server-assignment--stability-on-push).
 - Use descriptive node `title` values (e.g., "Call Payment Process", not "RPC")
 - Place new nodes below existing ones, incrementing `y` by 200–250px
 - Position error nodes to the right of their parent (`x + 300`)

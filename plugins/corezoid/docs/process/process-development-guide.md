@@ -236,6 +236,38 @@ Before deploying a process, validate its JSON structure to ensure it meets all r
    - Duplicate node IDs
    - Missing Start node (every process must have exactly one Start node)
 
+### Node ID Lifecycle: Server Assignment & Stability on Push
+
+Node IDs you write locally are **temporary** for any node the server does not yet recognize. On
+`push-process`, Corezoid assigns its own canonical 24-character hex ID to every **new** node and
+rewrites all references to it. This is expected, not an error.
+
+What is preserved vs. reassigned:
+
+| Node | On push |
+| ---- | ------- |
+| **New** node (locally invented ID, even a valid `^[0-9a-f]{24}$` string) | ID is **reassigned** to a server-generated value; format/plausibility of your ID does not matter |
+| **Existing** node (already carries a server-assigned ID) | ID is **preserved** — stable across all subsequent pushes |
+
+Each node also carries a server-managed `uuid`, which is likewise assigned on first push and stable
+thereafter.
+
+Practical workflow:
+
+1. For new nodes, supply any unique, format-valid placeholder ID (`^[0-9a-f]{24}$`) so the JSON
+   validates and intra-push references resolve. **Within a single push**, references between your
+   new nodes (`go`, `to_node_id`, `err_node_id`) are remapped to the canonical IDs automatically —
+   you do **not** need to know the final IDs in advance.
+2. `push-process` writes the canonical IDs back into your local process file and rewires references.
+3. Run **`pull-process`** afterward to fully resync server-managed fields (canonical `id`, `uuid`,
+   and any normalized values) before you make further edits.
+4. In a **later** editing session, never reference an ID you invented in a previous push — it no
+   longer exists. Use the canonical ID from the latest pull. (Node `title` is **not** a safe
+   substitute: titles are not unique and may be empty.)
+
+> Common failure: editing a process across sessions using stale, locally-invented IDs. The
+> connection silently points to a non-existent node. Always `pull` first and work from canonical IDs.
+
 ### Automatic Node Positioning
 
 To ensure clean, readable process diagrams with minimal edge intersections, use the provided node
