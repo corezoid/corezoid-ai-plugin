@@ -160,6 +160,7 @@ Use the `Read` tool to load these files when specific node or validation details
 | `${CLAUDE_PLUGIN_ROOT}/docs/nodes/call-process-node.md` | Call a Process node, semaphores, cross-folder calls |
 | `${CLAUDE_PLUGIN_ROOT}/docs/nodes/reply-to-process-node.md` | Reply formats, object stringification |
 | `${CLAUDE_PLUGIN_ROOT}/docs/nodes/api-call-node.md` | HTTP API call configuration |
+| `${CLAUDE_PLUGIN_ROOT}/docs/nodes/delay-node.md` | Delay/timer node; 30s limit is static-literal only — dynamic absolute-timestamp `value` for scheduled or sub-30s delays |
 | `${CLAUDE_PLUGIN_ROOT}/docs/nodes/end-node.md` | End node success/error configuration |
 | `${CLAUDE_PLUGIN_ROOT}/docs/process/process-json-validation.md` | Validation rules and common errors |
 | `${CLAUDE_PLUGIN_ROOT}/docs/process/error-handling.md` | Error handling patterns |

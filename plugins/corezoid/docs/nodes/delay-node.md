@@ -13,7 +13,7 @@
 1. **Delay Duration** (Number)
 
    - The amount of time to hold the task.
-   - Minimum value: 30 seconds. Values below this limit are not allowed (e.g., `"Timer value 15 sec is less than minimum limit 30 sec"`).
+   - Minimum value: 30 seconds — **but this limit is only enforced on a static numeric literal at deploy time** (e.g., `"value": 15` is rejected with `"Timer value 15 sec is less than minimum limit 30 sec"`). A **dynamic** `value` (a `{{placeholder}}` string resolved at runtime) is **not** subject to this static check. See [Scheduled & sub-30s timers via a dynamic absolute timestamp](#scheduled--sub-30s-timers-via-a-dynamic-absolute-timestamp).
    - Example: `"value": 30`
 
 2. **Time Unit** (String)
@@ -89,9 +89,68 @@ concurrent delayed tasks reaches the threshold, new tasks are routed to an escal
 
 This can be used to prevent system overload when many tasks are being delayed simultaneously.
 
+## Scheduled & sub-30s timers via a dynamic absolute timestamp
+
+The 30-second minimum is a **deploy-time validation of a static numeric literal** in the
+time-semaphore `value`. It is **not** a runtime floor. When `value` is a **dynamic reference**
+(a `{{placeholder}}` resolved at runtime), the static check does not apply — and the timer
+fires when that value tells it to.
+
+**Key semantic: a dynamic `value` is an _absolute Unix timestamp_ (the moment to fire), not a
+relative number of seconds.** Set it to the epoch second at which the task should be released.
+This lets you:
+
+- schedule a release at an exact moment (e.g. "tomorrow at 09:00"), and
+- release **sooner than 30 seconds** from now — set `value` to `now + 3`, and the task is held
+  for ~3 seconds. (A static `"value": 3` would be rejected at deploy; the dynamic form is not.)
+
+Because the value is absolute, **always compute `now + delta`**, never a small bare number —
+a dynamic `value` of `3` would be interpreted as epoch second 3 (1970), i.e. fire immediately.
+
+The fire-moment can be produced anywhere upstream — it just has to land in task data before the
+Delay node reads it:
+
+- a **Set Parameter** node: `"timeout": "$.math($.unixtime()+{{delta}})"` (type `number`);
+- a **Code** node returning an epoch second;
+- passed in from **another process** or the incoming task `data`.
+
+### Pattern (verified)
+
+Upstream node computes the absolute moment:
+
+```json
+{
+  "type": "set_param",
+  "extra": { "timeout": "$.math($.unixtime()+{{delta}})" },
+  "extra_type": { "timeout": "number" },
+  "err_node_id": "error_node_id"
+}
+```
+
+Delay node holds the task until that moment, then routes onward:
+
+```json
+{
+  "logics": [],
+  "semaphors": [
+    {
+      "type": "time",
+      "value": "{{timeout}}",
+      "dimension": "sec",
+      "to_node_id": "next_node_id"
+    }
+  ]
+}
+```
+
+**Observed behaviour** (live test, `dimension: "sec"`): with `delta = 3` the task entered the
+Delay node and reached the next node ~3 s later; with `delta = 10` it was released exactly at
+`now + 10`. Firing precision is ~1 s, and no 30-second floor is applied to the dynamic value.
+
 ## Best Practices
 
-- The minimum allowed delay is 30 seconds; values below this threshold will result in a validation error
+- The 30-second minimum applies only to a **static literal** `value` at deploy time; for shorter
+  or scheduled delays use a **dynamic `value` holding an absolute Unix timestamp** (see above)
 - Use reasonable delay times to avoid resource constraints
 - For variable delays, validate the parameter before reaching the Delay node
 - Consider using a Queue node for very long delays

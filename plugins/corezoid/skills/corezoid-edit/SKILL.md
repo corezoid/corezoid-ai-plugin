@@ -109,7 +109,7 @@ Use the `Read` tool to load these files when specific node or validation details
 | `${CLAUDE_PLUGIN_ROOT}/docs/nodes/api-call-node.md` | HTTP API call configuration |
 | `${CLAUDE_PLUGIN_ROOT}/docs/nodes/end-node.md` | End node success/error configuration |
 | `${CLAUDE_PLUGIN_ROOT}/docs/nodes/condition-node.md` | Condition node (branching logic) |
-| `${CLAUDE_PLUGIN_ROOT}/docs/nodes/delay-node.md` | Delay node (timers and waiting) |
+| `${CLAUDE_PLUGIN_ROOT}/docs/nodes/delay-node.md` | Delay node (timers and waiting); 30s limit is static-literal only — dynamic absolute-timestamp `value` for scheduled or sub-30s delays |
 | `${CLAUDE_PLUGIN_ROOT}/docs/nodes/copy-task-node.md` | Copy Task node (task duplication) |
 | `${CLAUDE_PLUGIN_ROOT}/docs/process/process-json-validation.md` | Validation rules and common errors |
 | `${CLAUDE_PLUGIN_ROOT}/docs/process/error-handling.md` | Error handling patterns (hardware vs software errors) |
