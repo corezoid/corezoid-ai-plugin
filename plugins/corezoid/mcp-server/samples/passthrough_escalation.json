@@ -1,0 +1,79 @@
+{
+  "obj_type": 1,
+  "obj_id": 0,
+  "title": "Passthrough Escalation Example",
+  "scheme": {
+    "nodes": [
+      {
+        "id": "aabbccddaabbccddaabbcc01",
+        "obj_type": 1,
+        "condition": {
+          "logics": [
+            {"type": "go", "to_node_id": "aabbccddaabbccddaabbcc02"}
+          ],
+          "semaphors": []
+        },
+        "title": "Start",
+        "x": 0, "y": 0,
+        "extra": "{\"modeForm\":\"collapse\",\"icon\":\"\"}"
+      },
+      {
+        "id": "aabbccddaabbccddaabbcc02",
+        "obj_type": 0,
+        "condition": {
+          "logics": [
+            {
+              "type": "api_rpc",
+              "conv_id": 12345,
+              "user_id": 1,
+              "group": "",
+              "extra": {},
+              "extra_type": {},
+              "err_node_id": "aabbccddaabbccddaabbcc03"
+            },
+            {"type": "go", "to_node_id": "aabbccddaabbccddaabbcc05"}
+          ],
+          "semaphors": []
+        },
+        "title": "Call Payment",
+        "x": 0, "y": 200,
+        "extra": "{\"modeForm\":\"expand\",\"icon\":\"\"}"
+      },
+      {
+        "id": "aabbccddaabbccddaabbcc03",
+        "obj_type": 3,
+        "condition": {
+          "logics": [
+            {"type": "go", "to_node_id": "aabbccddaabbccddaabbcc04"}
+          ],
+          "semaphors": []
+        },
+        "title": "",
+        "x": 300, "y": 200,
+        "extra": "{\"modeForm\":\"collapse\",\"icon\":\"error\"}"
+      },
+      {
+        "id": "aabbccddaabbccddaabbcc04",
+        "obj_type": 2,
+        "condition": {
+          "logics": [],
+          "semaphors": []
+        },
+        "title": "rpc_error",
+        "x": 300, "y": 400,
+        "extra": "{\"modeForm\":\"collapse\",\"icon\":\"error\"}"
+      },
+      {
+        "id": "aabbccddaabbccddaabbcc05",
+        "obj_type": 2,
+        "condition": {
+          "logics": [],
+          "semaphors": []
+        },
+        "title": "Final",
+        "x": 0, "y": 400,
+        "extra": "{\"modeForm\":\"collapse\",\"icon\":\"success\"}"
+      }
+    ]
+  }
+}

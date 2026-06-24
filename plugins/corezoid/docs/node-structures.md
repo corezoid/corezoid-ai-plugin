@@ -446,8 +446,8 @@ Complete JSON structures for all node types used when modifying Corezoid process
 
 ## Escalation Node (`obj_type: 3`)
 
-Escalation nodes handle errors and timeouts. They always contain `api_rpc_reply` with
-`throw_exception: true` and route to a Final Error node.
+Escalation nodes handle errors that require active logic: replying to the calling process,
+conditional retry routing, or performing any action before terminating.
 
 ```json
 {
@@ -484,17 +484,46 @@ Escalation nodes handle errors and timeouts. They always contain `api_rpc_reply`
 ```
 
 **Rules:**
-- `obj_type: 3` marks this node as an escalation (reply) node
-- Must always contain `api_rpc_reply` with `throw_exception: true`
+- `obj_type: 3` marks this node as an escalation node
 - Must always end with `go` routing to a Final Error node (`obj_type: 2`)
 - `{{__conveyor_api_return_description__}}` is the system variable that captures the error message from the failed node
-- Every functional node that can fail (`api`, `api_code`, `api_rpc`, `api_copy`, `set_param`, `db_call`, `git_call`, `api_sum`) needs `err_node_id` pointing to an escalation node
 - API Call nodes also need a separate timeout escalation node via `semaphors`
 
-**Error handling pattern:**
+**When to use an escalation node vs. a direct final node:**
+
+Use an escalation node (`obj_type: 3`) only when the error path needs actual logic:
+- Replying to the calling process (`api_rpc_reply` with `throw_exception: true`)
+- Conditional routing based on error type (`go_if_const` on `__conveyor_*_return_type_tag__`)
+- Any other action before terminating
+
+Wire `err_node_id` **directly to a Final Error node** (`obj_type: 2`) when the error path
+simply needs to terminate with no additional logic:
+
 ```
-[Functional Node] --err_node_id--> [Escalation obj_type:3] --go--> [Final Error obj_type:2]
-[API Call Node]   --semaphor-----> [Timeout Escalation]    --go--> [Timeout Final obj_type:2]
+[Functional Node] --err_node_id--> [Final Error obj_type:2]      ✓ no logic needed
+[Functional Node] --err_node_id--> [Escalation obj_type:3]       ✓ reply / routing needed
+                                          └──go──> [Final Error obj_type:2]
+[API Call Node]   --semaphor-----> [Timeout Escalation obj_type:3] --go--> [Timeout Final obj_type:2]
+```
+
+**Anti-pattern — passthrough escalation (flagged by `lint-process`):**
+
+An escalation node with only a bare `go` and no action logic is pointless clutter.
+Replace it with a direct `err_node_id` pointer to the final node:
+
+```json
+// ✗ wrong — empty escalation node, no logic inside
+{
+  "id": "...",
+  "obj_type": 3,
+  "condition": {
+    "logics": [{"type": "go", "to_node_id": "<final_error_id>"}],
+    "semaphors": []
+  }
+}
+
+// ✓ correct — err_node_id points straight at the final error node
+"err_node_id": "<final_error_id>"
 ```
 
 ---

@@ -110,7 +110,7 @@ Produce a valid `.conv.json` file.
 
 - Node IDs must be unique 24-character hex strings: `^[0-9a-f]{24}$`. These are **temporary placeholders** for new nodes — on `push-process` Corezoid reassigns its own canonical IDs (and rewires references within the push). Run `pull-process` after pushing to get the canonical IDs before any further edits. See [Node ID Lifecycle](${CLAUDE_PLUGIN_ROOT}/docs/process/process-development-guide.md#node-id-lifecycle-server-assignment--stability-on-push).
 - Connect nodes only through the `go` field
-- Every node that can fail must have `err_node_id` pointing to a dedicated error node
+- Every node that can fail must have `err_node_id` — point it **directly at a Final Error node** (`obj_type: 2`) unless the error path needs logic (reply to caller, retry routing). Never create an Escalation node (`obj_type: 3`) that only contains a bare `go` — that is a passthrough anti-pattern flagged by `lint-process`
 - All constants (URLs, tokens, IDs) must be Corezoid variables — never hardcoded:
   1. Check for existing variables: read `_ENV_VARS_.json` (from `pull-folder`) or `.processes/variables.json` (from this session)
   2. Create a new variable if needed: call MCP tool **`create-variable`** with `name`, `description`, `value`
