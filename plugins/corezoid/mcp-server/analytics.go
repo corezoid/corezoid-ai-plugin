@@ -16,8 +16,6 @@ import (
 	"time"
 )
 
-const analyticsEndpoint = "https://www.corezoid.com/api/2/json/public/1852976/5b76d006818d63730bc18a5b0e7d8d091e82d2a2"
-const analyticsConvID = 1852976
 const analyticsBatchSize = 20
 const analyticsFlushInterval = 5 * time.Second
 
@@ -25,6 +23,14 @@ var analyticsEnabled atomic.Bool
 var analyticsTransport string
 var installationID string
 var analyticsCh chan AnalyticsEvent
+
+// analyticsEndpoint and analyticsConvID are set from telemetryConfig during initAnalytics.
+var analyticsEndpoint string
+var analyticsConvID int
+
+// teleCfg is the resolved telemetry config, loaded once in initAnalytics.
+// The feedback handler reads FeedbackEndpoint/FeedbackConvID from it.
+var teleCfg telemetryConfig
 
 // AnalyticsEvent holds telemetry data for a single tool call.
 type AnalyticsEvent struct {
@@ -117,6 +123,10 @@ func generateUUIDv4() string {
 // COREZOID_ANALYTICS=true. Must be called after loadConfig() and before the
 // MCP server starts accepting requests.
 func initAnalytics() {
+	teleCfg = loadTelemetryConfig()
+	analyticsEndpoint = teleCfg.AnalyticsEndpoint
+	analyticsConvID = teleCfg.AnalyticsConvID
+
 	if os.Getenv("COREZOID_ANALYTICS_DISABLED") != "" {
 		return
 	}

@@ -51,14 +51,20 @@ var toolHandlers = map[string]toolHandler{
 	"modify-chart":         handleModifyChart,
 	"get-chart":            handleGetChart,
 	"set-dashboard-layout": handleSetDashboardLayout,
+
+	// feedback
+	"send-feedback": handleSendFeedback,
 }
 
 // noAuthTools don't need any credentials. lint runs entirely on local files;
 // login/logout manage credentials themselves.
+// send-feedback must not require auth so users can report problems that
+// occurred before or during the login flow.
 var noAuthTools = map[string]struct{}{
-	"lint-process": {},
-	"login":        {},
-	"logout":       {},
+	"lint-process":  {},
+	"login":         {},
+	"logout":        {},
+	"send-feedback": {},
 }
 
 // tokenOnlyTools need an OAuth token but not a fully configured workspace or

@@ -28,6 +28,7 @@ Credentials are split into two layers:
 - All Corezoid API calls go to the `COREZOID_API_URL` configured in `.env` (default: `https://api.corezoid.com`).
 - TLS verification is enabled by default. It can be disabled with `COREZOID_INSECURE_TLS=1` — only for on-premises installations with self-signed certificates.
 - Anonymous tool-call telemetry (tool name, duration ms, error type, API hostname) is sent to `www.corezoid.com`. No tokens, workspace identifiers, process content, or personally identifiable data are included. Set `COREZOID_ANALYTICS_DISABLED=1` to opt out.
+- User-initiated feedback (via the `corezoid-feedback` skill / `send-feedback` tool) is sent **only after explicit user confirmation**. All text fields are scanned for Bearer tokens, JWTs, API keys, passwords, and long hex secrets; any matches are replaced with `[REDACTED]` before transmission. Set `COREZOID_FEEDBACK_DISABLED=1` to block feedback submission entirely.
 
 ## MCP server binary distribution
 

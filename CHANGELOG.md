@@ -1,5 +1,12 @@
 # Changelog
 
+## [Unreleased]
+
+- Feat: `send-feedback` MCP tool — submits user feedback to a dedicated Corezoid process (`conv_id 1871779`) and returns a ticket id. Does not require authentication so users can report auth-related issues too.
+- Feat: `corezoid-feedback` skill — UX layer for the feedback flow: detects when a result was unexpected, collects problem/expected/solution, shows the full payload for confirmation, then calls `send-feedback`.
+- Refactor: all telemetry values (analytics + feedback endpoint and conv_id) centralised in `telemetry_config.go`; individually overridable via `COREZOID_ANALYTICS_ENDPOINT`, `COREZOID_ANALYTICS_CONV_ID`, `COREZOID_FEEDBACK_ENDPOINT`, `COREZOID_FEEDBACK_CONV_ID`. Existing default behavior unchanged.
+- Security: secret redaction applied to all feedback fields before transmission (Bearer tokens, JWTs, `api_key`/`token`/`password`/`secret` values, hex strings ≥ 32 chars). Feedback disabled by `COREZOID_FEEDBACK_DISABLED=1`.
+
 ## [2.3.9]
 
 - Docs: clarify in SECURITY.md that Go is not required on supported prebuilt platforms; only needed for developer/fallback scenarios.

@@ -208,6 +208,28 @@ validation errors, and summarize what each process does.
 | `modify-chart`      | Modify an existing chart (full series replace)     |
 | `get-chart`         | Get a single chart with its series data            |
 | `set-dashboard-layout` | Save chart positions on a dashboard grid        |
+| `send-feedback`     | Submit feedback about plugin behavior (returns ticket id) |
+
+## Feedback
+
+When the plugin does something unexpected, the `corezoid-feedback` skill guides you through collecting a description of the problem and sends it to the Corezoid team via the `send-feedback` MCP tool.
+
+**Privacy guarantees:**
+
+- Feedback is sent **only after your explicit confirmation**. Nothing is sent automatically.
+- All fields are scanned for tokens, API keys, JWTs, and long hex secrets before transmission — any matches are replaced with `[REDACTED]`.
+- To disable feedback entirely (e.g. in corporate environments), set `COREZOID_FEEDBACK_DISABLED=1`.
+
+**Telemetry environment variables:**
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `COREZOID_ANALYTICS_DISABLED` | — | Opt out of anonymous tool-call telemetry |
+| `COREZOID_ANALYTICS_ENDPOINT` | built-in prod URL | Override analytics endpoint |
+| `COREZOID_ANALYTICS_CONV_ID` | `1852976` | Override analytics conv_id |
+| `COREZOID_FEEDBACK_DISABLED` | — | Disable user-initiated feedback submission |
+| `COREZOID_FEEDBACK_ENDPOINT` | built-in prod URL | Override feedback endpoint |
+| `COREZOID_FEEDBACK_CONV_ID` | `1871779` | Override feedback conv_id |
 
 ## Architecture
 
@@ -220,8 +242,9 @@ Claude Code / Codex
         │                 create-process, create-folder, create-alias, create-variable
         ├── Tasks         run-task, list-node-tasks, list-task-history
         │                 modify-task, delete-task
-        └── Dashboards    create-dashboard, get-dashboard, add-chart,
-                          modify-chart, get-chart, set-dashboard-layout
+        ├── Dashboards    create-dashboard, get-dashboard, add-chart,
+        │                 modify-chart, get-chart, set-dashboard-layout
+        └── Feedback      send-feedback
 ```
 
 ## Project structure
