@@ -1,10 +1,11 @@
 {
-  "_comment": "Connection-profile registry for the Corezoid MCP server. Copy this file to ~/.corezoid/profiles/registry.json and fill in your own environments. Coordinates only — NEVER put ACCESS_TOKEN here; tokens stay per-user in ~/.corezoid/credentials or each profile's .env. The resolver picks a profile from a signal (alias / jira_prefix / host URL). When a JIRA prefix maps to several profiles (e.g. a dev + a prod of the same project), the dev one (is_prod:false) wins unless the signal explicitly names prod or carries a prod host.",
+  "_comment": "Connection-profile registry for the Corezoid MCP server. Copy this file to ~/.corezoid/profiles/registry.json and fill in your own environments. Coordinates only — NEVER put ACCESS_TOKEN here; point env_file at a per-user .env that holds it. The use-profile tool resolves a profile from a signal (registry key / Corezoid URL host / JIRA prefix / alias) and loads it into the session WITHOUT rewriting the shared cwd/.env. When a JIRA prefix maps to several profiles (e.g. a dev + a prod of the same project), the dev one (is_prod:false) wins unless the signal explicitly names prod or carries a prod host.",
   "profiles": {
     "myproject-dev": {
       "account_url": "https://account.dev.example.com",
       "workspace_id": "i000000000",
       "stage_id": 10001,
+      "env_file": "/home/me/.corezoid/profiles/myproject-dev.env",
       "match": {
         "aliases": ["myproject", "myproject dev"],
         "hosts": ["account.dev.example.com"],
@@ -16,6 +17,7 @@
       "account_url": "https://account.example.com",
       "workspace_id": "i000000001",
       "stage_id": 20001,
+      "env_file": "/home/me/.corezoid/profiles/myproject-prod.env",
       "match": {
         "aliases": ["myproject prod"],
         "hosts": ["account.example.com"],

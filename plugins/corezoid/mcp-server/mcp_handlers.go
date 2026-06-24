@@ -19,8 +19,9 @@ type toolHandler func(ctx context.Context, args map[string]interface{}) (result 
 // behavior doesn't pull in unrelated diffs to login/push/etc.
 var toolHandlers = map[string]toolHandler{
 	// auth
-	"login":  handleLogin,
-	"logout": handleLogout,
+	"login":       handleLogin,
+	"logout":      handleLogout,
+	"use-profile": handleUseProfile,
 
 	// process / folder / alias
 	"pull-process":         handlePullProcess,
@@ -86,6 +87,7 @@ var noAuthTools = map[string]struct{}{
 	"lint-process": {},
 	"login":        {},
 	"logout":       {},
+	"use-profile":  {},
 }
 
 // tokenOnlyTools need an OAuth token but not a fully configured workspace or

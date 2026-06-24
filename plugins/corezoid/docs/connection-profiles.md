@@ -1,7 +1,6 @@
 # Connection profiles (multi-environment switching)
 
-> Status: **proposal / convention**. The `registry.example.json` template ships now; the
-> MCP-server wiring described under "Implementation notes" is the developer task this PR asks for.
+> Status: **implemented**. Ships the `use-profile` MCP tool + `registry.example.json` template.
 
 ## Problem
 
@@ -57,15 +56,23 @@ Safety (dev is the safe zone):
   second environment into an existing profile. Merging multiple configs into one profile is
   only allowed on an explicit flag.
 
-## Implementation notes (for the MCP server — the ask of this PR)
+## The `use-profile` tool
 
-The mechanism to swap the auth globals already exists: `handleLogin` reloads
-`accountURL`/`workspaceID`/`stageID`/`apiToken` under `withAuthLock`. A profile feature can reuse it:
+```
+use-profile profile=az-dev            # by registry key
+use-profile signal=AZ-123             # by JIRA prefix
+use-profile signal=https://host/...   # by Corezoid URL host
+use-profile profile=az-prod confirm=true   # production requires confirm
+```
 
-1. Load `~/.corezoid/profiles/registry.json` (fall back to `.env` if absent — fully backward compatible).
-2. Add a `use-profile` tool (and/or a resolver helper) that takes a signal, picks a profile per the
-   rules above, and writes its coordinates into the globals via `withAuthLock` — no OAuth needed.
-3. Keep `is_prod` confirmation as a guardrail.
+It loads the resolved profile's coordinates into the running server's auth globals via
+`withAuthLock`, and the `ACCESS_TOKEN` from the profile's `env_file` if set (otherwise the
+current session token is kept). Crucially it does **not** write the shared `cwd/.env` — so two
+chats rooted in the same directory no longer clobber each other's environment.
+
+Implemented in `mcp-server/mcp_handlers_profile.go` (`loadProfileRegistry`, `resolveProfile`,
+`handleUseProfile`); registered in `mcp_handlers.go` and `tools_registry.go`. The registry is
+optional — with no `registry.json`, behaviour is unchanged (the server still uses `.env`).
 
 No per-call `env` argument is needed: the established workflow is one chat = one environment, so
 resolve-and-lock at session start is enough.
