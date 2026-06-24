@@ -1,0 +1,67 @@
+{
+  "skills": [
+    {
+      "name": "corezoid",
+      "description": "Universal Corezoid assistant. Use when the user asks anything about Corezoid processes, wants to work with process JSON files, mentions process nodes, MCP tools, process validation, or any Corezoid-specific task. Also use when the user mentions \"Corezoid\", \"BPM process\", \"conv.json\", \"push process\", \"run task\", or asks for general platform knowledge. This skill provides deep knowledge of the platform model and guides you to use the Corezoid MCP tools correctly.",
+      "files": [
+        "https://raw.githubusercontent.com/corezoid/corezoid-ai-plugin/main/plugins/corezoid/skills/corezoid/SKILL.md"
+      ]
+    },
+    {
+      "name": "corezoid-create",
+      "description": "Corezoid process creation specialist. Use when the user wants to create a new Corezoid process from scratch, build a new automation flow, design a new BPM process, or implement a new API connector. Activate when the user says \"create a process\", \"build a new flow\", \"new process\", \"design from scratch\", \"implement a connector\", \"create an automation\", or \"add a new process\".",
+      "files": [
+        "https://raw.githubusercontent.com/corezoid/corezoid-ai-plugin/main/plugins/corezoid/skills/corezoid-create/SKILL.md"
+      ]
+    },
+    {
+      "name": "corezoid-dashboard-manager",
+      "description": "Creates and manages Corezoid dashboards — adds charts (column, pie, funnel, table), binds metrics to process nodes, configures real-time mode, and sets up drill-down linking between dashboards. Activate whenever a user asks to create a dashboard, add a chart, visualize process metrics, set up reporting for a Corezoid process, configure real-time monitoring, or asks what dashboards or charts exist. Also activate when the user wants to show task counts, completion rates, error rates, or any other process statistics visually in Corezoid.",
+      "files": [
+        "https://raw.githubusercontent.com/corezoid/corezoid-ai-plugin/main/plugins/corezoid/skills/corezoid-dashboard-manager/SKILL.md"
+      ]
+    },
+    {
+      "name": "corezoid-edit",
+      "description": "Corezoid process editing specialist. Use when the user wants to modify, update, or fix an existing Corezoid process, add or remove nodes, change node behavior, add an API call, fix an error, or update process logic. Activate when the user says \"edit a process\", \"modify\", \"update\", \"fix\", \"add a node\", \"change behavior\", \"add a call\", \"remove a node\", or \"update the logic\".",
+      "files": [
+        "https://raw.githubusercontent.com/corezoid/corezoid-ai-plugin/main/plugins/corezoid/skills/corezoid-edit/SKILL.md"
+      ]
+    },
+    {
+      "name": "corezoid-init",
+      "description": "Corezoid environment setup specialist. Use when the user wants to connect to Corezoid, set up credentials, authenticate, pull a project, configure the environment, or start working with a Corezoid project for the first time. Activate when the user says \"init\", \"setup\", \"connect to corezoid\", \"login\", \"pull workspace\", \"configure environment\", or \"get started\".",
+      "files": [
+        "https://raw.githubusercontent.com/corezoid/corezoid-ai-plugin/main/plugins/corezoid/skills/corezoid-init/SKILL.md"
+      ]
+    },
+    {
+      "name": "corezoid-process-tech-writer",
+      "description": "Documents a Corezoid process — produces a human-readable Markdown file AND enriches the process JSON with descriptions on every node and parameter. Output is designed for team wikis, internal portals, and future product integration. Activate whenever a user asks to document a process, write docs for a connector, add descriptions to a process, create documentation for a logic, describe what a process does, or any similar phrasing. Also activate when the user shares a process JSON and asks to explain it or make it self-documenting. Always produce BOTH outputs (Markdown file + enriched JSON) — never just one.",
+      "files": [
+        "https://raw.githubusercontent.com/corezoid/corezoid-ai-plugin/main/plugins/corezoid/skills/corezoid-process-tech-writer/SKILL.md"
+      ]
+    },
+    {
+      "name": "corezoid-project-review",
+      "description": "Corezoid project review and audit specialist. Use when the user wants to review or audit an entire Corezoid project or folder — multiple processes at once. Activate when the user says \"review project\", \"audit project\", \"review all processes\", \"audit all processes\", \"review folder\", \"review all processes in\", \"project-wide review\", \"cross-process analysis\", \"find issues across processes\", \"review the whole project\", or \"audit folder\".",
+      "files": [
+        "https://raw.githubusercontent.com/corezoid/corezoid-ai-plugin/main/plugins/corezoid/skills/corezoid-project-review/SKILL.md"
+      ]
+    },
+    {
+      "name": "corezoid-review",
+      "description": "Corezoid process review and audit specialist. Use when the user wants to analyze, review, audit, or improve an existing Corezoid process. Activate when the user says \"review a process\", \"analyze\", \"check\", \"audit\", \"find issues\", \"explain this process\", \"what's wrong with\", \"optimize\", or \"check for hardcoded values\".",
+      "files": [
+        "https://raw.githubusercontent.com/corezoid/corezoid-ai-plugin/main/plugins/corezoid/skills/corezoid-review/SKILL.md"
+      ]
+    },
+    {
+      "name": "marketplace-publish-validation",
+      "description": "Corezoid  marketplace pre-publication validator. Standalone skill — no external skill dependencies required. Use this skill whenever the user wants to publish, release, or submit a project or folder to the Corezoid marketplace, or asks to check if a project is ready to publish. Activate on phrases: \"publish to marketplace\", \"готово до публікації\", \"можна публікувати\", \"перевір перед публікацією\", \"validate for marketplace\", \"pre-publish check\", \"marketplace validation\", \"publication readiness\", \"check before publish\", \"submit to marketplace\", \"перевірка публікації\". Also activate when the user asks \"what's blocking publication\" or \"why can't I publish this\".",
+      "files": [
+        "https://raw.githubusercontent.com/corezoid/corezoid-ai-plugin/main/plugins/corezoid/skills/marketplace-publish-validation/SKILL.md"
+      ]
+    }
+  ]
+}

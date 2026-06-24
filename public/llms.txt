@@ -1,0 +1,49 @@
+# Corezoid AI Plugin
+
+> Official Claude Code plugin for Corezoid BPM platform. Provides skills and MCP tools for creating, editing, reviewing, and managing Corezoid business processes directly from the IDE.
+
+## Skills
+
+- [corezoid](https://raw.githubusercontent.com/corezoid/corezoid-ai-plugin/main/plugins/corezoid/skills/corezoid/SKILL.md): Universal Corezoid assistant
+- [corezoid-create](https://raw.githubusercontent.com/corezoid/corezoid-ai-plugin/main/plugins/corezoid/skills/corezoid-create/SKILL.md): Corezoid process creation specialist
+- [corezoid-dashboard-manager](https://raw.githubusercontent.com/corezoid/corezoid-ai-plugin/main/plugins/corezoid/skills/corezoid-dashboard-manager/SKILL.md): Creates and manages Corezoid dashboards — adds charts (column, pie, funnel, table), binds metrics to process nodes, configures real-time mode, and sets up drill-down linking between dashboards
+- [corezoid-edit](https://raw.githubusercontent.com/corezoid/corezoid-ai-plugin/main/plugins/corezoid/skills/corezoid-edit/SKILL.md): Corezoid process editing specialist
+- [corezoid-init](https://raw.githubusercontent.com/corezoid/corezoid-ai-plugin/main/plugins/corezoid/skills/corezoid-init/SKILL.md): Corezoid environment setup specialist
+- [corezoid-process-tech-writer](https://raw.githubusercontent.com/corezoid/corezoid-ai-plugin/main/plugins/corezoid/skills/corezoid-process-tech-writer/SKILL.md): Documents a Corezoid process — produces a human-readable Markdown file AND enriches the process JSON with descriptions on every node and parameter
+- [corezoid-project-review](https://raw.githubusercontent.com/corezoid/corezoid-ai-plugin/main/plugins/corezoid/skills/corezoid-project-review/SKILL.md): Corezoid project review and audit specialist
+- [corezoid-review](https://raw.githubusercontent.com/corezoid/corezoid-ai-plugin/main/plugins/corezoid/skills/corezoid-review/SKILL.md): Corezoid process review and audit specialist
+- [marketplace-publish-validation](https://raw.githubusercontent.com/corezoid/corezoid-ai-plugin/main/plugins/corezoid/skills/marketplace-publish-validation/SKILL.md): Corezoid  marketplace pre-publication validator
+
+## MCP Tools
+
+The plugin bundles a Go MCP server (`convctl`) with these tools:
+
+- **login**: Authenticate with Corezoid via OAuth2 browser flow
+- **pull-process**: Export a single process definition to a local .conv.json file
+- **pull-folder**: Recursively export all processes from a Corezoid folder
+- **push-process**: Validate and deploy a local process file to Corezoid
+- **lint-process**: Validate process structure — orphaned nodes, noop conditions, unused params
+- **run-task**: Execute a task on a deployed Corezoid process
+- **create-process**: Create a new empty process inside a Corezoid folder
+- **create-folder**: Create a new folder inside a Corezoid folder
+- **create-variable**: Create an environment variable in a Corezoid folder
+- **create-dashboard**: Create a dashboard for visualizing process node metrics
+- **add-chart**: Add a chart (column, pie, funnel, table) to a dashboard
+- **list-workspaces**: List Corezoid workspaces available to the authenticated user
+- **list-projects**: List projects inside a workspace
+- **list-stages**: List stages (environments) inside a project
+- **modify-task**: Modify an existing task's data
+- **delete-task**: Delete a task from a process
+- **logout**: Remove saved Corezoid credentials from disk
+
+## Documentation
+
+- [Node Structures](https://raw.githubusercontent.com/corezoid/corezoid-ai-plugin/main/plugins/corezoid/docs/node-structures.md): JSON schemas for all 24 Corezoid node types
+- [Variables Guide](https://raw.githubusercontent.com/corezoid/corezoid-ai-plugin/main/plugins/corezoid/docs/variables-guide.md): Environment variable syntax `{{env_var[@name]}}`
+- [Process Docs](https://raw.githubusercontent.com/corezoid/corezoid-ai-plugin/main/plugins/corezoid/docs/process/): Process format, validation rules, and error handling
+- [Node Docs](https://raw.githubusercontent.com/corezoid/corezoid-ai-plugin/main/plugins/corezoid/docs/nodes/): Per-node-type documentation (24 types)
+
+## Optional
+
+- [Skills Index](https://raw.githubusercontent.com/corezoid/corezoid-ai-plugin/main/public/.well-known/skills/index.json): Machine-readable agent discovery index
+- [Changelog](https://raw.githubusercontent.com/corezoid/corezoid-ai-plugin/main/CHANGELOG.md): Release history

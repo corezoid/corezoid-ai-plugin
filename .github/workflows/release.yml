@@ -58,6 +58,9 @@ jobs:
         working-directory: dist/
         run: sha256sum convctl-* > checksums.txt
 
+      - name: Generate discovery files
+        run: python3 scripts/generate-discovery.py
+
       - name: Attest binary provenance
         uses: actions/attest-build-provenance@v2
         with:
@@ -90,3 +93,5 @@ jobs:
           files: |
             dist/convctl-*
             dist/checksums.txt
+            public/llms.txt
+            public/.well-known/skills/index.json
