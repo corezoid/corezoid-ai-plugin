@@ -1,0 +1,27 @@
+{
+  "_comment": "Connection-profile registry for the Corezoid MCP server. Copy this file to ~/.corezoid/profiles/registry.json and fill in your own environments. Coordinates only — NEVER put ACCESS_TOKEN here; tokens stay per-user in ~/.corezoid/credentials or each profile's .env. The resolver picks a profile from a signal (alias / jira_prefix / host URL). When a JIRA prefix maps to several profiles (e.g. a dev + a prod of the same project), the dev one (is_prod:false) wins unless the signal explicitly names prod or carries a prod host.",
+  "profiles": {
+    "myproject-dev": {
+      "account_url": "https://account.dev.example.com",
+      "workspace_id": "i000000000",
+      "stage_id": 10001,
+      "match": {
+        "aliases": ["myproject", "myproject dev"],
+        "hosts": ["account.dev.example.com"],
+        "jira_prefix": ["PROJ"]
+      },
+      "is_prod": false
+    },
+    "myproject-prod": {
+      "account_url": "https://account.example.com",
+      "workspace_id": "i000000001",
+      "stage_id": 20001,
+      "match": {
+        "aliases": ["myproject prod"],
+        "hosts": ["account.example.com"],
+        "jira_prefix": ["PROJ"]
+      },
+      "is_prod": true
+    }
+  }
+}
