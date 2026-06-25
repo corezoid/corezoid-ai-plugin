@@ -24,18 +24,8 @@
       "description": "Internal user ID associated with the operation"
     },
     "conv_id": {
-      "oneOf": [
-        {
-          "type": "integer",
-          "description": "Numeric ID of the target Process"
-        },
-        {
-          "type": "string",
-          "pattern": "^@.*",
-          "description": "String ID of the target Process, must start with '@'"
-        }
-      ],
-      "description": "ID of the target Process to receive the copied task or where the task to modify resides. Can be either a numeric ID or a string starting with '@'"
+      "type": ["integer", "string"],
+      "description": "ID of the target Process to receive the copied task or where the task to modify resides. Numeric ID, an '@alias', or a dynamic reference like '{{param}}' (aligned with api_rpc conv_id)."
     },
     "convTitle": {
       "type": "string",
