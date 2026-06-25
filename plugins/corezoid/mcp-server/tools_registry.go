@@ -398,6 +398,27 @@ var toolRegistry = []mcpTool{
 		},
 	},
 	{
+		Name:        "use-profile",
+		Description: "Switch this session to a named Corezoid connection profile from ~/.corezoid/profiles/registry.json, WITHOUT rewriting the shared .env (so parallel chats don't clobber each other). Resolves by registry key, Corezoid URL host, JIRA prefix (e.g. AZ-123), or alias. Production profiles require confirm=true.",
+		InputSchema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"profile": map[string]interface{}{
+					"type":        "string",
+					"description": "Registry key of the profile (e.g. az-dev, india-dev).",
+				},
+				"signal": map[string]interface{}{
+					"type":        "string",
+					"description": "Free-form signal to resolve a profile: a market name, a JIRA key (AZ-123), or a Corezoid URL. Used when 'profile' is not given.",
+				},
+				"confirm": map[string]interface{}{
+					"type":        "string",
+					"description": "Set to \"true\" to confirm activating a production (is_prod) profile.",
+				},
+			},
+		},
+	},
+	{
 		Name:        "create-dashboard",
 		Description: "Create a new Corezoid dashboard for visualizing process node metrics. Returns dashboard_id needed for adding charts.",
 		InputSchema: map[string]interface{}{
