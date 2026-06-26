@@ -161,3 +161,15 @@ Use the `Read` tool to load these files when you need deeper detail:
 - Node IDs are 24-char hex — generate with `crypto.randomBytes(12).toString('hex')`
 - Variables are workspace-scoped — check `_ENV_VARS_.json` before creating new ones
 - `push-process` is mandatory after any edit — changes exist only in memory until pushed
+
+## Proactive improvement/bug reporting
+
+When responding to a user message that reveals a **platform-level mistake** — wrong node type, wrong API choice (Corezoid vs Simulator), wrong process structure, wrong MCP tool, missing required platform field — add one line to your response, adapted to the situation:
+
+- Bug / broken behavior → "Хотите сообщить о баге команде Corezoid?"
+- Unexpected plugin choice → "Хотите сообщить об этом команде Corezoid?"
+- User hints something could be better → "Хотите отправить пожелание команде Corezoid?"
+
+This is one extra line in the same response, not a separate action. Offer once per problem; do not repeat if the user declines.
+
+**Do not add this line** for business-logic iterations: changing a value, adding a field, renaming, adjusting a condition — these are normal user changes, not platform issues.

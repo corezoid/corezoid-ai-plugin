@@ -10,6 +10,9 @@
 
 ## [2.4.0]
 
+- Feat: `send-feedback` MCP tool — submits user feedback to a dedicated Corezoid process (`conv_id 1871779`) and returns a ticket id. Does not require authentication so users can report auth-related issues too.
+- Feat: `corezoid-feedback` skill — UX layer for the feedback flow: detects when a result was unexpected, collects problem/expected/solution, shows the full payload for confirmation, then calls `send-feedback`.
+- Feat: opt-in email telemetry — after first successful login, users are asked (via elicitation) if they want to share their email with the Corezoid team; stored in `~/.corezoid/preferences.json`, included as `user_email` in analytics events.
 - Feat: corezoid-access skill and MCP tools for user groups, API keys, and object/folder sharing.
 - Feat: corezoid-state-diagram-create and corezoid-state-diagram-edit skills with a create-state-diagram MCP tool for building and modifying state-diagram processes.
 - Feat: corezoid-process-optimizer skill for auditing existing processes for performance and structural issues.
@@ -17,9 +20,13 @@
 - Feat: get-node-stat MCP tool exposing node archive statistics.
 - Feat: AI discovery files — llms.txt and .well-known/skills/index.json — with a generator script under scripts/.
 - Feat: context7 integration for live documentation lookups.
+- Refactor: all telemetry values (analytics + feedback endpoint and conv_id) centralised in `telemetry_config.go`; individually overridable via `COREZOID_ANALYTICS_ENDPOINT`, `COREZOID_ANALYTICS_CONV_ID`, `COREZOID_FEEDBACK_ENDPOINT`, `COREZOID_FEEDBACK_CONV_ID`. Existing default behavior unchanged.
+- Security: secret redaction applied to all feedback fields before transmission (Bearer tokens, JWTs, `api_key`/`token`/`password`/`secret` values, hex strings ≥ 32 chars). Feedback disabled by `COREZOID_FEEDBACK_DISABLED=1`.
 - Docs: full state-diagram documentation set under plugins/corezoid/docs/state-diagrams/ (overview, node structures, process interaction).
 - Docs: clarifications in call-process, copy-task, set-state, set-parameters dynamic values, and variables-guide nodes.
 - Docs: bundle docs/corezoid-swagger.json as a canonical Corezoid REST API reference.
+- Docs: updated SECURITY.md telemetry section to disclose optional email opt-in and how to remove it.
+- Chore: MCP server log file moved from `/tmp/corezoid.log` to `~/.corezoid/mcp.log` for easier discoverability.
 - Chore: unit tests for mcp-server analytics, access, config, and helpers.
 - CI: minor tweak to release.yml.
 

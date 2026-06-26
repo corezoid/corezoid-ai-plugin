@@ -192,6 +192,41 @@ Therefore: use `customize_response: true` only after confirming the **actual** r
 validate the mapped value downstream (e.g. a Condition node checking it is non-empty) instead of
 assuming the mapping succeeded.
 
+## Required node shape: author the full canonical `api` logic
+
+Although the JSON schema marks only `type`, `method`, `url`, and `err_node_id` as strictly
+required, an `api` logic written with just those fields is **incomplete** and breaks deployment.
+A "light" node passes client-side validation (and `lint-process`), but the server cannot complete
+the **commit** of an under-specified `api` logic: it stops responding, and after ~15–20 s
+`push-process` fails with `Error deploying process: failed to commit changes: no response from
+server` instead of deploying. (Verified live: the identical process commits cleanly in ~10 s once
+the node carries the full field set; the light variant failed this way on every attempt.) This is a
+common, easily-misdiagnosed cause of a `push` that does not complete on a process containing an API
+Call node.
+
+**Always author an API Call node with the full canonical field set**, even when a value is the
+default:
+
+| Field | Typical value | Notes |
+| --- | --- | --- |
+| `type` | `"api"` | |
+| `method` | `"GET"` / `"POST"` / … | required |
+| `url` | endpoint | required; use a variable, never hardcoded |
+| `extra` / `extra_type` | request params + their types | both required, may be `{}` |
+| `format` | `""` (default) or `"raw"` | |
+| `max_threads` | `5` | |
+| `send_sys` | `true` | `false` for non-Corezoid endpoints |
+| `customize_response` | `false` or `true` | see "Reading the response body" below |
+| `response` / `response_type` | mapping objects | only consulted when `customize_response: true` |
+| `rfc_format` | `true` | |
+| `debug_info` | `false` | |
+| `cert_pem` | `""` | a PEM string only when signing by certificate |
+| `version` | `2` | |
+| `err_node_id` | error-node id | required |
+
+Copy the [GET configuration example](#configuration-example-get-request) as a template rather than
+writing a minimal block from scratch. Do **not** set `is_migrate` by hand — it is server-managed.
+
 ## Validation Rules
 
 The API Call node undergoes validation during process commit with these checks:
@@ -202,8 +237,14 @@ The API Call node undergoes validation during process commit with these checks:
 4. If `err_node_id` is specified, it must reference a valid node
 5. `max_threads` must be a positive integer if specified
 
+> Note: schema validation only enforces `type`, `method`, `url`, and `err_node_id`. Omitting the
+> other canonical fields is **not** caught client-side and makes the deploy fail at commit
+> (`no response from server`) — see
+> [Required node shape](#required-node-shape-author-the-full-canonical-api-logic).
+
 ## Best Practices
 
+- Author the **full canonical `api` field set** (see [Required node shape](#required-node-shape-author-the-full-canonical-api-logic)); a minimal/"light" node passes validation but makes `push-process` fail at commit (`no response from server`)
 - Include proper error handling for all API calls
 - After an API Call node, add a "Reply to process" node to return the data
 - Set reasonable timeouts based on the expected response time

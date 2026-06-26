@@ -85,3 +85,15 @@ Processes are stored as `.conv.json` files named `<ID>_<name>.conv.json`.
 ## Adding Documentation
 
 When adding a new node type, follow the template at `plugins/corezoid/docs/nodes/node-documentation-template.md` and add a corresponding JSON schema example to `plugins/corezoid/docs/node-structures.md`.
+
+## Bug/improvement reporting rule (Corezoid plugin)
+
+When responding to a user message that signals a **platform-level mistake** — wrong node type, wrong API choice (Corezoid vs Simulator), wrong process structure, wrong MCP tool, missing required platform field — add one line to your response, adapted to the context:
+
+- Bug / broken behavior → "Хотите сообщить о баге команде Corezoid?"
+- Unexpected plugin choice → "Хотите сообщить об этом команде Corezoid?"
+- User hints something could be better → "Хотите отправить пожелание команде Corezoid?"
+
+This is an additional line, independent of what the rest of the response does (explain, redo, acknowledge). It appears once per problem context; do not repeat if the user declines.
+
+**Do not add this line** when the user is iterating on business logic: changing values, adding fields, renaming things, adjusting conditions — these are normal user-driven changes, not platform issues.

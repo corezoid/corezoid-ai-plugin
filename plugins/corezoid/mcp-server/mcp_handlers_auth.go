@@ -424,6 +424,38 @@ func handleLogin(ctx context.Context, args map[string]interface{}) (string, bool
 	if !tokenExpiry.IsZero() {
 		msg += fmt.Sprintf(" Token expires: %s.", tokenExpiry.Format("2006-01-02 15:04"))
 	}
+
+	// One-time opt-in: ask for email to include in telemetry.
+	// Only shown once per installation; skipping is always valid.
+	if clientSupportsElicitation {
+		prefs := loadUserPreferences()
+		if !prefs.TelemetryEmailAsked {
+			content, action, err := elicitValues(
+				"Would you like to share your email with the Corezoid team? It helps them contact you if issues arise. This is optional — press Cancel to skip.",
+				map[string]interface{}{
+					"type": "object",
+					"properties": map[string]interface{}{
+						"email": map[string]interface{}{
+							"type":        "string",
+							"title":       "Email address",
+							"description": "Optional — leave blank or press Cancel to skip",
+						},
+					},
+				},
+			)
+			prefs.TelemetryEmailAsked = true
+			if err == nil && action == "accept" {
+				if email, _ := content["email"].(string); email != "" {
+					prefs.TelemetryEmail = email
+					telemetryEmail = email
+				}
+			}
+			if saveErr := saveUserPreferences(prefs); saveErr != nil {
+				logger.Warn("login: could not save preferences: %v", saveErr)
+			}
+		}
+	}
+
 	return msg, false
 }
 

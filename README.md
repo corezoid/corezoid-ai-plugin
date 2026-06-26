@@ -233,6 +233,28 @@ validation errors, and summarize what each process does.
 | `list-api-keys`     | List API keys in the workspace                     |
 | `find-principal`    | Resolve user / group / API-key name to obj_id      |
 | `invite-user`       | Invite an external email and share an object in one call |
+| `send-feedback`     | Submit feedback about plugin behavior (returns ticket id) |
+
+## Feedback
+
+When the plugin does something unexpected, the `corezoid-feedback` skill guides you through collecting a description of the problem and sends it to the Corezoid team via the `send-feedback` MCP tool.
+
+**Privacy guarantees:**
+
+- Feedback is sent **only after your explicit confirmation**. Nothing is sent automatically.
+- All fields are scanned for tokens, API keys, JWTs, and long hex secrets before transmission — any matches are replaced with `[REDACTED]`.
+- To disable feedback entirely (e.g. in corporate environments), set `COREZOID_FEEDBACK_DISABLED=1`.
+
+**Telemetry environment variables:**
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `COREZOID_ANALYTICS_DISABLED` | — | Opt out of anonymous tool-call telemetry |
+| `COREZOID_ANALYTICS_ENDPOINT` | built-in prod URL | Override analytics endpoint |
+| `COREZOID_ANALYTICS_CONV_ID` | `1852976` | Override analytics conv_id |
+| `COREZOID_FEEDBACK_DISABLED` | — | Disable user-initiated feedback submission |
+| `COREZOID_FEEDBACK_ENDPOINT` | built-in prod URL | Override feedback endpoint |
+| `COREZOID_FEEDBACK_CONV_ID` | `1871779` | Override feedback conv_id |
 
 ## Architecture
 
@@ -249,11 +271,12 @@ Claude Code / Codex
         │                 modify-task, delete-task
         ├── Dashboards    create-dashboard, get-dashboard, add-chart,
         │                 modify-chart, get-chart, set-dashboard-layout
-        └── Access        share-object, list-shares,
-                          create-group, modify-group, delete-group, list-group-objects,
-                          add-to-group, remove-from-group, list-groups,
-                          create-api-key, modify-api-key, delete-api-key, list-api-keys,
-                          find-principal, invite-user
+        ├── Access        share-object, list-shares,
+        │                 create-group, modify-group, delete-group, list-group-objects,
+        │                 add-to-group, remove-from-group, list-groups,
+        │                 create-api-key, modify-api-key, delete-api-key, list-api-keys,
+        │                 find-principal, invite-user
+        └── Feedback      send-feedback
 ```
 
 ## Project structure
