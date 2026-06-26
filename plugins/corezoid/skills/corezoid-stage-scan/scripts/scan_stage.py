@@ -44,6 +44,21 @@ def is_dynamic(v):
     return isinstance(v, str) and bool(DYN.search(v))
 
 
+def folder_of(rel_path):
+    """Human-readable folder location (where to find the object in the tree).
+
+    Drops the filename and the ".folder" suffix from each path segment, so
+    "4570_CRM.folder/4526_Push.folder/9009_x.conv.json" -> "4570_CRM / 4526_Push".
+    Exported names may carry mojibake (UTF-8 shown as latin-1); the id_ prefix
+    is kept so the object is always locatable by folder id.
+    """
+    parts = rel_path.split('/')[:-1]
+    # drop the export wrapper segments ("<name>.zip", "<id>_<name>.stage")
+    parts = [p for p in parts if not (p.endswith('.zip') or p.endswith('.stage'))]
+    return ' / '.join(p[:-len('.folder')] if p.endswith('.folder') else p
+                      for p in parts) or '(stage root)'
+
+
 def collect_conv_files(path):
     """Return (root_dir, [conv.json paths]). Extracts zips to a temp dir."""
     tmp = None
@@ -151,9 +166,11 @@ def scan(path, label=None):
         'stage': label,
         'totals': {'parsed': len(procs), 'active': len(active_ids),
                    'parse_errors': len(parse_errors)},
-        'inactive': [{k: m[k] for k in ('obj_id', 'status', 'conv_type', 'title', 'path')}
+        'inactive': [{**{k: m[k] for k in ('obj_id', 'status', 'conv_type', 'title', 'path')},
+                      'folder': folder_of(m['path'])}
                      for m in sorted(inactive, key=lambda x: (str(x['status']), x['obj_id'] or 0))],
-        'empty': [{k: m[k] for k in ('obj_id', 'status', 'title', 'path')}
+        'empty': [{**{k: m[k] for k in ('obj_id', 'status', 'title', 'path')},
+                   'folder': folder_of(m['path'])}
                   for m in sorted(empty, key=lambda x: x['obj_id'] or 0)],
         'broken_node_links': broken_node_links,
         'broken_conv_refs': broken_conv_refs,
@@ -161,6 +178,10 @@ def scan(path, label=None):
         'dynamic_refs_count': len(dynamic_refs),
         'parse_errors': [{'path': p, 'error': e} for p, e in parse_errors],
     }
+    # annotate every finding with its folder location ("where to find it")
+    for key in ('broken_node_links', 'broken_conv_refs', 'broken_gettask'):
+        for x in report[key]:
+            x['folder'] = folder_of(x['path'])
     return report
 
 
@@ -178,13 +199,14 @@ def print_report(r, quiet=False):
     if not quiet:
         for m in r['inactive']:
             print(f"    id={m['obj_id']:<7} {str(m['status']):<8} {m['conv_type']:<8} "
-                  f"{m['title']!r}\n        {m['path']}")
+                  f"{m['title']!r}\n        folder: {m['folder']}\n        file:   {m['path']}")
 
     print(f"\n[1b] empty (no nodes): {len(r['empty'])} "
           f"-> {distinct(r['empty'], 'obj_id')}")
     if not quiet:
         for m in r['empty']:
-            print(f"    id={m['obj_id']:<7} {str(m['status']):<8} {m['title']!r}  {m['path']}")
+            print(f"    id={m['obj_id']:<7} {str(m['status']):<8} {m['title']!r}"
+                  f"\n        folder: {m['folder']}")
 
     bnl = r['broken_node_links']
     print(f"\n[2a] broken node links: {len(bnl)} link(s) in "
@@ -192,7 +214,8 @@ def print_report(r, quiet=False):
     if not quiet:
         for x in bnl:
             print(f"    conv={x['conv_id']:<7} node={x['node']} "
-                  f"{x['type']}.{x['field']} -> {x['target']}  MISSING\n        {x['path']}")
+                  f"{x['type']}.{x['field']} -> {x['target']}  MISSING"
+                  f"\n        folder: {x['folder']}")
 
     bcr = r['broken_conv_refs']
     print(f"\n[2b] broken/inactive conv refs: {len(bcr)} in "
@@ -200,14 +223,14 @@ def print_report(r, quiet=False):
     if not quiet:
         for x in bcr:
             print(f"    conv={x['conv_id']:<7} node={x['node']} {x['type']} -> "
-                  f"conv_id={x['target_conv']}  [{x['reason']}]\n        {x['path']}")
+                  f"conv_id={x['target_conv']}  [{x['reason']}]\n        folder: {x['folder']}")
 
     bgt = r['broken_gettask']
     print(f"\n[2c] api_get_task node missing in target: {len(bgt)}")
     if not quiet:
         for x in bgt:
             print(f"    conv={x['conv_id']:<7} -> conv {x['target_conv']} "
-                  f"node {x['target_node']} MISSING\n        {x['path']}")
+                  f"node {x['target_node']} MISSING\n        folder: {x['folder']}")
 
     print(f"\n(unresolvable dynamic/@alias conv refs, not checked: {r['dynamic_refs_count']})")
 

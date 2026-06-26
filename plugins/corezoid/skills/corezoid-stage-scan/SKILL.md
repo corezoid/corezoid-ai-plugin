@@ -61,6 +61,13 @@ python3 "${CLAUDE_PLUGIN_ROOT}/skills/corezoid-stage-scan/scripts/scan_stage.py"
 - `--json` writes a machine-readable report (array if multiple inputs).
 - Exit code `1` if any blocker is found, `0` if clean → drop it into CI before merge.
 
+Every finding carries both `path` (full file path inside the export) and `folder` (the
+human-readable folder location in the tree, e.g. `4570_CRM / 4526_Push: Pin block`), so you
+can always tell the user **where** to find the object. When reporting back, include the folder
+for each `conv_id` — "what's broken" without "where it is" is not actionable. Exported folder
+names keep their `id_` prefix (and may show mojibake for non-ASCII); the folder id always locates
+the object even if the display name is garbled.
+
 Pass the stage exports as positional args. If the user attached ZIPs to a ticket,
 download them first, then point the scanner at the local files.
 
