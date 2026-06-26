@@ -13,7 +13,7 @@
 
 1. **Target Process** (String/ID)
    - The Process that will receive the copied task.
-   - Example: `"conv_id": 1023393`
+   - Example: `"conv_id": 1023393` (numeric) or `"conv_id": "@send-notification"` (alias, if one exists)
    - Can be a dynamic value from the process task
    - Dynamic example: `"conv_id": "{{param1}}"` (with quotes for JSON format)
 2. **Error Node ID** (String)

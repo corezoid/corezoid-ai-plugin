@@ -109,6 +109,49 @@ validation rules, and flags. This pattern is useful when you need to:
 }
 ```
 
+## Required `params` element shape (deploy validation)
+
+`params` is a required top-level field, but it may be an **empty array** — use `"params": []` when
+the process declares no inputs.
+
+When you DO declare a parameter, the server validates each element strictly. **Every element must
+contain all six keys** below, or the deploy fails with `Params are not valid`:
+
+| Key | Type | Value |
+| --- | --- | --- |
+| `name` | string | a real parameter name |
+| `type` | string | one of `string`, `number`, `boolean`, `object`, `array` |
+| `descr` | string | may be `""` |
+| `flags` | array | may be `[]`; otherwise a subset of `required`, `input`, `output`, `auto-clear` |
+| `regex` | string | may be `""` |
+| `regex_error_text` | string | may be `""` |
+
+The keys must be **present** even when their value is empty — `descr: ""`, `flags: []`,
+`regex: ""`, and `regex_error_text: ""` are each accepted; `name` and `type` carry the parameter's
+actual definition. The JSON schema is laxer than the server here — it lists only `name`/`type`/`flags`
+and marks nothing as required, so an incomplete element passes client-side validation and is
+rejected only at deploy.
+
+Minimal valid single-parameter declaration:
+
+```json
+"params": [
+  { "name": "x", "type": "string", "descr": "", "flags": ["input"], "regex": "", "regex_error_text": "" }
+]
+```
+
+Verified by deploy: omitting any one of `descr`, `flags`, `regex`, or `regex_error_text` — or
+shrinking the element to `{ "name": "x", "type": "string" }` — is rejected with `Params are not
+valid`; the full element (and `"params": []`) deploy cleanly.
+
+### `params` is not required to receive data
+
+A process does **not** need declared `params` to accept input. When one process calls another via an
+`api_rpc` (Call a Process) or `api_copy` (Copy Task) node, the payload is passed through that node's
+`extra`, and the callee reads those keys directly from its task data — no `params` declaration
+required. Declare `params` only to enforce types / required-ness or to drive a UI; otherwise keep
+`"params": []`.
+
 ## Input Parameters
 
 The process defines five input parameters with different types, validation rules, and flags:
@@ -209,7 +252,8 @@ To call this process with valid parameters:
 
 When defining process parameters:
 
-1. Use the `required` flag for parameters that must be provided
+1. Include all six keys in every `params` element (`name`, `type`, `descr`, `flags`, `regex`, `regex_error_text`) — an incomplete element fails deploy with `Params are not valid` (see [Required `params` element shape](#required-params-element-shape-deploy-validation)); use `"params": []` when no inputs are declared
+2. Use the `required` flag for parameters that must be provided
 2. Provide clear descriptions for each parameter
 3. Use appropriate data types for parameters
 4. Add regex validation for string parameters that need to follow specific patterns

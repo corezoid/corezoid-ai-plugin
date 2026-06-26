@@ -35,23 +35,27 @@ cd plugins/corezoid/mcp-server && npx @modelcontextprotocol/inspector go run . m
 plugins/corezoid/
   mcp-server/                     — Go MCP server source (starts automatically via .mcp.json)
   skills/
-    corezoid/                     — Main skill: platform overview, MCP tools, routing
+    corezoid/                       — Main skill: platform overview, MCP tools, routing
       SKILL.md
-      references/                 — Lookup documents (variables guide, env setup)
-    corezoid-init/                — Sub-skill: environment setup and workspace pull
-      SKILL.md
-    corezoid-create/              — Sub-skill: create a new process from scratch
-      SKILL.md
-    corezoid-edit/                — Sub-skill: modify an existing process
-      SKILL.md
-    corezoid-review/              — Sub-skill: audit and analyze a process
-      SKILL.md
+      references/                   — Lookup documents (variables guide, env setup)
+    corezoid-init/                  — Sub-skill: environment setup and workspace pull
+    corezoid-create/                — Sub-skill: create a new process from scratch
+    corezoid-edit/                  — Sub-skill: modify an existing process
+    corezoid-state-diagram-create/  — Sub-skill: create a new state diagram (conv_type "state") from scratch
+    corezoid-state-diagram-edit/    — Sub-skill: modify an existing state diagram
+    corezoid-review/                — Sub-skill: audit and analyze a single process
+    corezoid-project-review/        — Sub-skill: audit a whole project / multiple processes
+    corezoid-dashboard-manager/     — Sub-skill: create and edit Corezoid dashboards
+    corezoid-process-tech-writer/   — Sub-skill: generate technical documentation for processes
+    corezoid-access/                — Sub-skill: share processes/folders, manage groups/API keys
+    marketplace-publish-validation/ — Sub-skill: validation checklist for marketplace publishing
   docs/
     nodes/                        — Per-node-type documentation (24 node types)
     process/                      — Process structure, validation rules, error handling
+    state-diagrams/               — State diagram concepts, node structures, process interaction
     tasks/                        — Task metadata and examples
     node-structures.md            — JSON schemas for all node types (canonical reference)
-  samples/                        — Example .conv.json processes
+  samples/                        — Example .conv.json processes (state-diagrams/ holds state-diagram samples)
 ```
 
 ### How skills work

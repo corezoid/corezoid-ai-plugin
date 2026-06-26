@@ -79,6 +79,58 @@ func handleListNodeTasks(ctx context.Context, args map[string]interface{}) (stri
 	return string(data), false
 }
 
+// handleGetNodeStat returns time-series in/out statistics for a process node
+// over a caller-specified time window. The interval parameter controls bucket
+// granularity ("day" or "hour", default "day").
+func handleGetNodeStat(ctx context.Context, args map[string]interface{}) (string, bool) {
+	processID, err := intArg(args, "process_id")
+	if err != nil {
+		return "Error: " + err.Error(), true
+	}
+	nodeID, err := strArg(args, "node_id")
+	if err != nil {
+		return "Error: " + err.Error(), true
+	}
+	start, err := intArg(args, "start")
+	if err != nil {
+		return "Error: " + err.Error(), true
+	}
+	end, err := intArg(args, "end")
+	if err != nil {
+		return "Error: " + err.Error(), true
+	}
+	interval := "day"
+	if v, ok := args["interval"].(string); ok && v != "" {
+		interval = v
+	}
+	timezoneOffset := 0
+	if n, err := intArg(args, "timezone_offset"); err == nil {
+		timezoneOffset = n
+	}
+
+	v := NewValidator(ctx, processID)
+	ops := []map[string]any{
+		{
+			"obj":             "stat",
+			"type":            "show",
+			"group":           "time",
+			"conv_id":         processID,
+			"node_id":         nodeID,
+			"company_id":      v.WorkspaceID,
+			"start":           start,
+			"end":             end,
+			"interval":        interval,
+			"timezone_offset": timezoneOffset,
+		},
+	}
+	resp, err := v.req("get_node_stat", ops)
+	if err != nil {
+		return fmt.Sprintf("Error: %v", err), true
+	}
+	data, _ := json.MarshalIndent(resp, "", "  ")
+	return string(data), false
+}
+
 // handleModifyTask updates the data payload of an existing task. Either
 // task_id or ref must be supplied to identify the task.
 func handleModifyTask(ctx context.Context, args map[string]interface{}) (string, bool) {

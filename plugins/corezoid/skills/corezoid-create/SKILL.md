@@ -26,6 +26,8 @@ For **API connector**, also require:
 - `URL` — endpoint URL (use a Corezoid variable, never hardcode)
 - `AUTH` — authentication method and token variable name
 
+> ⚠️ If the target API is the **Corezoid public API** (`/api/2/json/`), stop here and use `/corezoid-api-connector` instead — it follows a different pattern (`api_secret_outer`, `ops` array, no Code Node for signing).
+
 If any required information is missing, ask the user before proceeding.
 
 ---
@@ -110,7 +112,7 @@ Produce a valid `.conv.json` file.
 - Connect nodes only through the `go` field
 - Every node that can fail must have `err_node_id` pointing to a dedicated error node
 - All constants (URLs, tokens, IDs) must be Corezoid variables — never hardcoded:
-  1. Check for existing variables: read `_ENV_VARS_.json` in the project folder
+  1. Check for existing variables: read `_ENV_VARS_.json` (from `pull-folder`) or `.processes/variables.json` (from this session)
   2. Create a new variable if needed: call MCP tool **`create-variable`** with `name`, `description`, `value`
   3. Reference in logic: `{{env_var[@variable-name]}}`
 - Use descriptive `title` values (e.g., "Call Payment Process", not "RPC")
@@ -169,6 +171,7 @@ Use the `Read` tool to load these files when specific node or validation details
 | Path | Description |
 |---|---|
 | `${CLAUDE_PLUGIN_ROOT}/samples/api-post.json` | HTTP POST API call (connector pattern) |
+| `${CLAUDE_PLUGIN_ROOT}/samples/corezoid-api-node-list.conv.json` | Corezoid API connector (Node List, `api_secret_outer` pattern) |
 | `${CLAUDE_PLUGIN_ROOT}/samples/stripe-checkout.json` | Stripe payment checkout flow |
 | `${CLAUDE_PLUGIN_ROOT}/samples/create-actors.json` | Business logic with multiple process calls |
 | `${CLAUDE_PLUGIN_ROOT}/samples/gpt-calculator.json` | GPT integration example |

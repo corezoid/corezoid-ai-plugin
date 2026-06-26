@@ -285,6 +285,19 @@ func handleRunTask(ctx context.Context, args map[string]interface{}) (string, bo
 // handleCreateProcess creates an empty process in the given local folder and
 // writes its skeleton JSON to disk for the user to flesh out.
 func handleCreateProcess(ctx context.Context, args map[string]interface{}) (string, bool) {
+	return createConv(ctx, args, "process")
+}
+
+// handleCreateStateDiagram creates an empty state diagram (conv_type "state")
+// in the given local folder and writes its skeleton JSON to disk.
+func handleCreateStateDiagram(ctx context.Context, args map[string]interface{}) (string, bool) {
+	return createConv(ctx, args, "state")
+}
+
+// createConv is the shared implementation for create-process and
+// create-state-diagram. It accepts a conv_type ("process" or "state") and
+// produces a .conv.json skeleton on disk inside the requested folder.
+func createConv(ctx context.Context, args map[string]interface{}, convType string) (string, bool) {
 	folderPath := resolveDirPath(args, "folder_path")
 	processName, err := strArg(args, "process_name")
 	if err != nil {
@@ -297,9 +310,9 @@ func handleCreateProcess(ctx context.Context, args map[string]interface{}) (stri
 	}
 
 	v := NewValidator(ctx, 0)
-	processID := v.CreateEmptyProcess(folderID, processName, "")
+	processID := v.CreateEmptyConv(folderID, processName, "", convType)
 	if processID == 0 {
-		return fmt.Sprintf("Error: failed to create process '%s'", processName), true
+		return fmt.Sprintf("Error: failed to create %s '%s'", convType, processName), true
 	}
 
 	procInfo1, err := v.ExportProcess()
@@ -324,7 +337,11 @@ func handleCreateProcess(ctx context.Context, args map[string]interface{}) (stri
 		return fmt.Sprintf("Error writing file: %v", err), true
 	}
 
-	return fmt.Sprintf("Process '%s' created and saved to %s", processName, filePath), false
+	label := "Process"
+	if convType == "state" {
+		label = "State diagram"
+	}
+	return fmt.Sprintf("%s '%s' created and saved to %s", label, processName, filePath), false
 }
 
 // handleCreateFolder creates a new folder under the given parent, mirrors it

@@ -423,8 +423,19 @@ func (v *Executor) GetProcessByID(id int) (rsp map[string]any, err error) {
 }
 
 func (v *Executor) CreateEmptyProcess(folderID int, title, desc string) int {
+	return v.CreateEmptyConv(folderID, title, desc, "process")
+}
+
+// CreateEmptyConv creates an empty Corezoid object of the given conv_type
+// ("process" for a regular process, "state" for a state diagram).
+// CreateEmptyProcess is preserved as a backward-compatible wrapper that
+// defaults to conv_type "process".
+func (v *Executor) CreateEmptyConv(folderID int, title, desc, convType string) int {
 	if title == "" {
 		title = time.Now().String()
+	}
+	if convType == "" {
+		convType = "process"
 	}
 	ops := []map[string]any{
 		{
@@ -434,7 +445,7 @@ func (v *Executor) CreateEmptyProcess(folderID int, title, desc string) int {
 			"company_id":  v.WorkspaceID,
 			"obj":         "conv",
 			"create_mode": "without_nodes",
-			"conv_type":   "process",
+			"conv_type":   convType,
 			"type":        "create",
 			"obj_type":    0,
 			"status":      "active",

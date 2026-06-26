@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 )
@@ -178,6 +179,217 @@ func handleListStages(ctx context.Context, args map[string]interface{}) (string,
 			immutableStr = "yes"
 		}
 		sb.WriteString(fmt.Sprintf("  %-10d  %-20s  %-20s  %s\n", stageID, title, shortName, immutableStr))
+	}
+	return sb.String(), false
+}
+
+// handleCreateProject creates a new project in a workspace. Optional `stages`
+// arg is a JSON array of {"title":"...","immutable":bool}.
+func handleCreateProject(ctx context.Context, args map[string]interface{}) (string, bool) {
+	companyID, err := strArg(args, "company_id")
+	if err != nil {
+		return "Error: " + err.Error(), true
+	}
+	title, err := strArg(args, "title")
+	if err != nil {
+		return "Error: " + err.Error(), true
+	}
+	shortName := optStrArg(args, "short_name")
+	description := optStrArg(args, "description")
+
+	op := map[string]any{
+		"type":       "create",
+		"obj":        "project",
+		"company_id": companyID,
+		"title":      title,
+	}
+	if shortName != "" {
+		op["short_name"] = shortName
+	}
+	if description != "" {
+		op["description"] = description
+	}
+	if stagesJSON := strings.TrimSpace(optStrArg(args, "stages")); stagesJSON != "" {
+		var stages []map[string]any
+		if err := json.Unmarshal([]byte(stagesJSON), &stages); err != nil {
+			return fmt.Sprintf("Error: stages must be a JSON array, got: %v", err), true
+		}
+		op["stages"] = stages
+	}
+
+	v := NewValidator(ctx, 0)
+	resp, err := v.req("create_project", []map[string]any{op})
+	if err != nil {
+		return fmt.Sprintf("Error: %v", err), true
+	}
+	opMap, opErr := firstOp(resp)
+	if opErr != nil {
+		return fmt.Sprintf("Error: %v", opErr), true
+	}
+
+	projectID := int64(0)
+	if f, ok := opMap["obj_id"].(float64); ok {
+		projectID = int64(f)
+	}
+	stageIDs := []int64{}
+	if arr, ok := opMap["stages"].([]interface{}); ok {
+		for _, item := range arr {
+			if f, ok := item.(float64); ok {
+				stageIDs = append(stageIDs, int64(f))
+			}
+		}
+	}
+	var sb strings.Builder
+	sb.WriteString(fmt.Sprintf("Project %q created — project_id=%d", title, projectID))
+	if len(stageIDs) > 0 {
+		parts := make([]string, len(stageIDs))
+		for i, id := range stageIDs {
+			parts[i] = fmt.Sprintf("%d", id)
+		}
+		sb.WriteString(fmt.Sprintf("  stages=[%s]", strings.Join(parts, ", ")))
+	}
+	return sb.String(), false
+}
+
+// handleModifyProject renames a project and/or updates its short_name and
+// description. At least one of title/short_name/description must be supplied.
+func handleModifyProject(ctx context.Context, args map[string]interface{}) (string, bool) {
+	companyID, err := strArg(args, "company_id")
+	if err != nil {
+		return "Error: " + err.Error(), true
+	}
+	projectID, err := intArg(args, "project_id")
+	if err != nil {
+		return "Error: " + err.Error(), true
+	}
+	title := optStrArg(args, "title")
+	shortName := optStrArg(args, "short_name")
+	description := optStrArg(args, "description")
+	if title == "" && shortName == "" && description == "" {
+		return "Error: at least one of title, short_name, description must be provided", true
+	}
+
+	op := map[string]any{
+		"type":       "modify",
+		"obj":        "project",
+		"obj_id":     projectID,
+		"company_id": companyID,
+	}
+	if title != "" {
+		op["title"] = title
+	}
+	if shortName != "" {
+		op["short_name"] = shortName
+	}
+	if description != "" {
+		op["description"] = description
+	}
+
+	v := NewValidator(ctx, 0)
+	resp, err := v.req("modify_project", []map[string]any{op})
+	if err != nil {
+		return fmt.Sprintf("Error: %v", err), true
+	}
+	if _, opErr := firstOp(resp); opErr != nil {
+		return fmt.Sprintf("Error: %v", opErr), true
+	}
+
+	parts := []string{}
+	if title != "" {
+		parts = append(parts, fmt.Sprintf("title=%q", title))
+	}
+	if shortName != "" {
+		parts = append(parts, fmt.Sprintf("short_name=%q", shortName))
+	}
+	if description != "" {
+		parts = append(parts, fmt.Sprintf("description=%q", description))
+	}
+	return fmt.Sprintf("Project #%d updated (%s)", projectID, strings.Join(parts, ", ")), false
+}
+
+// handleDeleteProject moves a project to the recycle bin (Trash). The server
+// preserves the project — restore-project (not yet exposed) brings it back.
+func handleDeleteProject(ctx context.Context, args map[string]interface{}) (string, bool) {
+	companyID, err := strArg(args, "company_id")
+	if err != nil {
+		return "Error: " + err.Error(), true
+	}
+	projectID, err := intArg(args, "project_id")
+	if err != nil {
+		return "Error: " + err.Error(), true
+	}
+
+	op := map[string]any{
+		"type":       "delete",
+		"obj":        "project",
+		"obj_id":     projectID,
+		"company_id": companyID,
+	}
+	v := NewValidator(ctx, 0)
+	resp, err := v.req("del_project", []map[string]any{op})
+	if err != nil {
+		return fmt.Sprintf("Error: %v", err), true
+	}
+	if _, opErr := firstOp(resp); opErr != nil {
+		return fmt.Sprintf("Error: %v", opErr), true
+	}
+	return fmt.Sprintf("Project #%d moved to Trash.", projectID), false
+}
+
+// handleShowProject returns a project's stages and short_name plus the parent
+// folder ID. Use list-stages for a richer per-stage view.
+func handleShowProject(ctx context.Context, args map[string]interface{}) (string, bool) {
+	companyID, err := strArg(args, "company_id")
+	if err != nil {
+		return "Error: " + err.Error(), true
+	}
+	projectID, err := intArg(args, "project_id")
+	if err != nil {
+		return "Error: " + err.Error(), true
+	}
+
+	op := map[string]any{
+		"type":       "show",
+		"obj":        "project",
+		"obj_id":     projectID,
+		"company_id": companyID,
+	}
+	v := NewValidator(ctx, 0)
+	resp, err := v.req("show_project", []map[string]any{op})
+	if err != nil {
+		return fmt.Sprintf("Error: %v", err), true
+	}
+	opMap, opErr := firstOp(resp)
+	if opErr != nil {
+		return fmt.Sprintf("Error: %v", opErr), true
+	}
+
+	shortName, _ := opMap["obj_short_name"].(string)
+	parentID := int64(0)
+	if f, ok := opMap["parent_obj_id"].(float64); ok {
+		parentID = int64(f)
+	}
+	parentType, _ := opMap["parent_obj_type"].(string)
+
+	var sb strings.Builder
+	sb.WriteString(fmt.Sprintf("Project #%d (short_name=%q, parent=%s#%d):\n\n", projectID, shortName, parentType, parentID))
+
+	stages, _ := opMap["stages"].([]interface{})
+	if len(stages) == 0 {
+		sb.WriteString("  (no stages visible to the caller)\n")
+		return sb.String(), false
+	}
+	sb.WriteString(fmt.Sprintf("  %-10s  %-25s  %s\n", "Stage ID", "Title", "Short name"))
+	sb.WriteString("  " + strings.Repeat("-", 55) + "\n")
+	for _, item := range stages {
+		s, _ := item.(map[string]interface{})
+		stageID := int64(0)
+		if f, ok := s["obj_id"].(float64); ok {
+			stageID = int64(f)
+		}
+		title, _ := s["title"].(string)
+		sn, _ := s["obj_short_name"].(string)
+		sb.WriteString(fmt.Sprintf("  %-10d  %-25s  %s\n", stageID, title, sn))
 	}
 	return sb.String(), false
 }

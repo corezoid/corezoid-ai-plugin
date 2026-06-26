@@ -186,7 +186,7 @@ func oauthPKCEFlow(accountURL, clientID string) (*PKCEResult, error) {
 		"code_verifier": {verifier},
 		"redirect_uri":  {redirectURI},
 	}
-	httpClient := &http.Client{Timeout: 30 * time.Second}
+	httpClient := &http.Client{Timeout: 60 * time.Second}
 	resp, err := httpClient.PostForm(tokenURL, tokenParams)
 	if err != nil {
 		return nil, fmt.Errorf("token exchange request failed: %w", err)

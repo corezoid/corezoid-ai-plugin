@@ -189,6 +189,10 @@ validation errors, and summarize what each process does.
 | `list-workspaces`   | List available workspaces and stages               |
 | `list-stages`       | List stages in a workspace                         |
 | `list-projects`     | List folders and processes in a stage              |
+| `create-project`    | Create a new project (with optional stages) in a workspace |
+| `modify-project`    | Update a project's title, short_name and/or description |
+| `delete-project`    | Move a project to the recycle bin (Trash)          |
+| `show-project`      | Show a project's stages and parent folder          |
 | `pull-folder`       | Export an entire folder/stage to local files       |
 | `pull-process`      | Export a single process to a `.conv.json` file     |
 | `push-process`      | Validate and deploy a `.conv.json` to Corezoid     |
@@ -196,9 +200,11 @@ validation errors, and summarize what each process does.
 | `run-task`          | Send a task to a deployed process                  |
 | `list-node-tasks`   | List tasks currently sitting in a node             |
 | `list-task-history` | Show task execution history                        |
+| `get-node-stat`     | Return time-series in/out statistics for a node   |
 | `delete-task`       | Remove a task from a node                          |
 | `modify-task`       | Update task parameters                             |
 | `create-process`    | Create a new empty process in a folder             |
+| `create-state-diagram` | Create a new empty state diagram (conv_type "state") in a folder |
 | `create-folder`     | Create a new subfolder                             |
 | `create-alias`      | Create a short alias for a process                 |
 | `create-variable`   | Create a Corezoid environment variable             |
@@ -208,6 +214,21 @@ validation errors, and summarize what each process does.
 | `modify-chart`      | Modify an existing chart (full series replace)     |
 | `get-chart`         | Get a single chart with its series data            |
 | `set-dashboard-layout` | Save chart positions on a dashboard grid        |
+| `share-object`      | Grant or revoke access on a process/folder/stage/project for a user, API key or group (use privs="none" to revoke) |
+| `list-shares`       | List principals with access to a shared object     |
+| `create-group`      | Create a new user group (optional description)     |
+| `modify-group`      | Rename a group or update its description           |
+| `list-group-objects`| List processes currently shared with a group       |
+| `delete-group`      | Delete a user group (refuses by default if shares active; force=true to override) |
+| `add-to-group`      | Add a user or API key to a group                   |
+| `remove-from-group` | Remove a user or API key from a group              |
+| `list-groups`       | List user groups in the workspace                  |
+| `create-api-key`    | Create a new API key (secret written to ~/.corezoid/api-keys/, never printed in chat) |
+| `modify-api-key`    | Rename or re-describe an API key                   |
+| `delete-api-key`    | Delete an API key (invalidates secret immediately) |
+| `list-api-keys`     | List API keys in the workspace                     |
+| `find-principal`    | Resolve user / group / API-key name to obj_id      |
+| `invite-user`       | Invite an external email and share an object in one call |
 | `send-feedback`     | Submit feedback about plugin behavior (returns ticket id) |
 
 ## Feedback
@@ -237,13 +258,19 @@ When the plugin does something unexpected, the `corezoid-feedback` skill guides 
 Claude Code / Codex
   └── corezoid MCP server (prebuilt binary)
         ├── Auth          login, logout
-        ├── Workspace     list-workspaces, list-stages, list-projects
+        ├── Workspace     list-workspaces, list-stages, list-projects,
+        │                 create-project, modify-project, delete-project, show-project
         ├── Processes     pull-process, pull-folder, push-process, lint-process
         │                 create-process, create-folder, create-alias, create-variable
         ├── Tasks         run-task, list-node-tasks, list-task-history
         │                 modify-task, delete-task
         ├── Dashboards    create-dashboard, get-dashboard, add-chart,
         │                 modify-chart, get-chart, set-dashboard-layout
+        ├── Access        share-object, list-shares,
+        │                 create-group, modify-group, delete-group, list-group-objects,
+        │                 add-to-group, remove-from-group, list-groups,
+        │                 create-api-key, modify-api-key, delete-api-key, list-api-keys,
+        │                 find-principal, invite-user
         └── Feedback      send-feedback
 ```
 
