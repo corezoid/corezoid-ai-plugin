@@ -1,5 +1,10 @@
 # Changelog
 
+## [2.5.1]
+
+- Docs: Standardise error handling on a dedicated per-node error cluster — each error-prone node gets its own collapsed Reply to Process node leading to its own descriptively-named (expanded) Error node, instead of funnelling failures into one shared terminal.
+- Docs: Pin each error cluster tight to the node it protects (same `y`, small `x` offset) for cleaner, more readable process layouts.
+
 ## [2.5.0]
 
 - Feat: Project CRUD MCP tools — create-project, modify-project, delete-project, show-project — for managing Corezoid projects without leaving the IDE.
