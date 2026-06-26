@@ -16,6 +16,7 @@ The plugin bundles a Go MCP server that exposes Corezoid operations as MCP tools
 | `corezoid-edit`                | "edit", "modify", "update" a process     | Modifying existing `.conv.json` files             |
 | `corezoid-review`              | "review", "audit", "check" a process     | Analysis, dead code, best-practice violations     |
 | `corezoid-project-review`      | "review project", "audit folder"         | Cross-process audit of an entire folder           |
+| `corezoid-stage-scan`          | "scan stage", "check stage before merge", "why does the merge fail" | Offline pre-merge validation of exported stage `.zip`s: non-active/empty processes, broken node links, broken/inactive `conv_id` refs |
 | `corezoid-dashboard-manager`   | "create dashboard", "add chart", "visualize metrics" | Dashboards, charts, node metrics, real-time monitoring |
 | `corezoid-process-tech-writer` | "document", "write docs", "describe process" | Markdown docs + enriched JSON with node descriptions |
 

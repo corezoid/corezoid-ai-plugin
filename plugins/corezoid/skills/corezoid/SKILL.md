@@ -124,6 +124,7 @@ For domain-specific workflows use the specialized skills:
 - `/corezoid-state-diagram-edit` — modifying an existing state diagram
 - `/corezoid-review` — auditing and analyzing a single process
 - `/corezoid-project-review` — auditing an entire project or folder (cross-process analysis)
+- `/corezoid-stage-scan` — pre-merge/pre-deploy static check of exported stage `.zip`s: non-active processes, empty/battered processes, broken node links, broken/inactive `conv_id` references (explains "Only active process can be used", "referenced node X does not exist", "Access user to conveyor is denied")
 - `/corezoid-dashboard-manager` — creating dashboards and charts for process metrics
 - `/corezoid-process-tech-writer` — documenting a process (Markdown + enriched JSON)
 - `/corezoid-alias-manager` — creating, listing, modifying, deleting, and using aliases

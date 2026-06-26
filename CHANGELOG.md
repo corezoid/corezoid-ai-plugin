@@ -1,5 +1,9 @@
 # Changelog
 
+## [2.7.0]
+
+- Feat: `corezoid-stage-scan` skill — offline pre-merge/pre-deploy static validator for exported stage `.zip`s (or extracted dirs). Detects non-active processes, empty/battered processes, broken intra-process node links (`to_node_id`/`err_node_id`), and broken/inactive cross-process `conv_id` references. Maps findings to the platform's merge "Errors list" messages ("Only active process can be used", "referenced node X does not exist", "Access user to conveyor is denied in logic"). Ships a stdlib-only Python scanner with CI-friendly exit codes (`scripts/scan_stage.py`). Each finding carries a `folder` field with the human-readable folder path in the stage tree.
+
 ## [2.6.0]
 
 - Feat: `send-feedback` MCP tool — submits user feedback to a dedicated Corezoid process (`conv_id 1871779`) and returns a ticket id. Does not require authentication so users can report auth-related issues too.
