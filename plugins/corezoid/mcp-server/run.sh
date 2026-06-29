@@ -4,6 +4,14 @@
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
+# Host-neutral plugin root. Resolves from whichever host-specific variable is
+# present (Claude Code, Codex, AWS Kiro), with a fallback to the directory
+# containing run.sh so the script works when invoked directly. CLAUDE_PLUGIN_ROOT
+# is re-exported for downstream consumers that still read the legacy name.
+PLUGIN_ROOT="${PLUGIN_ROOT:-${CLAUDE_PLUGIN_ROOT:-${KIRO_PLUGIN_ROOT:-$SCRIPT_DIR/..}}}"
+export PLUGIN_ROOT
+export CLAUDE_PLUGIN_ROOT="$PLUGIN_ROOT"
+
 if [ -n "$COREZOID_MCP_DEV" ]; then
   cd "$SCRIPT_DIR" && exec go run . "$@"
 fi
