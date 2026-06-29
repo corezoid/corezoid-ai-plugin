@@ -64,7 +64,7 @@ Each skill has a frontmatter `description` with trigger phrases — Claude Code 
 
 The main `corezoid/SKILL.md` is the universal entry point for general Corezoid questions and routes to the specialized sub-skills.
 
-Commands use the path variable `${CLAUDE_PLUGIN_ROOT}` to reference files relative to the installed plugin root.
+Commands use the host-neutral path variable `${PLUGIN_ROOT}` to reference files relative to the installed plugin root. The MCP wrapper (`plugins/corezoid/mcp-server/run.sh`) resolves `${PLUGIN_ROOT}` from whichever host-specific variable is set (`$CLAUDE_PLUGIN_ROOT` for Claude Code / Codex, `$KIRO_PLUGIN_ROOT` for AWS Kiro) and re-exports `$CLAUDE_PLUGIN_ROOT` as a legacy alias.
 <!-- AUTO:ARCHITECTURE:END -->
 
 ## Key Corezoid Process Rules

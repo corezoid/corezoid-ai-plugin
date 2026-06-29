@@ -6,7 +6,7 @@
   "plugins": [
     {
       "name": "corezoid",
-      "version": "2.6.0",
+      "version": "2.8.0",
       "license": "MIT",
       "source": {
         "source": "local",

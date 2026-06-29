@@ -1,5 +1,15 @@
 # Changelog
 
+## [2.8.0]
+
+### Added
+- AWS Kiro support. The same plugin payload now installs on Kiro alongside the existing Claude Code and Codex hosts via a symmetric overlay: `plugins/corezoid/.kiro-plugin/plugin.json`, `plugins/corezoid/.mcp.kiro.json`, `plugins/corezoid/steering/corezoid.md`, and a root-level `POWER.md` distribution manifest for kiro.dev/powers.
+- `python3 scripts/generate-discovery.py --kiro` emits a runtime `.kiro/{settings,skills,steering}` overlay under `dist/kiro/`. The release pipeline zips it as `corezoid-kiro-vX.Y.Z.zip` and attaches it (plus `POWER.md`) to every GitHub Release.
+- `plugins/corezoid/scripts/install-kiro.sh` sets up an existing Kiro workspace from a cloned repo: copies the MCP entry, symlinks skills and steering. Hard-copies on Windows shells. Idempotent.
+
+### Changed
+- All `$CLAUDE_PLUGIN_ROOT` / `${CLAUDE_PLUGIN_ROOT}` references inside skill SKILL.md files are renamed to the host-neutral `$PLUGIN_ROOT` / `${PLUGIN_ROOT}`. The MCP wrapper script (`plugins/corezoid/mcp-server/run.sh`) resolves `$PLUGIN_ROOT` from whichever host-specific variable is present (`CLAUDE_PLUGIN_ROOT`, `KIRO_PLUGIN_ROOT`) and re-exports `CLAUDE_PLUGIN_ROOT` from the result, so existing Claude Code and Codex installs keep working byte-equivalent.
+
 ## [2.7.0]
 
 - Feat: `corezoid-stage-scan` skill — offline pre-merge/pre-deploy static validator for exported stage `.zip`s (or extracted dirs). Detects non-active processes, empty/battered processes, broken intra-process node links (`to_node_id`/`err_node_id`), and broken/inactive cross-process `conv_id` references. Maps findings to the platform's merge "Errors list" messages ("Only active process can be used", "referenced node X does not exist", "Access user to conveyor is denied in logic"). Ships a stdlib-only Python scanner with CI-friendly exit codes (`scripts/scan_stage.py`). Each finding carries a `folder` field with the human-readable folder path in the stage tree.
