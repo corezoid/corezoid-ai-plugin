@@ -123,7 +123,70 @@ func (v *Executor) PullFolder(id int, objType string) ([]any, error) {
 	return processes, nil
 }
 
+// schemeNodesEmpty reports whether the exported process JSON has an empty
+// (or absent) scheme.nodes array. This is the diagnostic signal for a process
+// that was imported from a file but never successfully deployed — the
+// export_process endpoint only returns deployed node data, so non-deployed
+// processes come back with an empty scheme even though their nodes are stored
+// internally and visible in the Corezoid UI.
+func schemeNodesEmpty(proc interface{}) bool {
+	m, ok := proc.(map[string]interface{})
+	if !ok {
+		return false
+	}
+	scheme, ok := m["scheme"].(map[string]interface{})
+	if !ok {
+		return true // no scheme block at all → treat as empty
+	}
+	nodes, ok := scheme["nodes"].([]interface{})
+	return !ok || len(nodes) == 0
+}
+
+// FetchDraftNodes retrieves the current node list for processID via the
+// get_process API and converts each entry from Corezoid's internal format
+// (field "obj_id") to the export format (field "id") so that the result is
+// directly usable as scheme.nodes in a pulled process JSON.
+//
+// This is the fallback for pull-process / pull-folder when export_process
+// returns an empty scheme.nodes for a process that was imported from a file
+// but never deployed (e.g. it referenced a non-existent sub-process at
+// import time). The get_process API always returns the full, uncommitted node
+// list, matching what the Corezoid UI displays for such processes.
+func (v *Executor) FetchDraftNodes(processID int) ([]interface{}, error) {
+	proc, err := v.GetProcessByID(processID)
+	if err != nil {
+		return nil, fmt.Errorf("FetchDraftNodes: get_process failed: %w", err)
+	}
+	rawList, ok := proc["list"].([]interface{})
+	if !ok || len(rawList) == 0 {
+		return nil, fmt.Errorf("FetchDraftNodes: no nodes returned by get_process for process %d", processID)
+	}
+	nodes := make([]interface{}, 0, len(rawList))
+	for _, item := range rawList {
+		nodeMap, ok := item.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		// The export format uses "id" as the node identifier while the
+		// internal get_process list uses "obj_id". Normalise the key so
+		// that the saved JSON is compatible with push-process.
+		if objID, exists := nodeMap["obj_id"]; exists {
+			if _, hasID := nodeMap["id"]; !hasID {
+				nodeMap["id"] = objID
+			}
+			delete(nodeMap, "obj_id")
+		}
+		nodes = append(nodes, nodeMap)
+	}
+	return nodes, nil
+}
+
 // ExportProcess downloads the current process definition as parsed JSON.
+// If the server returns a process with an empty scheme.nodes (which happens
+// for processes that were imported but never deployed), ExportProcess falls
+// back to FetchDraftNodes to populate the nodes from the get_process API,
+// ensuring that pull-process always returns a usable JSON regardless of the
+// process deployment status.
 func (v *Executor) ExportProcess() (any, error) {
 	ops := []map[string]any{
 		{
@@ -179,6 +242,31 @@ func (v *Executor) ExportProcess() (any, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to unmarshal process: %v", err)
 	}
+
+	// If the exported process has an empty scheme.nodes, the process was
+	// likely imported but never deployed. Fall back to get_process to recover
+	// the nodes that are stored internally (and visible in the Corezoid UI).
+	if len(process) > 0 && schemeNodesEmpty(process[0]) {
+		logger.Warn("ExportProcess: process %d has empty scheme.nodes (not deployed); "+
+			"falling back to get_process to fetch draft nodes", v.ProcessID)
+		nodes, fallbackErr := v.FetchDraftNodes(v.ProcessID)
+		if fallbackErr == nil && len(nodes) > 0 {
+			if procMap, ok := process[0].(map[string]interface{}); ok {
+				scheme, _ := procMap["scheme"].(map[string]interface{})
+				if scheme == nil {
+					scheme = make(map[string]interface{})
+					procMap["scheme"] = scheme
+				}
+				scheme["nodes"] = nodes
+				process[0] = procMap
+				logger.Warn("ExportProcess: injected %d draft nodes into process %d", len(nodes), v.ProcessID)
+			}
+		} else {
+			logger.Warn("ExportProcess: draft node fallback for process %d also returned no nodes: %v",
+				v.ProcessID, fallbackErr)
+		}
+	}
+
 	return process, nil
 }
 
