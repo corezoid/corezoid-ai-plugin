@@ -17,3 +17,4 @@ coverage.out
 # Python
 __pycache__/
 *.pyc
+/dist/

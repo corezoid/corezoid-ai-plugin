@@ -7,14 +7,20 @@ Usage:
     python3 scripts/generate-discovery.py
 """
 
+import argparse
 import json
 import os
 import re
+import shutil
 import sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-SKILLS_DIR = os.path.join(ROOT, "plugins", "corezoid", "skills")
+PLUGIN_DIR = os.path.join(ROOT, "plugins", "corezoid")
+SKILLS_DIR = os.path.join(PLUGIN_DIR, "skills")
+STEERING_DIR = os.path.join(PLUGIN_DIR, "steering")
+MCP_KIRO_JSON = os.path.join(PLUGIN_DIR, ".mcp.kiro.json")
 PUBLIC_DIR = os.path.join(ROOT, "public")
+DIST_KIRO = os.path.join(ROOT, "dist", "kiro")
 REPO_RAW = "https://raw.githubusercontent.com/corezoid/corezoid-ai-plugin/main"
 SKILLS_RAW = f"{REPO_RAW}/plugins/corezoid/skills"
 DOCS_RAW = f"{REPO_RAW}/plugins/corezoid/docs"
@@ -203,7 +209,52 @@ def read_version():
         return "unknown"
 
 
+def emit_kiro_overlay(skills):
+    """Materialise dist/kiro/.kiro/{settings,steering,skills} from the
+    canonical plugin payload. Skills and steering files are COPIED (not
+    symlinked) so the resulting dist/kiro is a portable artifact suitable
+    for zipping and attaching to a GitHub Release."""
+    kiro_root = os.path.join(DIST_KIRO, ".kiro")
+
+    # settings/mcp.json — verbatim copy of .mcp.kiro.json
+    settings_dst = os.path.join(kiro_root, "settings")
+    os.makedirs(settings_dst, exist_ok=True)
+    shutil.copy2(MCP_KIRO_JSON, os.path.join(settings_dst, "mcp.json"))
+
+    # steering/<file>.md — every .md under plugins/corezoid/steering/
+    steering_dst = os.path.join(kiro_root, "steering")
+    os.makedirs(steering_dst, exist_ok=True)
+    if os.path.isdir(STEERING_DIR):
+        for name in sorted(os.listdir(STEERING_DIR)):
+            if name.endswith(".md"):
+                shutil.copy2(
+                    os.path.join(STEERING_DIR, name),
+                    os.path.join(steering_dst, name),
+                )
+
+    # skills/<dir>/SKILL.md and sibling .md files
+    skills_dst = os.path.join(kiro_root, "skills")
+    for s in skills:
+        skill_src = os.path.join(SKILLS_DIR, s["dir"])
+        skill_dst = os.path.join(skills_dst, s["dir"])
+        for rel in s["files"]:
+            src = os.path.join(skill_src, rel)
+            dst = os.path.join(skill_dst, rel)
+            os.makedirs(os.path.dirname(dst), exist_ok=True)
+            shutil.copy2(src, dst)
+
+    print(f"Written: {os.path.relpath(DIST_KIRO, ROOT)} (.kiro/{{settings,steering,skills}})")
+
+
 def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--kiro",
+        action="store_true",
+        help="Also emit a runtime .kiro/ overlay under dist/kiro for AWS Kiro installs.",
+    )
+    args = parser.parse_args()
+
     if not os.path.isdir(SKILLS_DIR):
         print(f"ERROR: skills dir not found: {SKILLS_DIR}", file=sys.stderr)
         sys.exit(1)
@@ -231,6 +282,9 @@ def main():
     with open(llms_path, "w", encoding="utf-8") as f:
         f.write(generate_llms_txt(skills, version))
     print(f"Written: {os.path.relpath(llms_path, ROOT)}")
+
+    if args.kiro:
+        emit_kiro_overlay(skills)
 
 
 if __name__ == "__main__":
