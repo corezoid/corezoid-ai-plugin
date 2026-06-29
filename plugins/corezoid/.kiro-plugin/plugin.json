@@ -1,0 +1,20 @@
+{
+  "name": "corezoid",
+  "version": "2.7.0",
+  "description": "Corezoid AI Documentation and Templates — skills and MCP server for working with Corezoid BPM processes.",
+  "author": {
+    "name": "Corezoid",
+    "url": "https://corezoid.com"
+  },
+  "homepage": "https://github.com/corezoid/corezoid-ai-plugin",
+  "repository": "https://github.com/corezoid/corezoid-ai-plugin",
+  "license": "MIT",
+  "keywords": ["corezoid", "process", "bpm", "workflow", "automation", "mcp"],
+  "skills": "./skills/",
+  "mcpServers": "./.mcp.kiro.json",
+  "kiro": {
+    "steering": "./steering/corezoid.md",
+    "skills": "./skills/",
+    "mcpServers": "./.mcp.kiro.json"
+  }
+}
