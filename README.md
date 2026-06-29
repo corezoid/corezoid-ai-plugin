@@ -189,6 +189,8 @@ validation errors, and summarize what each process does.
 | `logout`            | Remove saved credentials                           |
 | `list-workspaces`   | List available workspaces and stages               |
 | `list-stages`       | List stages in a workspace                         |
+| `create-stage`      | Create a new empty stage inside a project          |
+| `clone-stage`       | Duplicate an existing stage (with all processes) under a new title |
 | `list-projects`     | List folders and processes in a stage              |
 | `create-project`    | Create a new project (with optional stages) in a workspace |
 | `modify-project`    | Update a project's title, short_name and/or description |

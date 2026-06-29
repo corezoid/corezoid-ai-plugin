@@ -281,6 +281,54 @@ var toolRegistry = []mcpTool{
 		},
 	},
 	{
+		Name:        "create-stage",
+		Description: "Create a new empty stage (environment) inside a Corezoid project. Returns the new stage_id.",
+		InputSchema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"company_id": map[string]interface{}{
+					"type":        "string",
+					"description": "Workspace (company) ID the project belongs to",
+				},
+				"project_id": map[string]interface{}{
+					"type":        "integer",
+					"description": "Project ID where the stage will be created",
+				},
+				"title": map[string]interface{}{
+					"type":        "string",
+					"description": "Stage title",
+				},
+				"description": map[string]interface{}{
+					"type":        "string",
+					"description": "Optional stage description",
+				},
+			},
+			"required": []string{"company_id", "project_id", "title"},
+		},
+	},
+	{
+		Name:        "clone-stage",
+		Description: "Duplicate an existing Corezoid stage (with all its processes and folders) under a new title in the same project. Returns the new stage_id.",
+		InputSchema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"company_id": map[string]interface{}{
+					"type":        "string",
+					"description": "Workspace (company) ID the stage belongs to",
+				},
+				"stage_id": map[string]interface{}{
+					"type":        "integer",
+					"description": "Stage ID (obj_id) to clone",
+				},
+				"new_title": map[string]interface{}{
+					"type":        "string",
+					"description": "Title for the cloned stage",
+				},
+			},
+			"required": []string{"company_id", "stage_id", "new_title"},
+		},
+	},
+	{
 		Name:        "create-project",
 		Description: "Create a new Corezoid project (with optional stages) inside a workspace. Returns the new project_id and the stage IDs that were created.",
 		InputSchema: map[string]interface{}{
