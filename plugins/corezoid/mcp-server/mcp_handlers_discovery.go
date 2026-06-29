@@ -357,7 +357,7 @@ func handleCreateStage(ctx context.Context, args map[string]interface{}) (string
 	op := map[string]any{
 		"type":       "create",
 		"obj":        "stage",
-		"obj_id":     projectID,
+		"project_id": projectID,
 		"company_id": companyID,
 		"title":      title,
 	}
@@ -382,10 +382,10 @@ func handleCreateStage(ctx context.Context, args map[string]interface{}) (string
 	return fmt.Sprintf("Stage %q created — stage_id=%d, project_id=%d", title, stageID, projectID), false
 }
 
-// handleCloneStage duplicates an existing stage (with all its processes) under
-// a new title inside the same project. The clone is performed server-side via
-// the Corezoid copy operation, so all processes, folders and their content are
-// preserved. Returns the new stage_id on success.
+// handleCloneStage duplicates an existing stage (with all its processes and folders)
+// under a new title in the same project. The Corezoid API /api/2/copy supports
+// obj_type="stage" + obj_to_type="project", which performs the full server-side
+// copy. Returns the new stage_id on success.
 func handleCloneStage(ctx context.Context, args map[string]interface{}) (string, bool) {
 	companyID, err := strArg(args, "company_id")
 	if err != nil {
@@ -400,16 +400,31 @@ func handleCloneStage(ctx context.Context, args map[string]interface{}) (string,
 		return "Error: " + err.Error(), true
 	}
 
-	op := map[string]any{
-		"type":       "copy",
-		"obj":        "stage",
-		"obj_id":     stageID,
-		"company_id": companyID,
-		"title":      newTitle,
+	// Resolve the project_id for the source stage so the clone lands in the same project.
+	v := NewValidator(ctx, 0)
+	stageInfo, err := v.ShowFolder(stageID)
+	if err != nil {
+		return fmt.Sprintf("Error resolving stage info: %v", err), true
+	}
+	projectID := stageInfo.ParentObjID
+	if projectID == 0 {
+		return fmt.Sprintf("Error: cannot resolve project_id for stage %d", stageID), true
 	}
 
-	v := NewValidator(ctx, 0)
-	resp, err := v.req("clone_stage", []map[string]any{op})
+	op := map[string]any{
+		"obj":              "obj_copy",
+		"obj_type":        "stage",
+		"obj_id":          stageID,
+		"obj_to_type":     "project",
+		"obj_to_id":       projectID,
+		"title":           newTitle,
+		"from_company_id": companyID,
+		"to_company_id":   companyID,
+		"ignore_errors":   false,
+		"async":           false,
+	}
+
+	resp, err := v.req("copy", []map[string]any{op})
 	if err != nil {
 		return fmt.Sprintf("Error: %v", err), true
 	}
@@ -422,7 +437,7 @@ func handleCloneStage(ctx context.Context, args map[string]interface{}) (string,
 	if f, ok := opMap["obj_id"].(float64); ok {
 		newStageID = int64(f)
 	}
-	return fmt.Sprintf("Stage #%d cloned as %q — new_stage_id=%d", stageID, newTitle, newStageID), false
+	return fmt.Sprintf("Stage #%d cloned as %q — new_stage_id=%d, project_id=%d", stageID, newTitle, newStageID, projectID), false
 }
 
 // handleShowProject returns a project's stages and short_name plus the parent
