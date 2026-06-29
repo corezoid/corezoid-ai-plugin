@@ -61,6 +61,16 @@ jobs:
       - name: Generate discovery files
         run: python3 scripts/generate-discovery.py
 
+      - name: Generate Kiro overlay
+        run: python3 scripts/generate-discovery.py --kiro
+
+      - name: Package Kiro overlay
+        env:
+          VERSION: ${{ github.ref_name }}
+        run: |
+          cp POWER.md dist/kiro/POWER.md
+          (cd dist/kiro && zip -r "../corezoid-kiro-${VERSION}.zip" .)
+
       - name: Attest binary provenance
         uses: actions/attest-build-provenance@v2
         with:
@@ -95,3 +105,5 @@ jobs:
             dist/checksums.txt
             public/llms.txt
             public/.well-known/skills/index.json
+            dist/corezoid-kiro-*.zip
+            POWER.md
