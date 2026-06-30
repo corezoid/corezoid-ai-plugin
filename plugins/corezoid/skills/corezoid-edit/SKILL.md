@@ -47,8 +47,8 @@ Apply changes to `PROCESS_PATH`.
 - Every node that can fail must have `err_node_id` — point it **directly at a Final Error node** (`obj_type: 2`) unless the error path needs logic (reply to caller, retry routing). Never create an Escalation node (`obj_type: 3`) that only contains a bare `go` — that is a passthrough anti-pattern flagged by `lint-process`
 - Node IDs must be unique 24-character hex strings: `^[0-9a-f]{24}$`. **Always `pull-process` before editing** and reference only canonical, server-assigned IDs — IDs you invented in a previous push were reassigned by the server and no longer exist. New nodes added now get placeholder IDs that the server will likewise reassign on push. Existing nodes' IDs are preserved. See [Node ID Lifecycle](${CLAUDE_PLUGIN_ROOT}/docs/process/process-development-guide.md#node-id-lifecycle-server-assignment--stability-on-push).
 - Use descriptive node `title` values (e.g., "Call Payment Process", not "RPC")
-- Place new nodes below existing ones, incrementing `y` by 200–250px
-- Position error nodes to the right of their parent (`x + 300`)
+- Node coordinates (`x`/`y`) are assigned automatically by the MCP server on `push-process` — archetype-aware, with the happy path as a vertical spine and branches/errors as straight horizontal connectors to the right (see `${CLAUDE_PLUGIN_ROOT}/docs/process/node-positioning-best-practices.md`). You normally do not need to set coordinates by hand; new nodes can be given any placeholder `x`/`y` and the engine will lay them out.
+- To disable auto-layout (e.g. to preserve a hand-tuned process), set `web_settings.autolayout: false` in the scheme, or the env var `COREZOID_AUTOLAYOUT=off`. When auto-layout is OFF and you insert a node mid-flow, re-flow downstream: shift every node at or below the insertion row DOWN by one vertical step (~180px) before placing the new node, and put error/branch nodes one column to the right on the SAME row as their source — never drop a node onto an already-occupied position.
 
 ### Variables for constants
 
