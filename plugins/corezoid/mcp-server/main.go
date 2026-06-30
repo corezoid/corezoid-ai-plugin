@@ -206,6 +206,16 @@ func main() {
 		os.Exit(runLayoutCheck(dir))
 	}
 
+	// Hidden subcommand: layout-crossings <dir> — per-process edge-crossing
+	// diagnostic for the barycenter ordering work. Prints crossings per file.
+	if len(os.Args) >= 2 && os.Args[1] == "layout-crossings" {
+		dir := "."
+		if len(os.Args) >= 3 {
+			dir = os.Args[2]
+		}
+		os.Exit(runLayoutCrossings(dir))
+	}
+
 	// CLI mode: first argument is a tool name (e.g. "pull-folder folder_id=123").
 	if len(os.Args) >= 2 && !strings.HasPrefix(os.Args[1], "-") {
 		// In CLI mode log to stderr directly so stdout stays clean for the result.

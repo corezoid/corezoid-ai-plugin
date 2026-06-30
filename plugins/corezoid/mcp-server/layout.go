@@ -460,6 +460,127 @@ func terminalFailureEnds(g *graph) map[string]bool {
 	return out
 }
 
+// spineSet returns the set of nodes on the primary down-chain: starting from
+// each start node, follow the chosen downTarget edge as long as it descends by
+// exactly one rank (the same edge that costs 1 row in ranks()). These nodes are
+// PINNED to column 0 and are excluded from barycenter reordering, keeping the
+// spine straight. The one-rank guard prevents a down edge that loops back or
+// jumps ranks from pulling a far node onto the spine.
+func spineSet(g *graph, dt map[string]string, rank map[string]int) map[string]bool {
+	spine := map[string]bool{}
+	for _, s := range g.starts() {
+		cur := s
+		for cur != "" && !spine[cur] {
+			spine[cur] = true
+			nxt := dt[cur]
+			if nxt == "" || rank[nxt] != rank[cur]+1 {
+				break
+			}
+			cur = nxt
+		}
+	}
+	return spine
+}
+
+// Barycenter (median) within-rank ordering — formula and pass count:
+//
+// To reduce edge crossings we order the BRANCH-ROOT nodes within each rank (the
+// "others": non-spine, non-failEnd nodes that do NOT inherit a parent column) by
+// the classic barycenter/median heuristic. The metric is the node's neighbours'
+// actual assigned COLUMNS — not an abstract slot index — so the ordering tracks
+// the real packed layout. Because columns are only known AFTER packing, the
+// whole thing is iterated:
+//
+//	col := pack(seed order by id)
+//	repeat barycenterSweeps times:
+//	    refine each rank's others-order from the current `col`
+//	    col = pack(refined orders)
+//	keep the col that yields the fewest crossings (never worse than the seed)
+//
+// Per refinement we do ONE down sweep + ONE up sweep:
+//   - down: a node's key is the MEDIAN of its PARENTS' columns (rank above).
+//   - up:   a node's key is the MEDIAN of its CHILDREN's columns (rank below).
+//
+// Median (not mean) is the standard robust choice. A node with no neighbour on
+// the reference side keeps its current column as the key so it does not drift.
+// Ties break by current column then by id, so the result is fully deterministic
+// (no map-iteration dependence). barycenterSweeps is fixed for determinism.
+//
+// Crucially we KEEP the best-scoring packing across the seed + every sweep, so
+// the heuristic can never make a process worse than the original id-order
+// packing — if a sweep would increase crossings on some graph, that sweep's
+// result is simply discarded.
+const barycenterSweeps = 4
+
+// medianOf returns the median of vals, or -1 for the empty slice.
+func medianOf(vals []float64) float64 {
+	if len(vals) == 0 {
+		return -1
+	}
+	sort.Float64s(vals)
+	m := len(vals)
+	if m%2 == 1 {
+		return vals[m/2]
+	}
+	return (vals[m/2-1] + vals[m/2]) / 2
+}
+
+// refineOthersOrder produces, per rank, a refined left-to-right order of the
+// MOVABLE branch-root nodes (those in others[r]) by sweeping medians of
+// neighbour COLUMNS taken from `col`. `down` selects the reference side: true =
+// parents (rank above), false = children (rank below). The seed within-rank
+// order is each rank's current others slice. Deterministic: median key, then
+// current column, then id.
+func refineOthersOrder(others map[int][]string, rankKeys []int, parents, children map[string][]string, col map[string]int, down bool) map[int][]string {
+	neigh := children
+	if down {
+		neigh = parents
+	}
+	order := rankKeys
+	if !down {
+		order = append([]int(nil), rankKeys...)
+		for i, j := 0, len(order)-1; i < j; i, j = i+1, j-1 {
+			order[i], order[j] = order[j], order[i]
+		}
+	}
+	out := map[int][]string{}
+	for r := range others {
+		out[r] = append([]string(nil), others[r]...)
+	}
+	for _, r := range order {
+		mv := out[r]
+		if len(mv) < 2 {
+			continue
+		}
+		key := map[string]float64{}
+		for _, id := range mv {
+			var cs []float64
+			for _, nb := range neigh[id] {
+				if c, ok := col[nb]; ok {
+					cs = append(cs, float64(c))
+				}
+			}
+			if med := medianOf(cs); med >= 0 {
+				key[id] = med
+			} else {
+				key[id] = float64(col[id]) // no neighbour: hold position
+			}
+		}
+		ordered := append([]string(nil), mv...)
+		sort.SliceStable(ordered, func(i, j int) bool {
+			if key[ordered[i]] != key[ordered[j]] {
+				return key[ordered[i]] < key[ordered[j]]
+			}
+			if col[ordered[i]] != col[ordered[j]] {
+				return col[ordered[i]] < col[ordered[j]]
+			}
+			return ordered[i] < ordered[j]
+		})
+		out[r] = ordered
+	}
+	return out
+}
+
 // assignPositions ports assign_positions: the full layered layout. Returns a
 // map id -> [2]int{x, y}.
 func assignPositions(g *graph, archetype string) map[string][2]int {
@@ -533,7 +654,12 @@ func assignPositions(g *graph, archetype string) map[string][2]int {
 	// source stays a straight horizontal line to the right.
 	failEnds := terminalFailureEnds(g)
 
-	col := map[string]int{}
+	// children adjacency for the barycenter up-sweep.
+	children := map[string][]string{}
+	for _, e := range g.edges {
+		children[e.src] = append(children[e.src], e.dst)
+	}
+
 	lowestFree := func(taken map[int]bool, start int) int {
 		c := start
 		for taken[c] {
@@ -542,83 +668,135 @@ func assignPositions(g *graph, archetype string) map[string][2]int {
 		return c
 	}
 
-	for _, r := range rankKeys {
-		taken := map[int]bool{}
-		type chainEntry struct {
-			nid string
-			ic  int
-		}
-		var chain []chainEntry
-		var others []string
-
-		rowNodes := make([]string, 0, len(byRank[r]))
-		for _, nid := range byRank[r] {
-			if !failEnds[nid] { // terminal failure ENDs are placed in the rightmost lane
-				rowNodes = append(rowNodes, nid)
+	// pack assigns a column to every non-failEnd node, top rank to bottom. It is
+	// pure in `othersOrder` (the per-rank left-to-right order of branch-root
+	// nodes): same input -> same output. Down-children inherit their parent's
+	// column (straight vertical connectors); branch roots are packed strictly
+	// right of their source in the supplied order. othersOrder[r] may be nil, in
+	// which case the rank's branch roots fall back to id order.
+	//
+	// INVARIANTS pack upholds regardless of othersOrder:
+	//   - the spine (col-0 down-chain) keeps column 0: the start lands at the
+	//     lowest free col 0 on rank 0, every spine down-child inherits col 0 and,
+	//     being placed first (chain before others), claims col 0 again;
+	//   - branch roots only ever take columns >= source_col+1 >= 1, never col 0.
+	// pack returns the column map AND usedOthers — the actual per-rank branch-root
+	// order it placed (after applying othersOrder). usedOthers is what the
+	// barycenter refinement reorders, so the refinable set always matches exactly
+	// the nodes pack treats as branch roots (no drift between the seed
+	// classification and pack's runtime placed-based classification).
+	pack := func(othersOrder map[int][]string) (map[string]int, map[int][]string) {
+		col := map[string]int{}
+		usedOthers := map[int][]string{}
+		for _, r := range rankKeys {
+			taken := map[int]bool{}
+			type chainEntry struct {
+				nid string
+				ic  int
 			}
-		}
-		sort.Strings(rowNodes) // stable by id
+			var chain []chainEntry
+			var others []string
 
-		for _, nid := range rowNodes {
-			// down-parents: parents whose chosen down edge is this node, already placed.
-			var downpar []string
-			for _, s := range parents[nid] {
-				if dt[s] == nid {
-					if _, placed := col[s]; placed {
-						downpar = append(downpar, s)
+			rowNodes := make([]string, 0, len(byRank[r]))
+			for _, nid := range byRank[r] {
+				if !failEnds[nid] { // terminal failure ENDs are placed in the rightmost lane
+					rowNodes = append(rowNodes, nid)
+				}
+			}
+			sort.Strings(rowNodes) // stable by id
+
+			for _, nid := range rowNodes {
+				// down-parents: parents whose chosen down edge is this node, already placed.
+				var downpar []string
+				for _, s := range parents[nid] {
+					if dt[s] == nid {
+						if _, placed := col[s]; placed {
+							downpar = append(downpar, s)
+						}
 					}
 				}
-			}
-			if len(downpar) > 0 {
-				chain = append(chain, chainEntry{nid, col[downpar[0]]}) // inherit parent column
-			} else {
-				others = append(others, nid)
-			}
-		}
-
-		// Place chain entries sorted by (inherited column, id).
-		sort.SliceStable(chain, func(i, j int) bool {
-			if chain[i].ic != chain[j].ic {
-				return chain[i].ic < chain[j].ic
-			}
-			return chain[i].nid < chain[j].nid
-		})
-		for _, ce := range chain {
-			c := lowestFree(taken, ce.ic)
-			col[ce.nid] = c
-			taken[c] = true
-		}
-		// Place branch/root nodes strictly right of their source.
-		for _, nid := range others {
-			var placed []int
-			for _, s := range parents[nid] {
-				if c, ok := col[s]; ok {
-					placed = append(placed, c)
+				if len(downpar) > 0 {
+					chain = append(chain, chainEntry{nid, col[downpar[0]]}) // inherit parent column
+				} else {
+					others = append(others, nid)
 				}
 			}
-			base := 0
-			if len(placed) > 0 {
-				minC := placed[0]
-				for _, c := range placed[1:] {
-					if c < minC {
-						minC = c
+
+			// Place chain entries sorted by (inherited column, id) — spine (col 0)
+			// first, so it always re-claims column 0.
+			sort.SliceStable(chain, func(i, j int) bool {
+				if chain[i].ic != chain[j].ic {
+					return chain[i].ic < chain[j].ic
+				}
+				return chain[i].nid < chain[j].nid
+			})
+			for _, ce := range chain {
+				c := lowestFree(taken, ce.ic)
+				col[ce.nid] = c
+				taken[c] = true
+			}
+
+			// Order branch/root nodes by the barycenter-refined within-rank order if
+			// one was supplied for this rank, else by id (the original behaviour).
+			if want := othersOrder[r]; len(want) > 0 {
+				idx := make(map[string]int, len(want))
+				for i, id := range want {
+					idx[id] = i
+				}
+				sort.SliceStable(others, func(i, j int) bool {
+					oi, iok := idx[others[i]]
+					oj, jok := idx[others[j]]
+					if iok && jok && oi != oj {
+						return oi < oj
+					}
+					if iok != jok {
+						return iok // ordered ones first
+					}
+					return others[i] < others[j]
+				})
+			}
+
+			// Place branch/root nodes strictly right of their source.
+			for _, nid := range others {
+				var placed []int
+				for _, s := range parents[nid] {
+					if c, ok := col[s]; ok {
+						placed = append(placed, c)
 					}
 				}
-				base = minC + 1
+				base := 0
+				if len(placed) > 0 {
+					minC := placed[0]
+					for _, c := range placed[1:] {
+						if c < minC {
+							minC = c
+						}
+					}
+					base = minC + 1
+				}
+				c := lowestFree(taken, base)
+				col[nid] = c
+				taken[c] = true
 			}
-			c := lowestFree(taken, base)
-			col[nid] = c
-			taken[c] = true
+			usedOthers[r] = others
 		}
+		return col, usedOthers
 	}
 
+	// placeFailEnds appends the terminal-failure ENDs to a packed `col` in the
+	// dedicated rightmost lane (see below) and returns the augmented map. Pure in
+	// col, so identical packings give identical full layouts.
+	//
 	// Rightmost lane for terminal failure ENDs. maxCol is the widest column used
 	// by any NON-terminal-failure node; the cemetery starts one lane to its right.
 	// Each failure END keeps its own rank/row (Y unchanged) and takes the lowest
 	// free column >= maxCol+1 WITHIN its rank, so two failure ENDs that share a
 	// rank stack across maxCol+1, maxCol+2, ... rather than colliding. Processed in
 	// (rank,id) order for determinism.
-	if len(failEnds) > 0 {
+	placeFailEnds := func(col map[string]int) map[string]int {
+		if len(failEnds) == 0 {
+			return col
+		}
 		maxCol := 0
 		for _, c := range col {
 			if c > maxCol {
@@ -626,7 +804,6 @@ func assignPositions(g *graph, archetype string) map[string][2]int {
 			}
 		}
 		laneStart := maxCol + 1
-
 		var fe []string
 		for id := range failEnds {
 			fe = append(fe, id)
@@ -637,7 +814,6 @@ func assignPositions(g *graph, archetype string) map[string][2]int {
 			}
 			return fe[i] < fe[j]
 		})
-		// Per-rank column occupancy so same-rank failure ENDs don't stack on one X.
 		takenByRank := map[int]map[int]bool{}
 		for _, id := range fe {
 			r := rank[id]
@@ -648,22 +824,79 @@ func assignPositions(g *graph, archetype string) map[string][2]int {
 			col[id] = c
 			takenByRank[r][c] = true
 		}
+		return col
 	}
 
-	pos := map[string][2]int{}
-	for _, nid := range g.order {
-		x := float64(spineX + col[nid]*lanePitch)
-		// Y is the top of the node's rank row (top-left pivot for logic nodes).
-		// rectOf treats circles with a CENTER pivot but the row is always at
-		// least as tall as the 56px circle, so placing the circle's pivot at
-		// rowTop keeps it inside its row and clear of neighbouring rows.
-		y := float64(rowTop[rank[nid]])
-		if role := g.role(nid); (role == "START" || role == "END") && col[nid] == 0 {
-			x += float64(p.startOff) // centre Start/Final circle over the spine
+	// finalPos turns a complete column map (including failEnds) into the final
+	// snapped x/y positions, applying the Start/End +startOff centering. This is
+	// THE single place positions are computed, used for both crossing scoring and
+	// the returned layout so the keep-best decision matches the real output.
+	finalPos := func(col map[string]int) map[string][2]int {
+		pos := map[string][2]int{}
+		for _, nid := range g.order {
+			x := float64(spineX + col[nid]*lanePitch)
+			// Y is the top of the node's rank row (top-left pivot for logic nodes).
+			// rectOf treats circles with a CENTER pivot but the row is always at
+			// least as tall as the 56px circle, so placing the circle's pivot at
+			// rowTop keeps it inside its row and clear of neighbouring rows.
+			y := float64(rowTop[rank[nid]])
+			if role := g.role(nid); (role == "START" || role == "END") && col[nid] == 0 {
+				x += float64(p.startOff) // centre Start/Final circle over the spine
+			}
+			pos[nid] = [2]int{snap(x, grid), snap(y, grid)}
 		}
-		pos[nid] = [2]int{snap(x, grid), snap(y, grid)}
+		return pos
 	}
-	return pos
+
+	// crossingsFor scores a (failEnds-augmented) packing by the SAME crossing
+	// metric and SAME final positions the layout will emit, so a packing chosen as
+	// "best" really is best by the validation metric.
+	crossingsFor := func(col map[string]int) int {
+		return countCrossings(g, finalPos(col))
+	}
+
+	// Iterated barycenter: pack the id-order seed, then run a fixed number of
+	// median sweeps (down then up, alternating) re-packing from the refined
+	// branch order each time, and KEEP the packing with the fewest crossings.
+	// Keeping the best guarantees the change never increases crossings versus the
+	// original id-order packing on any process. Deterministic: fixed sweep count,
+	// median+column+id tiebreaks, best chosen with a strict < (first/seed wins
+	// ties). Scoring is done on the full layout (branch columns + failEnds lane +
+	// startOff), which is exactly what finalPos returns at the end.
+	// Seed: pure id-order packing (othersOrder nil) — byte-for-byte the
+	// pre-barycenter layout. This is the baseline the keep-best comparison can
+	// never lose to.
+	seedCol, seedUsed := pack(nil)
+	bestCol := placeFailEnds(seedCol)
+	bestCross := crossingsFor(bestCol)
+
+	// Iterate: refine the branch order from the CURRENT branch columns, repack,
+	// score the full layout, keep the best. failEnds are not refined (they stay in
+	// the rightmost lane); refinement reads the branch-only `curBranchCol`.
+	curOthers := seedUsed
+	curBranchCol := seedCol
+	for s := 0; s < barycenterSweeps; s++ {
+		curOthers = refineOthersOrder(curOthers, rankKeys, parents, children, curBranchCol, s%2 == 0)
+		var used map[int][]string
+		curBranchCol, used = pack(curOthers)
+		curOthers = used
+		full := placeFailEnds(copyCol(curBranchCol))
+		if cr := crossingsFor(full); cr < bestCross {
+			bestCross = cr
+			bestCol = full
+		}
+	}
+	return finalPos(bestCol)
+}
+
+// copyCol returns a shallow copy of a column map (placeFailEnds mutates its
+// argument, so callers that keep using the branch-only map must copy first).
+func copyCol(m map[string]int) map[string]int {
+	out := make(map[string]int, len(m))
+	for k, v := range m {
+		out[k] = v
+	}
+	return out
 }
 
 // layoutMode resolves the layout mode from the COREZOID_AUTOLAYOUT env var
@@ -976,6 +1209,136 @@ func countOverlaps(nodes []map[string]interface{}) int {
 		}
 	}
 	return c
+}
+
+// --- edge-crossing validation -------------------------------------------------
+//
+// countCrossings is a validation-only metric (not used by the layout algorithm
+// itself): given final node positions, it draws each graph edge as a straight
+// segment between the CENTER of its source and destination node and counts the
+// number of unordered edge PAIRS whose segments properly cross. It is the
+// classic layered-graph quality measure that barycenter ordering is meant to
+// reduce. O(E^2) — fine for validation on processes of a few hundred nodes.
+//
+// "Cross" means a proper segment intersection: the two segments touch at a point
+// interior to both. Edges that merely share an endpoint (a fan-out from one
+// source, or a fan-in to one destination) or that are collinear are NOT counted
+// as crossings — those are unavoidable and not a layout-quality signal.
+func countCrossings(g *graph, pos map[string][2]int) int {
+	type seg struct{ ax, ay, bx, by float64 }
+	center := func(id string) (float64, float64) {
+		p := pos[id]
+		// rectOf gives the footprint; the visual center is x+w/2, y+h/2 for
+		// top-left logic boxes and x,y for center-pivot circles. We use the
+		// footprint center so segments emanate from where the connector visually
+		// attaches, consistent regardless of pivot.
+		n := map[string]interface{}{
+			"obj_type": g.nodes[id]["obj_type"], "condition": g.nodes[id]["condition"],
+			"x": float64(p[0]), "y": float64(p[1]),
+		}
+		r := rectOf(n)
+		return r[0] + r[2]/2, r[1] + r[3]/2
+	}
+	segs := make([]seg, 0, len(g.edges))
+	for _, e := range g.edges {
+		if _, ok := pos[e.src]; !ok {
+			continue
+		}
+		if _, ok := pos[e.dst]; !ok {
+			continue
+		}
+		ax, ay := center(e.src)
+		bx, by := center(e.dst)
+		segs = append(segs, seg{ax, ay, bx, by})
+	}
+	count := 0
+	for i := 0; i < len(segs); i++ {
+		for j := i + 1; j < len(segs); j++ {
+			if segmentsProperlyCross(
+				segs[i].ax, segs[i].ay, segs[i].bx, segs[i].by,
+				segs[j].ax, segs[j].ay, segs[j].bx, segs[j].by) {
+				count++
+			}
+		}
+	}
+	return count
+}
+
+// segmentsProperlyCross reports whether segments p1p2 and p3p4 intersect at a
+// point strictly interior to both (the standard orientation test). Shared
+// endpoints and collinear overlaps return false.
+func segmentsProperlyCross(p1x, p1y, p2x, p2y, p3x, p3y, p4x, p4y float64) bool {
+	d1 := orient(p3x, p3y, p4x, p4y, p1x, p1y)
+	d2 := orient(p3x, p3y, p4x, p4y, p2x, p2y)
+	d3 := orient(p1x, p1y, p2x, p2y, p3x, p3y)
+	d4 := orient(p1x, p1y, p2x, p2y, p4x, p4y)
+	return ((d1 > 0 && d2 < 0) || (d1 < 0 && d2 > 0)) &&
+		((d3 > 0 && d4 < 0) || (d3 < 0 && d4 > 0))
+}
+
+// orient returns the signed area (cross product) of (b-a)x(c-a): >0 left turn,
+// <0 right turn, 0 collinear.
+func orient(ax, ay, bx, by, cx, cy float64) float64 {
+	return (bx-ax)*(cy-ay) - (by-ay)*(cx-ax)
+}
+
+// runLayoutCrossings walks dir for *.conv.json, applies a FULL layout to each,
+// and prints "<file> nodes=N crossings=C" per process plus a total. A
+// validation/diagnostic harness for the barycenter ordering work; never returns
+// a failing exit code.
+func runLayoutCrossings(dir string) int {
+	var files []string
+	_ = filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
+		if err != nil || info.IsDir() {
+			return nil
+		}
+		if strings.HasSuffix(path, ".conv.json") {
+			files = append(files, path)
+		}
+		return nil
+	})
+	sort.Strings(files)
+	total := 0
+	for _, f := range files {
+		data, err := os.ReadFile(f)
+		if err != nil {
+			continue
+		}
+		var doc map[string]interface{}
+		if err := json.Unmarshal(data, &doc); err != nil {
+			continue
+		}
+		scheme, _ := doc["scheme"].(map[string]interface{})
+		if scheme == nil {
+			continue
+		}
+		rawNodes, _ := scheme["nodes"].([]interface{})
+		if len(rawNodes) == 0 {
+			continue
+		}
+		convType, _ := doc["conv_type"].(string)
+		applyLayoutMode(scheme, convType, "full")
+
+		nodes := make([]map[string]interface{}, 0, len(rawNodes))
+		for _, raw := range rawNodes {
+			if nm, ok := raw.(map[string]interface{}); ok {
+				nodes = append(nodes, nm)
+			}
+		}
+		g := buildGraph(nodes)
+		pos := map[string][2]int{}
+		for _, n := range nodes {
+			id, _ := n["id"].(string)
+			x, _ := n["x"].(float64)
+			y, _ := n["y"].(float64)
+			pos[id] = [2]int{int(x), int(y)}
+		}
+		c := countCrossings(g, pos)
+		total += c
+		fmt.Printf("%s nodes=%d crossings=%d\n", filepath.Base(f), len(nodes), c)
+	}
+	fmt.Printf("total_crossings=%d\n", total)
+	return 0
 }
 
 // runLayoutCheck walks dir for *.conv.json, applies the layout (forced on) to

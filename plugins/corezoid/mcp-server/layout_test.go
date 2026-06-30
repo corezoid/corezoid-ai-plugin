@@ -372,6 +372,163 @@ func TestHeightAwareRowsNoOverlapWithTimer(t *testing.T) {
 	}
 }
 
+// mkLayoutNode and lgc are small builders for the barycenter tests below: a
+// node with the given id/obj_type and a variadic list of logic entries.
+func mkLayoutNode(id string, objType float64, logics ...map[string]interface{}) map[string]interface{} {
+	li := make([]interface{}, len(logics))
+	for i, l := range logics {
+		li[i] = l
+	}
+	return map[string]interface{}{
+		"id": id, "obj_type": objType, "x": float64(0), "y": float64(0),
+		"condition": map[string]interface{}{"logics": li, "semaphors": []interface{}{}},
+	}
+}
+
+func lgc(typ, to string) map[string]interface{} {
+	return map[string]interface{}{"type": typ, "to_node_id": to}
+}
+
+// TestBarycenterReducesCrossings builds a graph with an obvious crossing under
+// naive (id-order) within-rank placement and asserts that barycenter ordering
+// removes it. On rank 2 there are two BRANCH-ROOT targets: 12tA (low id) is
+// branched from the RIGHT-column source (21br2, col 1) and 99tZ (high id) from
+// the LEFT-column source (20sp2, col 0, the spine). Ordering the two targets by
+// id (tA left, tZ right) crosses the two branch edges; barycenter swaps them
+// (tZ left over its left source, tA right over its right source). The test
+// compares the engine's crossing count against a NAIVE baseline built by forcing
+// the two targets back into id-order columns, and asserts:
+//   - crossings(engine) < crossings(naive id-order),
+//   - the spine stays in column 0,
+//   - zero rect overlaps.
+func TestBarycenterReducesCrossings(t *testing.T) {
+	nodes := []map[string]interface{}{
+		mkLayoutNode("00s", 1, lgc("go", "10sp1")),
+		mkLayoutNode("10sp1", 3, lgc("go", "20sp2"), lgc("go_if_const", "11br")),
+		mkLayoutNode("11br", 0, lgc("go", "21br2")), // br (col1) -> br2 (chain, col1)
+		mkLayoutNode("20sp2", 3, lgc("go", "30end"), lgc("go_if_const", "99tZ")), // spine col0 -> tZ (high id)
+		mkLayoutNode("21br2", 3, lgc("go", "31y"), lgc("go_if_const", "12tA")),   // col1 -> tA (low id)
+		mkLayoutNode("30end", 2),
+		mkLayoutNode("31y", 2),
+		mkLayoutNode("12tA", 2), // branch root from the RIGHT source (21br2, col1)
+		mkLayoutNode("99tZ", 2), // branch root from the LEFT source (20sp2, col0)
+	}
+	g := buildGraph(nodes)
+	pos := assignPositions(g, "default")
+	got := countCrossings(g, pos)
+
+	// Naive baseline: the two rank-2 branch roots placed in id order (tA in the
+	// lower column, tZ in the higher) — i.e. the seed packing barycenter improves
+	// on. We rebuild it by swapping the engine's x for those two nodes so tA gets
+	// the smaller x and tZ the larger.
+	naive := map[string][2]int{}
+	for id, p := range pos {
+		naive[id] = p
+	}
+	ax, zx := pos["12tA"][0], pos["99tZ"][0]
+	lo, hi := ax, zx
+	if lo > hi {
+		lo, hi = hi, lo
+	}
+	naive["12tA"] = [2]int{lo, pos["12tA"][1]} // tA (low id) -> lower column
+	naive["99tZ"] = [2]int{hi, pos["99tZ"][1]} // tZ (high id) -> higher column
+	naiveCross := countCrossings(g, naive)
+
+	if !(got < naiveCross) {
+		t.Errorf("barycenter crossings=%d not < naive id-order crossings=%d", got, naiveCross)
+	}
+
+	// Spine (00s -> 10sp1 -> 20sp2 -> 30end) must sit in column 0.
+	for _, id := range []string{"10sp1", "20sp2"} { // logic/cond spine nodes (no +startOff)
+		if pos[id][0] != spineX {
+			t.Errorf("spine node %s x=%d want %d (col0)", id, pos[id][0], spineX)
+		}
+	}
+
+	for _, n := range nodes {
+		id, _ := n["id"].(string)
+		n["x"] = float64(pos[id][0])
+		n["y"] = float64(pos[id][1])
+	}
+	if c := countOverlaps(nodes); c != 0 {
+		t.Errorf("barycenter layout left %d overlapping rect pair(s); want 0", c)
+	}
+}
+
+// TestSpineStaysCol0 asserts that after barycenter ordering every node on the
+// primary down-chain stays in column 0 (x == SPINE_X, with the +100 startOff
+// only for Start/End circles at col 0), regardless of how many branches hang off
+// it. spineSet identifies the chain; the layout must pin it to col 0.
+func TestSpineStaysCol0(t *testing.T) {
+	// Long spine with a branch off every interior node, ids chosen so naive order
+	// would scatter the branches.
+	nodes := []map[string]interface{}{
+		mkLayoutNode("00s", 1, lgc("go", "01a")),
+		mkLayoutNode("01a", 3, lgc("go", "02b"), lgc("go_if_const", "91x")),
+		mkLayoutNode("02b", 3, lgc("go", "03c"), lgc("go_if_const", "12y")),
+		mkLayoutNode("03c", 3, lgc("go", "04e"), lgc("go_if_const", "93z")),
+		mkLayoutNode("04e", 2),
+		mkLayoutNode("91x", 2),
+		mkLayoutNode("12y", 2),
+		mkLayoutNode("93z", 2),
+	}
+	g := buildGraph(nodes)
+	dt := g.downTarget()
+	rank := g.ranks(dt)
+	spine := spineSet(g, dt, rank)
+	if !spine["00s"] || !spine["01a"] || !spine["02b"] || !spine["03c"] || !spine["04e"] {
+		t.Fatalf("spineSet missing a spine node: %v", spine)
+	}
+
+	pos := assignPositions(g, "default")
+	for id := range spine {
+		x := pos[id][0]
+		role := g.role(id)
+		if role == "START" || role == "END" {
+			if x != spineX+100 {
+				t.Errorf("spine circle %s x=%d want %d (col0 + startOff)", id, x, spineX+100)
+			}
+		} else if x != spineX {
+			t.Errorf("spine node %s x=%d want %d (col0)", id, x, spineX)
+		}
+	}
+	// Branches must be strictly right of the spine (col >= 1).
+	for _, id := range []string{"91x", "12y", "93z"} {
+		if pos[id][0] <= spineX {
+			t.Errorf("branch %s x=%d must be > spineX=%d", id, pos[id][0], spineX)
+		}
+	}
+}
+
+// TestLayoutDeterministicWithBarycenter runs assignPositions twice on the same
+// graph and asserts byte-identical position maps — the fixed sweep count plus
+// median+column+id tiebreaks must leave no map-iteration nondeterminism.
+func TestLayoutDeterministicWithBarycenter(t *testing.T) {
+	nodes := []map[string]interface{}{
+		mkLayoutNode("00s", 1, lgc("go", "10sp1")),
+		mkLayoutNode("10sp1", 3, lgc("go", "20sp2"), lgc("go_if_const", "11br")),
+		mkLayoutNode("11br", 0, lgc("go", "21br2")),
+		mkLayoutNode("20sp2", 3, lgc("go", "30end"), lgc("go_if_const", "99tZ")),
+		mkLayoutNode("21br2", 3, lgc("go", "31y"), lgc("go_if_const", "12tA")),
+		mkLayoutNode("30end", 2),
+		mkLayoutNode("31y", 2),
+		mkLayoutNode("12tA", 2),
+		mkLayoutNode("99tZ", 2),
+	}
+	g1 := buildGraph(nodes)
+	g2 := buildGraph(nodes)
+	p1 := assignPositions(g1, "default")
+	p2 := assignPositions(g2, "default")
+	if len(p1) != len(p2) {
+		t.Fatalf("position-map sizes differ: %d vs %d", len(p1), len(p2))
+	}
+	for id, a := range p1 {
+		if b, ok := p2[id]; !ok || a != b {
+			t.Errorf("non-deterministic at %s: %v vs %v", id, a, p2[id])
+		}
+	}
+}
+
 func TestDetectArchetype(t *testing.T) {
 	cases := []struct {
 		conv   string
