@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"os"
 	"testing"
 )
 
@@ -29,67 +30,176 @@ func sampleScheme() map[string]interface{} {
 	return map[string]interface{}{"nodes": raw}
 }
 
-func TestApplyLayoutEnvOff(t *testing.T) {
+func TestLayoutModeEnv(t *testing.T) {
+	cases := []struct {
+		set   bool
+		val   string
+		want  string
+		label string
+	}{
+		{true, "off", "off", "off"},
+		{true, "full", "full", "full"},
+		{false, "", "preserve", "unset"},
+		{true, "PRESERVE", "preserve", "PRESERVE (case-insensitive)"},
+		{true, "  full  ", "full", "full (trimmed)"},
+		{true, "junk", "preserve", "junk -> preserve"},
+	}
+	for _, c := range cases {
+		if c.set {
+			t.Setenv("COREZOID_AUTOLAYOUT", c.val)
+		} else {
+			t.Setenv("COREZOID_AUTOLAYOUT", "")
+			os.Unsetenv("COREZOID_AUTOLAYOUT")
+		}
+		if got := layoutMode(); got != c.want {
+			t.Errorf("layoutMode() [%s]=%q want %q", c.label, got, c.want)
+		}
+	}
+}
+
+func TestApplyLayoutOffNoop(t *testing.T) {
 	t.Setenv("COREZOID_AUTOLAYOUT", "off")
 	scheme := sampleScheme()
 	applyLayout(scheme, "process")
 	for _, raw := range scheme["nodes"].([]interface{}) {
 		n := raw.(map[string]interface{})
 		if x, _ := n["x"].(float64); x != 0 {
-			t.Errorf("env off: node %v x=%v want 0 (unchanged)", n["id"], x)
+			t.Errorf("mode off: node %v x=%v want 0 (unchanged)", n["id"], x)
+		}
+		if y, _ := n["y"].(float64); y != 0 {
+			t.Errorf("mode off: node %v y=%v want 0 (unchanged)", n["id"], y)
 		}
 	}
 }
 
-func TestApplyLayoutOptOutFlag(t *testing.T) {
+// TestApplyLayoutAllNewDoesFull: a scheme where every node is at 0/0 (the
+// sample fixture) gets the full clean layout even in the default preserve mode,
+// because there is nothing placed to preserve. Coords match assignPositions.
+func TestApplyLayoutAllNewDoesFull(t *testing.T) {
+	t.Setenv("COREZOID_AUTOLAYOUT", "") // preserve (default)
+	os.Unsetenv("COREZOID_AUTOLAYOUT")
 	scheme := sampleScheme()
-	scheme["web_settings"] = map[string]interface{}{"autolayout": false}
+	want := assignPositions(buildGraph(sampleApiNodes()), "api")
+
 	applyLayout(scheme, "process")
 	for _, raw := range scheme["nodes"].([]interface{}) {
 		n := raw.(map[string]interface{})
-		if x, _ := n["x"].(float64); x != 0 {
-			t.Errorf("opt-out flag: node %v x=%v want 0 (unchanged)", n["id"], x)
+		id, _ := n["id"].(string)
+		x, _ := n["x"].(float64)
+		y, _ := n["y"].(float64)
+		if x == 0 && y == 0 {
+			t.Errorf("all-new node %s was not placed", id)
+		}
+		if int(x) != want[id][0] || int(y) != want[id][1] {
+			t.Errorf("node %s at (%v,%v) want full layout (%d,%d)", id, x, y, want[id][0], want[id][1])
 		}
 	}
 }
 
-func TestApplyLayoutMovesNodes(t *testing.T) {
-	t.Setenv("COREZOID_AUTOLAYOUT", "")
-	scheme := sampleScheme()
-	// Reference position for the Start node from assignPositions (archetype "api").
-	want := assignPositions(buildGraph(sampleApiNodes()), "api")["a"]
+// TestPreserveLeavesPlacedNodes: placed nodes keep their exact coords and the
+// one new node (primary child of placed P) lands at (P.x, P.y+vstep).
+func TestPreserveLeavesPlacedNodes(t *testing.T) {
+	t.Setenv("COREZOID_AUTOLAYOUT", "") // preserve
+	os.Unsetenv("COREZOID_AUTOLAYOUT")
 
+	// P (placed) --go--> N (new, 0/0). End placed too.
+	nodes := []map[string]interface{}{
+		{"id": "p", "obj_type": float64(0), "x": float64(600), "y": float64(180), "condition": map[string]interface{}{
+			"logics": []interface{}{map[string]interface{}{"type": "go", "to_node_id": "n"}}, "semaphors": []interface{}{}}},
+		{"id": "n", "obj_type": float64(0), "x": float64(0), "y": float64(0), "condition": map[string]interface{}{
+			"logics": []interface{}{map[string]interface{}{"type": "go", "to_node_id": "z"}}, "semaphors": []interface{}{}}},
+		{"id": "z", "obj_type": float64(2), "x": float64(600), "y": float64(900), "condition": map[string]interface{}{
+			"logics": []interface{}{}, "semaphors": []interface{}{}}},
+	}
+	raw := make([]interface{}, len(nodes))
+	for i, n := range nodes {
+		raw[i] = n
+	}
+	scheme := map[string]interface{}{"nodes": raw}
 	applyLayout(scheme, "process")
-	get := func(s map[string]interface{}, id string) (float64, float64) {
-		for _, raw := range s["nodes"].([]interface{}) {
-			n := raw.(map[string]interface{})
-			if n["id"] == id {
-				x, _ := n["x"].(float64)
-				y, _ := n["y"].(float64)
-				return x, y
-			}
+
+	if nodes[0]["x"].(float64) != 600 || nodes[0]["y"].(float64) != 180 {
+		t.Errorf("placed p moved: (%v,%v) want (600,180)", nodes[0]["x"], nodes[0]["y"])
+	}
+	if nodes[2]["x"].(float64) != 600 || nodes[2]["y"].(float64) != 900 {
+		t.Errorf("placed z moved: (%v,%v) want (600,900)", nodes[2]["x"], nodes[2]["y"])
+	}
+	// vstep for a 3-node process is the minimum 180.
+	if nodes[1]["x"].(float64) != 600 || nodes[1]["y"].(float64) != 360 {
+		t.Errorf("new n at (%v,%v) want (600,360) = (p.x, p.y+vstep)", nodes[1]["x"], nodes[1]["y"])
+	}
+}
+
+// TestPreserveBranchGoesRight: a new branch/error target of a placed source P
+// lands at (P.x+pitch, P.y) (same row, right).
+func TestPreserveBranchGoesRight(t *testing.T) {
+	t.Setenv("COREZOID_AUTOLAYOUT", "") // preserve
+	os.Unsetenv("COREZOID_AUTOLAYOUT")
+
+	// P (placed) --error--> E (new). P also has a placed primary child so E is
+	// only reachable as a branch (error) target.
+	nodes := []map[string]interface{}{
+		{"id": "p", "obj_type": float64(0), "x": float64(600), "y": float64(180), "condition": map[string]interface{}{
+			"logics": []interface{}{
+				map[string]interface{}{"type": "api_rpc", "to_node_id": "ok", "err_node_id": "e"},
+			}, "semaphors": []interface{}{}}},
+		{"id": "ok", "obj_type": float64(2), "x": float64(600), "y": float64(360), "condition": map[string]interface{}{
+			"logics": []interface{}{}, "semaphors": []interface{}{}}},
+		{"id": "e", "obj_type": float64(2), "x": float64(0), "y": float64(0), "condition": map[string]interface{}{
+			"logics": []interface{}{}, "semaphors": []interface{}{}}},
+	}
+	raw := make([]interface{}, len(nodes))
+	for i, n := range nodes {
+		raw[i] = n
+	}
+	scheme := map[string]interface{}{"nodes": raw}
+	applyLayout(scheme, "process")
+
+	if nodes[2]["x"].(float64) != 840 || nodes[2]["y"].(float64) != 180 {
+		t.Errorf("new error e at (%v,%v) want (840,180) = (p.x+pitch, p.y)", nodes[2]["x"], nodes[2]["y"])
+	}
+}
+
+// TestPreserveNudgesOnCollision: when a new node's target slot is already taken
+// by a placed node, the new node is nudged down by vstep; no two nodes overlap.
+func TestPreserveNudgesOnCollision(t *testing.T) {
+	t.Setenv("COREZOID_AUTOLAYOUT", "") // preserve
+	os.Unsetenv("COREZOID_AUTOLAYOUT")
+
+	// P (600,180) --go--> N (new). A placed node X already sits at (600,360),
+	// which is exactly P.y+vstep, so N must be nudged to (600,540).
+	nodes := []map[string]interface{}{
+		{"id": "p", "obj_type": float64(0), "x": float64(600), "y": float64(180), "condition": map[string]interface{}{
+			"logics": []interface{}{map[string]interface{}{"type": "go", "to_node_id": "n"}}, "semaphors": []interface{}{}}},
+		{"id": "n", "obj_type": float64(0), "x": float64(0), "y": float64(0), "condition": map[string]interface{}{
+			"logics": []interface{}{}, "semaphors": []interface{}{}}},
+		{"id": "x", "obj_type": float64(0), "x": float64(600), "y": float64(360), "condition": map[string]interface{}{
+			"logics": []interface{}{}, "semaphors": []interface{}{}}},
+	}
+	raw := make([]interface{}, len(nodes))
+	for i, n := range nodes {
+		raw[i] = n
+	}
+	scheme := map[string]interface{}{"nodes": raw}
+	applyLayout(scheme, "process")
+
+	if nodes[1]["x"].(float64) != 600 || nodes[1]["y"].(float64) != 540 {
+		t.Errorf("new n at (%v,%v) want (600,540) after collision nudge", nodes[1]["x"], nodes[1]["y"])
+	}
+	// No two nodes share coordinates.
+	seen := map[[2]float64]string{}
+	for _, n := range nodes {
+		k := [2]float64{n["x"].(float64), n["y"].(float64)}
+		if prev, ok := seen[k]; ok {
+			t.Errorf("nodes %s and %s share coords %v", prev, n["id"], k)
 		}
-		t.Fatalf("node %s not found", id)
-		return 0, 0
-	}
-	gx, gy := get(scheme, "a")
-	if gx == 0 && gy == 0 {
-		t.Fatal("Start node was not moved")
-	}
-	if int(gx) != want[0] || int(gy) != want[1] {
-		t.Errorf("Start node at (%v,%v) want (%d,%d)", gx, gy, want[0], want[1])
-	}
-
-	// Idempotent: applying again yields identical coordinates.
-	applyLayout(scheme, "process")
-	gx2, gy2 := get(scheme, "a")
-	if gx2 != gx || gy2 != gy {
-		t.Errorf("not idempotent: (%v,%v) vs (%v,%v)", gx, gy, gx2, gy2)
+		seen[k] = n["id"].(string)
 	}
 }
 
 func TestApplyLayoutMalformed(t *testing.T) {
 	t.Setenv("COREZOID_AUTOLAYOUT", "")
+	os.Unsetenv("COREZOID_AUTOLAYOUT")
 	// Empty nodes slice must not panic.
 	applyLayout(map[string]interface{}{"nodes": []interface{}{}}, "process")
 	// Missing nodes key entirely.

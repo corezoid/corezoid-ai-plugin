@@ -10,16 +10,15 @@ import (
 	"strings"
 )
 
-// layout.go is a faithful Go port of proto/layout.py — an archetype-aware,
-// layered node-layout engine that produces straight connectors and zero
-// overlaps. It reproduces the exact coordinates the Python prototype emits:
-// same graph model, same weighted-longest-path ranks, same deterministic
-// column packing, same adaptive vertical spacing, same grid snapping.
+// layout.go is the canonical archetype-aware, layered node-layout engine. It
+// produces straight connectors and zero overlaps via a graph model,
+// weighted-longest-path ranks, deterministic column packing, adaptive vertical
+// spacing, and grid snapping. (Originally prototyped in Python; the Go here is
+// now the source of truth.)
 //
 // Determinism: nodes are iterated in insertion order (graph.order) and
-// per-row node lists are sorted by id string, mirroring the Python's reliance
-// on dict insertion order + sorted(...). This is what makes the layout
-// idempotent and byte-for-byte matched to the Python output.
+// per-row node lists are sorted by id string. This is what makes the layout
+// idempotent.
 
 // edge is a directed connection between two nodes.
 // kind is one of: "primary" (go / logic fall-through), "cond" (go_if_const),
@@ -490,15 +489,44 @@ func assignPositions(g *graph, archetype string) map[string][2]int {
 	return pos
 }
 
-// applyLayout runs the archetype-aware layout engine over a process scheme and
-// writes the computed coordinates back onto each node, in place. It is the
-// single integration point used by the push path (see fixStruct in main.go).
+// layoutMode resolves the layout mode from the COREZOID_AUTOLAYOUT env var
+// (case-insensitive, trimmed). It is the ONLY source of mode control:
+//   - "off"     -> do nothing.
+//   - "full"    -> lay out ALL nodes (full re-tidy of the whole scheme).
+//   - otherwise -> "preserve" (the DEFAULT, including when unset): keep placed
+//     nodes exactly where they are and only position newly-added nodes.
+func layoutMode() string {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv("COREZOID_AUTOLAYOUT"))) {
+	case "off":
+		return "off"
+	case "full":
+		return "full"
+	default:
+		return "preserve"
+	}
+}
+
+// coordOf returns a node's x/y as float64 (missing/non-float treated as 0), and
+// whether the node is "new/unplaced" (both x and y are 0).
+func coordOf(n map[string]interface{}) (x, y float64, isNew bool) {
+	x, _ = n["x"].(float64)
+	y, _ = n["y"].(float64)
+	return x, y, x == 0 && y == 0
+}
+
+// applyLayout positions nodes of a process scheme in place. It is the single
+// integration point used by the push path (see fixStruct in main.go).
 //
-// Opt-out: if env COREZOID_AUTOLAYOUT == "off" (case-insensitive), or the
-// scheme's web_settings map has "autolayout" == false, the function returns
-// without mutating anything. Malformed input is handled gracefully (no panic):
-// comma-ok type assertions throughout, and a missing/empty nodes list is a
-// no-op.
+// SAFE BY DEFAULT: the mode comes from layoutMode() (env-only).
+//   - off:      no-op.
+//   - full:     archetype-aware full layout of every node (overwrites all x/y).
+//   - preserve: keep every already-placed node exactly where it is and slot
+//     ONLY the new (0/0) nodes in near their neighbours. A scheme where every
+//     node is new (e.g. a process built from scratch) gets the full clean
+//     layout — there is nothing to preserve.
+//
+// Malformed input is handled gracefully (no panic): comma-ok type assertions
+// throughout, and a missing/empty nodes list is a no-op.
 //
 // convType is the top-level conv_type of the loaded .conv.json; pass "" if it
 // cannot be determined (detectArchetype then classifies purely by logic types).
@@ -506,15 +534,9 @@ func applyLayout(scheme map[string]interface{}, convType string) {
 	if scheme == nil {
 		return
 	}
-	// Opt-out 1: global env switch.
-	if strings.EqualFold(strings.TrimSpace(os.Getenv("COREZOID_AUTOLAYOUT")), "off") {
+	mode := layoutMode()
+	if mode == "off" {
 		return
-	}
-	// Opt-out 2: per-process web_settings.autolayout == false.
-	if ws, ok := scheme["web_settings"].(map[string]interface{}); ok {
-		if al, ok := ws["autolayout"].(bool); ok && !al {
-			return
-		}
 	}
 
 	rawNodes, ok := scheme["nodes"].([]interface{})
@@ -531,17 +553,153 @@ func applyLayout(scheme map[string]interface{}, convType string) {
 		return
 	}
 
-	types := collectLogicTypes(nodes)
-	archetype := detectArchetype(convType, types)
-	g := buildGraph(nodes)
-	pos := assignPositions(g, archetype)
-
+	// A node is new/unplaced when both x and y are 0.
+	allNew := true
 	for _, n := range nodes {
-		id, _ := n["id"].(string)
-		if p, ok := pos[id]; ok {
-			n["x"] = float64(p[0])
-			n["y"] = float64(p[1])
+		if _, _, isNew := coordOf(n); !isNew {
+			allNew = false
+			break
 		}
+	}
+
+	if mode == "full" || allNew {
+		// Full pipeline: re-tidy every node onto the spine.
+		types := collectLogicTypes(nodes)
+		archetype := detectArchetype(convType, types)
+		g := buildGraph(nodes)
+		pos := assignPositions(g, archetype)
+		for _, n := range nodes {
+			id, _ := n["id"].(string)
+			if p, ok := pos[id]; ok {
+				n["x"] = float64(p[0])
+				n["y"] = float64(p[1])
+			}
+		}
+		return
+	}
+
+	// preserve: mixed placed + new -> only position the new nodes.
+	placeNewNodes(nodes)
+}
+
+// placeNewNodes slots each just-added node (x==0 && y==0) into the existing
+// manual layout near its graph neighbours, WITHOUT moving any placed node and
+// without overlap. Connectors are kept straight: a new primary child goes
+// directly below its parent, a new branch/error/reply target goes to the right
+// of its source, a new parent of a placed primary child goes directly above it.
+func placeNewNodes(nodes []map[string]interface{}) {
+	g := buildGraph(nodes)
+	dt := g.downTarget()
+
+	parents := map[string][]string{}
+	for _, nid := range g.order {
+		parents[nid] = nil
+	}
+	for _, e := range g.edges {
+		parents[e.dst] = append(parents[e.dst], e.src)
+	}
+
+	// Adaptive vertical spacing — same formula assignPositions uses.
+	p := profileFor("default")
+	grid := p.grid
+	n := len(nodes)
+	extra := 0
+	if n > 8 {
+		extra = (n - 8) / 12
+	}
+	vStepUnsnapped := p.vStep + 20*extra
+	if maxStep := p.vStep + 60; vStepUnsnapped > maxStep {
+		vStepUnsnapped = maxStep
+	}
+	vstep := snap(float64(vStepUnsnapped), grid)
+	const pitch = 240
+
+	type xy struct{ x, y int }
+	placed := map[string]xy{}
+	occupied := map[xy]bool{}
+	for _, nd := range nodes {
+		id, _ := nd["id"].(string)
+		x, y, isNew := coordOf(nd)
+		if isNew {
+			continue
+		}
+		sx, sy := snap(x, grid), snap(y, grid)
+		placed[id] = xy{sx, sy}
+		occupied[xy{sx, sy}] = true
+	}
+
+	// Process new nodes in topological rank order so a new node whose parent is
+	// also new is placed after its parent; ties by id for determinism.
+	rank := g.ranks(dt)
+	var newIDs []string
+	for _, nd := range nodes {
+		if _, _, isNew := coordOf(nd); isNew {
+			id, _ := nd["id"].(string)
+			newIDs = append(newIDs, id)
+		}
+	}
+	sort.SliceStable(newIDs, func(i, j int) bool {
+		if rank[newIDs[i]] != rank[newIDs[j]] {
+			return rank[newIDs[i]] < rank[newIDs[j]]
+		}
+		return newIDs[i] < newIDs[j]
+	})
+
+	for _, id := range newIDs {
+		var target xy
+		switch {
+		case func() bool {
+			// 1. N is the primary down-child of some placed parent P.
+			for _, s := range parents[id] {
+				if dt[s] == id {
+					if pp, ok := placed[s]; ok {
+						target = xy{pp.x, pp.y + vstep}
+						return true
+					}
+				}
+			}
+			return false
+		}():
+		case func() bool {
+			// 2. N has any placed parent P (branch/error/reply target).
+			for _, s := range parents[id] {
+				if pp, ok := placed[s]; ok {
+					target = xy{pp.x + pitch, pp.y}
+					return true
+				}
+			}
+			return false
+		}():
+		case func() bool {
+			// 3. N has a placed primary down-child C.
+			if c := dt[id]; c != "" {
+				if pc, ok := placed[c]; ok {
+					target = xy{pc.x, pc.y - vstep}
+					return true
+				}
+			}
+			return false
+		}():
+		default:
+			// 4. Fallback.
+			target = xy{spineX, 0}
+		}
+
+		target = xy{snap(float64(target.x), grid), snap(float64(target.y), grid)}
+		for occupied[target] {
+			target.y += vstep
+		}
+
+		// Write back onto the node and register it as placed.
+		for _, nd := range nodes {
+			if nid, _ := nd["id"].(string); nid == id {
+				nd["x"] = float64(target.x)
+				nd["y"] = float64(target.y)
+				break
+			}
+		}
+		placed[id] = target
+		occupied[target] = true
 	}
 }
 
@@ -595,8 +753,10 @@ func countOverlaps(nodes []map[string]interface{}) int {
 // returns a non-zero exit code if T>0. Mirrors proto/validate.py's pass
 // criterion (overlaps_after==0 on the corpus).
 func runLayoutCheck(dir string) int {
-	// Force layout on regardless of the environment.
-	os.Unsetenv("COREZOID_AUTOLAYOUT")
+	// Force a FULL layout regardless of the environment so the harness always
+	// exercises the engine on every node (preserve mode would leave already-
+	// placed nodes untouched and not test the packing).
+	os.Setenv("COREZOID_AUTOLAYOUT", "full")
 
 	var files []string
 	_ = filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
@@ -627,10 +787,6 @@ func runLayoutCheck(dir string) int {
 		rawNodes, _ := scheme["nodes"].([]interface{})
 		if len(rawNodes) == 0 {
 			continue
-		}
-		// Strip a per-process opt-out so the harness always exercises the engine.
-		if ws, ok := scheme["web_settings"].(map[string]interface{}); ok {
-			delete(ws, "autolayout")
 		}
 		convType, _ := doc["conv_type"].(string)
 		applyLayout(scheme, convType)
