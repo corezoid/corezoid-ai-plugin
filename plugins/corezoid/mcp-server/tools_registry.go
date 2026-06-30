@@ -87,6 +87,20 @@ var toolRegistry = []mcpTool{
 		},
 	},
 	{
+		Name:        "layout-process",
+		Description: "Apply a FULL archetype-aware re-layout to a local process file, overwriting ALL node positions to produce a clean, straight-connector, zero-overlap diagram. This is the explicit \"re-tidy everything\" action: a normal push-process only auto-places brand-new nodes (preserve mode) and never moves hand-placed nodes. Use this when the user asks to clean up / re-layout / tidy the whole process. Writes the file back in place; run push-process afterwards to deploy the new positions.",
+		InputSchema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"process_path": map[string]interface{}{
+					"type":        "string",
+					"description": "Relative path to the process JSON file.",
+				},
+			},
+			"required": []string{"process_path"},
+		},
+	},
+	{
 		Name:        "run-task",
 		Description: "Run a task on an already-deployed Corezoid process (without re-deploying).",
 		InputSchema: map[string]interface{}{

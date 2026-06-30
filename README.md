@@ -198,6 +198,7 @@ validation errors, and summarize what each process does.
 | `pull-process`      | Export a single process to a `.conv.json` file     |
 | `push-process`      | Validate and deploy a `.conv.json` to Corezoid     |
 | `lint-process`      | Validate process structure locally (no API call)   |
+| `layout-process`    | Full archetype-aware re-layout of a `.conv.json`   |
 | `run-task`          | Send a task to a deployed process                  |
 | `list-node-tasks`   | List tasks currently sitting in a node             |
 | `list-task-history` | Show task execution history                        |

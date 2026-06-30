@@ -531,10 +531,18 @@ func coordOf(n map[string]interface{}) (x, y float64, isNew bool) {
 // convType is the top-level conv_type of the loaded .conv.json; pass "" if it
 // cannot be determined (detectArchetype then classifies purely by logic types).
 func applyLayout(scheme map[string]interface{}, convType string) {
+	applyLayoutMode(scheme, convType, layoutMode())
+}
+
+// applyLayoutMode is the explicit-mode core of applyLayout: it positions nodes
+// using the caller-supplied mode ("off"|"full"|"preserve") instead of reading
+// the COREZOID_AUTOLAYOUT env var. applyLayout is the env-driven wrapper; the
+// layout-process tool and the layout-check harness call this directly to force
+// a "full" re-layout without mutating global env state.
+func applyLayoutMode(scheme map[string]interface{}, convType, mode string) {
 	if scheme == nil {
 		return
 	}
-	mode := layoutMode()
 	if mode == "off" {
 		return
 	}
@@ -753,11 +761,9 @@ func countOverlaps(nodes []map[string]interface{}) int {
 // returns a non-zero exit code if T>0. Mirrors proto/validate.py's pass
 // criterion (overlaps_after==0 on the corpus).
 func runLayoutCheck(dir string) int {
-	// Force a FULL layout regardless of the environment so the harness always
-	// exercises the engine on every node (preserve mode would leave already-
-	// placed nodes untouched and not test the packing).
-	os.Setenv("COREZOID_AUTOLAYOUT", "full")
-
+	// The harness forces a FULL layout (via applyLayoutMode below) so it always
+	// exercises the engine on every node — preserve mode would leave already-
+	// placed nodes untouched and not test the packing.
 	var files []string
 	_ = filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
 		if err != nil || info.IsDir() {
@@ -789,7 +795,7 @@ func runLayoutCheck(dir string) int {
 			continue
 		}
 		convType, _ := doc["conv_type"].(string)
-		applyLayout(scheme, convType)
+		applyLayoutMode(scheme, convType, "full")
 
 		nodes := make([]map[string]interface{}, 0, len(rawNodes))
 		for _, raw := range rawNodes {
