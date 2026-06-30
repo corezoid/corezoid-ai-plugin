@@ -116,7 +116,7 @@ Produce a valid `.conv.json` file.
   2. Create a new variable if needed: call MCP tool **`create-variable`** with `name`, `description`, `value`
   3. Reference in logic: `{{env_var[@variable-name]}}`
 - Use descriptive `title` values (e.g., "Call Payment Process", not "RPC")
-- Node coordinates (`x`/`y`) are assigned automatically by the MCP server on `push-process` per `${CLAUDE_PLUGIN_ROOT}/docs/process/node-positioning-best-practices.md` — focus on correct logic and edges rather than precise positions; any placeholder values are fine. To opt out and preserve a hand-tuned layout, set `web_settings.autolayout: false` in the scheme or the env var `COREZOID_AUTOLAYOUT=off`.
+- Node coordinates (`x`/`y`) are handled by the MCP server's **preserve-by-default** layout engine (see `${CLAUDE_PLUGIN_ROOT}/docs/process/node-positioning-best-practices.md`). For a brand-new process every node starts at `0/0`, so the engine applies a full clean layout on the first push — focus on correct logic and edges rather than precise positions. If you set explicit coordinates on any node, those will be preserved on every subsequent push. To disable layout entirely use the env var `COREZOID_AUTOLAYOUT=off`. To re-tidy an existing process in one shot, use the `layout-process` MCP tool.
 
 ### Common pitfalls
 

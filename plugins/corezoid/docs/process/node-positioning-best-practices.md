@@ -2,11 +2,18 @@
 
 ## Overview
 
-Starting from plugin v2, the MCP server **automatically lays out every process on push** via the
-`applyLayout` engine (`plugins/corezoid/mcp-server/layout.go`). You never need to compute node
-coordinates by hand — the engine places every node, snaps to the grid, and guarantees zero overlaps
-(validated on 554 real processes). This document describes the conventions the engine applies so
-that humans and the model understand the resulting layout and can opt out when needed.
+Starting from plugin v2, the MCP server runs the archetype-aware `applyLayout` engine
+(`plugins/corezoid/mcp-server/layout.go`) automatically on every `push-process`.
+
+**Safe by default — preserve mode.** The engine only places *new* nodes: nodes whose `x` and `y`
+are both `0`. Already-positioned nodes are never moved. This means a model (or human) can set
+precise coordinates for any node and those positions will survive every subsequent push untouched.
+A process built from scratch has all nodes at `0/0`, so it still receives a full clean layout on
+the first push — there is nothing to preserve.
+
+The engine snaps to the grid, guarantees zero overlaps (validated on 554 real processes), and
+keeps connectors straight. This document describes the conventions it applies so that humans and
+the model understand the resulting layout and can control it when needed.
 
 ## Node Dimensions
 
@@ -197,36 +204,47 @@ Y=360  [Reply]    [Error-End]
 Y=540  [End@700]
 ```
 
-## Opt-Out
+## Controlling the Layout Mode
 
 The engine only ever writes `x` and `y` on nodes. It never changes logics, semaphors, extra fields,
 IDs, or edges.
 
-### Global opt-out
+Mode is controlled exclusively by the `COREZOID_AUTOLAYOUT` environment variable (case-insensitive,
+trimmed). Set it before starting the MCP server. Three values are recognised:
 
-Set the environment variable before starting the MCP server:
+| Value | Behaviour |
+|-------|-----------|
+| _(unset or anything else)_ | **`preserve`** (default) — only new (0/0) nodes are positioned; existing coordinates are kept |
+| `off` | Layout is disabled entirely; `push-process` leaves all coordinates exactly as they are in the source file |
+| `full` | All nodes are re-laid-out on every push, overwriting existing coordinates |
+
+Examples:
 
 ```
+# Disable layout entirely:
 COREZOID_AUTOLAYOUT=off
+
+# Force a full re-tidy on every push:
+COREZOID_AUTOLAYOUT=full
 ```
 
-Comparison is case-insensitive (`off`, `OFF`, `Off` all work). With this set, `push-process` leaves
-every node's coordinates exactly as they are in the source file.
+> **Note:** there is no per-process flag. On the real Corezoid platform `web_settings` is always
+> an array (`[[], []]`), never an object, so a property-based flag cannot be stored there.
+> Use the env var or the `layout-process` tool instead.
 
-### Per-process opt-out
+### On-demand full re-layout: the `layout-process` tool
 
-Add `autolayout: false` inside the process scheme's `web_settings` map:
+To apply a full archetype-aware re-layout to a single process without changing the global env var,
+use the `layout-process` MCP tool:
 
-```json
-{
-  "web_settings": {
-    "autolayout": false
-  }
-}
+```
+layout-process  process_path: "<PROCESS_PATH>"
 ```
 
-The engine checks this flag before running. If it is `false`, that one process is skipped while all
-others are still auto-laid-out normally.
+This overwrites every node's `x`/`y` with freshly computed positions (same engine as `full` mode)
+and saves the file. Use it whenever you want to tidy an existing process that has drifted from the
+clean spine layout — for example after many incremental edits. It does not push; run `push-process`
+afterwards to deploy the re-tidied layout.
 
 ## Edge Connections and Routing
 
