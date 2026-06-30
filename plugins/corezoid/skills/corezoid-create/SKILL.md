@@ -116,8 +116,7 @@ Produce a valid `.conv.json` file.
   2. Create a new variable if needed: call MCP tool **`create-variable`** with `name`, `description`, `value`
   3. Reference in logic: `{{env_var[@variable-name]}}`
 - Use descriptive `title` values (e.g., "Call Payment Process", not "RPC")
-- Position nodes top-to-bottom, incrementing `y` by 200–250px; place error nodes to the right (`x + 300`)
-- Place each Reply Error node at the **same `y`** as the Call/API node it handles — this creates a straight horizontal connector line for the error path
+- Node coordinates (`x`/`y`) are assigned automatically by the MCP server on `push-process` per `${CLAUDE_PLUGIN_ROOT}/docs/process/node-positioning-best-practices.md` — focus on correct logic and edges rather than precise positions; any placeholder values are fine. To opt out and preserve a hand-tuned layout, set `web_settings.autolayout: false` in the scheme or the env var `COREZOID_AUTOLAYOUT=off`.
 
 ### Common pitfalls
 
