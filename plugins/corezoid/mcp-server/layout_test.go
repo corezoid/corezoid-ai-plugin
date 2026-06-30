@@ -405,7 +405,7 @@ func TestBarycenterReducesCrossings(t *testing.T) {
 	nodes := []map[string]interface{}{
 		mkLayoutNode("00s", 1, lgc("go", "10sp1")),
 		mkLayoutNode("10sp1", 3, lgc("go", "20sp2"), lgc("go_if_const", "11br")),
-		mkLayoutNode("11br", 0, lgc("go", "21br2")), // br (col1) -> br2 (chain, col1)
+		mkLayoutNode("11br", 0, lgc("go", "21br2")),                              // br (col1) -> br2 (chain, col1)
 		mkLayoutNode("20sp2", 3, lgc("go", "30end"), lgc("go_if_const", "99tZ")), // spine col0 -> tZ (high id)
 		mkLayoutNode("21br2", 3, lgc("go", "31y"), lgc("go_if_const", "12tA")),   // col1 -> tA (low id)
 		mkLayoutNode("30end", 2),
