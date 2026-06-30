@@ -329,59 +329,128 @@ Standardize error responses using this format:
 
 ## Dedicated Error Nodes Pattern
 
-Each Code node should have its own dedicated error escalation node rather than sharing a common
-error node:
+Every node that can fail (`api_rpc`, `api`, `api_code`, `code`, `db`) must have its own
+**dedicated** error chain — **never share** a single Reply+Final Error pair across multiple
+source nodes.
 
-1. Create a basic "error" END node positioned to the right of each Code node
-2. Connect the Code node's error path (via the "err_node_id" parameter) to its dedicated error node
-3. This one-to-one mapping between Code nodes and their error nodes improves error isolation and
-   troubleshooting
+### Rules
 
-Example Code Node with Dedicated Error Node:
+1. **1-to-1 mapping:** Each failing node gets its own unique `err_node_id` pointing to its own
+   Final Error node (`obj_type: 2`). Sharing one error node across several source nodes is
+   forbidden — it hides which step actually failed.
+2. **Subprocess error chain:** When the process is called via `api_rpc` (i.e. it is a subprocess
+   invoked with "Call a Process"), every individual error path must use this chain:
+   ```
+   failing_node ──[err_node_id]──▶ api_rpc_reply (throw_exception: true)
+                                        │
+                                        └──[go]──▶ Final Error (obj_type: 2)
+   ```
+   Each `api_rpc_reply` + Final Error pair must be unique and dedicated to one source node.
+   The Final Error title must reflect the specific step that failed.
+3. **Direct routing (non-subprocess):** If the process is NOT a subprocess, wire `err_node_id`
+   directly to a dedicated Final Error node:
+   ```
+   failing_node ──[err_node_id]──▶ Final Error (obj_type: 2)
+   ```
 
-```json
-{
-  "id": "code_node_id",
-  "obj_type": 0,
-  "condition": {
-    "logics": [
-      {
-        "type": "api_code",
-        "code": "data.result = data.a + data.b;",
-        "err_node_id": "code_error_node_id",
-        "extra": {},
-        "extra_type": {}
-      },
-      {
-        "type": "go",
-        "to_node_id": "next_node_id"
-      }
-    ],
-    "semaphors": []
-  },
-  "title": "Calculate Sum",
-  "x": 200,
-  "y": 300
-}
-```
+### Example — Subprocess with Two Independently Failing Nodes
 
-Corresponding dedicated error node:
+Two nodes (`Fetch Invoice`, `Send Notification`) each get their own Reply + Final Error pair:
 
 ```json
-{
-  "id": "code_error_node_id",
-  "obj_type": 2,
-  "condition": {
-    "logics": [],
-    "semaphors": []
+[
+  {
+    "id": "fetch_invoice_node_id",
+    "obj_type": 0,
+    "condition": {
+      "logics": [
+        {
+          "type": "api_rpc",
+          "conv_id": 11111,
+          "err_node_id": "reply_fetch_error_id",
+          "extra": {}
+        },
+        { "type": "go", "to_node_id": "send_notification_node_id" }
+      ],
+      "semaphors": []
+    },
+    "title": "Fetch Invoice",
+    "x": 200, "y": 100
   },
-  "title": "Calculate Sum Error",
-  "x": 450,
-  "y": 300
-}
+  {
+    "id": "reply_fetch_error_id",
+    "obj_type": 3,
+    "condition": {
+      "logics": [
+        {
+          "type": "api_rpc_reply",
+          "mode": "key_value",
+          "res_data": { "result": "error", "message": "Invoice fetch failed" },
+          "res_data_type": { "result": "string", "message": "string" },
+          "throw_exception": true
+        },
+        { "type": "go", "to_node_id": "final_fetch_error_id" }
+      ],
+      "semaphors": []
+    },
+    "title": "Reply: Invoice fetch error",
+    "x": 500, "y": 100
+  },
+  {
+    "id": "final_fetch_error_id",
+    "obj_type": 2,
+    "condition": { "logics": [], "semaphors": [] },
+    "title": "Error: Invoice fetch",
+    "x": 800, "y": 100
+  },
+  {
+    "id": "send_notification_node_id",
+    "obj_type": 0,
+    "condition": {
+      "logics": [
+        {
+          "type": "api_rpc",
+          "conv_id": 22222,
+          "err_node_id": "reply_notify_error_id",
+          "extra": {}
+        },
+        { "type": "go", "to_node_id": "success_node_id" }
+      ],
+      "semaphors": []
+    },
+    "title": "Send Notification",
+    "x": 200, "y": 350
+  },
+  {
+    "id": "reply_notify_error_id",
+    "obj_type": 3,
+    "condition": {
+      "logics": [
+        {
+          "type": "api_rpc_reply",
+          "mode": "key_value",
+          "res_data": { "result": "error", "message": "Notification sending failed" },
+          "res_data_type": { "result": "string", "message": "string" },
+          "throw_exception": true
+        },
+        { "type": "go", "to_node_id": "final_notify_error_id" }
+      ],
+      "semaphors": []
+    },
+    "title": "Reply: Notification error",
+    "x": 500, "y": 350
+  },
+  {
+    "id": "final_notify_error_id",
+    "obj_type": 2,
+    "condition": { "logics": [], "semaphors": [] },
+    "title": "Error: Send Notification",
+    "x": 800, "y": 350
+  }
+]
 ```
 
-This dedicated error node pattern is the standard practice for error handling in Corezoid processes.
+This dedicated 1-to-1 pattern is the standard practice for error handling in Corezoid processes.
 
 ## Related Documentation
 

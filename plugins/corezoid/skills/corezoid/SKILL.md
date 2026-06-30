@@ -94,6 +94,14 @@ Workspace
 
 ## Common Operations
 
+### Before creating a new process
+
+Always check if the project already has what you need:
+1. Browse local `.conv.json` files in the project directory
+2. Read `CLAUDE.md` if present — it documents existing processes
+3. Reuse via `api_rpc` call or extend with `/corezoid-edit` instead of building from scratch
+4. Never duplicate logic that already exists in another process
+
 ### Deploy a process
 ```
 push-process(process_path="./folder/12345_MyProcess.conv.json")
