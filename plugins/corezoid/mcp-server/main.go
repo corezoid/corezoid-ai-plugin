@@ -195,6 +195,17 @@ func main() {
 		os.Exit(0)
 	}
 
+	// Hidden subcommand: layout-check <dir> — corpus parity harness mirroring
+	// proto/validate.py. Runs applyLayout (force-on) over every *.conv.json and
+	// counts remaining overlaps using the same role-aware rect model.
+	if len(os.Args) >= 2 && os.Args[1] == "layout-check" {
+		dir := "."
+		if len(os.Args) >= 3 {
+			dir = os.Args[2]
+		}
+		os.Exit(runLayoutCheck(dir))
+	}
+
 	// CLI mode: first argument is a tool name (e.g. "pull-folder folder_id=123").
 	if len(os.Args) >= 2 && !strings.HasPrefix(os.Args[1], "-") {
 		// In CLI mode log to stderr directly so stdout stays clean for the result.
@@ -512,6 +523,17 @@ func fixStruct(dataBin string, inProcessID int) (string, []string) {
 
 			}
 		}
+	}
+
+	// Auto-layout: place every node on the spine just before the scheme is
+	// re-marshaled for upload. This runs for every successful push (fixStruct
+	// is the single transform fixStruct->ValidateJSONSchema->ProcessJSON path).
+	// It is a no-op when opted out (COREZOID_AUTOLAYOUT=off or
+	// scheme.web_settings.autolayout=false). conv_type drives archetype
+	// detection; an empty value still classifies by logic types.
+	if schemeMap != nil {
+		convType, _ := data["conv_type"].(string)
+		applyLayout(schemeMap, convType)
 	}
 
 	dataRspBin, err := json.MarshalIndent(data, "", "  ")

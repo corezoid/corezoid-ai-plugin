@@ -1,8 +1,13 @@
 package main
 
 import (
+	"encoding/json"
+	"fmt"
 	"math"
+	"os"
+	"path/filepath"
 	"sort"
+	"strings"
 )
 
 // layout.go is a faithful Go port of proto/layout.py — an archetype-aware,
@@ -483,4 +488,166 @@ func assignPositions(g *graph, archetype string) map[string][2]int {
 		pos[nid] = [2]int{snap(x, grid), snap(y, grid)}
 	}
 	return pos
+}
+
+// applyLayout runs the archetype-aware layout engine over a process scheme and
+// writes the computed coordinates back onto each node, in place. It is the
+// single integration point used by the push path (see fixStruct in main.go).
+//
+// Opt-out: if env COREZOID_AUTOLAYOUT == "off" (case-insensitive), or the
+// scheme's web_settings map has "autolayout" == false, the function returns
+// without mutating anything. Malformed input is handled gracefully (no panic):
+// comma-ok type assertions throughout, and a missing/empty nodes list is a
+// no-op.
+//
+// convType is the top-level conv_type of the loaded .conv.json; pass "" if it
+// cannot be determined (detectArchetype then classifies purely by logic types).
+func applyLayout(scheme map[string]interface{}, convType string) {
+	if scheme == nil {
+		return
+	}
+	// Opt-out 1: global env switch.
+	if strings.EqualFold(strings.TrimSpace(os.Getenv("COREZOID_AUTOLAYOUT")), "off") {
+		return
+	}
+	// Opt-out 2: per-process web_settings.autolayout == false.
+	if ws, ok := scheme["web_settings"].(map[string]interface{}); ok {
+		if al, ok := ws["autolayout"].(bool); ok && !al {
+			return
+		}
+	}
+
+	rawNodes, ok := scheme["nodes"].([]interface{})
+	if !ok || len(rawNodes) == 0 {
+		return
+	}
+	nodes := make([]map[string]interface{}, 0, len(rawNodes))
+	for _, raw := range rawNodes {
+		if n, ok := raw.(map[string]interface{}); ok {
+			nodes = append(nodes, n)
+		}
+	}
+	if len(nodes) == 0 {
+		return
+	}
+
+	types := collectLogicTypes(nodes)
+	archetype := detectArchetype(convType, types)
+	g := buildGraph(nodes)
+	pos := assignPositions(g, archetype)
+
+	for _, n := range nodes {
+		id, _ := n["id"].(string)
+		if p, ok := pos[id]; ok {
+			n["x"] = float64(p[0])
+			n["y"] = float64(p[1])
+		}
+	}
+}
+
+// --- layout-check corpus parity harness (mirrors proto/validate.py) ----------
+//
+// Real Corezoid node footprints: Start/End are 56px circles with a CENTER
+// pivot; all other nodes are 200x150 with a TOP-LEFT pivot. Modelling this lets
+// columns sit as tight as the real shapes allow.
+const (
+	layoutCircle = 56.0
+	layoutLogicW = 200.0
+	layoutLogicH = 150.0
+)
+
+// rectOf returns the axis-aligned box (x, y, w, h) in top-left form for a node,
+// mirroring proto/validate.py rect_of.
+func rectOf(n map[string]interface{}) [4]float64 {
+	x, _ := n["x"].(float64)
+	y, _ := n["y"].(float64)
+	switch roleOf(n) {
+	case "START", "END":
+		return [4]float64{x - layoutCircle/2, y - layoutCircle/2, layoutCircle, layoutCircle}
+	default:
+		return [4]float64{x, y, layoutLogicW, layoutLogicH}
+	}
+}
+
+func rectsIntersect(a, b [4]float64) bool {
+	return a[0] < b[0]+b[2] && b[0] < a[0]+a[2] && a[1] < b[1]+b[3] && b[1] < a[1]+a[3]
+}
+
+// countOverlaps counts overlapping pairs among the node rects.
+func countOverlaps(nodes []map[string]interface{}) int {
+	rects := make([][4]float64, 0, len(nodes))
+	for _, n := range nodes {
+		rects = append(rects, rectOf(n))
+	}
+	c := 0
+	for i := 0; i < len(rects); i++ {
+		for j := i + 1; j < len(rects); j++ {
+			if rectsIntersect(rects[i], rects[j]) {
+				c++
+			}
+		}
+	}
+	return c
+}
+
+// runLayoutCheck walks dir for *.conv.json, applies the layout (forced on) to
+// each, counts remaining overlaps, prints "files=N overlaps_after=T" and
+// returns a non-zero exit code if T>0. Mirrors proto/validate.py's pass
+// criterion (overlaps_after==0 on the corpus).
+func runLayoutCheck(dir string) int {
+	// Force layout on regardless of the environment.
+	os.Unsetenv("COREZOID_AUTOLAYOUT")
+
+	var files []string
+	_ = filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
+		if err != nil || info.IsDir() {
+			return nil
+		}
+		if strings.HasSuffix(path, ".conv.json") {
+			files = append(files, path)
+		}
+		return nil
+	})
+
+	n := 0
+	total := 0
+	for _, f := range files {
+		data, err := os.ReadFile(f)
+		if err != nil {
+			continue
+		}
+		var doc map[string]interface{}
+		if err := json.Unmarshal(data, &doc); err != nil {
+			continue
+		}
+		scheme, _ := doc["scheme"].(map[string]interface{})
+		if scheme == nil {
+			continue
+		}
+		rawNodes, _ := scheme["nodes"].([]interface{})
+		if len(rawNodes) == 0 {
+			continue
+		}
+		// Strip a per-process opt-out so the harness always exercises the engine.
+		if ws, ok := scheme["web_settings"].(map[string]interface{}); ok {
+			delete(ws, "autolayout")
+		}
+		convType, _ := doc["conv_type"].(string)
+		applyLayout(scheme, convType)
+
+		nodes := make([]map[string]interface{}, 0, len(rawNodes))
+		for _, raw := range rawNodes {
+			if nm, ok := raw.(map[string]interface{}); ok {
+				nodes = append(nodes, nm)
+			}
+		}
+		total += countOverlaps(nodes)
+		n++
+	}
+
+	fmt.Printf("files=%d overlaps_after=%d\n", n, total)
+	if total > 0 {
+		return 1
+	}
+	return 0
 }

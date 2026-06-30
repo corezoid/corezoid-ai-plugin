@@ -18,6 +18,90 @@ func sampleApiNodes() []map[string]interface{} {
 	}
 }
 
+// sampleScheme wraps sampleApiNodes into a scheme map (nodes as []interface{},
+// matching how the .conv.json round-trips through encoding/json).
+func sampleScheme() map[string]interface{} {
+	nodes := sampleApiNodes()
+	raw := make([]interface{}, len(nodes))
+	for i, n := range nodes {
+		raw[i] = n
+	}
+	return map[string]interface{}{"nodes": raw}
+}
+
+func TestApplyLayoutEnvOff(t *testing.T) {
+	t.Setenv("COREZOID_AUTOLAYOUT", "off")
+	scheme := sampleScheme()
+	applyLayout(scheme, "process")
+	for _, raw := range scheme["nodes"].([]interface{}) {
+		n := raw.(map[string]interface{})
+		if x, _ := n["x"].(float64); x != 0 {
+			t.Errorf("env off: node %v x=%v want 0 (unchanged)", n["id"], x)
+		}
+	}
+}
+
+func TestApplyLayoutOptOutFlag(t *testing.T) {
+	scheme := sampleScheme()
+	scheme["web_settings"] = map[string]interface{}{"autolayout": false}
+	applyLayout(scheme, "process")
+	for _, raw := range scheme["nodes"].([]interface{}) {
+		n := raw.(map[string]interface{})
+		if x, _ := n["x"].(float64); x != 0 {
+			t.Errorf("opt-out flag: node %v x=%v want 0 (unchanged)", n["id"], x)
+		}
+	}
+}
+
+func TestApplyLayoutMovesNodes(t *testing.T) {
+	t.Setenv("COREZOID_AUTOLAYOUT", "")
+	scheme := sampleScheme()
+	// Reference position for the Start node from assignPositions (archetype "api").
+	want := assignPositions(buildGraph(sampleApiNodes()), "api")["a"]
+
+	applyLayout(scheme, "process")
+	get := func(s map[string]interface{}, id string) (float64, float64) {
+		for _, raw := range s["nodes"].([]interface{}) {
+			n := raw.(map[string]interface{})
+			if n["id"] == id {
+				x, _ := n["x"].(float64)
+				y, _ := n["y"].(float64)
+				return x, y
+			}
+		}
+		t.Fatalf("node %s not found", id)
+		return 0, 0
+	}
+	gx, gy := get(scheme, "a")
+	if gx == 0 && gy == 0 {
+		t.Fatal("Start node was not moved")
+	}
+	if int(gx) != want[0] || int(gy) != want[1] {
+		t.Errorf("Start node at (%v,%v) want (%d,%d)", gx, gy, want[0], want[1])
+	}
+
+	// Idempotent: applying again yields identical coordinates.
+	applyLayout(scheme, "process")
+	gx2, gy2 := get(scheme, "a")
+	if gx2 != gx || gy2 != gy {
+		t.Errorf("not idempotent: (%v,%v) vs (%v,%v)", gx, gy, gx2, gy2)
+	}
+}
+
+func TestApplyLayoutMalformed(t *testing.T) {
+	t.Setenv("COREZOID_AUTOLAYOUT", "")
+	// Empty nodes slice must not panic.
+	applyLayout(map[string]interface{}{"nodes": []interface{}{}}, "process")
+	// Missing nodes key entirely.
+	applyLayout(map[string]interface{}{}, "process")
+	// A node missing its condition block must not panic.
+	applyLayout(map[string]interface{}{
+		"nodes": []interface{}{
+			map[string]interface{}{"id": "a", "obj_type": float64(1)},
+		},
+	}, "process")
+}
+
 func TestDetectArchetype(t *testing.T) {
 	cases := []struct {
 		conv   string
