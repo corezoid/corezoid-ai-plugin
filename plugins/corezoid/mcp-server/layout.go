@@ -211,6 +211,38 @@ func profileFor(archetype string) profile {
 
 const spineX = 600
 
+// estimatedHeight returns the approximate rendered vertical footprint (px) of a
+// node, used both for cumulative row spacing in assignPositions and for the
+// rect height in rectOf so overlap validation matches the spacing.
+//
+//   - Start/End (role START/END): 56  (the small circle).
+//   - Condition (role COND):      120.
+//   - logic node carrying a timer/delay semaphor (a condition.semaphors entry of
+//     type "time"): 300 (renders ~2x tall).
+//   - otherwise (logic):          150 (the normal box height; this is the value
+//     rectOf used as a fixed constant before height-awareness).
+//
+// All reads are comma-ok safe so malformed nodes never panic.
+func estimatedHeight(node map[string]interface{}) int {
+	switch roleOf(node) {
+	case "START", "END":
+		return 56
+	case "COND":
+		return 120
+	}
+	// LOGIC: tall if it has a time semaphor (timer/delay), else normal.
+	for _, raw := range semaphorsOf(node) {
+		s, _ := raw.(map[string]interface{})
+		if s == nil {
+			continue
+		}
+		if strField(s, "type") == "time" {
+			return 300
+		}
+	}
+	return 150
+}
+
 // starts ports _starts: all START nodes in order, or the first node if none.
 func (g *graph) starts() []string {
 	var s []string
@@ -358,26 +390,51 @@ func snap(v float64, grid int) int {
 	return int(math.Round(v/float64(grid))) * grid
 }
 
+// adaptiveVStep is the (unsnapped) adaptive vertical value shared by
+// assignPositions and placeNewNodes. It is the old uniform row pitch:
+// min(base+60, base + 20*max(0,(n-8)//12)) for n nodes. Extracted into a helper
+// so the height-aware spacing math (vGap) and the preserve path stay in sync.
+func adaptiveVStep(p profile, n int) int {
+	extra := 0
+	if n > 8 {
+		extra = (n - 8) / 12
+	}
+	v := p.vStep + 20*extra
+	if maxStep := p.vStep + 60; v > maxStep {
+		v = maxStep
+	}
+	return v
+}
+
+// vGap is the inter-row gap inserted BETWEEN cumulative per-rank row heights.
+// Height-aware spacing replaces the old uniform "y = rank*vStep" with
+// "rowTop[r] = rowTop[r-1] + rowHeight[r-1] + gap". To keep total spacing in the
+// same ballpark as before for a normal 150px logic node, gap is the adaptive
+// vStep MINUS the base node height (layoutLogicH=150): a normal node + gap then
+// sums back to roughly the old vStep. Floored at 40 so short rows still breathe,
+// and snapped to the 20px grid.
+func vGap(p profile, n int) int {
+	g := adaptiveVStep(p, n) - int(layoutLogicH)
+	if g < 40 {
+		g = 40
+	}
+	return snap(float64(g), p.grid)
+}
+
 // assignPositions ports assign_positions: the full layered layout. Returns a
 // map id -> [2]int{x, y}.
 func assignPositions(g *graph, archetype string) map[string][2]int {
 	p := profileFor(archetype)
 	grid := p.grid
 
-	// Adaptive vertical spacing; horizontal pitch stays at the compact minimum.
-	// Python: v_step = min(base+60, base + 20*max(0,(n-8)//12)).
-	// (n-8) is only used inside max(0, ...), so for n<8 the term is clamped to
-	// 0 and Python's floor-division sign behaviour never matters.
+	// Height-aware vertical spacing; horizontal pitch stays at the compact
+	// minimum. Instead of a uniform "y = rank*vStep", each rank gets a row height
+	// equal to the tallest node footprint on it, and rows are stacked
+	// cumulatively with a gap between them (see vGap). This lets a tall timer
+	// node (height 300) get room without crowding the next row, while rows of
+	// short nodes (e.g. Start/End circles) no longer waste a full uniform step.
 	n := len(g.nodes)
-	extra := 0
-	if n > 8 {
-		extra = (n - 8) / 12
-	}
-	vStepUnsnapped := p.vStep + 20*extra
-	if maxStep := p.vStep + 60; vStepUnsnapped > maxStep {
-		vStepUnsnapped = maxStep
-	}
-	vStep := snap(float64(vStepUnsnapped), grid)
+	gap := vGap(p, n)
 	lanePitch := p.lanePitch
 
 	dt := g.downTarget()
@@ -402,6 +459,33 @@ func assignPositions(g *graph, archetype string) map[string][2]int {
 		byRank[r] = append(byRank[r], nid)
 	}
 	sort.Ints(rankKeys)
+
+	// Per-rank row heights: rowHeight[r] = max node footprint on rank r. Rows are
+	// then stacked cumulatively (rowTop) so same-rank nodes share a Y and a tall
+	// row pushes everything below it down by its real height + gap.
+	rowHeight := map[int]int{}
+	for r, ids := range byRank {
+		h := 0
+		for _, id := range ids {
+			if eh := estimatedHeight(g.nodes[id]); eh > h {
+				h = eh
+			}
+		}
+		rowHeight[r] = h
+	}
+	rowTop := map[int]int{}
+	prevTop := 0
+	prevSet := false
+	for _, r := range rankKeys {
+		if !prevSet {
+			rowTop[r] = 0
+			prevSet = true
+		} else {
+			rowTop[r] = prevTop
+		}
+		// Advance the running top by THIS row's height + gap for the next rank.
+		prevTop = rowTop[r] + rowHeight[r] + gap
+	}
 
 	col := map[string]int{}
 	lowestFree := func(taken map[int]bool, start int) int {
@@ -480,7 +564,11 @@ func assignPositions(g *graph, archetype string) map[string][2]int {
 	pos := map[string][2]int{}
 	for _, nid := range g.order {
 		x := float64(spineX + col[nid]*lanePitch)
-		y := float64(rank[nid] * vStep)
+		// Y is the top of the node's rank row (top-left pivot for logic nodes).
+		// rectOf treats circles with a CENTER pivot but the row is always at
+		// least as tall as the 56px circle, so placing the circle's pivot at
+		// rowTop keeps it inside its row and clear of neighbouring rows.
+		y := float64(rowTop[rank[nid]])
 		if role := g.role(nid); (role == "START" || role == "END") && col[nid] == 0 {
 			x += float64(p.startOff) // centre Start/Final circle over the spine
 		}
@@ -607,20 +695,20 @@ func placeNewNodes(nodes []map[string]interface{}) {
 		parents[e.dst] = append(parents[e.dst], e.src)
 	}
 
-	// Adaptive vertical spacing — same formula assignPositions uses.
+	// Height-aware vertical spacing — same gap assignPositions uses, so the
+	// preserve path slots new nodes the same distance below their parents as a
+	// full layout would. The vertical step between two stacked nodes is the upper
+	// node's real footprint + gap, so a tall timer parent (300) gets room.
 	p := profileFor("default")
 	grid := p.grid
 	n := len(nodes)
-	extra := 0
-	if n > 8 {
-		extra = (n - 8) / 12
-	}
-	vStepUnsnapped := p.vStep + 20*extra
-	if maxStep := p.vStep + 60; vStepUnsnapped > maxStep {
-		vStepUnsnapped = maxStep
-	}
-	vstep := snap(float64(vStepUnsnapped), grid)
+	gap := vGap(p, n)
 	const pitch = 240
+	// vstepBetween is the vertical distance from the TOP of node `up` to the top
+	// of the node directly below it: up's height + the inter-row gap.
+	vstepBetween := func(up map[string]interface{}) int {
+		return estimatedHeight(up) + gap
+	}
 
 	type xy struct{ x, y int }
 	placed := map[string]xy{}
@@ -630,9 +718,16 @@ func placeNewNodes(nodes []map[string]interface{}) {
 	// node landing NEAR — but not exactly on — a placed node is still detected.
 	var placedRects [][4]float64
 	// rectAt builds nd's real footprint AT a candidate (x,y), preserving nd's own
-	// role (a new End circle uses the 56px box; a logic node the 200x150 box).
+	// role AND its height inputs (a new End circle uses the 56px box; a logic
+	// node the 200x150 box; a logic node with a time semaphor the 200x300 box).
+	// condition is carried through so estimatedHeight can see a time semaphor.
 	rectAt := func(nd map[string]interface{}, x, y int) [4]float64 {
-		probe := map[string]interface{}{"obj_type": nd["obj_type"], "x": float64(x), "y": float64(y)}
+		probe := map[string]interface{}{
+			"obj_type":  nd["obj_type"],
+			"condition": nd["condition"],
+			"x":         float64(x),
+			"y":         float64(y),
+		}
 		return rectOf(probe)
 	}
 	for _, nd := range nodes {
@@ -675,11 +770,12 @@ func placeNewNodes(nodes []map[string]interface{}) {
 		var target xy
 		switch {
 		case func() bool {
-			// 1. N is the primary down-child of some placed parent P.
+			// 1. N is the primary down-child of some placed parent P. The drop is
+			// P's real footprint + gap so a tall timer parent gets room.
 			for _, s := range parents[id] {
 				if dt[s] == id {
 					if pp, ok := placed[s]; ok {
-						target = xy{pp.x, pp.y + vstep}
+						target = xy{pp.x, pp.y + vstepBetween(nodeByID[s])}
 						return true
 					}
 				}
@@ -697,10 +793,11 @@ func placeNewNodes(nodes []map[string]interface{}) {
 			return false
 		}():
 		case func() bool {
-			// 3. N has a placed primary down-child C.
+			// 3. N has a placed primary down-child C. N sits above C by N's own
+			// footprint + gap so N's (possibly tall) box clears C.
 			if c := dt[id]; c != "" {
 				if pc, ok := placed[c]; ok {
-					target = xy{pc.x, pc.y - vstep}
+					target = xy{pc.x, pc.y - vstepBetween(nodeByID[id])}
 					return true
 				}
 			}
@@ -713,11 +810,13 @@ func placeNewNodes(nodes []map[string]interface{}) {
 
 		target = xy{snap(float64(target.x), grid), snap(float64(target.y), grid)}
 
-		// Rect-aware nudge: advance down by vstep while N's real footprint at the
-		// candidate intersects ANY placed rect. Termination is guaranteed — placed
-		// rects are finite and bounded, so once the candidate clears the lowest one
-		// it stops; the len(nodes)+1 cap is belt-and-suspenders.
+		// Rect-aware nudge: advance down by N's own footprint + gap while N's real
+		// footprint at the candidate intersects ANY placed rect. Termination is
+		// guaranteed — placed rects are finite and bounded, the step is strictly
+		// positive, so once the candidate clears the lowest one it stops; the
+		// len(nodes)+1 cap is belt-and-suspenders.
 		nd := nodeByID[id]
+		step := vstepBetween(nd)
 		intersectsPlaced := func(x, y int) bool {
 			cand := rectAt(nd, x, y)
 			for _, r := range placedRects {
@@ -728,7 +827,7 @@ func placeNewNodes(nodes []map[string]interface{}) {
 			return false
 		}
 		for guard := 0; intersectsPlaced(target.x, target.y) && guard <= len(nodes); guard++ {
-			target.y += vstep
+			target.y += step
 		}
 
 		// Write back onto the node and register it as placed.
@@ -757,11 +856,15 @@ const (
 func rectOf(n map[string]interface{}) [4]float64 {
 	x, _ := n["x"].(float64)
 	y, _ := n["y"].(float64)
+	h := float64(estimatedHeight(n)) // height-aware: matches the cumulative spacing
 	switch roleOf(n) {
 	case "START", "END":
-		return [4]float64{x - layoutCircle/2, y - layoutCircle/2, layoutCircle, layoutCircle}
+		// Circles keep their CENTER pivot and 56px square (h == layoutCircle).
+		return [4]float64{x - layoutCircle/2, y - layoutCircle/2, layoutCircle, h}
 	default:
-		return [4]float64{x, y, layoutLogicW, layoutLogicH}
+		// Width stays role-based (200 for logic); height now follows the footprint
+		// (150 normal, 120 condition, 300 timer) so overlap checks match spacing.
+		return [4]float64{x, y, layoutLogicW, h}
 	}
 }
 

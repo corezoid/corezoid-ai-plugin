@@ -124,9 +124,11 @@ func TestPreserveLeavesPlacedNodes(t *testing.T) {
 	if nodes[2]["x"].(float64) != 600 || nodes[2]["y"].(float64) != 900 {
 		t.Errorf("placed z moved: (%v,%v) want (600,900)", nodes[2]["x"], nodes[2]["y"])
 	}
-	// vstep for a 3-node process is the minimum 180.
-	if nodes[1]["x"].(float64) != 600 || nodes[1]["y"].(float64) != 360 {
-		t.Errorf("new n at (%v,%v) want (600,360) = (p.x, p.y+vstep)", nodes[1]["x"], nodes[1]["y"])
+	// Height-aware preserve: n drops below placed p by p's footprint + gap.
+	// p is a normal logic node (height 150); gap for a 3-node process is the
+	// floor 40. So target = snap(p.y + 150 + 40) = snap(180+190) = snap(370) = 380.
+	if nodes[1]["x"].(float64) != 600 || nodes[1]["y"].(float64) != 380 {
+		t.Errorf("new n at (%v,%v) want (600,380) = (p.x, snap(p.y+height(p)+gap))", nodes[1]["x"], nodes[1]["y"])
 	}
 }
 
@@ -166,8 +168,10 @@ func TestPreserveNudgesOnCollision(t *testing.T) {
 	t.Setenv("COREZOID_AUTOLAYOUT", "") // preserve
 	os.Unsetenv("COREZOID_AUTOLAYOUT")
 
-	// P (600,180) --go--> N (new). A placed node X already sits at (600,360),
-	// which is exactly P.y+vstep, so N must be nudged to (600,540).
+	// P (600,180) --go--> N (new). A placed node X sits at (600,360). With
+	// height-aware spacing N's first slot is snap(180+150+40)=380, whose 150px
+	// rect (380..530) still overlaps X's rect (360..510), so N is nudged down by
+	// one step (height(N)+gap = 150+40 = 190) to (600,570) where it is clear.
 	nodes := []map[string]interface{}{
 		{"id": "p", "obj_type": float64(0), "x": float64(600), "y": float64(180), "condition": map[string]interface{}{
 			"logics": []interface{}{map[string]interface{}{"type": "go", "to_node_id": "n"}}, "semaphors": []interface{}{}}},
@@ -183,8 +187,8 @@ func TestPreserveNudgesOnCollision(t *testing.T) {
 	scheme := map[string]interface{}{"nodes": raw}
 	applyLayout(scheme, "process")
 
-	if nodes[1]["x"].(float64) != 600 || nodes[1]["y"].(float64) != 540 {
-		t.Errorf("new n at (%v,%v) want (600,540) after collision nudge", nodes[1]["x"], nodes[1]["y"])
+	if nodes[1]["x"].(float64) != 600 || nodes[1]["y"].(float64) != 570 {
+		t.Errorf("new n at (%v,%v) want (600,570) after collision nudge", nodes[1]["x"], nodes[1]["y"])
 	}
 	// No two nodes share coordinates.
 	seen := map[[2]float64]string{}
@@ -293,6 +297,81 @@ func TestApplyLayoutMalformed(t *testing.T) {
 	}, "process")
 }
 
+// TestEstimatedHeight checks the per-role footprint heights that drive the
+// height-aware vertical spacing and rectOf.
+func TestEstimatedHeight(t *testing.T) {
+	circle := map[string]interface{}{"obj_type": float64(1)} // START
+	end := map[string]interface{}{"obj_type": float64(2)}    // END
+	cond := map[string]interface{}{"obj_type": float64(3)}   // COND
+	logic := map[string]interface{}{"obj_type": float64(0), "condition": map[string]interface{}{
+		"logics": []interface{}{}, "semaphors": []interface{}{}}}
+	timer := map[string]interface{}{"obj_type": float64(0), "condition": map[string]interface{}{
+		"logics":    []interface{}{},
+		"semaphors": []interface{}{map[string]interface{}{"type": "time", "to_node_id": "x"}}}}
+
+	cases := []struct {
+		name string
+		node map[string]interface{}
+		want int
+	}{
+		{"start circle", circle, 56},
+		{"end circle", end, 56},
+		{"condition", cond, 120},
+		{"timer logic", timer, 300},
+		{"plain logic", logic, 150},
+	}
+	for _, c := range cases {
+		if got := estimatedHeight(c.node); got != c.want {
+			t.Errorf("estimatedHeight(%s)=%d want %d", c.name, got, c.want)
+		}
+	}
+}
+
+// TestHeightAwareRowsNoOverlapWithTimer builds START -> T (logic with a time
+// semaphor, height 300) -> B (plain logic) so T and B share a column on
+// successive ranks. The row holding B must start at least height(T)+gap below T,
+// and there must be zero rect overlaps once positioned.
+func TestHeightAwareRowsNoOverlapWithTimer(t *testing.T) {
+	nodes := []map[string]interface{}{
+		{"id": "s", "obj_type": float64(1), "x": float64(0), "y": float64(0), "condition": map[string]interface{}{
+			"logics": []interface{}{map[string]interface{}{"type": "go", "to_node_id": "ti"}}, "semaphors": []interface{}{}}},
+		{"id": "ti", "obj_type": float64(0), "x": float64(0), "y": float64(0), "condition": map[string]interface{}{
+			"logics":    []interface{}{map[string]interface{}{"type": "go", "to_node_id": "b"}},
+			"semaphors": []interface{}{map[string]interface{}{"type": "time", "to_node_id": "b"}}}},
+		{"id": "b", "obj_type": float64(0), "x": float64(0), "y": float64(0), "condition": map[string]interface{}{
+			"logics": []interface{}{}, "semaphors": []interface{}{}}},
+	}
+	g := buildGraph(nodes)
+	pos := assignPositions(g, "default")
+
+	// ti (timer) and b sit in the same column (the spine).
+	if pos["ti"][0] != pos["b"][0] {
+		t.Fatalf("ti and b must share a column: ti.x=%d b.x=%d", pos["ti"][0], pos["b"][0])
+	}
+	// b's row must start at least height(ti)=300 below ti's top (room for the
+	// tall timer node, plus the inter-row gap). gap is the 3-node floor 40.
+	gap := vGap(profileFor("default"), len(nodes))
+	if got := pos["b"][1] - pos["ti"][1]; got < 300 {
+		t.Errorf("b row starts %d below ti; want >= 300 (timer footprint)", got)
+	} else if got < 300+gap-20 { // allow one grid-snap of slack on the gap
+		t.Errorf("b row starts %d below ti; want ~300+gap=%d", got, 300+gap)
+	}
+
+	// Write positions back and assert zero rect overlaps with the height-aware
+	// metric (ti's rect is now 300 tall).
+	for _, n := range nodes {
+		id, _ := n["id"].(string)
+		n["x"] = float64(pos[id][0])
+		n["y"] = float64(pos[id][1])
+	}
+	if c := countOverlaps(nodes); c != 0 {
+		for _, n := range nodes {
+			t.Logf("node %v at (%v,%v) rect=%v", n["id"], n["x"], n["y"], rectOf(n))
+		}
+		t.Errorf("height-aware layout left %d overlapping rect pair(s); want 0", c)
+	}
+}
+
 func TestDetectArchetype(t *testing.T) {
 	cases := []struct {
 		conv   string
@@ -396,7 +475,10 @@ func TestAssignPositionsEmptyAndSingle(t *testing.T) {
 // TestAssignPositionsCyclic builds a→b→c with c's primary edge going back to b
 // (a cycle). The DFS cycle-breaking in ranks must drop the back edge, leaving a
 // finite DAG, so assignPositions terminates with on-grid coordinates for all
-// nodes. Reference (proto/layout.py): a=(700,0) b=(600,180) c=(600,360).
+// nodes. With height-aware cumulative rows: a is a START circle (height 56) at
+// rank 0; b,c are logic nodes (height 150) at ranks 1,2; gap for a 3-node
+// process is the floor 40. rowTop[0]=0, rowTop[1]=0+56+40=96 -> snap 100,
+// rowTop[2]=96+150+40=286 -> snap 280. So a=(700,0) b=(600,100) c=(600,280).
 func TestAssignPositionsCyclic(t *testing.T) {
 	nodes := []map[string]interface{}{
 		{"id": "a", "obj_type": float64(1), "x": float64(0), "y": float64(0), "condition": map[string]interface{}{
@@ -419,11 +501,11 @@ func TestAssignPositionsCyclic(t *testing.T) {
 	if pos["a"] != [2]int{700, 0} {
 		t.Errorf("a: want (700,0), got %v", pos["a"])
 	}
-	if pos["b"] != [2]int{600, 180} {
-		t.Errorf("b: want (600,180), got %v", pos["b"])
+	if pos["b"] != [2]int{600, 100} {
+		t.Errorf("b: want (600,100), got %v", pos["b"])
 	}
-	if pos["c"] != [2]int{600, 360} {
-		t.Errorf("c: want (600,360), got %v", pos["c"])
+	if pos["c"] != [2]int{600, 280} {
+		t.Errorf("c: want (600,280), got %v", pos["c"])
 	}
 }
 
@@ -456,10 +538,19 @@ func TestBuildGraphTimeoutEdge(t *testing.T) {
 }
 
 // TestAssignPositionsAdaptiveVStep confirms the n>8 branch raises vertical
-// spacing above the small-process minimum (180), capped at base+60 (240).
-// A long primary chain of N nodes places the bottom node at (N-1)*vStep.
-// Reference (proto/layout.py): N=21 -> vStep=200, bottom y=4000;
-// N=100 -> vStep=240 (capped), bottom y=23760.
+// spacing above the small-process minimum, capped at the adaptive ceiling.
+//
+// Height-aware update: the measured n00->n01 distance is now the START circle's
+// footprint (56) + the inter-row gap (vGap = adaptiveVStep-150, floored at 40,
+// snapped to 20), NOT the old uniform vStep. gap is 40 for n<=8, 60 at n=21
+// (snap(200-150)=snap(50)=60), 100 at n=100 (snap(240-150)=snap(90)=100). So the
+// circle->logic step is snap(56+gap): 4-node -> snap(96)=100, 21-node ->
+// snap(116)=120, 100-node -> snap(156)=160. These still rise with N and the gap
+// caps with the adaptive ceiling, which is exactly what this test guards.
+//
+// The chain bottom node (rank N-1) sits at the cumulative rowTop: rank 0 is the
+// circle row (56), ranks 1..N-1 are logic rows (150) each + gap. Derived from the
+// algorithm: N=21 -> bottom y=4100; N=100 -> bottom y=24660.
 func TestAssignPositionsAdaptiveVStep(t *testing.T) {
 	chain := func(N int) *graph {
 		nodes := make([]map[string]interface{}, 0, N)
@@ -488,23 +579,24 @@ func TestAssignPositionsAdaptiveVStep(t *testing.T) {
 	}
 
 	small := vStepOf(chain(4))
-	if small != 180 {
-		t.Errorf("4-node chain vStep=%d want 180 (minimum)", small)
+	if small != 100 {
+		t.Errorf("4-node chain circle->logic step=%d want 100 (snap(56+40))", small)
 	}
 
 	g21 := chain(21)
-	if v := vStepOf(g21); v != 200 {
-		t.Errorf("21-node chain vStep=%d want 200 (raised)", v)
+	if v := vStepOf(g21); v != 120 {
+		t.Errorf("21-node chain step=%d want 120 (snap(56+60), raised)", v)
 	} else if v <= small {
-		t.Errorf("21-node vStep %d must exceed 4-node vStep %d", v, small)
+		t.Errorf("21-node step %d must exceed 4-node step %d", v, small)
 	}
 	pos21 := assignPositions(g21, "default")
-	if pos21["n20"][1] != 4000 {
-		t.Errorf("21-node bottom y=%d want 4000", pos21["n20"][1])
+	if pos21["n20"][1] != 4100 {
+		t.Errorf("21-node bottom y=%d want 4100", pos21["n20"][1])
 	}
 
-	// Cap: very large N must not exceed base+60 = 240.
-	if v := vStepOf(chain(100)); v != 240 {
-		t.Errorf("100-node chain vStep=%d want 240 (capped at base+60)", v)
+	// Cap: very large N's gap must not exceed the adaptive ceiling, so the
+	// circle->logic step caps at snap(56+100)=160.
+	if v := vStepOf(chain(100)); v != 160 {
+		t.Errorf("100-node chain step=%d want 160 (gap capped)", v)
 	}
 }
