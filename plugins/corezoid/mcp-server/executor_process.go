@@ -311,6 +311,12 @@ func (validator *Executor) ProcessJSON(filePath, jsonContent string) (newProcess
 			return nil, err
 		}
 	} else {
+		title, _ := processDataOfAI["title"].(string)
+		if title != "" {
+			if err = validator.RenameProcess(title); err != nil {
+				return nil, fmt.Errorf("error renaming process: %v", err)
+			}
+		}
 		oldProcessData, err := validator.GetProcessByID(validator.ProcessID)
 		if err != nil {
 			logger.Error("Failed to get process: %v", err)
@@ -585,6 +591,35 @@ func (v *Executor) SetParams(params []interface{}) error {
 	}
 	if requestProc, ok := response["request_proc"].(string); !ok || requestProc != "ok" {
 		return fmt.Errorf("failed to set params: request_proc not ok")
+	}
+	return nil
+}
+
+// RenameProcess updates the title of an existing Corezoid process.
+// It issues a "modify" / "conv" API operation so that the server-side name
+// stays in sync with the title field stored in the local .conv.json file.
+func (v *Executor) RenameProcess(title string) error {
+	ops := []map[string]any{
+		{
+			"obj_id":     v.ProcessID,
+			"type":       "modify",
+			"obj":        "conv",
+			"title":      title,
+			"company_id": v.WorkspaceID,
+		},
+	}
+	if v.Debug {
+		logger.Debug("Sending rename process request, title=%s", title)
+	}
+	response, err := v.req("set_params", ops)
+	if err != nil {
+		return fmt.Errorf("failed to rename process: %w", err)
+	}
+	if response == nil {
+		return fmt.Errorf("failed to rename process: no response from server")
+	}
+	if requestProc, ok := response["request_proc"].(string); !ok || requestProc != "ok" {
+		return fmt.Errorf("failed to rename process: request_proc not ok")
 	}
 	return nil
 }
