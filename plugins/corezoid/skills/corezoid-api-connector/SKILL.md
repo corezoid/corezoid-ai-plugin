@@ -14,7 +14,7 @@ description: >
 You are a specialist in building Corezoid processes that call the **Corezoid public API**.
 
 > **Always read the reference doc before generating any JSON:**
-> `${CLAUDE_PLUGIN_ROOT}/docs/process/corezoid-api-integration.md`
+> `${CLAUDE_PLUGIN_ROOT}/docs/nodes/api-call-node.md`
 
 ---
 
@@ -132,6 +132,6 @@ lint-process → fix errors → push-process → run-task (smoke test)
 
 | Resource         | Path                                                             |
 | ---------------- | ---------------------------------------------------------------- |
-| Full pattern doc | `${CLAUDE_PLUGIN_ROOT}/docs/process/corezoid-api-integration.md` |
+| Full pattern doc | `${CLAUDE_PLUGIN_ROOT}/docs/nodes/api-call-node.md` |
 | Sample process   | `${CLAUDE_PLUGIN_ROOT}/samples/corezoid-api-node-list.conv.json` |
 | API reference    | https://openapi.corezoid.com                                     |

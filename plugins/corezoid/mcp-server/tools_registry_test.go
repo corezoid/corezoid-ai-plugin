@@ -56,7 +56,9 @@ func TestSkillPathsExist(t *testing.T) {
 	pluginRoot := filepath.Join(filepath.Dir(thisFile), "..")
 
 	skillsDir := filepath.Join(pluginRoot, "skills")
-	re := regexp.MustCompile(`\$\{CLAUDE_PLUGIN_ROOT\}/([^\s'")\]` + "`" + `]+)`)
+	// Stop the captured path at a markdown anchor ('#...') too: an anchor is a
+	// link fragment for in-page navigation, not part of the file path on disk.
+	re := regexp.MustCompile(`\$\{CLAUDE_PLUGIN_ROOT\}/([^\s'")\]#` + "`" + `]+)`)
 
 	entries, err := os.ReadDir(skillsDir)
 	if err != nil {
