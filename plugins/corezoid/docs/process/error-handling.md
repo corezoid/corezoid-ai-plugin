@@ -57,24 +57,30 @@ Condition nodes:
 
 ### 1. Basic Error Routing
 
-The simplest error handling pattern routes tasks to a dedicated error node when an error occurs:
+The simplest pattern routes `err_node_id` directly to a Final Error node when no action
+is needed on the error path:
 
 ```
 Operation Node ──→ Success Path
       │
-      └─── [error] ──→ Error Node → End Node
+      └─── [err_node_id] ──→ Final Error Node (obj_type:2)
 ```
 
 Implementation:
 
 ```json
 {
-  "type": "api",
-  "method": "GET",
-  "url": "https://api.example.com",
-  "err_node_id": "error_node_id"
+  "type": "api_rpc",
+  "conv_id": 12345,
+  "err_node_id": "<final_error_node_id>"
 }
 ```
+
+> **Rule:** Wire `err_node_id` directly to a Final Error node (`obj_type: 2`) when the
+> error path needs no logic. Only interpose an Escalation node (`obj_type: 3`) when the
+> error path requires an action such as replying to the caller or conditional retry routing.
+> An escalation node that only contains a bare `go` with no action logic is an anti-pattern
+> and is flagged by `lint-process` as a **passthrough escalation**.
 
 ### 2. Error Type Differentiation
 

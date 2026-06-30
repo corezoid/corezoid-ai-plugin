@@ -16,6 +16,7 @@ The plugin bundles a Go MCP server that exposes Corezoid operations as MCP tools
 | `corezoid-edit`                | "edit", "modify", "update" a process     | Modifying existing `.conv.json` files             |
 | `corezoid-review`              | "review", "audit", "check" a process     | Analysis, dead code, best-practice violations     |
 | `corezoid-project-review`      | "review project", "audit folder"         | Cross-process audit of an entire folder           |
+| `corezoid-stage-scan`          | "scan stage", "check stage before merge", "why does the merge fail" | Offline pre-merge validation of exported stage `.zip`s: non-active/empty processes, broken node links, broken/inactive `conv_id` refs |
 | `corezoid-dashboard-manager`   | "create dashboard", "add chart", "visualize metrics" | Dashboards, charts, node metrics, real-time monitoring |
 | `corezoid-process-tech-writer` | "document", "write docs", "describe process" | Markdown docs + enriched JSON with node descriptions |
 
@@ -206,6 +207,10 @@ validation errors, and summarize what each process does.
 | `create-process`    | Create a new empty process in a folder             |
 | `create-state-diagram` | Create a new empty state diagram (conv_type "state") in a folder |
 | `create-folder`     | Create a new subfolder                             |
+| `show-folder`       | Show folder metadata (title, kind, parent)         |
+| `list-folders`      | List immediate children of a folder (no disk I/O)  |
+| `modify-folder`     | Rename a folder or update its description          |
+| `delete-folder`     | Move a folder to the recycle bin                   |
 | `create-alias`      | Create a short alias for a process                 |
 | `create-variable`   | Create a Corezoid environment variable             |
 | `create-dashboard`  | Create a new dashboard for visualizing node metrics |
@@ -262,6 +267,7 @@ Claude Code / Codex
         │                 create-project, modify-project, delete-project, show-project
         ├── Processes     pull-process, pull-folder, push-process, lint-process
         │                 create-process, create-folder, create-alias, create-variable
+        │                 show-folder, list-folders, modify-folder, delete-folder
         ├── Tasks         run-task, list-node-tasks, list-task-history
         │                 modify-task, delete-task
         ├── Dashboards    create-dashboard, get-dashboard, add-chart,

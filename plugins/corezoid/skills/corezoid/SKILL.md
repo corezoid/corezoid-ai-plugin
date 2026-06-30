@@ -124,6 +124,7 @@ For domain-specific workflows use the specialized skills:
 - `/corezoid-state-diagram-edit` — modifying an existing state diagram
 - `/corezoid-review` — auditing and analyzing a single process
 - `/corezoid-project-review` — auditing an entire project or folder (cross-process analysis)
+- `/corezoid-stage-scan` — pre-merge/pre-deploy static check of exported stage `.zip`s: non-active processes, empty/battered processes, broken node links, broken/inactive `conv_id` references (explains "Only active process can be used", "referenced node X does not exist", "Access user to conveyor is denied")
 - `/corezoid-dashboard-manager` — creating dashboards and charts for process metrics
 - `/corezoid-process-tech-writer` — documenting a process (Markdown + enriched JSON)
 - `/corezoid-alias-manager` — creating, listing, modifying, deleting, and using aliases
@@ -137,7 +138,10 @@ Use the `Read` tool to load these files when you need deeper detail:
 
 | Path | When to read |
 |---|---|
-| `${CLAUDE_PLUGIN_ROOT}/docs/node-structures.md` | JSON schemas for all node types (canonical reference) |
+| `${CLAUDE_PLUGIN_ROOT}/docs/node-structures.md` | JSON schemas for all node types + full Logics fields reference (canonical) |
+| `${CLAUDE_PLUGIN_ROOT}/docs/nodes/set-parameters-built-in-functions.md` | Built-in functions: `$.math`, `$.date`, `$.random`, `$.sha1_hex`, `$.md5_hex`, `$.base64_encode`, `$.unixtime`, `$.map`, `$.filter` |
+| `${CLAUDE_PLUGIN_ROOT}/docs/nodes/set-parameters-dynamic-values.md` | Dynamic values: `{{var}}`, `{{node[id].count}}`, `{{node[id].SumID}}`, `{{conv[@alias].ref[...]}}`, `{{env_var[@name].key[1]}}` |
+| `${CLAUDE_PLUGIN_ROOT}/docs/tasks/task-metadata.md` | Global `root.*` fields: `root.task_id`, `root.ref`, `root.conv_id`, `root.node_id`, `root.prev_node_id`, `root.user_id`, `root.change_time`, `root.create_time` |
 | `${CLAUDE_PLUGIN_ROOT}/docs/nodes/code-node.md` | Code node details and available JS libraries |
 | `${CLAUDE_PLUGIN_ROOT}/docs/nodes/call-process-node.md` | Call a Process node, semaphores, cross-folder calls |
 | `${CLAUDE_PLUGIN_ROOT}/docs/nodes/api-call-node.md` | HTTP API call configuration |

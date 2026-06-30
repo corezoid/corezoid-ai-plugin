@@ -8,6 +8,27 @@
       ]
     },
     {
+      "name": "corezoid-access",
+      "description": "Corezoid access-control specialist. Use when the user wants to share a process, folder, stage or project with another user / group / API key, create or delete a user group, create or rotate an API key, invite an external user, or audit who currently has access to a Corezoid object. Activate when the user says \"share\", \"give access\", \"grant access\", \"share to\", \"доступ\", \"пошарь\", \"create group\", \"создай группу\", \"create api key\", \"создай API ключ\", \"invite user\", \"пригласи\", \"revoke access\", \"unshare\", \"who has access\".",
+      "files": [
+        "https://raw.githubusercontent.com/corezoid/corezoid-ai-plugin/main/plugins/corezoid/skills/corezoid-access/SKILL.md"
+      ]
+    },
+    {
+      "name": "corezoid-alias-manager",
+      "description": "Manages Corezoid aliases — create, list, modify, delete, link/unlink, and use aliases in process JSON. Activate when the user mentions \"alias\", \"short_name\", \"short name\", \"create alias\", \"list aliases\", \"delete alias\", \"modify alias\", \"rename alias\", \"unlink alias\", \"link alias\", \"get callback hash\", \"conv[@\", or asks how to reference a process by name instead of numeric ID. Also activate when reviewing a process that uses numeric conv_id values and the user wants to replace them with aliases.",
+      "files": [
+        "https://raw.githubusercontent.com/corezoid/corezoid-ai-plugin/main/plugins/corezoid/skills/corezoid-alias-manager/SKILL.md"
+      ]
+    },
+    {
+      "name": "corezoid-api-connector",
+      "description": "Corezoid API connector specialist. Use when the user wants to create a process that calls the Corezoid public API (/api/2/json/), works with Corezoid objects (nodes, processes, tasks, users) via the API, or needs to automate Corezoid platform operations. Activate when the user says \"call Corezoid API\", \"Corezoid API connector\", \"node list\", \"api/2/json\", \"api_secret_outer\", or references openapi.corezoid.com operations.",
+      "files": [
+        "https://raw.githubusercontent.com/corezoid/corezoid-ai-plugin/main/plugins/corezoid/skills/corezoid-api-connector/SKILL.md"
+      ]
+    },
+    {
       "name": "corezoid-create",
       "description": "Corezoid process creation specialist. Use when the user wants to create a new Corezoid process from scratch, build a new automation flow, design a new BPM process, or implement a new API connector. Activate when the user says \"create a process\", \"build a new flow\", \"new process\", \"design from scratch\", \"implement a connector\", \"create an automation\", or \"add a new process\".",
       "files": [
@@ -36,6 +57,13 @@
       ]
     },
     {
+      "name": "corezoid-process-optimizer",
+      "description": "Optimizes a Corezoid process JSON — reduces tact consumption by merging nodes, cleans data flow, fills missing node titles, and adds resilience patterns. Activate when the user says \"optimize\", \"improve\", \"reduce tacts\", \"merge nodes\", \"clean up process\", \"what can be improved\", \"show optimizations\", or any phrase implying they want to make a process faster, cheaper, or more readable. Two modes: plan-only (analysis + report, no changes) and auto (plan + execute immediately).",
+      "files": [
+        "https://raw.githubusercontent.com/corezoid/corezoid-ai-plugin/main/plugins/corezoid/skills/corezoid-process-optimizer/SKILL.md"
+      ]
+    },
+    {
       "name": "corezoid-process-tech-writer",
       "description": "Documents a Corezoid process — produces a human-readable Markdown file AND enriches the process JSON with descriptions on every node and parameter. Output is designed for team wikis, internal portals, and future product integration. Activate whenever a user asks to document a process, write docs for a connector, add descriptions to a process, create documentation for a logic, describe what a process does, or any similar phrasing. Also activate when the user shares a process JSON and asks to explain it or make it self-documenting. Always produce BOTH outputs (Markdown file + enriched JSON) — never just one.",
       "files": [
@@ -54,6 +82,34 @@
       "description": "Corezoid process review and audit specialist. Use when the user wants to analyze, review, audit, or improve an existing Corezoid process. Activate when the user says \"review a process\", \"analyze\", \"check\", \"audit\", \"find issues\", \"explain this process\", \"what's wrong with\", \"optimize\", or \"check for hardcoded values\".",
       "files": [
         "https://raw.githubusercontent.com/corezoid/corezoid-ai-plugin/main/plugins/corezoid/skills/corezoid-review/SKILL.md"
+      ]
+    },
+    {
+      "name": "corezoid-stage-scan",
+      "description": "Pre-merge / pre-deploy static validator for exported Corezoid stages. Use when the user has one or more exported stage files (.zip) or extracted stage folders and wants to find, BEFORE merging or deploying, what will break: processes that are not active, empty/battered processes, broken intra-process node links (to_node_id / err_node_id pointing at a missing node), and broken or inactive cross-process conv_id references (api_rpc / api_copy / api_get_task). Activate when the user says \"scan stage\", \"check stage before merge\", \"validate export\", \"why does the merge fail\", \"find broken links\", \"find non-active processes\", \"Can't create more start nodes\", \"Only active process can be used\", \"referenced node ... does not exist\", \"Access user to conveyor is denied\", \"проверь стейдж\", \"почему не мерджится\", \"битые ссылки\", \"найди неактивные процессы\", or attaches two stage ZIPs and asks what is wrong with the merge.",
+      "files": [
+        "https://raw.githubusercontent.com/corezoid/corezoid-ai-plugin/main/plugins/corezoid/skills/corezoid-stage-scan/SKILL.md"
+      ]
+    },
+    {
+      "name": "corezoid-state-diagram-create",
+      "description": "Corezoid state diagram creation specialist. Use when the user wants to create a new Corezoid state diagram, build a state machine, design a status / lifecycle store, or set up a \"state\" object with conv_type \"state\". Activate when the user says \"create a state diagram\", \"build a state machine\", \"new state diagram\", \"design states\", \"track status\", \"user lifecycle\", \"состояния\", \"стейт диаграмма\", \"создать state diagram\", or mentions storing state-by-ref between processes.",
+      "files": [
+        "https://raw.githubusercontent.com/corezoid/corezoid-ai-plugin/main/plugins/corezoid/skills/corezoid-state-diagram-create/SKILL.md"
+      ]
+    },
+    {
+      "name": "corezoid-state-diagram-edit",
+      "description": "Corezoid state diagram editing specialist. Use when the user wants to modify, update, or fix an existing Corezoid state diagram — add or remove a state, change a transition, add a side effect on transition, fix the wiring of an api_callback state node, or rework transitions. Activate when the user says \"edit a state diagram\", \"add a state\", \"remove a state\", \"change transitions\", \"fix state diagram\", \"update state machine\", \"поправить state diagram\", \"изменить состояния\", or refers to modifying a .conv.json with conv_type \"state\".",
+      "files": [
+        "https://raw.githubusercontent.com/corezoid/corezoid-ai-plugin/main/plugins/corezoid/skills/corezoid-state-diagram-edit/SKILL.md"
+      ]
+    },
+    {
+      "name": "corezoid-variable-manager",
+      "description": "Manages Corezoid environment variables (env_var) — create, list, modify, delete, and use variables in process JSON. Activate when the user mentions \"variable\", \"env var\", \"environment variable\", \"secret\", \"create variable\", \"list variables\", \"delete variable\", \"modify variable\", \"env_var\", \"{{env_var\", or asks how to store a URL, token, API key, or any constant that should not be hardcoded in a process. Also activate when a process references {{env_var[@name]}} and the variable does not exist yet.",
+      "files": [
+        "https://raw.githubusercontent.com/corezoid/corezoid-ai-plugin/main/plugins/corezoid/skills/corezoid-variable-manager/SKILL.md"
       ]
     },
     {

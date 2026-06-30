@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"unicode/utf8"
 )
@@ -213,6 +214,17 @@ func downloadStageRecursively(e *Executor, folderID int, filePath string) error 
 		return fmt.Errorf("failed to format json: %v", err)
 	}
 
+	// Patch any process files whose scheme.nodes is empty. This happens when
+	// a process was imported from a file but never deployed (e.g. it referenced
+	// a non-existent sub-process). export_process only exports deployed content,
+	// so the ZIP contains empty scheme.nodes for those processes. We recover the
+	// node list from the get_process API, which always returns the full stored
+	// (uncommitted) node set — matching what the Corezoid UI displays.
+	if patchErr := patchEmptyNodesInDir(e, filePath); patchErr != nil {
+		logger.Warn("pull-folder: patch empty nodes partially failed: %v", patchErr)
+		// Non-fatal: we still return any successfully patched files.
+	}
+
 	return nil
 	//
 	//fmt.Println("procInfo", procInfo)
@@ -352,6 +364,110 @@ func formatJSON(filePath string) error {
 		if err != nil {
 			return fmt.Errorf("failed to write file: %v", err)
 		}
+	}
+	return nil
+}
+
+// processIDFromJSON extracts the numeric process ID stored in the "obj_id"
+// field of a parsed process JSON map. Returns 0 when the field is absent or
+// not a number.
+func processIDFromJSON(proc interface{}) int {
+	m, ok := proc.(map[string]interface{})
+	if !ok {
+		return 0
+	}
+	if f, ok := m["obj_id"].(float64); ok {
+		return int(f)
+	}
+	return 0
+}
+
+// patchEmptyNodesInDir walks the directory tree rooted at dir, finds process
+// JSON files whose scheme.nodes array is empty, and refills scheme.nodes from
+// the get_process API via FetchDraftNodes.
+//
+// Background: export_process only includes deployed node data. Processes that
+// were imported from a file but never deployed (e.g. because they contained a
+// reference to a non-existent sub-process) arrive with an empty scheme.nodes
+// in the ZIP. The get_process API always returns the full uncommitted node
+// list, so we can recover the nodes here and write them back into the file.
+//
+// Errors for individual files are logged as warnings and do not abort the
+// walk — callers receive a non-nil error only when the directory itself
+// cannot be read.
+func patchEmptyNodesInDir(v *Executor, dir string) error {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return err
+	}
+	for _, entry := range entries {
+		path := filepath.Join(dir, entry.Name())
+		if entry.IsDir() {
+			if subErr := patchEmptyNodesInDir(v, path); subErr != nil {
+				logger.Warn("patchEmptyNodesInDir: error in %s: %v", path, subErr)
+			}
+			continue
+		}
+		if filepath.Ext(entry.Name()) != ".json" {
+			continue
+		}
+		data, readErr := os.ReadFile(path)
+		if readErr != nil {
+			continue
+		}
+		var procJSON interface{}
+		if unmarshalErr := json.Unmarshal(data, &procJSON); unmarshalErr != nil {
+			continue
+		}
+		if !schemeNodesEmpty(procJSON) {
+			continue // nodes already present — nothing to do
+		}
+
+		// Determine the process ID: prefer the obj_id field in the JSON,
+		// fall back to the leading numeric prefix in the filename.
+		procID := processIDFromJSON(procJSON)
+		if procID == 0 {
+			base := filepath.Base(path)
+			if m := reProcessIDFromFilename.FindStringSubmatch(base); m != nil {
+				procID, _ = strconv.Atoi(m[1])
+			}
+		}
+		if procID == 0 {
+			logger.Warn("patchEmptyNodesInDir: cannot determine process ID for %s, skipping", path)
+			continue
+		}
+
+		logger.Warn("patchEmptyNodesInDir: process %d (%s) has empty scheme.nodes; "+
+			"fetching draft nodes via get_process", procID, entry.Name())
+
+		nodes, fetchErr := v.FetchDraftNodes(procID)
+		if fetchErr != nil || len(nodes) == 0 {
+			logger.Warn("patchEmptyNodesInDir: draft fallback for process %d failed: %v", procID, fetchErr)
+			continue
+		}
+
+		procMap, ok := procJSON.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		scheme, _ := procMap["scheme"].(map[string]interface{})
+		if scheme == nil {
+			scheme = make(map[string]interface{})
+			procMap["scheme"] = scheme
+		}
+		scheme["nodes"] = nodes
+
+		patched, marshalErr := json.MarshalIndent(procMap, "", "  ")
+		if marshalErr != nil {
+			logger.Warn("patchEmptyNodesInDir: failed to marshal patched process %d: %v", procID, marshalErr)
+			continue
+		}
+		if writeErr := os.WriteFile(path, patched, 0644); writeErr != nil {
+			logger.Warn("patchEmptyNodesInDir: failed to write patched file %s: %v", path, writeErr)
+			continue
+		}
+		logger.Warn("patchEmptyNodesInDir: injected %d draft nodes into process %d (%s)",
+			len(nodes), procID, entry.Name())
 	}
 	return nil
 }

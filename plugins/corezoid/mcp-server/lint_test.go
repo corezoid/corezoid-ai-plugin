@@ -53,6 +53,20 @@ func TestLintProcess_NoopCondition(t *testing.T) {
 	}
 }
 
+// TestLintProcess_PassthroughEscalation verifies passthrough escalation node detection.
+func TestLintProcess_PassthroughEscalation(t *testing.T) {
+	result, err := lintProcess("samples/passthrough_escalation.json")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(result.PassthroughEscalations) != 1 {
+		t.Errorf("expected 1 passthrough escalation, got %d", len(result.PassthroughEscalations))
+	}
+	if result.PassthroughEscalations[0].TargetTitle != "rpc_error" {
+		t.Errorf("expected target title 'rpc_error', got %q", result.PassthroughEscalations[0].TargetTitle)
+	}
+}
+
 // TestLintProcess_MalformedJSON verifies graceful error on invalid JSON.
 func TestLintProcess_MalformedJSON(t *testing.T) {
 	f, err := os.CreateTemp("", "bad-*.json")

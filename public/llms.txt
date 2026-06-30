@@ -5,13 +5,21 @@
 ## Skills
 
 - [corezoid](https://raw.githubusercontent.com/corezoid/corezoid-ai-plugin/main/plugins/corezoid/skills/corezoid/SKILL.md): Universal Corezoid assistant
+- [corezoid-access](https://raw.githubusercontent.com/corezoid/corezoid-ai-plugin/main/plugins/corezoid/skills/corezoid-access/SKILL.md): Corezoid access-control specialist
+- [corezoid-alias-manager](https://raw.githubusercontent.com/corezoid/corezoid-ai-plugin/main/plugins/corezoid/skills/corezoid-alias-manager/SKILL.md): Manages Corezoid aliases — create, list, modify, delete, link/unlink, and use aliases in process JSON
+- [corezoid-api-connector](https://raw.githubusercontent.com/corezoid/corezoid-ai-plugin/main/plugins/corezoid/skills/corezoid-api-connector/SKILL.md): Corezoid API connector specialist
 - [corezoid-create](https://raw.githubusercontent.com/corezoid/corezoid-ai-plugin/main/plugins/corezoid/skills/corezoid-create/SKILL.md): Corezoid process creation specialist
 - [corezoid-dashboard-manager](https://raw.githubusercontent.com/corezoid/corezoid-ai-plugin/main/plugins/corezoid/skills/corezoid-dashboard-manager/SKILL.md): Creates and manages Corezoid dashboards — adds charts (column, pie, funnel, table), binds metrics to process nodes, configures real-time mode, and sets up drill-down linking between dashboards
 - [corezoid-edit](https://raw.githubusercontent.com/corezoid/corezoid-ai-plugin/main/plugins/corezoid/skills/corezoid-edit/SKILL.md): Corezoid process editing specialist
 - [corezoid-init](https://raw.githubusercontent.com/corezoid/corezoid-ai-plugin/main/plugins/corezoid/skills/corezoid-init/SKILL.md): Corezoid environment setup specialist
+- [corezoid-process-optimizer](https://raw.githubusercontent.com/corezoid/corezoid-ai-plugin/main/plugins/corezoid/skills/corezoid-process-optimizer/SKILL.md): Optimizes a Corezoid process JSON — reduces tact consumption by merging nodes, cleans data flow, fills missing node titles, and adds resilience patterns
 - [corezoid-process-tech-writer](https://raw.githubusercontent.com/corezoid/corezoid-ai-plugin/main/plugins/corezoid/skills/corezoid-process-tech-writer/SKILL.md): Documents a Corezoid process — produces a human-readable Markdown file AND enriches the process JSON with descriptions on every node and parameter
 - [corezoid-project-review](https://raw.githubusercontent.com/corezoid/corezoid-ai-plugin/main/plugins/corezoid/skills/corezoid-project-review/SKILL.md): Corezoid project review and audit specialist
 - [corezoid-review](https://raw.githubusercontent.com/corezoid/corezoid-ai-plugin/main/plugins/corezoid/skills/corezoid-review/SKILL.md): Corezoid process review and audit specialist
+- [corezoid-stage-scan](https://raw.githubusercontent.com/corezoid/corezoid-ai-plugin/main/plugins/corezoid/skills/corezoid-stage-scan/SKILL.md): Pre-merge / pre-deploy static validator for exported Corezoid stages
+- [corezoid-state-diagram-create](https://raw.githubusercontent.com/corezoid/corezoid-ai-plugin/main/plugins/corezoid/skills/corezoid-state-diagram-create/SKILL.md): Corezoid state diagram creation specialist
+- [corezoid-state-diagram-edit](https://raw.githubusercontent.com/corezoid/corezoid-ai-plugin/main/plugins/corezoid/skills/corezoid-state-diagram-edit/SKILL.md): Corezoid state diagram editing specialist
+- [corezoid-variable-manager](https://raw.githubusercontent.com/corezoid/corezoid-ai-plugin/main/plugins/corezoid/skills/corezoid-variable-manager/SKILL.md): Manages Corezoid environment variables (env_var) — create, list, modify, delete, and use variables in process JSON
 - [marketplace-publish-validation](https://raw.githubusercontent.com/corezoid/corezoid-ai-plugin/main/plugins/corezoid/skills/marketplace-publish-validation/SKILL.md): Corezoid  marketplace pre-publication validator
 
 ## MCP Tools

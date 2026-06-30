@@ -9,14 +9,15 @@ import (
 
 // LintResult holds the combined lint output
 type LintResult struct {
-	ProcessTitle    string
-	NoopConditions  []NoopCondition
-	UnusedSetParams []UnusedSetParam
-	OrphanedNodes   []OrphanedNode
-	TotalNodes      int
-	ReachableCount  int
-	SchemaValid     bool
-	SchemaError     string
+	ProcessTitle             string
+	NoopConditions           []NoopCondition
+	UnusedSetParams          []UnusedSetParam
+	OrphanedNodes            []OrphanedNode
+	PassthroughEscalations   []PassthroughEscalation
+	TotalNodes               int
+	ReachableCount           int
+	SchemaValid              bool
+	SchemaError              string
 }
 
 type NoopCondition struct {
@@ -39,6 +40,17 @@ type OrphanedNode struct {
 	ID      string
 	Title   string
 	ObjType string
+}
+
+// PassthroughEscalation represents an escalation node (obj_type:3) whose only logic
+// is a bare `go` — it adds no value and should be replaced by a direct err_node_id
+// pointing straight to the final error node.
+type PassthroughEscalation struct {
+	ID          string
+	Title       string
+	TargetID    string
+	TargetTitle string
+	Issue       string
 }
 
 // processNode is the typed representation of a Corezoid node used throughout lint checks.
@@ -98,6 +110,7 @@ func lintProcess(filePath string) (*LintResult, error) {
 	typed := parseProcessNodes(nodes)
 	result.NoopConditions, result.UnusedSetParams = findNoopNodes(typed)
 	result.OrphanedNodes, result.ReachableCount = findOrphanedNodes(typed)
+	result.PassthroughEscalations = findPassthroughEscalations(typed)
 
 	schemaErr := ValidateJSONSchema(filePath, debug)
 	if schemaErr != nil {
@@ -223,6 +236,75 @@ func findNoopNodes(nodes []processNode) ([]NoopCondition, []UnusedSetParam) {
 	return noopConditions, unusedSetParams
 }
 
+// findPassthroughEscalations detects escalation nodes (obj_type:3) that contain only
+// a bare `go` logic and no action logic (api_rpc_reply, set_param, etc.).
+// Such nodes are pure pass-throughs: the err_node_id should point directly to the
+// final error node instead of routing through an empty escalation node.
+func findPassthroughEscalations(nodes []processNode) []PassthroughEscalation {
+	nodeMap := make(map[string]processNode, len(nodes))
+	for _, n := range nodes {
+		nodeMap[n.id] = n
+	}
+
+	actionTypes := map[string]bool{
+		"api_rpc_reply": true,
+		"api_rpc":       true,
+		"api_copy":      true,
+		"api":           true,
+		"api_code":      true,
+		"set_param":     true,
+		"api_sum":       true,
+		"db_call":       true,
+		"api_git":       true,
+		"api_queue":     true,
+		"api_get_task":  true,
+	}
+
+	var result []PassthroughEscalation
+	for _, n := range nodes {
+		if n.objType != 3 {
+			continue
+		}
+		hasAction := false
+		goTarget := ""
+		for _, lg := range n.logics {
+			lgType, _ := lg["type"].(string)
+			if actionTypes[lgType] {
+				hasAction = true
+				break
+			}
+			if lgType == "go" {
+				goTarget, _ = lg["to_node_id"].(string)
+			}
+		}
+		if hasAction || goTarget == "" {
+			continue
+		}
+		targetTitle := ""
+		if target, ok := nodeMap[goTarget]; ok {
+			targetTitle = target.title
+			if targetTitle == "" {
+				targetTitle = "(untitled)"
+			}
+		}
+		displayTitle := n.title
+		if displayTitle == "" {
+			displayTitle = "(untitled)"
+		}
+		result = append(result, PassthroughEscalation{
+			ID:          n.id,
+			Title:       displayTitle,
+			TargetID:    goTarget,
+			TargetTitle: targetTitle,
+			Issue: fmt.Sprintf(
+				"Escalation node (obj_type:3) has no action logic — wire err_node_id directly to '%s' (%s)",
+				targetTitle, goTarget,
+			),
+		})
+	}
+	return result
+}
+
 // findOrphanedNodes does a BFS from the Start node and returns unreachable nodes
 func findOrphanedNodes(nodes []processNode) ([]OrphanedNode, int) {
 	typeLabels := map[float64]string{0: "standard", 1: "start", 2: "final", 3: "escalation"}
@@ -343,6 +425,15 @@ func FormatLintResult(result *LintResult) string {
 		}
 	}
 
+	if len(result.PassthroughEscalations) > 0 {
+		hasIssues = true
+		sb.WriteString(fmt.Sprintf("\n=== PASSTHROUGH ESCALATION NODES (%d) ===\n", len(result.PassthroughEscalations)))
+		for _, pe := range result.PassthroughEscalations {
+			sb.WriteString(fmt.Sprintf("  [%s] %s\n", pe.ID, pe.Title))
+			sb.WriteString(fmt.Sprintf("  Issue: %s\n", pe.Issue))
+		}
+	}
+
 	if !hasIssues {
 		sb.WriteString("\nNo issues found.")
 	} else {
@@ -350,7 +441,7 @@ func FormatLintResult(result *LintResult) string {
 		if !result.SchemaValid {
 			schemaIssues = 1
 		}
-		total := len(result.NoopConditions) + len(result.UnusedSetParams) + len(result.OrphanedNodes) + schemaIssues
+		total := len(result.NoopConditions) + len(result.UnusedSetParams) + len(result.OrphanedNodes) + len(result.PassthroughEscalations) + schemaIssues
 		sb.WriteString(fmt.Sprintf("\nTotal issues: %d\n", total))
 	}
 

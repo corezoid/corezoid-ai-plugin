@@ -1,10 +1,38 @@
 # Changelog
 
-## [2.4.0]
+## [2.7.0]
+
+- Feat: `corezoid-stage-scan` skill — offline pre-merge/pre-deploy static validator for exported stage `.zip`s (or extracted dirs). Detects non-active processes, empty/battered processes, broken intra-process node links (`to_node_id`/`err_node_id`), and broken/inactive cross-process `conv_id` references. Maps findings to the platform's merge "Errors list" messages ("Only active process can be used", "referenced node X does not exist", "Access user to conveyor is denied in logic"). Ships a stdlib-only Python scanner with CI-friendly exit codes (`scripts/scan_stage.py`). Each finding carries a `folder` field with the human-readable folder path in the stage tree.
+
+## [2.6.0]
 
 - Feat: `send-feedback` MCP tool — submits user feedback to a dedicated Corezoid process (`conv_id 1871779`) and returns a ticket id. Does not require authentication so users can report auth-related issues too.
 - Feat: `corezoid-feedback` skill — UX layer for the feedback flow: detects when a result was unexpected, collects problem/expected/solution, shows the full payload for confirmation, then calls `send-feedback`.
 - Feat: opt-in email telemetry — after first successful login, users are asked (via elicitation) if they want to share their email with the Corezoid team; stored in `~/.corezoid/preferences.json`, included as `user_email` in analytics events.
+- Refactor: all telemetry values (analytics + feedback endpoint and conv_id) centralised in `telemetry_config.go`; individually overridable via `COREZOID_ANALYTICS_ENDPOINT`, `COREZOID_ANALYTICS_CONV_ID`, `COREZOID_FEEDBACK_ENDPOINT`, `COREZOID_FEEDBACK_CONV_ID`. Existing default behavior unchanged.
+- Security: secret redaction applied to all feedback fields before transmission (Bearer tokens, JWTs, `api_key`/`token`/`password`/`secret` values, hex strings ≥ 32 chars). Feedback disabled by `COREZOID_FEEDBACK_DISABLED=1`.
+- Fix: allow templated/dynamic `conv_id` in `api_copy` nodes (align schema with `api_rpc`).
+- Fix: detect and disallow passthrough escalation nodes during lint.
+- Docs: api-call — require the full canonical api logic shape; a "light" node fails the deploy.
+- Docs: api-call — correct `customize_response=false` behavior; document response-body placement and silent mapping failure.
+- Docs: params — document the exact valid params element shape and that params are optional for receiving data.
+- Docs: set-param — document nested env_var keys and expand `conv[].ref[]` rules.
+- Docs: delay-node — clarify the 30s limit is static-literal only; document dynamic absolute-timestamp timers.
+- Docs: delay-node — make timestamp source explicitly irrelevant (set_param is one example).
+- Docs: node-ids — document server reassignment and stability of node IDs on push.
+- Docs: updated SECURITY.md telemetry section to disclose optional email opt-in and how to remove it.
+- Chore: MCP server log file moved from `/tmp/corezoid.log` to `~/.corezoid/mcp.log` for easier discoverability.
+
+## [2.5.0]
+
+- Feat: Project CRUD MCP tools — create-project, modify-project, delete-project, show-project — for managing Corezoid projects without leaving the IDE.
+- Feat: Folder CRUD MCP tools — show-folder, list-folders, modify-folder, delete-folder — for working with the folder hierarchy.
+- Feat: corezoid-api-connector skill with a sample API-node-list process for wiring external API integrations.
+- Refactor: API-key Principal uses login obj_id (int) instead of the login string; drops the extra show_api_key round-trip. Note: changes the on-disk format under ~/.corezoid/api-keys/ — `login` is now a JSON number.
+- Fix: bump OAuth PKCE token-exchange timeout from 30s to 60s to avoid silent failures on slow networks.
+
+## [2.4.0]
+
 - Feat: corezoid-access skill and MCP tools for user groups, API keys, and object/folder sharing.
 - Feat: corezoid-state-diagram-create and corezoid-state-diagram-edit skills with a create-state-diagram MCP tool for building and modifying state-diagram processes.
 - Feat: corezoid-process-optimizer skill for auditing existing processes for performance and structural issues.
@@ -12,13 +40,9 @@
 - Feat: get-node-stat MCP tool exposing node archive statistics.
 - Feat: AI discovery files — llms.txt and .well-known/skills/index.json — with a generator script under scripts/.
 - Feat: context7 integration for live documentation lookups.
-- Refactor: all telemetry values (analytics + feedback endpoint and conv_id) centralised in `telemetry_config.go`; individually overridable via `COREZOID_ANALYTICS_ENDPOINT`, `COREZOID_ANALYTICS_CONV_ID`, `COREZOID_FEEDBACK_ENDPOINT`, `COREZOID_FEEDBACK_CONV_ID`. Existing default behavior unchanged.
-- Security: secret redaction applied to all feedback fields before transmission (Bearer tokens, JWTs, `api_key`/`token`/`password`/`secret` values, hex strings ≥ 32 chars). Feedback disabled by `COREZOID_FEEDBACK_DISABLED=1`.
 - Docs: full state-diagram documentation set under plugins/corezoid/docs/state-diagrams/ (overview, node structures, process interaction).
 - Docs: clarifications in call-process, copy-task, set-state, set-parameters dynamic values, and variables-guide nodes.
 - Docs: bundle docs/corezoid-swagger.json as a canonical Corezoid REST API reference.
-- Docs: updated SECURITY.md telemetry section to disclose optional email opt-in and how to remove it.
-- Chore: MCP server log file moved from `/tmp/corezoid.log` to `~/.corezoid/mcp.log` for easier discoverability.
 - Chore: unit tests for mcp-server analytics, access, config, and helpers.
 - CI: minor tweak to release.yml.
 

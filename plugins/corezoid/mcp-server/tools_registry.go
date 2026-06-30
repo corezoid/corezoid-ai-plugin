@@ -159,6 +159,70 @@ var toolRegistry = []mcpTool{
 		},
 	},
 	{
+		Name:        "show-folder",
+		Description: "Show metadata for a single Corezoid folder: title, obj_type (0 normal, 2 project, 3 stage), parent folder ID and parent type.",
+		InputSchema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"folder_id": map[string]interface{}{
+					"type":        "integer",
+					"description": "Corezoid folder ID to show",
+				},
+			},
+			"required": []string{"folder_id"},
+		},
+	},
+	{
+		Name:        "list-folders",
+		Description: "List the immediate children of a Corezoid folder (subfolders + processes + state diagrams). Lighter than pull-folder — does not write anything to disk.",
+		InputSchema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"folder_id": map[string]interface{}{
+					"type":        "integer",
+					"description": "Corezoid folder ID whose children to list",
+				},
+			},
+			"required": []string{"folder_id"},
+		},
+	},
+	{
+		Name:        "modify-folder",
+		Description: "Rename a Corezoid folder and/or update its description. At least one of title or description must be supplied.",
+		InputSchema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"folder_id": map[string]interface{}{
+					"type":        "integer",
+					"description": "Corezoid folder ID to modify",
+				},
+				"title": map[string]interface{}{
+					"type":        "string",
+					"description": "New folder title",
+				},
+				"description": map[string]interface{}{
+					"type":        "string",
+					"description": "New folder description",
+				},
+			},
+			"required": []string{"folder_id"},
+		},
+	},
+	{
+		Name:        "delete-folder",
+		Description: "Move a Corezoid folder to the recycle bin (Trash). Can be restored from the Corezoid UI.",
+		InputSchema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"folder_id": map[string]interface{}{
+					"type":        "integer",
+					"description": "Corezoid folder ID to delete",
+				},
+			},
+			"required": []string{"folder_id"},
+		},
+	},
+	{
 		Name:        "create-alias",
 		Description: "Create a short alias for a Corezoid process.",
 		InputSchema: map[string]interface{}{

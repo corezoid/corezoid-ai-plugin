@@ -64,6 +64,115 @@ func (v *Executor) ShowFolder(folderID int) (*FolderInfo, error) {
 	return info, nil
 }
 
+// FolderChild describes one entry returned by ListFolder. Folders and convs
+// share the same response slice, distinguished by Obj ("folder" | "conv") and
+// — for convs — ConvType ("process" | "state").
+type FolderChild struct {
+	Obj      string // "folder" | "conv"
+	ObjID    int
+	Title    string
+	ObjType  int    // for folders: 0 normal, 2 project, 3 stage
+	ConvType string // for convs only
+	Status   string
+}
+
+// ListFolder returns the immediate children of folderID (subfolders + convs).
+// The Corezoid list-folder endpoint returns a flat slice with each entry
+// tagged by "obj"; this method preserves that shape so callers can filter.
+func (v *Executor) ListFolder(folderID int) ([]FolderChild, error) {
+	ops := []map[string]any{
+		{
+			"type":       "list",
+			"obj":        "folder",
+			"obj_id":     folderID,
+			"company_id": v.WorkspaceID,
+		},
+	}
+	response, err := v.req("list_folder", ops)
+	if err != nil {
+		return nil, fmt.Errorf("ListFolder request failed: %w", err)
+	}
+	first, err := firstOp(response)
+	if err != nil {
+		return nil, err
+	}
+	list, _ := first["list"].([]any)
+	out := make([]FolderChild, 0, len(list))
+	for _, item := range list {
+		m, ok := item.(map[string]any)
+		if !ok {
+			continue
+		}
+		child := FolderChild{}
+		if s, ok := m["obj"].(string); ok {
+			child.Obj = s
+		}
+		if f, ok := m["obj_id"].(float64); ok {
+			child.ObjID = int(f)
+		}
+		if s, ok := m["title"].(string); ok {
+			child.Title = s
+		}
+		if f, ok := m["obj_type"].(float64); ok {
+			child.ObjType = int(f)
+		}
+		if s, ok := m["conv_type"].(string); ok {
+			child.ConvType = s
+		}
+		if s, ok := m["status"].(string); ok {
+			child.Status = s
+		}
+		out = append(out, child)
+	}
+	return out, nil
+}
+
+// ModifyFolder renames a folder and/or updates its description. At least one
+// of title/description must be non-empty — the caller is expected to enforce
+// that before calling.
+func (v *Executor) ModifyFolder(folderID int, title, description string) error {
+	op := map[string]any{
+		"type":       "modify",
+		"obj":        "folder",
+		"obj_id":     folderID,
+		"company_id": v.WorkspaceID,
+	}
+	if title != "" {
+		op["title"] = title
+	}
+	if description != "" {
+		op["description"] = description
+	}
+	resp, err := v.req("modify_folder", []map[string]any{op})
+	if err != nil {
+		return fmt.Errorf("ModifyFolder request failed: %w", err)
+	}
+	if _, err := firstOp(resp); err != nil {
+		return err
+	}
+	return nil
+}
+
+// DeleteFolder moves a folder to the recycle bin. Like delete-project this is
+// reversible from the Corezoid UI's Trash; permanent destruction is not
+// exposed via this tool.
+func (v *Executor) DeleteFolder(folderID int) error {
+	op := map[string]any{
+		"type":       "delete",
+		"obj":        "folder",
+		"obj_id":     folderID,
+		"company_id": v.WorkspaceID,
+	}
+	resp, err := v.req("delete_folder", []map[string]any{op})
+	if err != nil {
+		return fmt.Errorf("DeleteFolder request failed: %w", err)
+	}
+	if _, err := firstOp(resp); err != nil {
+		return err
+	}
+	return nil
+}
+
 // CreateFolder creates a new folder under parentFolderID and returns the new folder's obj_id.
 func (v *Executor) CreateFolder(parentFolderID int, title, desc string) (int, error) {
 	ops := []map[string]any{

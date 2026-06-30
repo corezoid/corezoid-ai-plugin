@@ -399,6 +399,109 @@ func handleCreateFolder(ctx context.Context, args map[string]interface{}) (strin
 	return fmt.Sprintf("Folder '%s' created and saved to %s", folderName, filePath), false
 }
 
+// handleShowFolder returns metadata for a single folder (title, obj_type,
+// parent). Used to introspect folders without writing anything to disk.
+func handleShowFolder(ctx context.Context, args map[string]interface{}) (string, bool) {
+	folderID, err := intArg(args, "folder_id")
+	if err != nil {
+		return "Error: " + err.Error(), true
+	}
+
+	v := NewValidator(ctx, 0)
+	info, err := v.ShowFolder(folderID)
+	if err != nil {
+		return fmt.Sprintf("Error: %v", err), true
+	}
+
+	kind := "folder"
+	switch info.ObjType {
+	case 1:
+		kind = "root"
+	case 2:
+		kind = "project"
+	case 3:
+		kind = "stage"
+	}
+	return fmt.Sprintf("Folder #%d %q (kind=%s, parent=%s#%d)",
+		info.ObjID, info.Title, kind, info.ParentObjType, info.ParentObjID), false
+}
+
+// handleListFolders prints the immediate children of a folder in a tabular
+// form. Subfolders come first, then convs (processes + state diagrams).
+func handleListFolders(ctx context.Context, args map[string]interface{}) (string, bool) {
+	folderID, err := intArg(args, "folder_id")
+	if err != nil {
+		return "Error: " + err.Error(), true
+	}
+
+	v := NewValidator(ctx, 0)
+	children, err := v.ListFolder(folderID)
+	if err != nil {
+		return fmt.Sprintf("Error: %v", err), true
+	}
+
+	if len(children) == 0 {
+		return fmt.Sprintf("Folder #%d is empty.", folderID), false
+	}
+
+	var sb strings.Builder
+	sb.WriteString(fmt.Sprintf("Folder #%d children (%d total):\n\n", folderID, len(children)))
+	sb.WriteString(fmt.Sprintf("  %-10s  %-12s  %s\n", "ID", "Kind", "Title"))
+	sb.WriteString("  " + strings.Repeat("-", 50) + "\n")
+	for _, c := range children {
+		kind := c.Obj
+		if c.Obj == "conv" && c.ConvType != "" {
+			kind = c.ConvType
+		}
+		sb.WriteString(fmt.Sprintf("  %-10d  %-12s  %s\n", c.ObjID, kind, c.Title))
+	}
+	return sb.String(), false
+}
+
+// handleModifyFolder renames a folder and/or updates its description. At
+// least one of title / description must be provided — the API silently
+// accepts an empty modify so we guard client-side.
+func handleModifyFolder(ctx context.Context, args map[string]interface{}) (string, bool) {
+	folderID, err := intArg(args, "folder_id")
+	if err != nil {
+		return "Error: " + err.Error(), true
+	}
+	title := optStrArg(args, "title")
+	description := optStrArg(args, "description")
+	if title == "" && description == "" {
+		return "Error: at least one of title or description must be provided", true
+	}
+
+	v := NewValidator(ctx, 0)
+	if err := v.ModifyFolder(folderID, title, description); err != nil {
+		return fmt.Sprintf("Error: %v", err), true
+	}
+
+	parts := []string{}
+	if title != "" {
+		parts = append(parts, fmt.Sprintf("title=%q", title))
+	}
+	if description != "" {
+		parts = append(parts, fmt.Sprintf("description=%q", description))
+	}
+	return fmt.Sprintf("Folder #%d updated (%s)", folderID, strings.Join(parts, ", ")), false
+}
+
+// handleDeleteFolder moves a folder to the recycle bin. The Corezoid UI's
+// Trash view restores it; permanent destruction is intentionally not exposed.
+func handleDeleteFolder(ctx context.Context, args map[string]interface{}) (string, bool) {
+	folderID, err := intArg(args, "folder_id")
+	if err != nil {
+		return "Error: " + err.Error(), true
+	}
+
+	v := NewValidator(ctx, 0)
+	if err := v.DeleteFolder(folderID); err != nil {
+		return fmt.Sprintf("Error: %v", err), true
+	}
+	return fmt.Sprintf("Folder #%d moved to Trash.", folderID), false
+}
+
 // handleCreateAlias creates a Corezoid alias (short_name → conv) pointing at
 // the process whose ID is encoded in the file path. Requires a configured
 // COREZOID_STAGE_ID since aliases are stage-scoped.
