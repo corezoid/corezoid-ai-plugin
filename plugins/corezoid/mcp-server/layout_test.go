@@ -197,6 +197,87 @@ func TestPreserveNudgesOnCollision(t *testing.T) {
 	}
 }
 
+// TestPreserveNoRectOverlapOffGrid reproduces the adversarial-review defect:
+// placed nodes sit at IRREGULAR/off-the-engine-grid coordinates so an exact-
+// coordinate collision check misses the overlap, but the real rectangular
+// footprints DO intersect.
+//
+//   - Vertical: P(600,180) --go--> N (new). A placed node X sits at (600,420)
+//     (off the engine grid, and clear of P's own rect). N targets (600,360);
+//     its 200x150 rect (y 360..510) overlaps X's rect (y 420..570) because
+//     420 < 360+150. An exact-pivot check (360 != 420) would MISS this.
+//   - Horizontal: P also --err--> E (new). E targets (840,180). A placed node Y
+//     sits at (900,180); E's rect (x 840..1040) overlaps Y's rect (x 900..1100).
+//     Exact-pivot (840 != 900) would miss it too.
+//
+// The placed nodes themselves do NOT overlap each other in the fixture, so a
+// post-layout countOverlaps==0 isolates the new-vs-placed defect.
+//
+// After the preserve layout there must be ZERO overlapping rects, and the
+// placed nodes must not have moved.
+func TestPreserveNoRectOverlapOffGrid(t *testing.T) {
+	t.Setenv("COREZOID_AUTOLAYOUT", "") // preserve
+	os.Unsetenv("COREZOID_AUTOLAYOUT")
+
+	nodes := []map[string]interface{}{
+		{"id": "p", "obj_type": float64(0), "x": float64(600), "y": float64(180), "condition": map[string]interface{}{
+			"logics": []interface{}{
+				map[string]interface{}{"type": "api_rpc", "to_node_id": "n", "err_node_id": "e"},
+			}, "semaphors": []interface{}{}}},
+		{"id": "n", "obj_type": float64(0), "x": float64(0), "y": float64(0), "condition": map[string]interface{}{
+			"logics": []interface{}{}, "semaphors": []interface{}{}}},
+		{"id": "e", "obj_type": float64(0), "x": float64(0), "y": float64(0), "condition": map[string]interface{}{
+			"logics": []interface{}{}, "semaphors": []interface{}{}}},
+		// placed obstacle below the primary parent (off the 180-grid, clear of p).
+		{"id": "x", "obj_type": float64(0), "x": float64(600), "y": float64(420), "condition": map[string]interface{}{
+			"logics": []interface{}{}, "semaphors": []interface{}{}}},
+		// placed obstacle to the right of the branch source (off the 240-pitch).
+		{"id": "y", "obj_type": float64(0), "x": float64(900), "y": float64(180), "condition": map[string]interface{}{
+			"logics": []interface{}{}, "semaphors": []interface{}{}}},
+	}
+	raw := make([]interface{}, len(nodes))
+	for i, n := range nodes {
+		raw[i] = n
+	}
+	scheme := map[string]interface{}{"nodes": raw}
+
+	placed := map[string][2]float64{
+		"p": {600, 180},
+		"x": {600, 420},
+		"y": {900, 180},
+	}
+
+	applyLayoutMode(scheme, "process", "preserve")
+
+	// Placed nodes must not have moved.
+	for id, want := range placed {
+		var got *map[string]interface{}
+		for i := range nodes {
+			if nid, _ := nodes[i]["id"].(string); nid == id {
+				got = &nodes[i]
+				break
+			}
+		}
+		if got == nil {
+			t.Fatalf("placed node %s vanished", id)
+		}
+		if gx, _ := (*got)["x"].(float64); gx != want[0] {
+			t.Errorf("placed %s moved: x=%v want %v", id, gx, want[0])
+		}
+		if gy, _ := (*got)["y"].(float64); gy != want[1] {
+			t.Errorf("placed %s moved: y=%v want %v", id, gy, want[1])
+		}
+	}
+
+	// No two node rectangles may intersect.
+	if c := countOverlaps(nodes); c != 0 {
+		for _, n := range nodes {
+			t.Logf("node %v at (%v,%v) rect=%v", n["id"], n["x"], n["y"], rectOf(n))
+		}
+		t.Errorf("preserve left %d overlapping rect pair(s); want 0", c)
+	}
+}
+
 func TestApplyLayoutMalformed(t *testing.T) {
 	t.Setenv("COREZOID_AUTOLAYOUT", "")
 	os.Unsetenv("COREZOID_AUTOLAYOUT")

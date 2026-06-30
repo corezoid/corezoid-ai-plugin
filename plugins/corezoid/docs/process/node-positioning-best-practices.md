@@ -11,7 +11,7 @@ precise coordinates for any node and those positions will survive every subseque
 A process built from scratch has all nodes at `0/0`, so it still receives a full clean layout on
 the first push — there is nothing to preserve.
 
-The engine snaps to the grid, guarantees zero overlaps (validated on 554 real processes), and
+The engine snaps to the grid, guarantees zero overlaps (validated on 596 real processes), and
 keeps connectors straight. This document describes the conventions it applies so that humans and
 the model understand the resulting layout and can control it when needed.
 

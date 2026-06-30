@@ -624,7 +624,17 @@ func placeNewNodes(nodes []map[string]interface{}) {
 
 	type xy struct{ x, y int }
 	placed := map[string]xy{}
-	occupied := map[xy]bool{}
+	// placedRects holds the REAL rectangular footprint of every node that is
+	// fixed in this pass (existing placed nodes + new nodes already slotted).
+	// Collision is rect-aware (rectOf/rectsIntersect), not exact-pivot, so a new
+	// node landing NEAR — but not exactly on — a placed node is still detected.
+	var placedRects [][4]float64
+	// rectAt builds nd's real footprint AT a candidate (x,y), preserving nd's own
+	// role (a new End circle uses the 56px box; a logic node the 200x150 box).
+	rectAt := func(nd map[string]interface{}, x, y int) [4]float64 {
+		probe := map[string]interface{}{"obj_type": nd["obj_type"], "x": float64(x), "y": float64(y)}
+		return rectOf(probe)
+	}
 	for _, nd := range nodes {
 		id, _ := nd["id"].(string)
 		x, y, isNew := coordOf(nd)
@@ -633,7 +643,7 @@ func placeNewNodes(nodes []map[string]interface{}) {
 		}
 		sx, sy := snap(x, grid), snap(y, grid)
 		placed[id] = xy{sx, sy}
-		occupied[xy{sx, sy}] = true
+		placedRects = append(placedRects, rectAt(nd, sx, sy))
 	}
 
 	// Process new nodes in topological rank order so a new node whose parent is
@@ -652,6 +662,14 @@ func placeNewNodes(nodes []map[string]interface{}) {
 		}
 		return newIDs[i] < newIDs[j]
 	})
+
+	// nodeByID lets the nudge build a candidate rect with the NEW node's own role.
+	nodeByID := map[string]map[string]interface{}{}
+	for _, nd := range nodes {
+		if nid, _ := nd["id"].(string); nid != "" {
+			nodeByID[nid] = nd
+		}
+	}
 
 	for _, id := range newIDs {
 		var target xy
@@ -694,20 +712,32 @@ func placeNewNodes(nodes []map[string]interface{}) {
 		}
 
 		target = xy{snap(float64(target.x), grid), snap(float64(target.y), grid)}
-		for occupied[target] {
+
+		// Rect-aware nudge: advance down by vstep while N's real footprint at the
+		// candidate intersects ANY placed rect. Termination is guaranteed — placed
+		// rects are finite and bounded, so once the candidate clears the lowest one
+		// it stops; the len(nodes)+1 cap is belt-and-suspenders.
+		nd := nodeByID[id]
+		intersectsPlaced := func(x, y int) bool {
+			cand := rectAt(nd, x, y)
+			for _, r := range placedRects {
+				if rectsIntersect(cand, r) {
+					return true
+				}
+			}
+			return false
+		}
+		for guard := 0; intersectsPlaced(target.x, target.y) && guard <= len(nodes); guard++ {
 			target.y += vstep
 		}
 
 		// Write back onto the node and register it as placed.
-		for _, nd := range nodes {
-			if nid, _ := nd["id"].(string); nid == id {
-				nd["x"] = float64(target.x)
-				nd["y"] = float64(target.y)
-				break
-			}
+		if nd != nil {
+			nd["x"] = float64(target.x)
+			nd["y"] = float64(target.y)
 		}
 		placed[id] = target
-		occupied[target] = true
+		placedRects = append(placedRects, rectAt(nd, target.x, target.y))
 	}
 }
 
