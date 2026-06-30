@@ -12,6 +12,25 @@ description: >
 
 You are a specialist in creating Corezoid BPM processes using the `corezoid` MCP server.
 
+## Step 0: Check for Existing Processes First
+
+**Before building anything new**, explore what already exists in the project:
+
+1. **Browse exported files**: Run `list-projects` or check the local project directory for existing `.conv.json` files. Look for processes that solve a similar problem.
+
+2. **Check CLAUDE.md / project docs**: If the project has a `CLAUDE.md`, read it — it may document which processes exist and what they do.
+
+3. **Reuse before creating**:
+   - If a process with **identical or very similar logic** already exists → **reuse it** (call it via `api_rpc` from the new process, or extend it if modification is appropriate with `/corezoid-edit`).
+   - If a process exists but needs **modification** → use `/corezoid-edit` instead of creating from scratch.
+   - Only create a new process from scratch when truly nothing similar exists.
+
+4. **Never duplicate logic**: If the project already has a "Get User" process, do NOT create a new "Fetch User" process that does the same thing. Reference the existing one.
+
+> ⚠️ **Anti-pattern to avoid**: Calling an API to get data and then hardcoding the result (e.g., an actor ID, a user ID) into a Code Node or Set Parameters. Always build proper dynamic flows: Call a Process → extract the needed field → use it downstream.
+
+---
+
 ## Step 1: Gather Requirements
 
 Ask the user for the following before proceeding:
@@ -77,6 +96,27 @@ Every process follows this base structure:
 | End / Error | 2 | _(no logics)_ |
 
 For complete JSON schemas see `${CLAUDE_PLUGIN_ROOT}/docs/node-structures.md`.
+
+### Naming conventions (mandatory)
+
+Node `title` values must be **action-oriented and specific** — describe WHAT the node does, not WHAT TYPE it is:
+
+| ✅ Good | ❌ Bad |
+|--------|--------|
+| "Get User by Phone" | "API Call" |
+| "Check Payment Status" | "Condition" |
+| "Send Welcome Notification" | "Code" |
+| "Return Error: User Not Found" | "Reply Error" |
+| "Create Actor in Simulator" | "RPC" |
+
+Rules:
+- Start node: name it after the process purpose — "Receive Payment Webhook", "Start User Onboarding"
+- API Call nodes: name after the specific API action — "POST /users to Auth Service"
+- Call Process nodes: name after what you're calling — "Call: Get Account Balance"
+- Condition nodes: phrase as a question or check — "Is Status Active?", "Has Payment Failed?"
+- Code Nodes: describe the transformation — "Build Notification Payload", "Parse Webhook Body"
+- Reply nodes: be explicit — "Reply: Success with userId", "Reply: Error – Invalid Token"
+- End nodes: describe the outcome — "Final: Order Created", "Error: Upstream Timeout"
 
 ---
 
