@@ -421,6 +421,45 @@ func vGap(p profile, n int) int {
 	return snap(float64(g), p.grid)
 }
 
+// terminalFailureEnds returns the set of node ids that are TERMINAL FAILURE
+// ENDs: role END, no outgoing edge, and every incoming edge is of kind "error"
+// or "timeout" (reached only via err_node_id / a timeout semaphor, never via a
+// primary/cond edge). A success-END reached by a 'go' is excluded; an error
+// node that keeps processing (has out-edges) is excluded; an END with no
+// incoming edges at all is excluded (nothing routes to it as a failure sink).
+//
+// In the author's hand-built KG processes these "process failed, stop" ENDs are
+// parked together in the far-right columns (an "error cemetery"), kept clear of
+// the happy path. assignPositions uses this set to route them to a dedicated
+// rightmost lane instead of packing them into the lowest free mid-layout column.
+func terminalFailureEnds(g *graph) map[string]bool {
+	hasOut := map[string]bool{}
+	for _, e := range g.edges {
+		hasOut[e.src] = true
+	}
+	out := map[string]bool{}
+	for _, id := range g.order {
+		if g.role(id) != "END" || hasOut[id] {
+			continue
+		}
+		inEdges := 0
+		allErr := true
+		for _, e := range g.edges {
+			if e.dst != id {
+				continue
+			}
+			inEdges++
+			if e.kind != "error" && e.kind != "timeout" {
+				allErr = false
+			}
+		}
+		if inEdges > 0 && allErr {
+			out[id] = true
+		}
+	}
+	return out
+}
+
 // assignPositions ports assign_positions: the full layered layout. Returns a
 // map id -> [2]int{x, y}.
 func assignPositions(g *graph, archetype string) map[string][2]int {
@@ -487,6 +526,13 @@ func assignPositions(g *graph, archetype string) map[string][2]int {
 		prevTop = rowTop[r] + rowHeight[r] + gap
 	}
 
+	// Terminal failure ENDs ("error cemetery"): laid out LAST, in a dedicated
+	// rightmost lane. They are skipped by the main column-assignment pass below so
+	// they neither claim a mid-layout column nor push other nodes around; their
+	// row (rank) and therefore their Y is unchanged, so the connector from their
+	// source stays a straight horizontal line to the right.
+	failEnds := terminalFailureEnds(g)
+
 	col := map[string]int{}
 	lowestFree := func(taken map[int]bool, start int) int {
 		c := start
@@ -505,7 +551,12 @@ func assignPositions(g *graph, archetype string) map[string][2]int {
 		var chain []chainEntry
 		var others []string
 
-		rowNodes := append([]string(nil), byRank[r]...)
+		rowNodes := make([]string, 0, len(byRank[r]))
+		for _, nid := range byRank[r] {
+			if !failEnds[nid] { // terminal failure ENDs are placed in the rightmost lane
+				rowNodes = append(rowNodes, nid)
+			}
+		}
 		sort.Strings(rowNodes) // stable by id
 
 		for _, nid := range rowNodes {
@@ -558,6 +609,44 @@ func assignPositions(g *graph, archetype string) map[string][2]int {
 			c := lowestFree(taken, base)
 			col[nid] = c
 			taken[c] = true
+		}
+	}
+
+	// Rightmost lane for terminal failure ENDs. maxCol is the widest column used
+	// by any NON-terminal-failure node; the cemetery starts one lane to its right.
+	// Each failure END keeps its own rank/row (Y unchanged) and takes the lowest
+	// free column >= maxCol+1 WITHIN its rank, so two failure ENDs that share a
+	// rank stack across maxCol+1, maxCol+2, ... rather than colliding. Processed in
+	// (rank,id) order for determinism.
+	if len(failEnds) > 0 {
+		maxCol := 0
+		for _, c := range col {
+			if c > maxCol {
+				maxCol = c
+			}
+		}
+		laneStart := maxCol + 1
+
+		var fe []string
+		for id := range failEnds {
+			fe = append(fe, id)
+		}
+		sort.SliceStable(fe, func(i, j int) bool {
+			if rank[fe[i]] != rank[fe[j]] {
+				return rank[fe[i]] < rank[fe[j]]
+			}
+			return fe[i] < fe[j]
+		})
+		// Per-rank column occupancy so same-rank failure ENDs don't stack on one X.
+		takenByRank := map[int]map[int]bool{}
+		for _, id := range fe {
+			r := rank[id]
+			if takenByRank[r] == nil {
+				takenByRank[r] = map[int]bool{}
+			}
+			c := lowestFree(takenByRank[r], laneStart)
+			col[id] = c
+			takenByRank[r][c] = true
 		}
 	}
 

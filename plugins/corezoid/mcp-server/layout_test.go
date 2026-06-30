@@ -600,3 +600,133 @@ func TestAssignPositionsAdaptiveVStep(t *testing.T) {
 		t.Errorf("100-node chain step=%d want 160 (gap capped)", v)
 	}
 }
+
+// TestErrorTerminalsGoRightmost: a happy-path spine (START s -> logic m1 ->
+// logic m2 -> success END ok) plus one inline NON-terminal branch (cond node c
+// off m1 that flows back into m2) plus TWO terminal error ENDs (e1 hanging off
+// m1 via err, e2 hanging off m2 via err). Both terminal error ENDs must land at
+// a column strictly greater than the max column of every non-terminal node, each
+// on its source's row (same Y as the source -> straight horizontal connector),
+// and the whole layout must have zero rect overlaps.
+func TestErrorTerminalsGoRightmost(t *testing.T) {
+	nodes := []map[string]interface{}{
+		{"id": "s", "obj_type": float64(1), "x": float64(0), "y": float64(0), "condition": map[string]interface{}{
+			"logics": []interface{}{map[string]interface{}{"type": "go", "to_node_id": "m1"}}, "semaphors": []interface{}{}}},
+		// m1: primary -> m2, a cond branch -> c (non-terminal), and an error -> e1.
+		{"id": "m1", "obj_type": float64(0), "x": float64(0), "y": float64(0), "condition": map[string]interface{}{
+			"logics": []interface{}{
+				map[string]interface{}{"type": "go_if_const", "to_node_id": "c"},
+				map[string]interface{}{"type": "api_rpc", "to_node_id": "m2", "err_node_id": "e1"},
+			}, "semaphors": []interface{}{}}},
+		// c: inline branch node that rejoins the spine at m2 (so it is NOT terminal).
+		{"id": "c", "obj_type": float64(0), "x": float64(0), "y": float64(0), "condition": map[string]interface{}{
+			"logics": []interface{}{map[string]interface{}{"type": "go", "to_node_id": "m2"}}, "semaphors": []interface{}{}}},
+		// m2: primary -> ok (success END), and an error -> e2.
+		{"id": "m2", "obj_type": float64(0), "x": float64(0), "y": float64(0), "condition": map[string]interface{}{
+			"logics": []interface{}{
+				map[string]interface{}{"type": "api_rpc", "to_node_id": "ok", "err_node_id": "e2"},
+			}, "semaphors": []interface{}{}}},
+		{"id": "ok", "obj_type": float64(2), "x": float64(0), "y": float64(0), "condition": map[string]interface{}{
+			"logics": []interface{}{}, "semaphors": []interface{}{}}},
+		// terminal error ENDs (no out-edges, reached only via err).
+		{"id": "e1", "obj_type": float64(2), "x": float64(0), "y": float64(0), "condition": map[string]interface{}{
+			"logics": []interface{}{}, "semaphors": []interface{}{}}},
+		{"id": "e2", "obj_type": float64(2), "x": float64(0), "y": float64(0), "condition": map[string]interface{}{
+			"logics": []interface{}{}, "semaphors": []interface{}{}}},
+	}
+	g := buildGraph(nodes)
+	pos := assignPositions(g, "business")
+
+	// terminalFailureEnds must be exactly {e1, e2}.
+	fe := terminalFailureEnds(g)
+	if len(fe) != 2 || !fe["e1"] || !fe["e2"] {
+		t.Fatalf("terminalFailureEnds = %v, want {e1,e2}", fe)
+	}
+
+	// Max column among all NON-terminal-failure nodes.
+	maxNonFail := 0
+	colOf := func(id string) int { return (pos[id][0] - spineX) / 240 }
+	for _, id := range []string{"s", "m1", "m2", "c", "ok"} {
+		// s/ok may carry the +100 startOff if at col 0; strip it before col math.
+		x := pos[id][0]
+		if (g.role(id) == "START" || g.role(id) == "END") && (x-spineX-100)%240 == 0 && x > spineX {
+			x -= 100
+		}
+		c := (x - spineX) / 240
+		if c > maxNonFail {
+			maxNonFail = c
+		}
+	}
+
+	for _, id := range []string{"e1", "e2"} {
+		if c := colOf(id); c <= maxNonFail {
+			t.Errorf("terminal error END %s at col %d; want > maxNonFail col %d", id, c, maxNonFail)
+		}
+	}
+
+	// Each terminal error END shares its source's row (Y) -> straight horizontal.
+	if pos["e1"][1] != pos["m1"][1] {
+		t.Errorf("e1 y=%d want same row as m1 y=%d (straight connector)", pos["e1"][1], pos["m1"][1])
+	}
+	if pos["e2"][1] != pos["m2"][1] {
+		t.Errorf("e2 y=%d want same row as m2 y=%d (straight connector)", pos["e2"][1], pos["m2"][1])
+	}
+
+	// Zero rect overlaps.
+	for _, n := range nodes {
+		id, _ := n["id"].(string)
+		n["x"] = float64(pos[id][0])
+		n["y"] = float64(pos[id][1])
+	}
+	if c := countOverlaps(nodes); c != 0 {
+		for _, n := range nodes {
+			t.Logf("node %v at (%v,%v) rect=%v", n["id"], n["x"], n["y"], rectOf(n))
+		}
+		t.Errorf("rightmost-lane layout left %d overlapping rect pair(s); want 0", c)
+	}
+}
+
+// TestSuccessEndNotTreatedAsError: a success END reached via a 'go' (primary)
+// edge must NOT be routed to the error lane. It stays on the spine and is
+// centered (col 0 -> +startOff), exactly as before this change. An error node
+// that keeps processing (has out-edges) is likewise excluded.
+func TestSuccessEndNotTreatedAsError(t *testing.T) {
+	nodes := []map[string]interface{}{
+		{"id": "s", "obj_type": float64(1), "x": float64(0), "y": float64(0), "condition": map[string]interface{}{
+			"logics": []interface{}{map[string]interface{}{"type": "go", "to_node_id": "m"}}, "semaphors": []interface{}{}}},
+		// m: primary -> ok (success END), error -> recover (which CONTINUES to fin).
+		{"id": "m", "obj_type": float64(0), "x": float64(0), "y": float64(0), "condition": map[string]interface{}{
+			"logics": []interface{}{
+				map[string]interface{}{"type": "api_rpc", "to_node_id": "ok", "err_node_id": "recover"},
+			}, "semaphors": []interface{}{}}},
+		{"id": "ok", "obj_type": float64(2), "x": float64(0), "y": float64(0), "condition": map[string]interface{}{
+			"logics": []interface{}{}, "semaphors": []interface{}{}}},
+		// recover is reached via error but is NOT terminal (it goes to fin), so it
+		// is not a terminal failure END (and it is a logic node, not an END).
+		{"id": "recover", "obj_type": float64(0), "x": float64(0), "y": float64(0), "condition": map[string]interface{}{
+			"logics": []interface{}{map[string]interface{}{"type": "go", "to_node_id": "fin"}}, "semaphors": []interface{}{}}},
+		{"id": "fin", "obj_type": float64(2), "x": float64(0), "y": float64(0), "condition": map[string]interface{}{
+			"logics": []interface{}{}, "semaphors": []interface{}{}}},
+	}
+	g := buildGraph(nodes)
+
+	fe := terminalFailureEnds(g)
+	if fe["ok"] {
+		t.Errorf("success END 'ok' (reached via go) must NOT be a terminal failure END")
+	}
+	if fe["recover"] {
+		t.Errorf("'recover' has out-edges and is LOGIC; must NOT be a terminal failure END")
+	}
+	if fe["fin"] {
+		t.Errorf("'fin' is reached via a primary edge from recover; must NOT be a terminal failure END")
+	}
+	if len(fe) != 0 {
+		t.Errorf("terminalFailureEnds = %v, want empty", fe)
+	}
+
+	pos := assignPositions(g, "business")
+	// ok stays on the spine and centered: col 0 -> x = spineX + startOff = 700.
+	if pos["ok"][0] != spineX+100 {
+		t.Errorf("success END ok x=%d want %d (spine, centered) — not pushed to an error lane", pos["ok"][0], spineX+100)
+	}
+}
