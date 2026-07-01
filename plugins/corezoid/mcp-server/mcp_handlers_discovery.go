@@ -336,6 +336,110 @@ func handleDeleteProject(ctx context.Context, args map[string]interface{}) (stri
 	return fmt.Sprintf("Project #%d moved to Trash.", projectID), false
 }
 
+// handleCreateStage creates a new empty stage (obj_type=3 folder) inside a project.
+// The stage is immediately visible in list-stages. An optional description can be
+// provided — if omitted the stage is created with an empty description.
+func handleCreateStage(ctx context.Context, args map[string]interface{}) (string, bool) {
+	companyID, err := strArg(args, "company_id")
+	if err != nil {
+		return "Error: " + err.Error(), true
+	}
+	projectID, err := intArg(args, "project_id")
+	if err != nil {
+		return "Error: " + err.Error(), true
+	}
+	title, err := strArg(args, "title")
+	if err != nil {
+		return "Error: " + err.Error(), true
+	}
+	description := optStrArg(args, "description")
+
+	op := map[string]any{
+		"type":       "create",
+		"obj":        "stage",
+		"project_id": projectID,
+		"company_id": companyID,
+		"title":      title,
+	}
+	if description != "" {
+		op["description"] = description
+	}
+
+	v := NewValidator(ctx, 0)
+	resp, err := v.req("create_stage", []map[string]any{op})
+	if err != nil {
+		return fmt.Sprintf("Error: %v", err), true
+	}
+	opMap, opErr := firstOp(resp)
+	if opErr != nil {
+		return fmt.Sprintf("Error: %v", opErr), true
+	}
+
+	stageID := int64(0)
+	if f, ok := opMap["obj_id"].(float64); ok {
+		stageID = int64(f)
+	}
+	return fmt.Sprintf("Stage %q created — stage_id=%d, project_id=%d", title, stageID, projectID), false
+}
+
+// handleCloneStage duplicates an existing stage (with all its processes and folders)
+// under a new title in the same project. The Corezoid API /api/2/copy supports
+// obj_type="stage" + obj_to_type="project", which performs the full server-side
+// copy. Returns the new stage_id on success.
+func handleCloneStage(ctx context.Context, args map[string]interface{}) (string, bool) {
+	companyID, err := strArg(args, "company_id")
+	if err != nil {
+		return "Error: " + err.Error(), true
+	}
+	stageID, err := intArg(args, "stage_id")
+	if err != nil {
+		return "Error: " + err.Error(), true
+	}
+	newTitle, err := strArg(args, "new_title")
+	if err != nil {
+		return "Error: " + err.Error(), true
+	}
+
+	// Resolve the project_id for the source stage so the clone lands in the same project.
+	v := NewValidator(ctx, 0)
+	stageInfo, err := v.ShowFolder(stageID)
+	if err != nil {
+		return fmt.Sprintf("Error resolving stage info: %v", err), true
+	}
+	projectID := stageInfo.ParentObjID
+	if projectID == 0 {
+		return fmt.Sprintf("Error: cannot resolve project_id for stage %d", stageID), true
+	}
+
+	op := map[string]any{
+		"obj":              "obj_copy",
+		"obj_type":        "stage",
+		"obj_id":          stageID,
+		"obj_to_type":     "project",
+		"obj_to_id":       projectID,
+		"title":           newTitle,
+		"from_company_id": companyID,
+		"to_company_id":   companyID,
+		"ignore_errors":   false,
+		"async":           false,
+	}
+
+	resp, err := v.req("copy", []map[string]any{op})
+	if err != nil {
+		return fmt.Sprintf("Error: %v", err), true
+	}
+	opMap, opErr := firstOp(resp)
+	if opErr != nil {
+		return fmt.Sprintf("Error: %v", opErr), true
+	}
+
+	newStageID := int64(0)
+	if f, ok := opMap["obj_id"].(float64); ok {
+		newStageID = int64(f)
+	}
+	return fmt.Sprintf("Stage #%d cloned as %q — new_stage_id=%d, project_id=%d", stageID, newTitle, newStageID, projectID), false
+}
+
 // handleShowProject returns a project's stages and short_name plus the parent
 // folder ID. Use list-stages for a richer per-stage view.
 func handleShowProject(ctx context.Context, args map[string]interface{}) (string, bool) {

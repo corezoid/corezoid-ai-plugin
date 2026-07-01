@@ -57,6 +57,8 @@ func (v *Executor) req(method string, ops []map[string]any) (map[string]interfac
 	path := "json"
 	if method == "export_process" {
 		path = "download"
+	} else if method == "copy" {
+		path = "copy"
 	}
 	authURL := fmt.Sprintf("%s/api/2/%s", v.APIUrl, path)
 
