@@ -47,8 +47,8 @@ Apply changes to `PROCESS_PATH`.
 - Every node that can fail must have `err_node_id` — point it **directly at a Final Error node** (`obj_type: 2`) unless the error path needs logic (reply to caller, retry routing). Never create an Escalation node (`obj_type: 3`) that only contains a bare `go` — that is a passthrough anti-pattern flagged by `lint-process`
 - Node IDs must be unique 24-character hex strings: `^[0-9a-f]{24}$`. **Always `pull-process` before editing** and reference only canonical, server-assigned IDs — IDs you invented in a previous push were reassigned by the server and no longer exist. New nodes added now get placeholder IDs that the server will likewise reassign on push. Existing nodes' IDs are preserved. See [Node ID Lifecycle](${CLAUDE_PLUGIN_ROOT}/docs/process/process-development-guide.md#node-id-lifecycle-server-assignment--stability-on-push).
 - Use descriptive node `title` values (e.g., "Call Payment Process", not "RPC")
-- Place new nodes below existing ones, incrementing `y` by 200–250px
-- Position error nodes to the right of their parent (`x + 300`)
+- Node coordinates (`x`/`y`) are managed by the MCP server's **preserve-by-default** layout engine (see `${CLAUDE_PLUGIN_ROOT}/docs/process/node-positioning-best-practices.md`). On `push-process`, only nodes with `x: 0, y: 0` are repositioned; nodes that already have coordinates are left exactly where they are. To insert a new node into an existing process, set its coordinates to `0`/`0` and push — preserve mode will slot it next to its graph neighbours automatically (primary child directly below its parent; branch/error target to the right on the same row). No manual re-flow math is needed.
+- Custom coordinates you set on any node are always respected on subsequent pushes (preserve mode keeps them). To disable layout entirely, set the env var `COREZOID_AUTOLAYOUT=off`. To re-tidy an entire existing process in one shot, use the `layout-process` MCP tool.
 
 ### Variables for constants
 

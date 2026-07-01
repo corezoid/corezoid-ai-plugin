@@ -195,6 +195,52 @@ func handleLintProcess(_ context.Context, args map[string]interface{}) (string, 
 	return FormatLintResult(result), false
 }
 
+// handleLayoutProcess applies a FULL archetype-aware re-layout to a local
+// .conv.json, overwriting every node's x/y, and writes the file back in place.
+// It runs entirely on local files (no server contact). Unlike push-process —
+// which only auto-places brand-new nodes (preserve mode) — this is the explicit
+// "re-tidy the whole process" action.
+func handleLayoutProcess(_ context.Context, args map[string]interface{}) (string, bool) {
+	filePath, err := resolveProcessPath(args, "process_path")
+	if err != nil {
+		return "Error: " + err.Error(), true
+	}
+
+	data, err := os.ReadFile(filePath)
+	if err != nil {
+		return fmt.Sprintf("Error reading process file: %v", err), true
+	}
+
+	var doc map[string]interface{}
+	if err := json.Unmarshal(data, &doc); err != nil {
+		return fmt.Sprintf("Error parsing JSON: %v", err), true
+	}
+
+	scheme, _ := doc["scheme"].(map[string]interface{})
+	if scheme == nil {
+		return "Error: process has no scheme object", true
+	}
+
+	rawNodes, _ := scheme["nodes"].([]interface{})
+	nodeCount := len(rawNodes)
+	if nodeCount == 0 {
+		return "Error: process scheme has no nodes to lay out", true
+	}
+
+	convType, _ := doc["conv_type"].(string)
+	applyLayoutMode(scheme, convType, "full")
+
+	out, err := json.MarshalIndent(doc, "", "  ")
+	if err != nil {
+		return fmt.Sprintf("Error marshaling process: %v", err), true
+	}
+	if err := os.WriteFile(filePath, out, 0644); err != nil {
+		return fmt.Sprintf("Error writing process file: %v", err), true
+	}
+
+	return fmt.Sprintf("Full re-layout applied: %d node(s) repositioned in %s. Run push-process to deploy the new positions.", nodeCount, filePath), false
+}
+
 // handleRunTask deploys the local process, fires a task at it, and reports
 // which node the task settled on. Used to smoke-test a process end-to-end.
 func handleRunTask(ctx context.Context, args map[string]interface{}) (string, bool) {

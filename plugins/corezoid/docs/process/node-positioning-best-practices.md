@@ -2,13 +2,22 @@
 
 ## Overview
 
-This document outlines best practices for positioning and arranging nodes in Corezoid processes.
-Following these guidelines ensures that processes are visually clear, easy to understand, and
-maintainable.
+Starting from plugin v2, the MCP server runs the archetype-aware `applyLayout` engine
+(`plugins/corezoid/mcp-server/layout.go`) automatically on every `push-process`.
+
+**Safe by default — preserve mode.** The engine only places *new* nodes: nodes whose `x` and `y`
+are both `0`. Already-positioned nodes are never moved. This means a model (or human) can set
+precise coordinates for any node and those positions will survive every subsequent push untouched.
+A process built from scratch has all nodes at `0/0`, so it still receives a full clean layout on
+the first push — there is nothing to preserve.
+
+The engine snaps to the grid, guarantees zero overlaps (validated on 596 real processes), and
+keeps connectors straight. This document describes the conventions it applies so that humans and
+the model understand the resulting layout and can control it when needed.
 
 ## Node Dimensions
 
-Corezoid nodes have specific dimensions that should be considered when positioning them:
+Corezoid nodes have specific dimensions that the layout engine accounts for when positioning them:
 
 1. **Start and End Nodes**
 
@@ -29,7 +38,8 @@ Corezoid nodes have specific dimensions that should be considered when positioni
    - Width: 200px
    - Height: approximately **2× the standard height** of the same node type
    - A timer semaphor adds a visible timer block below the node body, roughly doubling the rendered height
-   - Account for this when calculating vertical spacing to the next node — increase the Y gap accordingly
+   - The engine uses a fixed vStep that already accommodates a single-semaphor node; if a node has
+     multiple timers consider opting out and positioning manually
    - Pivot Point: Top-left corner
 
 4. **Nodes with Escalation or Error Links**
@@ -52,8 +62,7 @@ Corezoid nodes have specific dimensions that should be considered when positioni
 
 ## Pivot Points and Their Impact on Positioning
 
-Understanding the pivot point location for different node types is crucial for proper node
-alignment:
+Understanding the pivot point location for different node types is crucial for proper node alignment:
 
 1. **Pivot Point Definition**
 
@@ -72,208 +81,187 @@ alignment:
    - Pivot point is at the top-left corner
    - When aligning these nodes with Start/End nodes, proper offsets must be applied
 
-4. **Alignment Adjustment for Start/End Nodes**
-   - To align a Start/End node with other nodes vertically, add 150px to the X-coordinate of the
-     Start/End node
-   - Example: If regular nodes are at X=500, place the Start/End node at X=600 to achieve visual
-     alignment
+4. **Alignment Adjustment for Start/End Nodes (spine column only)**
+   - The engine shifts Start/End nodes by **+100px on X** when they sit in spine column 0, centering
+     their 56px circle over the 200px-wide column
+   - Example: spine nodes are at X=600; a Start/End in the spine is placed at X=700
 
-## Layout Guidelines
+## Auto-Layout Engine
 
-### Standard Patterns
+### Coordinate Model
 
-1. **Pattern Consistency**
-   - Nodes that implement standard patterns (like API Call with error handling) should maintain
-     standard relative positions
-   - Preserve the established spatial relationships between related nodes
-   - This ensures visual consistency across different processes
-   - Example: Error nodes should always be positioned to the right of their corresponding main nodes
+All coordinates snap to a **20px grid**. The spine column starts at X=600 (a constant named
+`spineX` in `layout.go`). Additional columns step right by a fixed **240px pitch** (the `lanePitch`
+parameter), so column 0 → X=600, column 1 → X=840, column 2 → X=1080, and so on.
 
-### Vertical Flow for Happy Path
+Vertical position is determined by a node's **rank** (row number), multiplied by the adaptive
+`vStep` (see Spacing below), starting from Y=0.
 
-1. **Top-to-Bottom Flow**
+### Flow Direction
 
-   - The main process flow (happy path) should flow vertically from top to bottom
-   - Start node should be at the top of the process
-   - End node(s) should be at the bottom of the process
-   - Maintain consistent vertical spacing between nodes (recommended: 150px)
+The happy path reads **TOP → BOTTOM**. Each node's rank (row) equals its longest weighted path from
+a Start node, where:
 
-2. **Node Alignment**
-   - Align nodes in the happy path along a central vertical axis
-   - This creates a clear visual indication of the primary process flow
+- The **down edge** (the chosen vertical continuation of a node) costs **+1 row**.
+- All other out-edges — branch conditions, `err_node_id` targets, semaphor timeout targets — cost
+  **+0 rows**, so the branch target lands on the same row as its source.
 
-### Horizontal Flow for Exceptions
+The down edge is selected in priority order:
+1. A `go` / primary logic edge, if any.
+2. Otherwise the first `go_if_const` / condition edge.
+3. Otherwise the first edge of any kind.
 
-1. **Error Paths**
+### Column Assignment (Spine and Branches)
 
-   - Position error handling nodes to the right of the main flow
-   - Connect error nodes with horizontal lines from the main flow
-   - Maintain consistent horizontal spacing (recommended: 200px from main flow)
+- **Main flow (spine):** nodes that inherit a down-edge from their parent keep their parent's column
+  (column 0 for the root chain), stepping straight downward.
+- **Branch targets:** a node that is reached via a branch/error/timeout edge — not the chosen down
+  edge of its source — is placed in the **first free column strictly to the right** of its source's
+  column, on the **same row** as that source. It then runs its own vertical sub-chain downward in
+  that column.
+- **Column reuse:** column slots are assigned independently per row, so the total canvas width equals
+  the width of the busiest single row, not the sum of all branches.
 
-2. **Escalation Paths**
+### Start/End Centering
 
-   - Position escalation handling nodes to the right of the main flow
-   - For multiple escalation types, arrange them vertically on the right side
+A Start or End node in spine column 0 is shifted **+100px on X** to center its 56px circle over the
+200px-wide column. Nodes in non-zero columns are not shifted (the engine only adjusts pivot
+alignment for the spine).
 
-3. **Branching Paths**
-   - For condition-based branching, position alternative paths to the right or left
-   - When using multiple branches, consider positioning:
-     - Primary/most common path: continue vertically
-     - Secondary paths: branch to the right
-     - Tertiary paths: branch to the left (if needed)
+### Spacing (Adaptive)
 
-## Spacing and Overlap Prevention
+| Parameter | Value | Notes |
+|-----------|-------|-------|
+| Horizontal column pitch (`lanePitch`) | **240px** | Constant; keeps wide processes compact |
+| Vertical step floor (`vStep` min) | **180px** | Logic node 150px tall + circle-intrusion margin |
+| Vertical step cap (`vStep` max) | **240px** | `180 + 60` |
+| Grid | **20px** | All coordinates rounded to nearest 20px |
 
-1. **Vertical Spacing**
-
-   - Minimum vertical spacing between connected nodes: 200px
-   - For complex processes with many nodes, increase spacing to 300px
-   - For sequential nodes in the main flow, use consistent spacing (recommended: 250px)
-   - When nodes have multiple connections, increase vertical spacing to 350-400px
-   - For Reply-Final node pairs, use at least 200px spacing between them
-
-2. **Horizontal Spacing**
-
-   - Minimum horizontal spacing between parallel flows: 300px
-   - For processes with multiple columns, use at least 300px between columns
-   - Error nodes should be positioned at least 250px to the right/left of the main flow
-   - When nodes have multiple connections to different columns, increase horizontal spacing to 400px
-
-3. **Preventing Overlap**
-   - Nodes should never overlap each other
-   - Connection lines should not cross through nodes
-   - When connection lines must cross, ensure they do so at clear angles
-   - Position nodes to minimize the number of edge crossings
-   - For complex processes, increase vertical and horizontal spacing to reduce edge intersections
-
-## Coordinates System
-
-Corezoid uses an X,Y coordinate system for node positioning:
-
-1. **X-Coordinate**
-
-   - Determines horizontal position (left to right)
-   - Increases as you move right on the canvas
-   - Main flow typically uses consistent X values (e.g., X=500)
-   - Remember that Start/End nodes need an X-offset of +100px for visual alignment with other nodes
-
-2. **Y-Coordinate**
-   - Determines vertical position (top to bottom)
-   - Increases as you move down on the canvas
-   - Sequential nodes typically increment Y by 200-250px
-   - The Y-coordinate is not affected by node type (all pivot points are at the same vertical
-     position)
-
-## Example Coordinates
-
-For a simple linear process with error handling (note the X-offset for Start/End nodes):
+The vertical step adapts to process size:
 
 ```
-Start Node:         X=600, Y=100    # X=600 (not 500) to align with the nodes below
-Validation Node:    X=500, Y=300
-Error Node:         X=800, Y=300
-Processing Node:    X=500, Y=500
-Reply Node:         X=500, Y=700
-End Node:           X=600, Y=850    # X=600 (not 500) to align with the nodes above
+vStep = min(180 + 60, 180 + 20 * floor(max(0, nodes − 8) / 12))
 ```
 
-For a process with condition branching:
+- For processes with 8 or fewer nodes: `vStep = 180px` (minimum, tightest layout).
+- For every 12 nodes above 8, vStep grows by 20px until it reaches the 240px cap.
+- The formula guarantees no vertical overlap: 180px ≥ 150px logic height + 28px circle radius margin.
+- The 240px horizontal pitch guarantees no horizontal overlap: 240px ≥ 200px logic width + 28px
+  circle-intrusion margin from an adjacent Start/End.
+
+### Archetype Detection
+
+The engine detects one of five archetypes from the logic types present in the process. Currently,
+all archetypes share the same spacing profile (the minima above). The detection exists so that
+per-archetype tuning can be added in the future without changing the routing logic.
+
+| Archetype | Detection rule |
+|-----------|---------------|
+| `state` | Process `conv_type` is `"state"` |
+| `receiver` | Has a node with logic type `api_callback` |
+| `api` | Has a node with logic type `api_rpc_reply` |
+| `business` | Has a node with logic type `api_rpc` |
+| `integration` | Has a node with logic type `api` |
+| `default` | None of the above |
+
+Rules are evaluated in the order shown; the first match wins.
+
+### Determinism
+
+The layout is a **pure function** of the graph topology and node count. Re-pushing the same process
+produces byte-for-byte identical coordinates. Nodes are iterated in insertion order and per-row
+lists are sorted by node ID, so the output is stable even if the JSON key order changes.
+
+## Before / After Example
+
+A minimal process with a Start, a Validate step, an Error branch, and a Reply+End, laid out by the
+engine (8 nodes or fewer → `vStep = 180`, `lanePitch = 240`, spine at X=600):
 
 ```
-Start Node:         X=600, Y=100    # X=600 (not 500) to align with the nodes below
-Condition Node:     X=500, Y=300
-True Path Node:     X=500, Y=500
-False Path Node:    X=800, Y=500
-Join Node:          X=500, Y=700
-End Node:           X=600, Y=850    # X=600 (not 500) to align with the nodes above
+Row 0  (Y=0):    Start         X=700, Y=0      ← +100 for center pivot
+Row 1  (Y=180):  Validate      X=600, Y=180    ← spine col 0
+                 Error         X=840, Y=180    ← branch: same row, col 1
+Row 2  (Y=360):  Reply         X=600, Y=360    ← spine continues down
+                 Error-End     X=840, Y=360    ← error sub-chain continues down col 1
+Row 3  (Y=540):  End           X=700, Y=540    ← +100 for center pivot
 ```
+
+Connector shape: **Validate → Reply** is a straight vertical line. **Validate → Error** is a
+straight horizontal line. Each branch sub-chain then runs vertically in its own column — no diagonal
+connectors anywhere.
+
+ASCII sketch (column headers = canvas X values):
+
+```
+        600        840
+         |          |
+Y=0    [Start@700]
+         |
+Y=180  [Validate]--[Error]
+         |              |
+Y=360  [Reply]    [Error-End]
+         |
+Y=540  [End@700]
+```
+
+## Controlling the Layout Mode
+
+The engine only ever writes `x` and `y` on nodes. It never changes logics, semaphors, extra fields,
+IDs, or edges.
+
+Mode is controlled exclusively by the `COREZOID_AUTOLAYOUT` environment variable (case-insensitive,
+trimmed). Set it before starting the MCP server. Three values are recognised:
+
+| Value | Behaviour |
+|-------|-----------|
+| _(unset or anything else)_ | **`preserve`** (default) — only new (0/0) nodes are positioned; existing coordinates are kept |
+| `off` | Layout is disabled entirely; `push-process` leaves all coordinates exactly as they are in the source file |
+| `full` | All nodes are re-laid-out on every push, overwriting existing coordinates |
+
+Examples:
+
+```
+# Disable layout entirely:
+COREZOID_AUTOLAYOUT=off
+
+# Force a full re-tidy on every push:
+COREZOID_AUTOLAYOUT=full
+```
+
+> **Note:** there is no per-process flag. On the real Corezoid platform `web_settings` is always
+> an array (`[[], []]`), never an object, so a property-based flag cannot be stored there.
+> Use the env var or the `layout-process` tool instead.
+
+### On-demand full re-layout: the `layout-process` tool
+
+To apply a full archetype-aware re-layout to a single process without changing the global env var,
+use the `layout-process` MCP tool:
+
+```
+layout-process  process_path: "<PROCESS_PATH>"
+```
+
+This overwrites every node's `x`/`y` with freshly computed positions (same engine as `full` mode)
+and saves the file. Use it whenever you want to tidy an existing process that has drifted from the
+clean spine layout — for example after many incremental edits. It does not push; run `push-process`
+afterwards to deploy the re-tidied layout.
 
 ## Edge Connections and Routing
 
-Corezoid uses Bezier curves for edge connections between nodes. Understanding how these connections
-are rendered helps create clearer process diagrams:
+Corezoid renders edges as smooth Bezier curves. The auto-layout engine positions nodes so that:
 
-1. **Edge Connection Types**
+- **Spine edges** (down the happy path) produce near-vertical straight connectors.
+- **Branch/error/timeout edges** produce near-horizontal connectors because the target lands on the
+  same row as its source, one column to the right.
+- No diagonal connectors appear under the standard layout.
 
-   - Edges are rendered as smooth Bezier curves
-   - Connection points are determined by the port positions (top, bottom, left, right)
-   - Control points for curves are calculated based on the distance between nodes
+For edge routing best practices when opting out and positioning manually:
 
-2. **Minimizing Edge Crossings**
-
-   - Position nodes to minimize the number of edge crossings
-   - Prefer vertical connections for the main flow (top-to-bottom)
-   - Use horizontal connections for branches and error paths
-   - Increase spacing between parallel flows to allow smoother curves
-
-3. **Edge Routing Best Practices**
-
-   - For sequential nodes, maintain consistent vertical alignment to create straight edges
-   - For branching paths, position branch nodes at the same vertical level
-   - When edges must cross, ensure they do so at clear angles (ideally 90 degrees)
-   - For complex processes with many connections, increase both vertical and horizontal spacing
-
-4. **Port Selection**
-   - Connections from the bottom port of one node to the top port of another create the cleanest
-     vertical flows
-   - For error paths, use right/left ports to create horizontal connections
-   - Avoid connecting opposite ports (e.g., left to right) when nodes are close to each other
-
-## Complex Process Layout
-
-For complex processes with multiple branches and error paths:
-
-1. **Use Grid-Based Positioning**
-
-   - Plan node positions on a grid with consistent spacing
-   - Main flow: central column
-   - Primary branches: adjacent columns
-   - Error handling: rightmost columns
-
-2. **Group Related Nodes**
-
-   - Position related nodes in proximity to each other
-   - Use consistent spacing within groups
-
-3. **Visual Separation**
-   - Use increased spacing to separate distinct process sections
-   - Consider adding Comment nodes to label different sections
-
-## Symmetry Principles
-
-Applying symmetry to process layouts creates visually balanced and aesthetically pleasing diagrams:
-
-1. **Balanced Error Handling**
-
-   - Position error nodes symmetrically on both sides of the main flow when possible
-   - For multiple error types, maintain consistent vertical alignment within each side
-   - Example: Validation errors on left, runtime errors on right
-
-2. **Vertical Alignment**
-
-   - Align nodes with similar functions at the same vertical level
-   - For parallel operations, position nodes at the same Y-coordinate
-   - Example: All error nodes for a specific validation step should share the same Y-coordinate
-
-3. **Horizontal Mirroring**
-
-   - When branching occurs, mirror the structure on both sides of the main flow
-   - Use equal distances from the center for nodes with equivalent importance
-   - Example: If condition branches to left and right, use equal horizontal spacing
-
-4. **Consistent Spacing Ratios**
-
-   - Maintain consistent ratios between horizontal and vertical spacing
-   - Recommended ratio: 1:1 or 1.5:1 (horizontal:vertical)
-   - This creates a visually balanced grid pattern
-
-5. **Center Alignment for Start/End Nodes**
-   - Always center the Start node directly above the first process node
-   - Center End nodes below their preceding nodes
-   - This creates a clear visual entry and exit point for the process
-
-
-```
+- Prefer connections from the bottom port of one node to the top port of the next for clean
+  vertical flows.
+- Use the right port for error and branch targets when placing them horizontally.
+- Maintain the 240px column pitch and 180px row pitch as minimum spacings to stay within the
+  overlap-safe zone.
 
 ## Related Documentation
 

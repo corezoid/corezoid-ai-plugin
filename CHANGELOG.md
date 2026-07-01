@@ -1,5 +1,22 @@
 # Changelog
 
+## [Unreleased]
+
+- **Breaking / behaviour change:** auto-layout on `push-process` now runs in **preserve** mode by
+  default. Only newly-added nodes (those with `x: 0` and `y: 0`) are positioned; existing
+  coordinates are never overwritten. Processes built entirely from scratch (all nodes at 0/0) still
+  receive a full clean layout on first push — there is nothing to preserve.
+- **New tool:** `layout-process` (takes `process_path`) applies a full archetype-aware re-layout to
+  an entire process on demand, overwriting all node positions. Use it to tidy an existing process
+  after many incremental edits, then follow with `push-process` to deploy.
+- **Layout mode:** controlled exclusively by the `COREZOID_AUTOLAYOUT` env var:
+  `off` = disable entirely; `full` = re-layout all nodes on every push; anything else / unset =
+  `preserve` (the new default).
+- **Removed:** the `web_settings.autolayout` per-process flag has been removed. On the real
+  Corezoid platform `web_settings` is always an array (`[[], []]`), not an object, so that flag
+  was structurally impossible and never took effect. Use `COREZOID_AUTOLAYOUT=off` or the new
+  `layout-process` tool instead.
+
 ## [2.7.0]
 
 - Feat: AWS Kiro support — the same plugin payload now installs on Kiro alongside Claude Code and Codex via a symmetric overlay (`plugins/corezoid/.kiro-plugin/plugin.json`, `plugins/corezoid/.mcp.kiro.json`, `plugins/corezoid/steering/corezoid.md`, and a root-level `POWER.md` distribution manifest for kiro.dev/powers).
