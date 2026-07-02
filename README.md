@@ -122,6 +122,68 @@ export ACCESS_TOKEN=your_token_here
 | `COREZOID_OAUTH_CLIENT_ID` | No       | OAuth2 client ID — on-prem deployments with a custom authorization server should set this to their own client ID; cloud (account.corezoid.com) users do not need it |
 | `COREZOID_HTTP_PORT`       | No       | Activate the Streamable HTTP transport on this port (e.g. `8080`). When set the server listens for MCP over HTTP instead of stdio — intended for hosted marketplace deployments. Credentials must be pre-configured via env vars; the browser OAuth login flow is not available in HTTP mode |
 
+### Multiple accounts and environments
+
+The plugin registers a single `corezoid` MCP server, and the server holds one login at a time — calling `login` for another account overwrites the saved token. If you work with several Corezoid installations at once (different regions, companies, or dev/prod pairs), switching by re-logging in quickly becomes painful.
+
+Instead, run **one named MCP server instance per environment**. Each instance points at the same bundled server but gets its own `COREZOID_WORK_DIR` — a directory whose `.env` carries that environment's URLs, workspace, stage, and token. Because an `ACCESS_TOKEN` in the work-dir `.env` overrides `~/.corezoid/credentials`, every instance authenticates independently and stays logged in until its own token expires. No re-login when switching — all environments are available in the same session, with tools prefixed per server (`mcp__corezoid-prod__…`, `mcp__corezoid-dev__…`).
+
+1. Create a config directory per environment:
+
+```
+~/.corezoid/dev/.env
+~/.corezoid/prod/.env
+```
+
+Each `.env` contains the full environment config, including its token:
+
+```
+ACCOUNT_URL=https://account.example.com
+COREZOID_API_URL=https://corezoid.example.com
+WORKSPACE_ID=<workspace_id>
+COREZOID_STAGE_ID=<stage_id>
+ACCESS_TOKEN=<token for this environment>
+```
+
+2. Register the extra servers in your MCP host config (Claude Code `.mcp.json`, Claude Desktop `claude_desktop_config.json`, or `claude mcp add`):
+
+```json
+{
+  "mcpServers": {
+    "corezoid-dev": {
+      "command": "sh",
+      "args": ["/path/to/plugin/mcp-server/run.sh"],
+      "env": { "COREZOID_WORK_DIR": "/Users/you/.corezoid/dev" }
+    },
+    "corezoid-prod": {
+      "command": "sh",
+      "args": ["/path/to/plugin/mcp-server/run.sh"],
+      "env": { "COREZOID_WORK_DIR": "/Users/you/.corezoid/prod" }
+    }
+  }
+}
+```
+
+For Claude Code plugin installs the plugin path is versioned (`~/.claude/plugins/cache/corezoid/corezoid/<version>/`), so a hard-coded path breaks on every plugin update. Use a small wrapper that resolves the latest installed version instead:
+
+```sh
+#!/bin/sh
+# corezoid-run.sh — launch the newest installed plugin version
+PLUGIN_BASE="$HOME/.claude/plugins/cache/corezoid/corezoid"
+LATEST=$(ls "$PLUGIN_BASE" 2>/dev/null | sort -t. -k1,1n -k2,2n -k3,3n | tail -1)
+if [ -z "$LATEST" ]; then
+  echo "corezoid plugin not found in $PLUGIN_BASE" >&2
+  exit 1
+fi
+exec sh "$PLUGIN_BASE/$LATEST/mcp-server/run.sh"
+```
+
+Notes:
+
+- The per-instance token is static — the browser OAuth `login` flow saves to the shared `~/.corezoid/credentials`, so for extra instances manage tokens in each `.env` yourself and refresh them there when they expire.
+- Keep the `.env` files outside any git repository — they contain live tokens.
+- The same pattern works for any MCP host that supports per-server `env` in its config.
+
 ## Telemetry
 
 The MCP server collects anonymous usage data (tool name, duration, error type, API hostname) to help improve the plugin. **Tokens, workspace identifiers, process content, and personal data are never sent.**
