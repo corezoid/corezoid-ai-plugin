@@ -197,6 +197,7 @@ validation errors, and summarize what each process does.
 | `pull-folder`       | Export an entire folder/stage to local files       |
 | `pull-process`      | Export a single process to a `.conv.json` file     |
 | `push-process`      | Validate and deploy a `.conv.json` to Corezoid     |
+| `push-folder`       | Validate and deploy every process under a local folder |
 | `lint-process`      | Validate process structure locally (no API call)   |
 | `run-task`          | Send a task to a deployed process                  |
 | `list-node-tasks`   | List tasks currently sitting in a node             |
@@ -266,7 +267,7 @@ Claude Code / Codex
         ├── Auth          login, logout
         ├── Workspace     list-workspaces, list-stages, list-projects,
         │                 create-project, modify-project, delete-project, show-project
-        ├── Processes     pull-process, pull-folder, push-process, lint-process
+        ├── Processes     pull-process, pull-folder, push-process, push-folder, lint-process
         │                 create-process, create-folder, create-alias, create-variable
         │                 show-folder, list-folders, modify-folder, delete-folder, delete-process
         ├── Tasks         run-task, list-node-tasks, list-task-history

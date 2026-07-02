@@ -73,6 +73,19 @@ var toolRegistry = []mcpTool{
 		},
 	},
 	{
+		Name:        "push-folder",
+		Description: "Recursively validate and deploy every process file (*.conv.json) found under a local directory back to Corezoid. Bulk counterpart to push-process — use it to sync a folder previously produced by pull-folder. Continues past per-file failures and reports which files succeeded or failed.",
+		InputSchema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"folder_path": map[string]interface{}{
+					"type":        "string",
+					"description": "Relative path to the local directory to push. Defaults to the current directory.",
+				},
+			},
+		},
+	},
+	{
 		Name:        "lint-process",
 		Description: "Validate process structure. Reports orphaned nodes, noop conditions, and unused set_params.",
 		InputSchema: map[string]interface{}{

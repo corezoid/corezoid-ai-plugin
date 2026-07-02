@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -98,6 +99,48 @@ func TestHandleToolCall_PushProcess_BadFilename(t *testing.T) {
 		t.Error("expected isError=true for filename without ID prefix")
 	}
 	_ = result
+}
+
+// ---- push-folder ------------------------------------------------------------
+
+func TestHandleToolCall_PushFolder_NoConvJSON(t *testing.T) {
+	resetGlobals(t)
+	dir := t.TempDir()
+	// Auth check fires before the directory scan when credentials are missing,
+	// same as push-process — see comment on TestHandleToolCall_PushProcess_BadFilename.
+	result, isErr := handleToolCall(context.Background(), "push-folder", map[string]interface{}{
+		"folder_path": dir,
+	})
+	if !isErr {
+		t.Error("expected isError=true when no .conv.json files are present")
+	}
+	_ = result
+}
+
+func TestCollectConvFiles_FindsNestedProcessesSkipsHidden(t *testing.T) {
+	dir := t.TempDir()
+	sub := filepath.Join(dir, "123_sub")
+	hidden := filepath.Join(dir, ".git")
+	os.MkdirAll(sub, 0755)    //nolint:errcheck
+	os.MkdirAll(hidden, 0755) //nolint:errcheck
+
+	os.WriteFile(filepath.Join(dir, "1_top.conv.json"), []byte(`{}`), 0644)       //nolint:errcheck
+	os.WriteFile(filepath.Join(sub, "2_nested.conv.json"), []byte(`{}`), 0644)    //nolint:errcheck
+	os.WriteFile(filepath.Join(dir, "123_sub.folder.json"), []byte(`{}`), 0644)   //nolint:errcheck
+	os.WriteFile(filepath.Join(hidden, "3_ignored.conv.json"), []byte(`{}`), 0644) //nolint:errcheck
+
+	files, err := collectConvFiles(dir)
+	if err != nil {
+		t.Fatalf("collectConvFiles: %v", err)
+	}
+	if len(files) != 2 {
+		t.Fatalf("expected 2 .conv.json files, got %d: %v", len(files), files)
+	}
+	for _, f := range files {
+		if strings.Contains(f, ".git") {
+			t.Errorf("hidden directory should have been skipped, found %s", f)
+		}
+	}
 }
 
 // ---- pull-process ----------------------------------------------------------
