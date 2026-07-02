@@ -344,6 +344,13 @@ func (validator *Executor) ProcessJSON(filePath, jsonContent string) (newProcess
 		return nil, err
 	}
 
+	// git_call nodes run on a container build service that must finish before
+	// Commit, or Commit rejects them with "source has to be built". Interpreted
+	// runtimes (js) need no build and are skipped inside BuildGitCallNodes.
+	if err = validator.BuildGitCallNodes(nodes); err != nil {
+		return nil, fmt.Errorf("failed to build git_call node(s): %v", err)
+	}
+
 	commitResponse := validator.Commit()
 	if commitResponse == nil {
 		return nil, fmt.Errorf("failed to commit changes: no response from server")
