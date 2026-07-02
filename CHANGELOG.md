@@ -1,5 +1,11 @@
 # Changelog
 
+## [2.8.0]
+
+- Feat: `push-folder` MCP tool — bulk counterpart to `push-process`. Recursively walks a local directory for `*.conv.json` files and deploys each one, so a folder previously produced by `pull-folder` can be synced back to Corezoid in one call. Continues past per-file failures and reports which files succeeded or failed instead of aborting the whole batch.
+- Refactor: extracted the single-file push logic from `handlePushProcess` into a shared `pushProcessFile` helper reused by `push-folder`; `push-process` behavior is unchanged.
+- Docs: `README.md`, main `corezoid` skill, and `public/llms.txt` updated to reference `push-folder` alongside the existing `pull-folder`/`push-process` tools.
+
 ## [2.7.0]
 
 - Feat: AWS Kiro support — the same plugin payload now installs on Kiro alongside Claude Code and Codex via a symmetric overlay (`plugins/corezoid/.kiro-plugin/plugin.json`, `plugins/corezoid/.mcp.kiro.json`, `plugins/corezoid/steering/corezoid.md`, and a root-level `POWER.md` distribution manifest for kiro.dev/powers).

@@ -27,6 +27,7 @@ var toolHandlers = map[string]toolHandler{
 	"pull-folder":          handlePullFolder,
 	"create-variable":      handleCreateVariable,
 	"push-process":         handlePushProcess,
+	"push-folder":          handlePushFolder,
 	"lint-process":         handleLintProcess,
 	"run-task":             handleRunTask,
 	"create-process":       handleCreateProcess,

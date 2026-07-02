@@ -24,6 +24,7 @@ You have access to the Corezoid API via the `corezoid` MCP server.
 | `pull-folder` | Export entire stage/folder to local directory |
 | `pull-process` | Export a single process to a file |
 | `push-process` | Validate and deploy a `.conv.json` file |
+| `push-folder` | Validate and deploy every process under a local folder (bulk push, mirrors `pull-folder`) |
 | `lint-process` | Validate process structure locally (no API needed) |
 | `run-task` | Run a task on an already-deployed process |
 | `create-process` | Create a new empty process (`conv_type: "process"`) in a folder |
@@ -162,6 +163,7 @@ Use the `Read` tool to load these files when you need deeper detail:
 - Node IDs are 24-char hex — generate with `crypto.randomBytes(12).toString('hex')`
 - Variables are workspace-scoped — check `_ENV_VARS_.json` before creating new ones
 - `push-process` is mandatory after any edit — changes exist only in memory until pushed
+- Editing several processes in the same folder? `push-folder` deploys every `.conv.json` under a directory in one call instead of pushing each file individually
 
 ## Proactive improvement/bug reporting
 

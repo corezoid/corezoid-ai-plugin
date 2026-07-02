@@ -141,16 +141,28 @@ func handlePushProcess(ctx context.Context, args map[string]interface{}) (string
 		return "Error: " + err.Error(), true
 	}
 
+	procID, err := pushProcessFile(ctx, filePath)
+	if err != nil {
+		return err.Error(), true
+	}
+
+	return fmt.Sprintf("Process deployed successfully, ProcessID: %d", procID), false
+}
+
+// pushProcessFile validates a single local .conv.json file and deploys it to
+// Corezoid. It's the shared core behind both push-process (one file) and
+// push-folder (every .conv.json file under a directory tree).
+func pushProcessFile(ctx context.Context, filePath string) (int, error) {
 	procID, errMsg := extractProcessIDFromPath(filePath)
 	if errMsg != "" {
-		return errMsg, true
+		return 0, fmt.Errorf("%s", errMsg)
 	}
 
 	v := NewValidator(ctx, procID)
 
 	jsonContent, err := LoadBinFromFile(filePath)
 	if err != nil {
-		return fmt.Sprintf("Error loading JSON file: %v", err), true
+		return 0, fmt.Errorf("error loading JSON file: %v", err)
 	}
 
 	jsonContent1, messages := fixStruct(jsonContent, procID)
@@ -162,23 +174,115 @@ func handlePushProcess(ctx context.Context, args map[string]interface{}) (string
 	if jsonContent1 != jsonContent {
 		jsonContent = jsonContent1
 		if err := os.WriteFile(filePath, []byte(jsonContent), 0644); err != nil {
-			return fmt.Sprintf("Error writing fixed JSON: %v", err), true
+			return 0, fmt.Errorf("error writing fixed JSON: %v", err)
 		}
 	}
 
 	if err := ValidateJSONSchema(filePath, debug); err != nil {
-		return fmt.Sprintf("JSON schema validation failed: %v", err), true
+		return 0, fmt.Errorf("JSON schema validation failed: %v", err)
 	}
 
 	if err := v.BeforeValidation(jsonContent, nil); err != nil {
-		return fmt.Sprintf("Validation failed: %v", err), true
+		return 0, fmt.Errorf("validation failed: %v", err)
 	}
 
 	if _, err := v.ProcessJSON(filePath, jsonContent); err != nil {
-		return fmt.Sprintf("Error deploying process: %v", err), true
+		return 0, fmt.Errorf("error deploying process: %v", err)
 	}
 
-	return fmt.Sprintf("Process deployed successfully, ProcessID: %d", procID), false
+	return procID, nil
+}
+
+// handlePushFolder recursively pushes every process file (*.conv.json) found
+// under folder_path back to Corezoid. It's the bulk counterpart to
+// push-process: where push-process deploys one file, push-folder walks a
+// directory tree (typically one previously produced by pull-folder) and
+// deploys every process it finds, so a locally-edited folder can be synced
+// back in one call.
+//
+// Failures are collected per-file rather than aborting the batch — a single
+// broken process shouldn't block deploying the rest of the folder. The
+// result lists both successes and failures; isError is true if any file
+// failed, so callers can tell a partial push from a clean one.
+func handlePushFolder(ctx context.Context, args map[string]interface{}) (string, bool) {
+	dirPath := resolveDirPath(args, "folder_path")
+
+	files, err := collectConvFiles(dirPath)
+	if err != nil {
+		return fmt.Sprintf("Error scanning folder '%s': %v", dirPath, err), true
+	}
+	if len(files) == 0 {
+		return fmt.Sprintf("No .conv.json files found under %s", dirPath), true
+	}
+
+	type pushOutcome struct {
+		path string
+		id   int
+		err  error
+	}
+	outcomes := make([]pushOutcome, 0, len(files))
+	for _, f := range files {
+		if err := ctx.Err(); err != nil {
+			return fmt.Sprintf("Push cancelled after %d/%d file(s): %v", len(outcomes), len(files), err), true
+		}
+		id, err := pushProcessFile(ctx, f)
+		outcomes = append(outcomes, pushOutcome{path: f, id: id, err: err})
+	}
+
+	succeeded := 0
+	var failures []pushOutcome
+	for _, o := range outcomes {
+		if o.err == nil {
+			succeeded++
+		} else {
+			failures = append(failures, o)
+		}
+	}
+
+	var sb strings.Builder
+	sb.WriteString(fmt.Sprintf("Pushed %d/%d process(es) from %s", succeeded, len(outcomes), dirPath))
+	for _, o := range outcomes {
+		if o.err == nil {
+			sb.WriteString(fmt.Sprintf("\n  OK   %s (ProcessID: %d)", o.path, o.id))
+		}
+	}
+	for _, o := range failures {
+		sb.WriteString(fmt.Sprintf("\n  FAIL %s: %v", o.path, o.err))
+	}
+	return sb.String(), len(failures) > 0
+}
+
+// collectConvFiles walks dir recursively and returns the paths of every file
+// ending in ".conv.json", in deterministic (directory-entry-sorted) order.
+// Hidden directories (leading ".") are skipped so trees like .git or
+// .processes don't get scanned. An unreadable subdirectory is skipped with a
+// warning rather than aborting the whole walk — a permission error on one
+// folder shouldn't block pushing the rest.
+func collectConvFiles(dir string) ([]string, error) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil, err
+	}
+	var out []string
+	for _, e := range entries {
+		p := filepath.Join(dir, e.Name())
+		if e.IsDir() {
+			if strings.HasPrefix(e.Name(), ".") {
+				continue
+			}
+			sub, err := collectConvFiles(p)
+			if err != nil {
+				logger.Warn("push-folder: skipping unreadable directory %s: %v", p, err)
+				continue
+			}
+			out = append(out, sub...)
+			continue
+		}
+		if strings.HasSuffix(e.Name(), ".conv.json") {
+			out = append(out, p)
+		}
+	}
+	return out, nil
 }
 
 // handleLintProcess validates a local .conv.json without touching the server.

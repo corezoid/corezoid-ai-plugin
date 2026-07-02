@@ -31,6 +31,7 @@ The plugin bundles a Go MCP server (`convctl`) with these tools:
 - **pull-process**: Export a single process definition to a local .conv.json file
 - **pull-folder**: Recursively export all processes from a Corezoid folder
 - **push-process**: Validate and deploy a local process file to Corezoid
+- **push-folder**: Recursively validate and deploy every process under a local folder
 - **lint-process**: Validate process structure — orphaned nodes, noop conditions, unused params
 - **run-task**: Execute a task on a deployed Corezoid process
 - **create-process**: Create a new empty process inside a Corezoid folder
