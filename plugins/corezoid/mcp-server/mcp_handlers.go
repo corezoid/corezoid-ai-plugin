@@ -105,6 +105,14 @@ var tokenOnlyTools = map[string]struct{}{
 	"modify-project":  {},
 	"delete-project":  {},
 	"show-project":    {},
+	// These take an explicit folder_id/process_id argument, so they don't need
+	// a configured COREZOID_STAGE_ID — this is what lets a user pull everything
+	// under the workspace's root "Folders" (folder_id=0) without ever picking a
+	// project/stage.
+	"list-folders": {},
+	"show-folder":  {},
+	"pull-folder":  {},
+	"pull-process": {},
 }
 
 // handleToolCall dispatches an MCP tool invocation. ctx must be non-nil — it
@@ -119,6 +127,8 @@ func handleToolCall(ctx context.Context, name string, args map[string]interface{
 	if ctx == nil {
 		ctx = context.Background()
 	}
+
+	refreshAuthStateFromEnv()
 
 	switch {
 	case isInSet(name, noAuthTools):

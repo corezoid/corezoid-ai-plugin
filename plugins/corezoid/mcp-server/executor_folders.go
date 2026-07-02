@@ -68,17 +68,18 @@ func (v *Executor) ShowFolder(folderID int) (*FolderInfo, error) {
 // share the same response slice, distinguished by Obj ("folder" | "conv") and
 // — for convs — ConvType ("process" | "state").
 type FolderChild struct {
-	Obj      string // "folder" | "conv"
+	Obj      string // "folder" | "conv" — read from the item's obj_type string
 	ObjID    int
 	Title    string
-	ObjType  int    // for folders: 0 normal, 2 project, 3 stage
 	ConvType string // for convs only
 	Status   string
 }
 
 // ListFolder returns the immediate children of folderID (subfolders + convs).
-// The Corezoid list-folder endpoint returns a flat slice with each entry
-// tagged by "obj"; this method preserves that shape so callers can filter.
+// Each item in the response's "list" carries its own kind in a per-item
+// string field named "obj_type" ("folder" | "conv") — there is no per-item
+// "obj" key; "obj" only appears once, on the request-echoing wrapper object,
+// and always says "folder" regardless of what's inside.
 func (v *Executor) ListFolder(folderID int) ([]FolderChild, error) {
 	ops := []map[string]any{
 		{
@@ -104,7 +105,7 @@ func (v *Executor) ListFolder(folderID int) ([]FolderChild, error) {
 			continue
 		}
 		child := FolderChild{}
-		if s, ok := m["obj"].(string); ok {
+		if s, ok := m["obj_type"].(string); ok {
 			child.Obj = s
 		}
 		if f, ok := m["obj_id"].(float64); ok {
@@ -112,9 +113,6 @@ func (v *Executor) ListFolder(folderID int) ([]FolderChild, error) {
 		}
 		if s, ok := m["title"].(string); ok {
 			child.Title = s
-		}
-		if f, ok := m["obj_type"].(float64); ok {
-			child.ObjType = int(f)
 		}
 		if s, ok := m["conv_type"].(string); ok {
 			child.ConvType = s
@@ -398,16 +396,27 @@ func (v *Executor) CreateAlias(shortName string, procID, stageID int) (int, erro
 	return 0, fmt.Errorf("create alias: unexpected response format")
 }
 
-// listAliasesByStage returns a map of short_name -> obj_id for all aliases in the given stage.
-func (v *Executor) listAliasesByStage(stage int) (map[string]int, error) {
-	projectID := v.GetProjectIDByStageID(stage)
+// AliasInfo describes one alias record as returned by the "list aliases" API.
+type AliasInfo struct {
+	ShortName string
+	ObjID     int
+	ObjToID   int
+	ObjToType string
+}
+
+// ListAliases returns every alias in the workspace. stage_id/project_id in
+// the request don't actually scope the result — the API returns every alias
+// in the company regardless of what's passed — so this always fetches the
+// full company-wide list; callers that only want aliases relevant to a
+// specific pull (e.g. root Folders) must filter by ObjToID themselves.
+func (v *Executor) ListAliases() ([]AliasInfo, error) {
 	ops := []map[string]any{
 		{
 			"type":       "list",
 			"obj":        "aliases",
 			"company_id": v.WorkspaceID,
-			"stage_id":   stage,
-			"project_id": projectID,
+			"stage_id":   0,
+			"project_id": 0,
 		},
 	}
 	response, err := v.req("json", ops)
@@ -422,20 +431,44 @@ func (v *Executor) listAliasesByStage(stage int) (map[string]int, error) {
 	if !ok || op["proc"] != "ok" {
 		return nil, fmt.Errorf("alias list failed")
 	}
-	result := make(map[string]int)
 	list, _ := op["list"].([]any)
+	out := make([]AliasInfo, 0, len(list))
 	for _, item := range list {
-		itemMap, ok := item.(map[string]any)
+		m, ok := item.(map[string]any)
 		if !ok {
 			continue
 		}
-		sn, _ := itemMap["short_name"].(string)
-		if sn == "" {
+		a := AliasInfo{}
+		if s, ok := m["short_name"].(string); ok {
+			a.ShortName = s
+		}
+		if s := a.ShortName; s == "" {
 			continue
 		}
-		if objID, ok := itemMap["obj_id"].(float64); ok {
-			result[sn] = int(objID)
+		if f, ok := m["obj_id"].(float64); ok {
+			a.ObjID = int(f)
 		}
+		if f, ok := m["obj_to_id"].(float64); ok {
+			a.ObjToID = int(f)
+		}
+		if s, ok := m["obj_to_type"].(string); ok {
+			a.ObjToType = s
+		}
+		out = append(out, a)
+	}
+	return out, nil
+}
+
+// listAliasesByStage returns a map of short_name -> obj_id for all aliases in
+// the workspace (see ListAliases — the API doesn't actually scope by stage).
+func (v *Executor) listAliasesByStage(stage int) (map[string]int, error) {
+	aliases, err := v.ListAliases()
+	if err != nil {
+		return nil, err
+	}
+	result := make(map[string]int, len(aliases))
+	for _, a := range aliases {
+		result[a.ShortName] = a.ObjID
 	}
 	return result, nil
 }

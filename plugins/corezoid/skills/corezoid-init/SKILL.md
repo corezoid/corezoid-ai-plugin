@@ -29,6 +29,17 @@ The `login` tool handles everything automatically in sequence:
 
 When `login` returns "Setup complete", proceed to **Step 2**.
 
+### If the user declines the project picker
+
+Corezoid workspaces have two separate top-level containers, visible side-by-side in the UI sidebar: **Projects** (each with its own stages) and plain **Folders** (folders/processes/state diagrams that live directly under the workspace, outside any Project). If the user clicks **Decline** on the "Select your Corezoid project" form, `login` does not fall through to Projects/Stages — it shows one more confirmation:
+
+> "Pull Corezoid Folders contents?" — Accept / Decline
+
+- **Accept** → `login` immediately pulls everything under the workspace's root Folders (folder_id `0`) — folders, processes, state diagrams, dashboards, and aliases, excluding Projects — and finishes with "Setup complete", reporting how much it found (including whether any aliases exist). No `COREZOID_STAGE_ID` is set or needed for this mode; `pull-folder`, `pull-process`, `list-folders`, and `show-folder` all work with an explicit `folder_id`/`process_id` regardless of whether a stage is configured.
+- **Decline** → nothing happens. `login` finishes with "Setup complete" and no stage is set. Don't offer a manual Stage-ID prompt unless the user asks for one directly.
+
+Once no project/stage is selected, treat the workspace as stage-less for the rest of the session: pull further content directly with `pull-folder(folder_id=<id>)` (root Folders is `folder_id=0`), and note that stage-scoped write operations (e.g. `create-alias`) will still require a real stage/project if the user later needs them.
+
 ---
 
 ## Mode B — Elicitation not supported (chat-based collection)
@@ -49,15 +60,19 @@ The tool opens a browser for OAuth2 authentication and saves the token to `~/.co
 
 → Show the full workspace list to the user. **Ask the user to choose** — do not select automatically.
 
-→ Wait for the user's answer before proceeding.
+→ Wait for the user's answer.
+
+→ **Immediately call `login(workspace_id=<chosen_id>)`** — do this before moving on to B3, even though a full "Setup complete" isn't expected yet (no stage is set). `list-projects` and `pull-folder` don't take a workspace/company argument of their own; they read `WORKSPACE_ID` from the saved config. Skipping this step is the single most common cause of "root Folders came back empty" — `pull-folder(folder_id=0)` in B3 would run against an unset workspace.
 
 ### B3 — Select Project
 
 → Call **`list-projects(company_id=<workspace_id>)`** using the workspace the user chose.
 
-→ Show the full project list to the user. **Ask the user to choose** — do not select automatically.
+→ Show the full project list to the user, and also ask whether they'd rather skip Projects entirely and pull everything under the workspace's root **Folders** instead (folders/processes/state diagrams/dashboards/aliases that live directly under the workspace, outside any Project). **Ask the user to choose** — do not select automatically.
 
-→ Wait for the user's answer before proceeding.
+→ If the user picks "Folders" / declines to pick a project: call `pull-folder(folder_id=0)` directly — this needs only the OAuth token and `WORKSPACE_ID` (already saved in B2), no `COREZOID_STAGE_ID`. Skip B4/B5 and Step 2 entirely; the pull already happened. Note for later in the session: this workspace has no stage/project — further pulls use `pull-folder(folder_id=<id>)` / `pull-process(process_id=<id>)` directly, and stage-scoped write operations (e.g. `create-alias`) will need a real stage if the user picks one later.
+
+→ Otherwise, wait for the user's project choice before proceeding.
 
 ### B4 — Select Stage
 

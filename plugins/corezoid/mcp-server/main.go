@@ -13,6 +13,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"testing"
 
 	"github.com/santhosh-tekuri/jsonschema/v6"
 )
@@ -64,6 +65,47 @@ func withAuthLock(fn func()) {
 	authStateMu.Lock()
 	defer authStateMu.Unlock()
 	fn()
+}
+
+// refreshAuthStateFromEnv re-reads .env and re-syncs the in-memory auth
+// globals from whatever it finds. Only handleLogin used to do this, which is
+// a problem: if more than one server process is alive at once (e.g. the host
+// reconnects/respawns the MCP server without killing the old one), a tool
+// call landing on a process OTHER than the one that just ran login() would
+// otherwise keep serving that process's stale startup-time snapshot forever
+// — WORKSPACE_ID looking "unset" even though .env on disk is correct. Called
+// at the top of every tool call so every process reflects the latest saved
+// config, not just the one that happened to run login most recently.
+func refreshAuthStateFromEnv() {
+	if testing.Testing() {
+		// Tests set up auth state directly (resetGlobals/setProjectAuth) and
+		// run from inside this repo, which has its own real .env a few
+		// directories up — walking up and loading it would clobber whatever
+		// mock state the test just configured.
+		return
+	}
+	findAndLoadDotEnv()
+	withAuthLock(func() {
+		if v := os.Getenv("ACCOUNT_URL"); v != "" {
+			accountURL = v
+		}
+		if v := os.Getenv("COREZOID_API_URL"); v != "" {
+			apiURL = v
+		}
+		if v := os.Getenv("WORKSPACE_ID"); v != "" {
+			workspaceID = v
+		}
+		if v := os.Getenv("COREZOID_STAGE_ID"); v != "" {
+			if id, err := strconv.Atoi(v); err == nil && id != 0 {
+				stageID = id
+			}
+		}
+		if apiToken == "" {
+			if v := os.Getenv("ACCESS_TOKEN"); v != "" {
+				apiToken = v
+			}
+		}
+	})
 }
 
 func loadDotEnv(filename string) {

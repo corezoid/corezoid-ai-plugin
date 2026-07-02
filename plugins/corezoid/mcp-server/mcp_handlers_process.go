@@ -94,11 +94,26 @@ func handlePullProcess(ctx context.Context, args map[string]interface{}) (string
 }
 
 // handlePullFolder recursively downloads a folder (stage) and all its
-// processes/subfolders into the current working directory.
+// processes/subfolders into the current working directory. folder_id 0 is
+// special-cased to mean the workspace's virtual root "Folders" (everything
+// outside any Project) — it isn't a real folder object the export endpoint
+// can address directly, so it's handled by listing + per-child export instead.
 func handlePullFolder(ctx context.Context, args map[string]interface{}) (string, bool) {
 	folderID, err := intArg(args, "folder_id")
 	if err != nil {
 		return "Error: " + err.Error(), true
+	}
+
+	if folderID == 0 {
+		count, aliasWarning, err := downloadRootFoldersRecursively(ctx, ".")
+		if err != nil {
+			return fmt.Sprintf("Error fetching root Folders: %v", err), true
+		}
+		if count == 0 {
+			return "Root Folders came back empty (0 items). If you expected content there, WORKSPACE_ID is probably not set correctly — check with list-workspaces and re-run login(workspace_id=<id>).", false
+		}
+		msg := fmt.Sprintf("Root Folders (excluding Projects) saved to current directory (%d item(s)). %s", count, aliasWarning)
+		return msg, false
 	}
 
 	v := NewValidator(ctx, 0)
