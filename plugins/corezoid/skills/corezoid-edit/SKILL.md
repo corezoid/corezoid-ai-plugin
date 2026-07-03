@@ -82,6 +82,23 @@ For complete JSON structures see `${CLAUDE_PLUGIN_ROOT}/docs/node-structures.md`
 
 ---
 
+## Pre-Deploy Sync Check (MANDATORY)
+
+**Before calling `push-process`**, always ask the user:
+
+> "Вносили ли вы или кто-то ещё изменения в этот процесс через веб-интерфейс Corezoid после последнего pull? (да/нет)"
+
+- **If "no"** — proceed directly to Step 3 (Deploy).
+- **If "yes"**:
+  1. Note all edits you applied to `PROCESS_PATH` in the current session — you will need to re-apply them after pulling.
+  2. Extract the process ID from `PROCESS_PATH` (the numeric prefix, e.g. `115` from `115_payment.conv.json`).
+  3. Call `pull-process(process_id=<ID>)` to overwrite the local file with the latest server version (which includes the user's UI changes).
+  4. Re-apply your edits from the current session on top of the freshly-pulled file.
+  5. Confirm with the user: "Я загрузил актуальную версию с сервера — ваши правки из UI теперь в файле. Мои изменения переприменены. Готов к деплою — продолжаем?" Wait for confirmation before proceeding.
+  6. Proceed to Step 3 (Deploy) after the user confirms.
+
+---
+
 ## Step 3: Deploy the Changes
 
 **MANDATORY: Always run this step whenever any changes were made to the process file — even if there are open questions or the work is not fully complete. Without deploying, all changes are lost.**
