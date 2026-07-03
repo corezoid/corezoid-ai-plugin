@@ -84,18 +84,25 @@ For complete JSON structures see `${CLAUDE_PLUGIN_ROOT}/docs/node-structures.md`
 
 ## Pre-Deploy Sync Check (MANDATORY)
 
+> ⚠️ **Version note**: `pull-process` always exports the **last deployed (committed) version** of a process. Auto-saved drafts from the Corezoid web editor are not captured — only changes that were explicitly deployed via the **Deploy** button in the UI are visible to `pull-process`.
+
 **Before calling `push-process`**, always ask the user:
 
 > "Вносили ли вы или кто-то ещё изменения в этот процесс через веб-интерфейс Corezoid после последнего pull? (да/нет)"
 
 - **If "no"** — proceed directly to Step 3 (Deploy).
-- **If "yes"**:
-  1. Note all edits you applied to `PROCESS_PATH` in the current session — you will need to re-apply them after pulling.
-  2. Extract the process ID from `PROCESS_PATH` (the numeric prefix, e.g. `115` from `115_payment.conv.json`).
-  3. Call `pull-process(process_id=<ID>)` to overwrite the local file with the latest server version (which includes the user's UI changes).
-  4. Re-apply your edits from the current session on top of the freshly-pulled file.
-  5. Confirm with the user: "Я загрузил актуальную версию с сервера — ваши правки из UI теперь в файле. Мои изменения переприменены. Готов к деплою — продолжаем?" Wait for confirmation before proceeding.
-  6. Proceed to Step 3 (Deploy) after the user confirms.
+- **If "yes"** — ask a follow-up before acting:
+  > "Были ли эти изменения задеплоены через кнопку **Deploy** в веб-интерфейсе, или они сохранены только как черновик (автосохранение)?"
+  - **If deployed (committed via Deploy button)**:
+    1. Note all edits you applied to `PROCESS_PATH` in the current session — you will need to re-apply them after pulling.
+    2. Extract the process ID from `PROCESS_PATH` (the numeric prefix, e.g. `115` from `115_payment.conv.json`).
+    3. Call `pull-process(process_id=<ID>)` to overwrite the local file with the latest deployed version.
+    4. Re-apply your edits from the current session on top of the freshly-pulled file.
+    5. Confirm with the user: "Я загрузил актуальную задеплоенную версию с сервера — ваши правки из UI теперь в файле. Мои изменения переприменены. Готов к деплою — продолжаем?" Wait for confirmation before proceeding.
+    6. Proceed to Step 3 (Deploy) after the user confirms.
+  - **If undeployed draft (auto-saved only, not yet deployed)**:
+    ⚠️ Warn the user: "Ваши правки в редакторе Corezoid сохранены как черновик, но ещё не задеплоены. `pull-process` не захватывает черновики — он видит только задеплоенную версию. Если мы задеплоим сейчас через Claude Code, ваши черновики из UI будут перезаписаны. Рекомендую сначала нажать **Deploy** в веб-интерфейсе Corezoid, затем выполнить pull снова. Как хотите поступить?"
+    Wait for the user's decision and follow their instruction.
 
 ---
 

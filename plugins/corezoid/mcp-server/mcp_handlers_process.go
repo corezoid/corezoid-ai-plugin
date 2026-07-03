@@ -90,7 +90,13 @@ func handlePullProcess(ctx context.Context, args map[string]interface{}) (string
 	if err := os.WriteFile(filePath, data, 0644); err != nil {
 		return fmt.Sprintf("Error writing file: %v", err), true
 	}
-	return fmt.Sprintf("Process %d saved to %s", processID, filePath), false
+	return fmt.Sprintf(
+		"Process %d saved to %s\n\n"+
+			"Note: this is the last *deployed* (committed) version. "+
+			"Auto-saved drafts from the Corezoid web editor are not included — "+
+			"only the state after the last Deploy button click in the UI is exported.",
+		processID, filePath,
+	), false
 }
 
 // handlePullFolder recursively downloads a folder (stage) and all its
