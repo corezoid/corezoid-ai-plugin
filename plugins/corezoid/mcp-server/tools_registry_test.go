@@ -76,7 +76,13 @@ func TestSkillPathsExist(t *testing.T) {
 		matches := re.FindAllSubmatch(data, -1)
 		for _, m := range matches {
 			relPath := string(m[1])
-			absPath := filepath.Join(pluginRoot, relPath)
+			// Strip Markdown anchor fragments (#section-name) before checking
+			// file existence — the file itself is what must exist, not the anchor.
+			filePath := relPath
+			if idx := strings.IndexByte(filePath, '#'); idx >= 0 {
+				filePath = filePath[:idx]
+			}
+			absPath := filepath.Join(pluginRoot, filePath)
 			if _, err := os.Stat(absPath); os.IsNotExist(err) {
 				t.Errorf("%s/SKILL.md: references non-existent path ${CLAUDE_PLUGIN_ROOT}/%s (resolved: %s)",
 					entry.Name(), relPath, absPath)
