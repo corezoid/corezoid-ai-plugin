@@ -8,10 +8,44 @@ import (
 	"time"
 )
 
+// gitCallLang is one language case for the multi-language build test. The Code
+// field doubles as living documentation of the git_call handler contract for
+// each supported runtime — it is exactly what a user writes in a git_call node.
+type gitCallLang struct {
+	lang string
+	code string
+	want string // the value handle() must place in data["r"]
+}
+
+// gitCallLangs covers several runtimes end-to-end. Each is built on the
+// container build service and run, and the Code is exactly what a user writes in
+// a git_call node — so this table doubles as a per-language usage reference.
+// (Go is exercised via repo mode / go.mod elsewhere: an inline Go snippet can't
+// resolve the external gitcall-go-runner import without a module file.)
+var gitCallLangs = []gitCallLang{
+	{
+		lang: "js",
+		code: "module.exports = (data) => { data.r = 'js-ok'; return data; };",
+		want: "js-ok",
+	},
+	{
+		lang: "python",
+		code: "def handle(data):\n    data['r'] = 'python-ok'\n    return data\n",
+		want: "python-ok",
+	},
+	{
+		lang: "php",
+		code: "<?php\nfunction handle($data) {\n    $data['r'] = 'php-ok';\n    return $data;\n}\n",
+		want: "php-ok",
+	},
+}
+
 // TestGitCallBuildIntegration exercises the real push build path
 // (modify -> BuildGitCallNodes over the live WebSocket -> Commit -> run) against
-// a live Corezoid workspace. It is skipped unless COREZOID_GITCALL_IT=1 and the
-// connection env is present, so `go test ./...` stays offline/deterministic.
+// a live Corezoid workspace, once per supported language (js, python, go, php).
+// It both proves multi-language build/deploy works and documents each runtime's
+// handler contract. Skipped unless COREZOID_GITCALL_IT=1 and the connection env
+// is present, so `go test ./...` stays offline/deterministic.
 //
 // Required env:
 //
@@ -47,38 +81,36 @@ func TestGitCallBuildIntegration(t *testing.T) {
 		Version:     int(time.Now().Unix()),
 		NodeIDMap:   map[string]NodeInfo{},
 	}
-	first := func(m map[string]interface{}) map[string]interface{} {
-		if ops, ok := m["ops"].([]interface{}); ok && len(ops) > 0 {
-			if x, ok := ops[0].(map[string]interface{}); ok {
-				return x
-			}
-		}
-		return map[string]interface{}{}
-	}
 
-	// Discard any leftover uncommitted draft so version/commit is clean.
-	if lst, err := v.req("it_list", []map[string]any{{"type": "list", "obj": "conv", "obj_id": conv, "company_id": ws}}); err == nil {
-		if cm, ok := first(lst)["commits"].(map[string]interface{}); ok {
-			if ver, ok := cm["version"].(float64); ok && ver > 0 {
-				_, _ = v.req("it_del", []map[string]any{{"type": "delete", "obj": "commits", "company_id": ws, "conv_id": conv, "version": int(ver)}})
-			}
-		}
+	for _, c := range gitCallLangs {
+		c := c
+		t.Run(c.lang, func(t *testing.T) {
+			deployAndRunGitCall(t, v, conv, ws, start, final, c)
+		})
 	}
+}
 
-	// Create a fresh python git_call node (compiled -> requires a real build).
-	code := "import base64\ndef handle(data):\n    data['result']='it-'+base64.b64encode(b'ok').decode()\n    return data\n"
-	localID := "it-gitcall-node"
+// deployAndRunGitCall creates a fresh git_call node for one language, builds it
+// over the live WebSocket (a no-op for interpreted runtimes), commits, fires a
+// task and asserts handle() ran — the exact path push-process takes for a
+// git_call node. Create + modify + build + commit all share one version so the
+// draft is consistent.
+func deployAndRunGitCall(t *testing.T, v *Executor, conv int, ws, start, final string, c gitCallLang) {
+	v.Version = int(time.Now().Unix())
+	gitCallDiscardDraft(v, conv, ws)
+
+	localID := "it-gitcall-" + c.lang
 	cr, err := v.req("it_create", []map[string]any{{"id": localID, "type": "create", "obj": "node", "conv_id": conv, "title": "it-gitcall", "obj_type": 0, "version": v.Version}})
 	if err != nil {
-		t.Fatalf("create node: %v", err)
+		t.Fatalf("[%s] create node: %v", c.lang, err)
 	}
-	serverID, _ := first(cr)["obj_id"].(string)
+	serverID, _ := gitCallFirstOp(cr)["obj_id"].(string)
 	if serverID == "" {
-		t.Fatalf("no server node id in create response: %v", cr)
+		t.Fatalf("[%s] no server node id in create response: %v", c.lang, cr)
 	}
 	v.NodeIDMap[localID] = NodeInfo{ServerID: serverID}
 
-	gitLogic := map[string]any{"type": "git_call", "version": 2, "lang": "python", "code": code, "src": code,
+	gitLogic := map[string]any{"type": "git_call", "version": 2, "lang": c.lang, "code": c.code, "src": c.code,
 		"repo": "", "commit": "", "path": "", "script": "", "log": map[string]any{}, "err_node_id": final, "code_error": false}
 	if _, err := v.req("it_modify", []map[string]any{
 		{"type": "modify", "obj": "node", "obj_id": serverID, "company_id": ws, "conv_id": conv, "title": "it-gitcall", "obj_type": 0, "options": nil,
@@ -86,44 +118,66 @@ func TestGitCallBuildIntegration(t *testing.T) {
 		{"type": "modify", "obj": "node", "obj_id": start, "company_id": ws, "conv_id": conv, "title": "Start", "obj_type": 1, "options": nil,
 			"logics": []any{map[string]any{"type": "go", "to_node_id": serverID}}, "semaphors": []any{}, "extra": map[string]any{"modeForm": "expand", "icon": ""}, "version": v.Version},
 	}); err != nil {
-		t.Fatalf("modify nodes: %v", err)
+		t.Fatalf("[%s] modify nodes: %v", c.lang, err)
 	}
 
-	// The unit under test: build the compiled git_call node over the live WS.
+	// The unit under test: build the git_call node the way push-process does.
 	nodes := []interface{}{map[string]interface{}{
 		"id": localID, "title": "it-gitcall",
 		"condition": map[string]interface{}{"logics": []interface{}{gitLogic}},
 	}}
 	buildStart := time.Now()
 	if err := v.BuildGitCallNodes(nodes); err != nil {
-		t.Fatalf("BuildGitCallNodes: %v", err)
+		t.Fatalf("[%s] BuildGitCallNodes: %v", c.lang, err)
 	}
-	t.Logf("git_call build finished in %s", time.Since(buildStart).Round(time.Second))
+	t.Logf("[%s] build finished in %s", c.lang, time.Since(buildStart).Round(time.Second))
 
-	if resp := v.Commit(); resp == nil || first(resp)["proc"] == "error" {
-		t.Fatalf("commit rejected after build: %v", resp)
+	if resp := v.Commit(); resp == nil || gitCallFirstOp(resp)["proc"] == "error" {
+		t.Fatalf("[%s] commit rejected after build: %v", c.lang, resp)
 	}
 
-	// Run a task through the node and confirm handle() executed.
-	ref := "it-run-" + strconv.FormatInt(time.Now().Unix(), 10)
+	ref := c.lang + "-it-" + strconv.FormatInt(time.Now().UnixNano(), 10)
 	if _, err := v.req("it_task", []map[string]any{{"type": "create", "obj": "task", "conv_id": conv, "ref": ref, "data": map[string]any{"in": "x"}}}); err != nil {
-		t.Fatalf("create task: %v", err)
+		t.Fatalf("[%s] create task: %v", c.lang, err)
 	}
-	for i := 0; i < 10; i++ {
+	for i := 0; i < 12; i++ {
 		time.Sleep(3 * time.Second)
 		g, err := v.req("it_show", []map[string]any{{"type": "show", "obj": "task", "conv_id": conv, "ref": ref}})
 		if err != nil {
 			continue
 		}
-		if data, ok := first(g)["data"].(map[string]interface{}); ok {
-			if res, ok := data["result"].(string); ok && res != "" {
-				if res != "it-b2s=" {
-					t.Fatalf("unexpected handle() result: %q", res)
+		if data, ok := gitCallFirstOp(g)["data"].(map[string]interface{}); ok {
+			if res, ok := data["r"].(string); ok && res != "" {
+				if res != c.want {
+					t.Fatalf("[%s] unexpected handle() result: got %q, want %q", c.lang, res, c.want)
 				}
-				t.Logf("✅ git_call executed end-to-end: result=%q", res)
+				t.Logf("✅ [%s] git_call executed end-to-end: r=%q", c.lang, res)
 				return
 			}
 		}
 	}
-	t.Fatal("task did not produce a git_call result in time")
+	t.Fatalf("[%s] task did not produce a git_call result in time", c.lang)
+}
+
+// gitCallDiscardDraft drops any leftover uncommitted draft so the next commit is clean.
+func gitCallDiscardDraft(v *Executor, conv int, ws string) {
+	lst, err := v.req("it_list", []map[string]any{{"type": "list", "obj": "conv", "obj_id": conv, "company_id": ws}})
+	if err != nil {
+		return
+	}
+	if cm, ok := gitCallFirstOp(lst)["commits"].(map[string]interface{}); ok {
+		if ver, ok := cm["version"].(float64); ok && ver > 0 {
+			_, _ = v.req("it_del", []map[string]any{{"type": "delete", "obj": "commits", "company_id": ws, "conv_id": conv, "version": int(ver)}})
+		}
+	}
+}
+
+// gitCallFirstOp returns ops[0] of a Corezoid API response, or an empty map.
+func gitCallFirstOp(m map[string]interface{}) map[string]interface{} {
+	if ops, ok := m["ops"].([]interface{}); ok && len(ops) > 0 {
+		if x, ok := ops[0].(map[string]interface{}); ok {
+			return x
+		}
+	}
+	return map[string]interface{}{}
 }

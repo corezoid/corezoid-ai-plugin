@@ -147,13 +147,15 @@ support in this plugin). Just author the node like any other and push:
 
 1. Add a node whose logic `type` is `git_call`, set `lang` and either `code`
    (inline) or `repo`/`commit`/`path`/`script` (Git Repo).
-2. `push-process` — it uploads the source, builds the container when the runtime
-   needs one, and commits. Interpreted runtimes (JavaScript) skip the build.
+2. `push-process` — it uploads the source, builds the container on the build
+   service, and commits. Every runtime (JavaScript included) is built before the
+   commit; JavaScript just builds fastest (a few seconds) since it installs no
+   compiler toolchain.
 
-Compiled runtimes take ~20–120 s on the first build (dependency install), then
-build from cache. `run-task` reports the task settling on a non-final node while
-the build runs — that is expected; the result merges into the task payload
-asynchronously.
+Builds take ~5 s (JavaScript) to ~20–120 s (compiled runtimes, first build with
+dependency install), then build from cache. `run-task` reports the task settling
+on a non-final node while the build runs — that is expected; the result merges
+into the task payload asynchronously.
 
 Override the build endpoint for on-prem installs with `COREZOID_WS_URL`.
 
