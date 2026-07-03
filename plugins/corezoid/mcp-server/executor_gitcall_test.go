@@ -76,7 +76,7 @@ func TestNewBuildID(t *testing.T) {
 }
 
 func TestGitCallNeedsBuild(t *testing.T) {
-	cases := map[string]bool{"js": false, "JS": false, "": false, "python": true, "golang": true, "php": true, "java": true}
+	cases := map[string]bool{"js": true, "JS": true, "python": true, "golang": true, "php": true, "java": true, "": false}
 	for lang, want := range cases {
 		if got := (gitCallBuild{lang: lang}).needsBuild(); got != want {
 			t.Errorf("needsBuild(lang=%q) = %v, want %v", lang, got, want)
@@ -119,8 +119,8 @@ func TestCollectGitCallBuilds(t *testing.T) {
 	if got[1].nodeServerID != "local-2" { // no NodeIDMap entry -> falls back to local id
 		t.Errorf("second build server id = %q, want fallback local-2", got[1].nodeServerID)
 	}
-	if got[1].needsBuild() {
-		t.Errorf("js must not need build")
+	if !got[1].needsBuild() {
+		t.Errorf("js must need a container build")
 	}
 	if got[1].repo != "https://x/y.git" || got[1].commit != "main" {
 		t.Errorf("repo-mode fields lost: %+v", got[1])

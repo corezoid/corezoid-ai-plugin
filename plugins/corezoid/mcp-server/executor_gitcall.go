@@ -33,8 +33,10 @@ const (
 	gitCallWSHandshakeTimeout = 15 * time.Second
 )
 
-// interpretedGitCallLangs need no container build.
-var interpretedGitCallLangs = map[string]bool{"js": true, "": true}
+// interpretedGitCallLangs need no container build. Only an unset lang is treated
+// as a non-git_call/no-build block; every real runtime (js included) is built on
+// the container build service before commit.
+var interpretedGitCallLangs = map[string]bool{"": true}
 
 // gitCallBuild is the resolved, build-relevant view of one git_call logic block.
 type gitCallBuild struct {
