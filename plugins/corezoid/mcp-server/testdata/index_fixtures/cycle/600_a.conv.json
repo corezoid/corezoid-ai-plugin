@@ -1,0 +1,23 @@
+{
+  "obj_type": 1,
+  "obj_id": 600,
+  "title": "A",
+  "conv_type": "process",
+  "status": "active",
+  "scheme": {
+    "nodes": [
+      {
+        "id": "ffff000000000000000000f1",
+        "title": "Start",
+        "obj_type": 1,
+        "condition": {"logics": [{"type": "go", "to_node_id": "ffff000000000000000000f2"}]}
+      },
+      {
+        "id": "ffff000000000000000000f2",
+        "title": "Call B",
+        "obj_type": 0,
+        "condition": {"logics": [{"type": "api_rpc", "conv_id": 601}]}
+      }
+    ]
+  }
+}

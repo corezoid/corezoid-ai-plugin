@@ -1,0 +1,23 @@
+{
+  "obj_type": 1,
+  "obj_id": 400,
+  "title": "test_playground",
+  "conv_type": "process",
+  "status": "active",
+  "scheme": {
+    "nodes": [
+      {
+        "id": "dddd000000000000000000d1",
+        "title": "Start",
+        "obj_type": 1,
+        "condition": {"logics": [{"type": "go", "to_node_id": "dddd000000000000000000d2"}]}
+      },
+      {
+        "id": "dddd000000000000000000d2",
+        "title": "End",
+        "obj_type": 2,
+        "condition": {"logics": []}
+      }
+    ]
+  }
+}

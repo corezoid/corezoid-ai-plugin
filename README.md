@@ -17,6 +17,7 @@ The plugin bundles a Go MCP server that exposes Corezoid operations as MCP tools
 | `corezoid-review`              | "review", "audit", "check" a process     | Analysis, dead code, best-practice violations     |
 | `corezoid-project-review`      | "review project", "audit folder"         | Cross-process audit of an entire folder           |
 | `corezoid-stage-scan`          | "scan stage", "check stage before merge", "why does the merge fail" | Offline pre-merge validation of exported stage `.zip`s: non-active/empty processes, broken node links, broken/inactive `conv_id` refs |
+| `corezoid-index`               | "index project", "build project index", "who calls process X" | Build/refresh `.corezoid/project-map.json` — persistent call graph, env-var usage, config-reference task contents, security hotspots |
 | `corezoid-dashboard-manager`   | "create dashboard", "add chart", "visualize metrics" | Dashboards, charts, node metrics, real-time monitoring |
 | `corezoid-process-tech-writer` | "document", "write docs", "describe process" | Markdown docs + enriched JSON with node descriptions |
 
@@ -198,6 +199,8 @@ validation errors, and summarize what each process does.
 | `pull-process`      | Export a single process to a `.conv.json` file     |
 | `push-process`      | Validate and deploy a `.conv.json` to Corezoid     |
 | `lint-process`      | Validate process structure locally (no API call)   |
+| `build-project-index` | Build/refresh `.corezoid/project-map.json`, `QUERIES.md`, and CLAUDE.md auto-block for the pulled project (no API call). Pass `mode="check"` to detect staleness without rebuilding |
+| `describe-process`  | Resolve a process identifier (conv_id/alias/title) against the project index and return path + calls_in count + staleness in one call |
 | `run-task`          | Send a task to a deployed process                  |
 | `list-node-tasks`   | List tasks currently sitting in a node             |
 | `list-task-history` | Show task execution history                        |

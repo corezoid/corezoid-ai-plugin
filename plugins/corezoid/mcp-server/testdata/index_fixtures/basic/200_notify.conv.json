@@ -1,0 +1,25 @@
+{
+  "obj_type": 1,
+  "obj_id": 200,
+  "title": "notify: send",
+  "conv_type": "process",
+  "status": "active",
+  "scheme": {
+    "nodes": [
+      {
+        "id": "bbbb000000000000000000b1",
+        "title": "Start",
+        "obj_type": 1,
+        "condition": {"logics": [{"type": "go", "to_node_id": "bbbb000000000000000000b2"}]}
+      },
+      {
+        "id": "bbbb000000000000000000b2",
+        "title": "GetPaymentTask",
+        "obj_type": 0,
+        "condition": {"logics": [
+          {"type": "api_get_task", "conv_id": 100, "node_id": "aaaa000000000000000000a2"}
+        ]}
+      }
+    ]
+  }
+}

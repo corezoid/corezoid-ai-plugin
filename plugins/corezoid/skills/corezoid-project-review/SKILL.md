@@ -28,8 +28,12 @@ Read `.env` from the current working directory and check for `COREZOID_STAGE_ID`
 
 ### Step 0.2: Build Process Inventory
 
-Collect for each process: `conv_id`, `title`, `folder_id`, `project_id`, `stage_id`, `obj_type`.
-Store as `process_inventory[]`. Skip objects where `obj_type != conveyor` unless explicitly requested.
+**Prefer the index over full re-pull.** If `.corezoid/project-map.json` exists, use it as the process inventory — one file read gives you every `conv_id`, `title`, folder breadcrumb, node count, and status without any `pull-process` calls. This is the reason the index exists.
+
+- Call MCP tool **`build-project-index`** with `mode: "check"` first. If the report says "up-to-date", the index is safe to use. If any files diverged (`changed`/`added`/`removed`), call `build-project-index` with no arguments to refresh, then continue. If either tool errors, or the index doesn't exist, fall back to the legacy path: `pull-process` per known process to reconstruct the inventory.
+- Read `.corezoid/project-map.json`. `processes{}` is `process_inventory[]` in map form (conv_id keyed). Skip entries where `conv_type == "state"` unless explicitly requested — state stores are audited under Phase 2 alias/cross-process analysis instead of per-process audit.
+
+Store as `process_inventory[]`. Only fall back to `pull-process`-based inventory building when the index is unavailable or the fallback was requested explicitly.
 
 ### Step 0.3: Announce Scope
 
@@ -76,14 +80,26 @@ Requires all `process_reports[]` from Phase 1.
 
 ### Step 2.1: Dependency Graph
 
-Build a directed graph — nodes: all processes; edges: every `api_rpc` / `api_copy` call between them.
+**Prefer the index over reconstruction.** If `.corezoid/project-map.json` is available and fresh (from Step 0.2), take the dependency graph directly from it — no pass over `.conv.json` files is needed:
+
+- Edges → `.edges` (each element has `from`, `to`, `type`, optional `mode` for `api_copy` and `via_alias`; type is one of `api_rpc`, `api_copy`, `api_get_task`)
+- Fan-in / fan-out → `.graph_stats.fan_in` / `.graph_stats.fan_out` per conv_id
+- High fan-in / fan-out — `.graph_stats.high_fan_in` / `.graph_stats.high_fan_out` (thresholds > 5 / > 7)
+- Cycles → `.graph_stats.cycles` (each is a normalised list of conv_ids)
+- Orphaned candidates → `.graph_stats.orphaned` (each with `suspicious_name: bool`)
+- Entry points → `.graph_stats.entry_points`
+- External `conv_id` references → `.unresolved_targets` (conv_ids referenced but not in this project inventory)
+
+**Do not interpret an empty `state_stores[cid].written_by` as `orphaned`.** State stores (`conv_type == "state"`) are excluded from the orphaned heuristic by construction — a state store with no writers is a legitimate read-only lookup, not dead code. This is a deliberate design choice in the index; treat `state_stores` and `orphaned` as unrelated signals.
 
 Flag:
-- ⚠️ **Circular dependencies** — A calls B which calls A
-- ⚠️ **Orphaned processes** — never called and no direct external input
-- ⚠️ **High fan-in** — called by > 5 other processes (single point of failure)
-- ⚠️ **High fan-out** — calls > 7 other processes (coupling risk)
-- ℹ️ **External calls** — `conv_id` values pointing outside the project inventory
+- ⚠️ **Circular dependencies** — from `.graph_stats.cycles`
+- ⚠️ **Orphaned candidates** — from `.graph_stats.orphaned`; phrase as "no internal caller in this project, verify before deletion", never as "dead code"
+- ⚠️ **High fan-in** — from `.graph_stats.high_fan_in`; single point of failure
+- ⚠️ **High fan-out** — from `.graph_stats.high_fan_out`; coupling risk
+- ℹ️ **External calls** — from `.unresolved_targets`
+
+Fallback: if the index is unavailable (Step 0.2 already surfaced that), reconstruct the graph the legacy way — one `pull-process` per inventory entry, walk `api_rpc`/`api_copy`/`api_get_task` logics manually. Note that this is much slower than the indexed path; suggest running the `corezoid-index` skill afterwards so the next review is fast.
 
 ### Step 2.2: Duplicate Logic Across Processes
 
@@ -107,15 +123,25 @@ False-positive guard (same as per-process review):
 
 ### Step 2.4: Alias Consistency
 
+Use `.by_alias` from `.corezoid/project-map.json` as the resolved alias↔conv_id map instead of walking `_ALIASES_.json` and diagram references manually. Then cross-reference against `edges[]` and per-process `aliases[]`.
+
 Flag:
-- Same alias used with both `create` and `modify` in different processes → race condition risk
-- Alias defined in one process but used with numeric `conv_id` in another → inconsistency
-- Aliases referenced in processes but absent from project inventory → undocumented external dependency
+- Same alias used with both `create` and `modify` in different processes → race condition risk (scan `edges` for `api_copy` with the same `via_alias` and differing `mode`)
+- Alias defined in one process but used with numeric `conv_id` in another → inconsistency (compare `.by_alias` targets with numeric `conv_id` references in `edges`)
+- Aliases referenced in processes but absent from `.by_alias` → falls out naturally as entries in `.unresolved_targets`
 
 To fix alias issues found here (create missing aliases, rename, repoint, delete conflicts),
 use the `/corezoid-alias-manager` skill.
 
-### Step 2.5: Naming Consistency
+### Step 2.5: Environment variable usage
+
+Read `.env_vars` from `.corezoid/project-map.json` — a map of `var_name -> { description, used_by }`. Cross-check against `_ENV_VARS_.json` (if present).
+
+Flag:
+- Variables in `_ENV_VARS_.json` with empty `used_by` → potentially dead variable declaration (`env_var_unused`)
+- References in `used_by` for variables not declared in `_ENV_VARS_.json` → undeclared variable used, often a typo or a variable defined at workspace level but not tracked in this project's export (`env_var_undeclared`)
+
+### Step 2.6: Naming Consistency
 
 Flag:
 - Same vague name used widely (e.g. 10+ nodes named `"error"` across project) → recommend naming standard
@@ -145,6 +171,8 @@ Run final normalization after merging: remove duplicates, remove dynamic-express
 | `cross_process` | `shared_hardcode_value` | medium |
 | `cross_process` | `duplicate_logic` | low |
 | `cross_process` | `alias_conflict` | warning |
+| `cross_process` | `env_var_unused` | low |
+| `cross_process` | `env_var_undeclared` | warning |
 | `cross_process` | `naming_convention` | low |
 
 Cross-process finding example:
@@ -215,7 +243,8 @@ Cross-process finding example:
       "dependency": 0,
       "cycle": 0,
       "repeated_logic": 0,
-      "cross_process": 0
+      "cross_process": 0,
+      "env_var": 0
     }
   },
   "dependency_graph": {
@@ -251,10 +280,15 @@ Cross-process finding example:
 
 | Step | MCP call |
 |------|----------|
-| 0.1 List processes | `list folder filter:"conveyor" obj_id:<COREZOID_STAGE_ID>` |
-| 1 Pull process | `pull-process process_id:<conv_id>` |
+| 0.2 Freshness check (preferred first call) | `build-project-index mode:check` |
+| 0.2 Full rebuild if stale | `build-project-index` (no args) |
+| 0.2 Read process inventory (indexed path) | Read `.corezoid/project-map.json` → `.processes{}` |
+| 0.1 List processes (legacy fallback) | `list folder filter:"conveyor" obj_id:<COREZOID_STAGE_ID>` |
+| 1 Pull process (legacy fallback) | `pull-process process_id:<conv_id>` |
 | 1 Lint process | `lint-process process_path:<path>` |
-| 2.1 List & resolve aliases | `/corezoid-alias-manager` → "Workflow: List aliases" |
+| 2.1 Dependency graph (indexed path) | Read `.corezoid/project-map.json` → `.edges` / `.graph_stats` / `.unresolved_targets` |
+| 2.4 Alias consistency (indexed path) | Read `.corezoid/project-map.json` → `.by_alias`; then `/corezoid-alias-manager` for fixes |
+| 2.5 Env var usage (indexed path) | Read `.corezoid/project-map.json` → `.env_vars`; cross-check against `_ENV_VARS_.json` |
 
 ---
 

@@ -1,0 +1,23 @@
+{
+  "obj_type": 1,
+  "obj_id": 602,
+  "title": "SelfLoop",
+  "conv_type": "process",
+  "status": "active",
+  "scheme": {
+    "nodes": [
+      {
+        "id": "0022000000000000000000f1",
+        "title": "Start",
+        "obj_type": 1,
+        "condition": {"logics": [{"type": "go", "to_node_id": "0022000000000000000000f2"}]}
+      },
+      {
+        "id": "0022000000000000000000f2",
+        "title": "Recurse",
+        "obj_type": 0,
+        "condition": {"logics": [{"type": "api_rpc", "conv_id": 602}]}
+      }
+    ]
+  }
+}

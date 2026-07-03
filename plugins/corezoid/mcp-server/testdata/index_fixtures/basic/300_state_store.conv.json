@@ -1,0 +1,23 @@
+{
+  "obj_type": 1,
+  "obj_id": 300,
+  "title": "payments-store",
+  "conv_type": "state",
+  "status": "active",
+  "scheme": {
+    "nodes": [
+      {
+        "id": "cccc000000000000000000c1",
+        "title": "Start",
+        "obj_type": 1,
+        "condition": {"logics": [{"type": "go", "to_node_id": "cccc000000000000000000c2"}]}
+      },
+      {
+        "id": "cccc000000000000000000c2",
+        "title": "Set state",
+        "obj_type": 0,
+        "condition": {"logics": [{"type": "set_param", "extra": {"state": "created"}}]}
+      }
+    ]
+  }
+}

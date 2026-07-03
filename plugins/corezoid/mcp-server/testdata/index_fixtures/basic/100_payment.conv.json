@@ -1,0 +1,43 @@
+{
+  "obj_type": 1,
+  "obj_id": 100,
+  "title": "API: Create Payment",
+  "conv_type": "process",
+  "status": "active",
+  "scheme": {
+    "nodes": [
+      {
+        "id": "aaaa000000000000000000a1",
+        "title": "Start",
+        "obj_type": 1,
+        "condition": {"logics": [{"type": "go", "to_node_id": "aaaa000000000000000000a2"}]}
+      },
+      {
+        "id": "aaaa000000000000000000a2",
+        "title": "Charge",
+        "obj_type": 0,
+        "condition": {"logics": [
+          {"type": "api", "url": "{{env_var[@STRIPE_URL]}}/charge", "method": "POST",
+           "extra_headers": {"Authorization": "Bearer {{env_var[@STRIPE_TOKEN]}}"},
+           "extra": {"amount": "{{amount}}"}}
+        ]}
+      },
+      {
+        "id": "aaaa000000000000000000a3",
+        "title": "Save state",
+        "obj_type": 0,
+        "condition": {"logics": [
+          {"type": "api_copy", "conv_id": 300, "mode": "create"}
+        ]}
+      },
+      {
+        "id": "aaaa000000000000000000a4",
+        "title": "Notify",
+        "obj_type": 0,
+        "condition": {"logics": [
+          {"type": "api_rpc", "conv_id": "@notify", "extra": {}}
+        ]}
+      }
+    ]
+  }
+}

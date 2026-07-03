@@ -14,12 +14,19 @@ You are a specialist in creating Corezoid BPM processes using the `corezoid` MCP
 
 ## Step 1: Gather Requirements
 
-Ask the user for the following before proceeding:
+Extract a **structured** requirements record from the user's request — this record drives both the duplicate-avoidance decision (Step 1a) and the audit log written into the created process's description (Step 4 / Step 6). Do not skip the structure just because the request is short; a one-line request produces a short record, not no record.
 
-- **Process purpose** — what should it do?
-- **Input parameters** — what data does it receive?
-- **Expected output** — what should it return on success?
-- **Process type** — API connector (calls an external HTTP API) or business logic (orchestrates other Corezoid processes)?
+```
+requirements:
+  action:         <verb, e.g. "get", "list", "create", "notify">
+  object:         <target, e.g. "accounts by actor id", "invoice", "user profile">
+  inputs:         [{name, type, required}]        # empty if none
+  output:         <shape summary: what fields the reply must contain>
+  side_effects:   read-only | mutating | external-api
+  process_type:   api-connector | business-logic
+```
+
+If any of `action` / `object` / `inputs` / `output` is genuinely missing from what the user said, ask a single clarifying question **only in interactive mode**. In autonomous mode (unattended run, no human at the console), fill unknown fields with `"unspecified"` and continue — the decision tree in Step 1a handles ambiguity by falling back to "create new" for low-match cases, so unspecified fields simply degrade to conservative behaviour rather than blocking the run.
 
 For **API connector**, also require:
 - `METHOD` — HTTP method (GET, POST, PUT, etc.)
@@ -28,7 +35,72 @@ For **API connector**, also require:
 
 > ⚠️ If the target API is the **Corezoid public API** (`/api/2/json/`), stop here and use `/corezoid-api-connector` instead — it follows a different pattern (`api_secret_outer`, `ops` array, no Code Node for signing).
 
-If any required information is missing, ask the user before proceeding.
+---
+
+## Step 1a: Duplicate-avoidance decision (MANDATORY, deterministic)
+
+The purpose of this step is to prevent silent duplicates in autonomous runs. It is **not** a "do you want to continue?" prompt — the outcome is decided by a fixed table, not by asking the user. Skip only when `index_missing: true` (no index exists yet — Step 1a-A degrades to "create new").
+
+### Step 1a-A: Find candidates
+
+Search `.corezoid/project-map.json` for existing processes that could serve the requirement. The search key is `action + object` from the requirements record, **not** the domain word.
+
+- Example (good): requirement `action="get", object="accounts by actor id"` → search keywords `"accounts actor"`, `"list accounts"`, `"accounts by actor"`.
+- Example (bad): searching by the domain word `"simulator"` — this over-matches every process that mentions the domain and misses the actual duplicate whose title uses a synonym.
+
+Call MCP tool **`describe-process`** with `identifier: "<action-object phrase>"`. If it returns > 10 candidates, narrow with a second call using 2–3 more specific keywords from the object phrase.
+
+If `index_missing: true` — record `Decision: index-missing, cannot detect duplicates` for the audit log (Step 4) and go to Step 2 (create new). Do not gate creation on rebuilding the index.
+
+### Step 1a-B: Score each candidate on three axes
+
+For every candidate in the (possibly narrowed) `candidates[]`:
+
+| Axis | Meaning | How to compute |
+|---|---|---|
+| **title_match** | Does the title describe the same action+object? | Word-overlap between the candidate's `title` and `action + object`. **Full** = every requirement word appears (in any order). **Partial** = ≥ half. **Low** = less. |
+| **signature_match** | Do the candidate's inputs and outputs cover the requirement? | `pull-process` the candidate, read `params[]` for inputs and reply-node `extra`/`extra_type` for outputs. **Full** = every required input is present and every required output field is emitted. **Partial** = candidate covers most; requirement adds one optional param or one extra output field. **Breaking-diff** = requirement renames, retypes, or drops something the candidate has. **Low** = doesn't cover the required contract at all. |
+| **blast_radius** | How many callers already depend on this process? | `calls_in_count` from the `describe-process` response — it is already there, do not skip using it. |
+
+### Step 1a-C: Pick action from the decision table
+
+| title_match | signature_match | callers | Action |
+|---|---|---|---|
+| Full or Partial | **Full** | — | **REUSE as-is.** Do not create. Return the existing `conv_id`/alias to the user (see Step 4). Exit the skill. |
+| Full or Partial | **Partial, additive** (new optional param OR new reply field, no removals) | any | **EXTEND.** Hand off to `corezoid-edit` with a precise patch description ("add optional param `X`", "add field `Y` to reply"). Do not create. |
+| Full or Partial | **Breaking-diff** | **0** | **MODIFY-IN-PLACE.** Hand off to `corezoid-edit`. Safe because nothing else calls this process yet. |
+| Full or Partial | **Breaking-diff** | **> 0** | **FORK.** Create a new process (Step 2 onwards). The duplicate is justified — existing callers keep the old contract, new logic gets a new conv_id. |
+| **Low** | — | — | **CREATE new.** No candidate is close enough. |
+
+Notes on reading this table:
+- The first row is the one that catches the reported bug: a signature-full match must reuse, never create.
+- `signature_match=Full` requires **both** input coverage and output coverage; if inputs match but the reply is a different shape, that's `Partial` or `Breaking-diff`, not `Full`.
+- Never ask the user "which one should I use" in autonomous mode. If the table doesn't give a unique answer (e.g. two candidates are both `Full` matches), pick the one with the higher `calls_in_count` (the more-established one) and record the tie-break in the audit log.
+
+### Step 1a-D: Record the decision (mandatory for every path)
+
+Regardless of which branch fired, record a one-line audit entry that will be written to the target process's `description` in Step 4 (for REUSE / EXTEND / MODIFY) or Step 6 (for FORK / CREATE). Format:
+
+```
+Decision (YYYY-MM-DD): <action> — <reason with numbers>
+  requirement: <action> <object>
+  matched: conv_id=<id>, callers=<n>, signature=<full|partial|breaking|low>
+```
+
+Examples:
+```
+Decision (2026-07-02): reuse conv_id=1877387 — signature full match, callers=3
+Decision (2026-07-02): extended conv_id=1877387 with optional param "incomeType" (additive, callers=3)
+Decision (2026-07-02): forked from conv_id=1877387 — breaking rename of param "user_id"→"actorId", callers=5
+Decision (2026-07-02): created new — no signature match ≥ partial in the project (searched "accounts actor")
+Decision (2026-07-02): created new — index-missing, cannot detect duplicates
+```
+
+### Step 1a-E: If REUSE, ensure a canonical alias exists
+
+Before exiting the skill, check `describe-process`'s response: if `aliases[]` is empty, call MCP tool **`create-alias`** with a slug derived from `action + object` (kebab-case, no spaces, no special chars — e.g. `get-accounts-by-actor-id`). This makes the next autonomous run resolve the same requirement in one lookup instead of another candidate scoring pass.
+
+If `aliases[]` already contains a slug that describes the same action+object, leave it — no need to add duplicates.
 
 ---
 
@@ -92,7 +164,7 @@ Produce a valid `.conv.json` file.
   "obj_id": null,
   "parent_id": null,
   "title": "Process Name",
-  "description": "",
+  "description": "Decision (YYYY-MM-DD): created new — no signature match ≥ partial in the project (searched \"...\").\n  requirement: <action> <object>",
   "status": "active",
   "params": [],
   "ref_mask": true,
@@ -104,11 +176,13 @@ Produce a valid `.conv.json` file.
 }
 ```
 
+`description` — must contain the audit line from Step 1a-D. This is not optional: it makes the decision auditable and lets the next autonomous run see that this process was already chosen as the mapping for a given requirement (so the next agent doesn't re-derive the same conclusion or re-fork it). Prepend the audit line to any user-supplied description text; keep it as a single line so it stays readable in the Corezoid UI's process list.
+
 `params` — declare all input parameters the caller must pass. See `${CLAUDE_PLUGIN_ROOT}/docs/process/process-with-parameters.md`.
 
 ### Core rules
 
-- Node IDs must be unique 24-character hex strings: `^[0-9a-f]{24}$`. These are **temporary placeholders** for new nodes — on `push-process` Corezoid reassigns its own canonical IDs (and rewires references within the push). Run `pull-process` after pushing to get the canonical IDs before any further edits. See [Node ID Lifecycle](${CLAUDE_PLUGIN_ROOT}/docs/process/process-development-guide.md#node-id-lifecycle-server-assignment--stability-on-push).
+- Node IDs must be unique 24-character hex strings: `^[0-9a-f]{24}$`. These are **temporary placeholders** for new nodes — on `push-process` Corezoid reassigns its own canonical IDs (and rewires references within the push). Run `pull-process` after pushing to get the canonical IDs before any further edits.
 - Connect nodes only through the `go` field
 - Every node that can fail must have `err_node_id` — point it **directly at a Final Error node** (`obj_type: 2`) unless the error path needs logic (reply to caller, retry routing). Never create an Escalation node (`obj_type: 3`) that only contains a bare `go` — that is a passthrough anti-pattern flagged by `lint-process`
 - All constants (URLs, tokens, IDs) must be Corezoid variables — never hardcoded:
@@ -146,6 +220,8 @@ After a successful deploy, run a test task to verify the process behaves as expe
 Call MCP tool **`run-task`** with:
 - `process_path`: `<PROCESS_PATH>`
 - `data`: `{"param1": "value1"}`
+
+The project index refreshes automatically at the end of `push-process` — the MCP server appends a "Project index refreshed at ..." line to the deploy output. Do **not** call `build-project-index` separately; surface the appended line to the user so the new process is visibly in the index. If the line reads "Warning: project index build failed ...", tell the user but continue — deploy already succeeded.
 
 ---
 

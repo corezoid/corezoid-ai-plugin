@@ -28,6 +28,8 @@ var toolHandlers = map[string]toolHandler{
 	"create-variable":      handleCreateVariable,
 	"push-process":         handlePushProcess,
 	"lint-process":         handleLintProcess,
+	"build-project-index":  handleBuildProjectIndex,
+	"describe-process":     handleDescribeProcess,
 	"run-task":             handleRunTask,
 	"create-process":       handleCreateProcess,
 	"create-state-diagram": handleCreateStateDiagram,
@@ -89,10 +91,12 @@ var toolHandlers = map[string]toolHandler{
 // send-feedback must not require auth so users can report problems that
 // occurred before or during the login flow.
 var noAuthTools = map[string]struct{}{
-	"lint-process":  {},
-	"login":         {},
-	"logout":        {},
-	"send-feedback": {},
+	"lint-process":        {},
+	"login":               {},
+	"logout":              {},
+	"send-feedback":       {},
+	"build-project-index": {},
+	"describe-process":    {},
 }
 
 // tokenOnlyTools need an OAuth token but not a fully configured workspace or

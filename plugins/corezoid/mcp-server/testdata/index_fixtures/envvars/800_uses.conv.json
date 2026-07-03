@@ -1,0 +1,36 @@
+{
+  "obj_type": 1,
+  "obj_id": 800,
+  "title": "Uses vars",
+  "conv_type": "process",
+  "status": "active",
+  "scheme": {
+    "nodes": [
+      {
+        "id": "0044000000000000000000g1",
+        "title": "Start",
+        "obj_type": 1,
+        "condition": {"logics": [{"type": "go", "to_node_id": "0044000000000000000000g2"}]}
+      },
+      {
+        "id": "0044000000000000000000g2",
+        "title": "Set params using vars",
+        "obj_type": 0,
+        "condition": {"logics": [
+          {"type": "set_param", "extra": {
+            "endpoint": "{{env_var[@API_URL]}}/v2",
+            "auth": "Bearer {{env_var[@API_TOKEN]}}"
+          }}
+        ]}
+      },
+      {
+        "id": "0044000000000000000000g3",
+        "title": "Third var deep",
+        "obj_type": 0,
+        "condition": {"logics": [
+          {"type": "api_code", "code": "return { workspace: '{{env_var[@WORKSPACE]}}' };"}
+        ]}
+      }
+    ]
+  }
+}

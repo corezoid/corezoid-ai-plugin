@@ -1,0 +1,23 @@
+{
+  "obj_type": 1,
+  "obj_id": 500,
+  "title": "Simple",
+  "conv_type": "process",
+  "status": "active",
+  "scheme": {
+    "nodes": [
+      {
+        "id": "eeee000000000000000000e1",
+        "title": "Start",
+        "obj_type": 1,
+        "condition": {"logics": [{"type": "go", "to_node_id": "eeee000000000000000000e2"}]}
+      },
+      {
+        "id": "eeee000000000000000000e2",
+        "title": "End",
+        "obj_type": 2,
+        "condition": {"logics": []}
+      }
+    ]
+  }
+}

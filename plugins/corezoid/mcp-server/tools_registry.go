@@ -87,6 +87,55 @@ var toolRegistry = []mcpTool{
 		},
 	},
 	{
+		Name:        "describe-process",
+		Description: "Resolve a process identifier (numeric conv_id, @alias, or title substring) against .corezoid/project-map.json and return conv_id, title, path, aliases, calls_in count with high_fan_in flag, and staleness (comparing index hash with current file hash). Meant to be called at the MANDATORY \"Identify the Process\" step of corezoid-edit so blast-radius and staleness data arrive with resolution — not as separate steps the model might skip. Multiple title matches return a candidates[] list instead of guessing.",
+		InputSchema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"identifier": map[string]interface{}{
+					"type":        "string",
+					"description": "Numeric conv_id, @alias (with or without @), or title substring.",
+				},
+				"process_id": map[string]interface{}{
+					"type":        "string",
+					"description": "Alias for identifier — numeric conv_id form.",
+				},
+				"process_name": map[string]interface{}{
+					"type":        "string",
+					"description": "Alias for identifier — title substring form.",
+				},
+				"project_path": map[string]interface{}{
+					"type":        "string",
+					"description": "Relative path to the project root. Omit for current directory.",
+				},
+			},
+			// At least one of identifier/process_id/process_name is required.
+			"anyOf": []interface{}{
+				map[string]interface{}{"required": []string{"identifier"}},
+				map[string]interface{}{"required": []string{"process_id"}},
+				map[string]interface{}{"required": []string{"process_name"}},
+			},
+		},
+	},
+	{
+		Name:        "build-project-index",
+		Description: "Build or refresh .corezoid/project-map.json + QUERIES.md + auto-block in CLAUDE.md for the current project. Pure local scan — no network calls, no Corezoid auth required. Detects cross-process calls, aliases, env variables used, external HTTP endpoints, DB instances, secret-shaped fields in both .instance.json and diagram nodes, and config-reference usage (which processes read which config refs and which fields). Config task runtime values are NOT stored in the index — agents read live values on demand via list-node-tasks when they need them. Pass mode=\"check\" to detect index staleness without rebuilding.",
+		InputSchema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"project_path": map[string]interface{}{
+					"type":        "string",
+					"description": "Relative path to the project root. Omit for current directory.",
+				},
+				"mode": map[string]interface{}{
+					"type":        "string",
+					"description": "'check' to report staleness without rebuilding; omit or 'build' for full rebuild.",
+					"enum":        []string{"build", "check"},
+				},
+			},
+		},
+	},
+	{
 		Name:        "run-task",
 		Description: "Run a task on an already-deployed Corezoid process (without re-deploying).",
 		InputSchema: map[string]interface{}{

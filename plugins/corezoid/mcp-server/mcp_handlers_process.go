@@ -95,6 +95,13 @@ func handlePullProcess(ctx context.Context, args map[string]interface{}) (string
 
 // handlePullFolder recursively downloads a folder (stage) and all its
 // processes/subfolders into the current working directory.
+//
+// On success, auto-rebuilds .corezoid/project-map.json, QUERIES.md and the
+// CLAUDE.md auto-block. This lives in the handler (not just in the
+// corezoid-init SKILL.md) so the index refreshes even when the user calls
+// pull-folder directly, bypassing the init skill entirely. Index build
+// failure is a warning, never a rollback — the pulled files are still on
+// disk and usable.
 func handlePullFolder(ctx context.Context, args map[string]interface{}) (string, bool) {
 	folderID, err := intArg(args, "folder_id")
 	if err != nil {
@@ -105,7 +112,11 @@ func handlePullFolder(ctx context.Context, args map[string]interface{}) (string,
 	if err := downloadStageRecursively(v, folderID, "."); err != nil {
 		return fmt.Sprintf("Error fetching folder: %v", err), true
 	}
-	return fmt.Sprintf("Folder %d saved to current directory", folderID), false
+	msg := fmt.Sprintf("Folder %d saved to current directory", folderID)
+	// pull-folder is the once-per-session event where refreshing
+	// state-store task contents is worth an extra Corezoid round-trip.
+	msg += autoRebuildIndex(ctx, ".")
+	return msg, false
 }
 
 // handleCreateVariable creates a Corezoid env variable scoped to the given stage.
@@ -178,7 +189,14 @@ func handlePushProcess(ctx context.Context, args map[string]interface{}) (string
 		return fmt.Sprintf("Error deploying process: %v", err), true
 	}
 
-	return fmt.Sprintf("Process deployed successfully, ProcessID: %d", procID), false
+	// Auto-rebuild the project index so describe-process / QUERIES /
+	// project-review see the just-deployed changes immediately. push
+	// path passes fetchStateContents=false: the tasks[] block preserved
+	// from the last build stays intact, and the edit loop doesn't pay
+	// for a fresh Corezoid round-trip on every save.
+	msg := fmt.Sprintf("Process deployed successfully, ProcessID: %d", procID)
+	msg += autoRebuildIndex(ctx, ".")
+	return msg, false
 }
 
 // handleLintProcess validates a local .conv.json without touching the server.

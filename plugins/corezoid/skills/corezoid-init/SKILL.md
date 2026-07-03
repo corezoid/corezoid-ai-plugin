@@ -84,6 +84,28 @@ Do not proceed until the tool returns successfully.
 
 ---
 
+## Step 3 — The project index is auto-built (no extra action)
+
+`pull-folder` itself rebuilds the project index at the end of a successful
+pull — you do **not** need to call `build-project-index` separately. The tool
+appends a short "Project index refreshed at ... — processes: N, edges: M"
+line to its output. Surface that line to the user verbatim so they see the
+new counts (and, on first creation, the notice about the CLAUDE.md
+auto-block).
+
+This is a code-level guarantee inside the MCP server, not a skill-prompt
+step to remember — see `handlePullFolder` in the plugin's `mcp-server/`. The
+same code-level auto-rebuild also runs at the end of `push-process`, so
+`corezoid-edit` and `corezoid-create` do not need to call
+`build-project-index` after deploy either.
+
+If the auto-rebuild line reads "Warning: project index build failed ..." (a
+locked-down filesystem, a partial pull, or similar), tell the user, but do
+**not** block init — the pull itself succeeded and the project is usable
+without an index. The user can retry by invoking the `corezoid-index` skill.
+
+---
+
 ## Exception: user provides values directly
 
 If the user explicitly pastes values, write them to `.env` and skip the corresponding prompts:

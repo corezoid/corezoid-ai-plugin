@@ -1,0 +1,4 @@
+{
+  "STRIPE_URL": {"description": "Stripe API endpoint"},
+  "STRIPE_TOKEN": {"description": "Stripe secret key"}
+}
