@@ -48,14 +48,14 @@ func TestDeployOpProc(t *testing.T) {
 
 func TestStageInfo(t *testing.T) {
 	e := wsExecMock(t, map[string]interface{}{"request_proc": "ok", "ops": []interface{}{
-		map[string]interface{}{"proc": "ok", "immutable": true, "title": "prod", "short_name": "p"}}})
-	imm, title, short, err := e.stageInfo(1, 2)
-	if err != nil || !imm || title != "prod" || short != "p" {
-		t.Fatalf("stageInfo: err=%v imm=%v title=%q short=%q", err, imm, title, short)
+		map[string]interface{}{"proc": "ok", "immutable": true, "undeployed": float64(3), "title": "prod", "short_name": "p"}}})
+	imm, undep, title, short, err := e.stageInfo(1, 2)
+	if err != nil || !imm || undep != 3 || title != "prod" || short != "p" {
+		t.Fatalf("stageInfo: err=%v imm=%v undep=%d title=%q short=%q", err, imm, undep, title, short)
 	}
 	e2 := wsExecMock(t, map[string]interface{}{"request_proc": "ok", "ops": []interface{}{
 		map[string]interface{}{"proc": "error", "description": "nope"}}})
-	if _, _, _, err := e2.stageInfo(1, 2); err == nil {
+	if _, _, _, _, err := e2.stageInfo(1, 2); err == nil {
 		t.Fatalf("expected error for proc!=ok")
 	}
 }

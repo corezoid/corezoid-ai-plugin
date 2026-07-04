@@ -10,13 +10,14 @@ import (
 // and handleSetStageImmutable issue (show-stage, compare, merge, modify-stage)
 // from a small config, and records the op types seen.
 type deployMock struct {
-	immutable  bool                       // target/queried stage immutable?
-	title      string                     // stage title
-	diff       []map[string]interface{}   // compare "list"
-	showErr    bool
-	compareErr bool
-	mergeErr   bool
-	seen       *[]string
+	immutable     bool                     // target/queried stage immutable?
+	title         string                   // stage title
+	diff          []map[string]interface{} // compare "list"
+	srcUndeployed int                      // undeployed count reported for the source stage (id 200)
+	showErr       bool
+	compareErr    bool
+	mergeErr      bool
+	seen          *[]string
 }
 
 // wrapOp wraps a single op result in the {request_proc, ops:[...]} envelope,
@@ -40,7 +41,12 @@ func (m deployMock) fn(ops []map[string]interface{}) interface{} {
 		if m.showErr {
 			return wrapOp(map[string]interface{}{"proc": "error", "description": "show boom"})
 		}
-		return wrapOp(map[string]interface{}{"proc": "ok", "immutable": m.immutable, "title": m.title, "short_name": "prod"})
+		// Source stage is id 200 (see callDeploy); report its undeployed count
+		// so the "source not deployed" gate can be exercised. Target is 300.
+		if id, _ := op["obj_id"].(float64); int(id) == 200 {
+			return wrapOp(map[string]interface{}{"proc": "ok", "immutable": false, "undeployed": float64(m.srcUndeployed), "title": "dev", "short_name": "dev"})
+		}
+		return wrapOp(map[string]interface{}{"proc": "ok", "immutable": m.immutable, "undeployed": float64(0), "title": m.title, "short_name": "prod"})
 	case typ == "compare":
 		if m.compareErr {
 			return wrapOp(map[string]interface{}{"proc": "error", "description": "cmp boom"})
@@ -133,6 +139,20 @@ func TestDeployStage_ShowStageError(t *testing.T) {
 	res, isErr := callDeploy(t, deployMock{showErr: true}, nil)
 	if !isErr || !strings.Contains(res, "checking target stage") {
 		t.Fatalf("expected show-stage error, got isErr=%v: %s", isErr, res)
+	}
+}
+
+func TestDeployStage_SourceNotDeployed(t *testing.T) {
+	var seen []string
+	m := deployMock{immutable: true, srcUndeployed: 2, seen: &seen}
+	res, isErr := callDeploy(t, m, nil)
+	if !isErr || !strings.Contains(res, "undeployed") {
+		t.Fatalf("expected source-not-deployed refusal, got isErr=%v: %s", isErr, res)
+	}
+	for _, s := range seen {
+		if s == "compare" || s == "merge" {
+			t.Fatalf("compare/merge must NOT run when source has undeployed changes; seen=%v", seen)
+		}
 	}
 }
 

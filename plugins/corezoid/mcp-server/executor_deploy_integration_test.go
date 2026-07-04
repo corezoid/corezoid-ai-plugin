@@ -36,7 +36,7 @@ func TestDeployStageIntegration(t *testing.T) {
 	v := &Executor{Ctx: context.Background(), Token: token, APIUrl: apiURL, WorkspaceID: ws}
 
 	// The target must be immutable — Corezoid only merges into immutable stages.
-	imm, title, _, err := v.stageInfo(tgt, proj)
+	imm, _, title, _, err := v.stageInfo(tgt, proj)
 	if err != nil {
 		t.Fatalf("stageInfo(target): %v", err)
 	}
@@ -115,7 +115,7 @@ func TestMergeIntoMutableFailsIntegration(t *testing.T) {
 	tgt := atoiEnv(t, "COREZOID_DEPLOY_TGT")
 	v := &Executor{Ctx: context.Background(), Token: token, APIUrl: apiURL, WorkspaceID: ws}
 
-	_, title, short, err := v.stageInfo(tgt, proj)
+	_, _, title, short, err := v.stageInfo(tgt, proj)
 	if err != nil {
 		t.Fatalf("stageInfo: %v", err)
 	}

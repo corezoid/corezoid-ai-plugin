@@ -55,12 +55,23 @@ func handleDeployStage(ctx context.Context, args map[string]interface{}) (string
 	// a deploy is never even attempted against a mutable target (it would fail
 	// with "You have to merge only in immutable stage"). We do NOT auto-fix this
 	// — flipping a stage to read-only is its own confirmed action (set-stage-immutable).
-	immut, tTitle, _, ierr := v.stageInfo(targetStage, projectID)
+	immut, _, tTitle, _, ierr := v.stageInfo(targetStage, projectID)
 	if ierr != nil {
 		return "Error (checking target stage): " + ierr.Error(), true
 	}
 	if !immut {
 		return fmt.Sprintf("⛔ Target stage %d (%q) is NOT immutable. Corezoid only deploys/merges INTO an immutable (read-only) stage — a mutable stage cannot be a deploy target.\nMake it read-only first with set-stage-immutable (which also requires confirmation), or choose an immutable target.", targetStage, tTitle), true
+	}
+
+	// Corezoid also only merges FROM a deployed stage. A source with undeployed
+	// changes fails the merge with the opaque "You have to merge only from
+	// deployed stage" — so check up front and explain what to do instead.
+	_, srcUndeployed, sTitle, _, serr := v.stageInfo(sourceStage, projectID)
+	if serr != nil {
+		return "Error (checking source stage): " + serr.Error(), true
+	}
+	if srcUndeployed > 0 {
+		return fmt.Sprintf("⛔ Source stage %d (%q) has %d undeployed change(s). Corezoid only merges FROM a deployed stage — publish the source first (the \"Deploy\" action on that stage in the Corezoid UI), then retry the deploy.", sourceStage, sTitle, srcUndeployed), true
 	}
 
 	// 1) compare: what differs between target and source.
@@ -184,7 +195,7 @@ func handleSetStageImmutable(ctx context.Context, args map[string]interface{}) (
 	confirm, _ := args["confirm"].(string)
 
 	v := NewValidator(ctx, 0)
-	cur, title, shortName, ierr := v.stageInfo(stageID, projectID)
+	cur, _, title, shortName, ierr := v.stageInfo(stageID, projectID)
 	if ierr != nil {
 		return "Error (show stage): " + ierr.Error(), true
 	}

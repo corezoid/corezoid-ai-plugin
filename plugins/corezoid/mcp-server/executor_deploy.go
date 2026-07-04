@@ -189,9 +189,11 @@ func parseDeployProgress(msg []byte) (done, failed bool, line string) {
 }
 
 // stageInfo shows a stage and reports whether it is immutable (read-only — the
-// only valid merge target in Corezoid) along with its title/short_name, which a
-// follow-up modify must preserve so it doesn't blank them.
-func (v *Executor) stageInfo(stageID, projectID int) (immutable bool, title, shortName string, err error) {
+// only valid merge TARGET in Corezoid), how many undeployed changes it has (a
+// stage with undeployed changes can't be a merge SOURCE — Corezoid rejects it
+// with "You have to merge only from deployed stage"), and its title/short_name,
+// which a follow-up modify must preserve so it doesn't blank them.
+func (v *Executor) stageInfo(stageID, projectID int) (immutable bool, undeployed int, title, shortName string, err error) {
 	resp, err := v.req("json", []map[string]any{{
 		"type":       "show",
 		"obj":        "stage",
@@ -200,11 +202,11 @@ func (v *Executor) stageInfo(stageID, projectID int) (immutable bool, title, sho
 		"company_id": v.WorkspaceID,
 	}})
 	if err != nil {
-		return false, "", "", err
+		return false, 0, "", "", err
 	}
 	opsArr, _ := resp["ops"].([]interface{})
 	if len(opsArr) == 0 {
-		return false, "", "", fmt.Errorf("show stage %d: empty response", stageID)
+		return false, 0, "", "", fmt.Errorf("show stage %d: empty response", stageID)
 	}
 	op, _ := opsArr[0].(map[string]interface{})
 	if proc, _ := op["proc"].(string); proc != "ok" {
@@ -212,12 +214,15 @@ func (v *Executor) stageInfo(stageID, projectID int) (immutable bool, title, sho
 		if desc == "" {
 			desc = "show stage did not succeed"
 		}
-		return false, "", "", fmt.Errorf("show stage %d: %s", stageID, desc)
+		return false, 0, "", "", fmt.Errorf("show stage %d: %s", stageID, desc)
 	}
 	immutable, _ = op["immutable"].(bool)
 	title, _ = op["title"].(string)
 	shortName, _ = op["short_name"].(string)
-	return immutable, title, shortName, nil
+	if u, ok := op["undeployed"].(float64); ok {
+		undeployed = int(u)
+	}
+	return immutable, undeployed, title, shortName, nil
 }
 
 // setStageImmutable flips a stage's immutable (read-only) flag, preserving its
