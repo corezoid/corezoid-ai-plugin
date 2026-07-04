@@ -215,6 +215,12 @@ func (v *Executor) buildGitCallNode(wsURL string, g gitCallBuild) error {
 			status, message := parseGitCallBuildLog(r.msg)
 			switch status {
 			case "done":
+				// Record the build outcome so the push handler can show it. On
+				// success the log is otherwise discarded (only errors surfaced it).
+				v.gitCallBuildLog = append(v.gitCallBuildLog, fmt.Sprintf("• %s (%s): built ✓", g.nodeTitle, g.lang))
+				for _, l := range logTail {
+					v.gitCallBuildLog = append(v.gitCallBuildLog, "    "+l)
+				}
 				return nil
 			case "error":
 				return fmt.Errorf("build reported error: %s; log: %s", message, strings.Join(logTail, " | "))
