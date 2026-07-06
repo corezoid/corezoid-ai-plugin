@@ -4,28 +4,17 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Repository Purpose
 
-This is a Claude Code plugin (`@corezoid/corezoid-ai-plugin`) that gives Claude the knowledge and tools to create, edit, and review [Corezoid](https://corezoid.com) BPM processes directly from the IDE.
-
-The repo has three layers:
-- **Go MCP server** (`plugins/corezoid/mcp-server/`) — 44 tools, compiled from Go source, started automatically via `.mcp.json`. Has a test suite (`go test ./...`) and CI.
-- **Skills** (`plugins/corezoid/skills/`) — 18 SKILL.md files that teach Claude platform conventions.
-- **Documentation corpus** (`plugins/corezoid/docs/`) — 24 node types, process guides, JSON schemas, samples.
+This is a Claude Code plugin (`@corezoid/corezoid-ai-plugin`) that gives Claude the knowledge and tools to create, edit, and review [Corezoid](https://corezoid.com) BPM processes directly from the IDE. It is primarily a **documentation and workflow plugin** — there is no build step or test suite. The repo ships static `.md` files, JSON samples, and plugin manifests.
 
 ## Plugin Development Commands
 
 ```bash
-# Build and test the MCP server
-cd plugins/corezoid/mcp-server && go build ./... && go test ./...
-
-# Run tests with race detector
-cd plugins/corezoid/mcp-server && go test -race ./...
-
 # Publish a new version (triggers GitHub Actions on tag push)
-git tag vX.Y.Z && git push origin vX.Y.Z
+git tag v1.x.x && git push origin v1.x.x
 
 # Install the plugin locally for testing
-claude plugin marketplace add .
-claude plugin install corezoid@corezoid
+npm install -g .
+claude plugin install @corezoid/corezoid-ai-plugin
 ```
 
 ## convctl MCP server (bundled in this plugin)
