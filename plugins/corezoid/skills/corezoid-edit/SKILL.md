@@ -86,6 +86,8 @@ For complete JSON structures see `${CLAUDE_PLUGIN_ROOT}/docs/node-structures.md`
 
 Before deploying, update the root-level `description` field in `PROCESS_PATH` to reflect the process's current behaviour after your edits.
 
+**Guard — preserve existing descriptions when appropriate:** if the process already has a non-empty description and your edits did not change the overall purpose (e.g. you fixed a bug, adjusted a timeout, or rewired an error path without altering what the process fundamentally does), preserve the existing description rather than replacing it.
+
 Follow the **Description Update Rule** from the `corezoid` skill:
 - 1–2 sentences, starting with a verb (*Calls*, *Creates*, *Validates*, *Routes*, *Aggregates*)
 - Sentence 1: what the process does — verb + action + subject
