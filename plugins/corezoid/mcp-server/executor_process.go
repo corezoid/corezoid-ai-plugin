@@ -344,9 +344,9 @@ func (validator *Executor) ProcessJSON(filePath, jsonContent string) (newProcess
 		return nil, err
 	}
 
-	commitResponse := validator.Commit()
-	if commitResponse == nil {
-		return nil, fmt.Errorf("failed to commit changes: no response from server")
+	commitResponse, commitErr := validator.Commit()
+	if commitErr != nil {
+		return nil, fmt.Errorf("failed to commit changes: %w", commitErr)
 	}
 	if requestProc, ok := commitResponse["request_proc"].(string); !ok || requestProc != "ok" {
 		err = fmt.Errorf("failed to commit changes: request_proc not ok")
@@ -502,7 +502,9 @@ func (v *Executor) SetParams(params []interface{}) error {
 }
 
 // Commit confirms and finalizes changes to a process.
-func (v *Executor) Commit() map[string]interface{} {
+// It returns the server response and any error so callers can report the
+// real failure reason instead of the generic "no response from server" message.
+func (v *Executor) Commit() (map[string]interface{}, error) {
 	ops := []map[string]any{
 		{
 			"type":    "confirm",
@@ -517,17 +519,19 @@ func (v *Executor) Commit() map[string]interface{} {
 	response, err := v.req("commit_process", ops)
 	if err != nil {
 		logger.Error("Failed to commit changes: %v", err)
-		return nil
+		return nil, fmt.Errorf("commit_process API error: %w", err)
 	}
 	if response == nil {
 		logger.Error("Failed to commit changes: no response from server")
-	} else if v.Debug {
+		return nil, fmt.Errorf("commit_process: no response from server")
+	}
+	if v.Debug {
 		if requestProc, ok := response["request_proc"].(string); ok {
 			logger.Debug("Commit response received, request_proc=%s", requestProc)
 		}
 	}
 	logger.Debug("Changes committed, processID=%d", v.ProcessID)
-	return response
+	return response, nil
 }
 
 func (v *Executor) DeleteVersion(ver int) {

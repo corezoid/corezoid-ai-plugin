@@ -290,10 +290,20 @@ func (v *Executor) ModifyNodes(nodes []any) error {
 	return nil
 }
 
-// CompileAPICode loads and compiles all api_code logic nodes on the server.
-// Each api_code node costs two API calls (load + compile), so for a process
-// with many code nodes the loop can be long-running. Check cancellation per
-// iteration to abort promptly when the client sends notifications/cancelled.
+// CompileAPICode loads and compiles all api_code and git_call (inline-code)
+// logic nodes on the server before the final commit_process call.
+//
+// Background: the Corezoid platform compiles inline code during the commit
+// phase when a node's code has not been pre-compiled. For api_code nodes this
+// was already handled; git_call nodes with inline code (the "code"/"src"
+// fields populated) follow the same load→compile pattern but use obj:
+// "git_call". Skipping the pre-compile step caused commit_process to time out
+// or return no response when the process contained a git_call node with inline
+// JS/Python/Go code (reported against process 179067).
+//
+// Each inline-code node costs two API calls (load + compile), so for a process
+// with many code nodes the loop can be long-running. Cancellation is checked
+// per iteration to abort promptly when the client sends notifications/cancelled.
 func (v *Executor) CompileAPICode(nodes []interface{}) error {
 	if err := v.checkCancel(); err != nil {
 		return err
@@ -311,125 +321,138 @@ func (v *Executor) CompileAPICode(nodes []interface{}) error {
 				for _, logic := range logicsArray {
 					if logicMap, ok := logic.(map[string]interface{}); ok {
 						lt, _ := logicMap["type"].(string)
-						if lt == "api_code" {
-							nodeID, ok := nodeMap["id"].(string)
-							if !ok {
+						if lt != "api_code" && lt != "git_call" {
+							continue
+						}
+
+						nodeID, ok := nodeMap["id"].(string)
+						if !ok {
+							continue
+						}
+						lang, _ := logicMap["lang"].(string)
+						if lang == "" {
+							lang = "js"
+						}
+						src, _ := logicMap["src"].(string)
+						if src == "" {
+							src, _ = logicMap["code"].(string)
+							if src == "" {
+								// git_call nodes that pull from a remote repo
+								// (no inline code) do not need a compile step.
 								continue
 							}
-							lang, _ := logicMap["lang"].(string)
-							if lang == "" {
-								lang = "js"
-							}
-							src, _ := logicMap["src"].(string)
-							if src == "" {
-								src, _ = logicMap["code"].(string)
-								if src == "" {
-									continue
-								}
-							}
+						}
 
-							loadOps := []map[string]any{
-								{
-									"type":    "load",
-									"obj":     "api_code",
-									"conv_id": v.ProcessID,
-									"node_id": nodeID,
-									"lang":    lang,
-									"src":     src,
-									"env":     "sandbox",
-								},
-							}
-							loadResponse, err := v.req("load_api_code", loadOps)
-							if err != nil {
-								return fmt.Errorf("failed to load API code: %w", err)
-							}
-							if loadResponse == nil {
-								return fmt.Errorf("failed to load API code: no response from server")
-							}
-							if requestProc, ok := loadResponse["request_proc"].(string); !ok || requestProc != "ok" {
-								return fmt.Errorf("failed to load API code: request_proc not ok")
-							}
-							if opsArray, ok := loadResponse["ops"].([]interface{}); ok {
-								for _, op := range opsArray {
-									if opMap, ok := op.(map[string]interface{}); ok {
-										if proc, ok := opMap["proc"].(string); !ok || proc != "ok" {
-											if errors, ok := opMap["errors"].(map[string]interface{}); ok {
-												var errorMsgs []string
-												for objID, errMsgs := range errors {
-													nodeID := objID
-													if errArray, ok := errMsgs.([]interface{}); ok {
-														for _, errMsg := range errArray {
-															if msg, ok := errMsg.(string); ok {
-																errorMsgs = append(errorMsgs, fmt.Sprintf("Error in the node %s: %s", nodeID, msg))
-															}
-														}
-													}
-												}
-												if len(errorMsgs) > 0 {
-													return fmt.Errorf("failed to load API code:\n%s", strings.Join(errorMsgs, "\n"))
-												}
-											}
-											errorMsg := "unknown error"
-											if msg, ok := opMap["description"].(string); ok {
-												errorMsg = msg
-											}
-											return fmt.Errorf("failed to load API code: %s", errorMsg)
-										}
-									}
-								}
-							}
+						if err := v.loadAndCompileNode(lt, nodeID, lang, src); err != nil {
+							return err
+						}
+					}
+				}
+			}
+		}
+	}
+	return nil
+}
 
-							compileOps := []map[string]any{
-								{
-									"obj":     "api_code",
-									"type":    "compile",
-									"conv_id": v.ProcessID,
-									"node_id": nodeID,
-									"lang":    lang,
-									"src":     src,
-								},
-							}
-							compileResponse, err := v.req("compile_api_code", compileOps)
-							if err != nil {
-								return fmt.Errorf("failed to compile API code: %w", err)
-							}
-							if compileResponse == nil {
-								return fmt.Errorf("failed to compile API code: no response from server")
-							}
-							if requestProc, ok := compileResponse["request_proc"].(string); !ok || requestProc != "ok" {
-								return fmt.Errorf("failed to compile API code: request_proc not ok")
-							}
-							if opsArray, ok := compileResponse["ops"].([]interface{}); ok {
-								for _, op := range opsArray {
-									if opMap, ok := op.(map[string]interface{}); ok {
-										if proc, ok := opMap["proc"].(string); !ok || proc != "ok" {
-											if errors, ok := opMap["errors"].(map[string]interface{}); ok {
-												var errorMsgs []string
-												for objID, errMsgs := range errors {
-													nodeID := objID
-													if errArray, ok := errMsgs.([]interface{}); ok {
-														for _, errMsg := range errArray {
-															if msg, ok := errMsg.(string); ok {
-																errorMsgs = append(errorMsgs, fmt.Sprintf("Node %s: %s", nodeID, msg))
-															}
-														}
-													}
-												}
-												if len(errorMsgs) > 0 {
-													return fmt.Errorf("failed to compile API code:\n%s", strings.Join(errorMsgs, "\n"))
-												}
-											}
-											errorMsg := "unknown error"
-											if msg, ok := opMap["description"].(string); ok {
-												errorMsg = msg
-											}
-											return fmt.Errorf("failed to compile API code: %s", errorMsg)
-										}
+// loadAndCompileNode performs the two-step load→compile sequence for a single
+// inline-code node. logicType is "api_code" or "git_call"; it is used as the
+// "obj" field in the API requests so the server routes them to the correct
+// handler.
+func (v *Executor) loadAndCompileNode(logicType, nodeID, lang, src string) error {
+	loadOps := []map[string]any{
+		{
+			"type":    "load",
+			"obj":     logicType,
+			"conv_id": v.ProcessID,
+			"node_id": nodeID,
+			"lang":    lang,
+			"src":     src,
+			"env":     "sandbox",
+		},
+	}
+	loadResponse, err := v.req("load_api_code", loadOps)
+	if err != nil {
+		return fmt.Errorf("failed to load %s code: %w", logicType, err)
+	}
+	if loadResponse == nil {
+		return fmt.Errorf("failed to load %s code: no response from server", logicType)
+	}
+	if requestProc, ok := loadResponse["request_proc"].(string); !ok || requestProc != "ok" {
+		return fmt.Errorf("failed to load %s code: request_proc not ok", logicType)
+	}
+	if opsArray, ok := loadResponse["ops"].([]interface{}); ok {
+		for _, op := range opsArray {
+			if opMap, ok := op.(map[string]interface{}); ok {
+				if proc, ok := opMap["proc"].(string); !ok || proc != "ok" {
+					if errors, ok := opMap["errors"].(map[string]interface{}); ok {
+						var errorMsgs []string
+						for objID, errMsgs := range errors {
+							if errArray, ok := errMsgs.([]interface{}); ok {
+								for _, errMsg := range errArray {
+									if msg, ok := errMsg.(string); ok {
+										errorMsgs = append(errorMsgs, fmt.Sprintf("Error in node %s: %s", objID, msg))
 									}
 								}
 							}
 						}
+						if len(errorMsgs) > 0 {
+							return fmt.Errorf("failed to load %s code:\n%s", logicType, strings.Join(errorMsgs, "\n"))
+						}
 					}
+					errorMsg := "unknown error"
+					if msg, ok := opMap["description"].(string); ok {
+						errorMsg = msg
+					}
+					return fmt.Errorf("failed to load %s code: %s", logicType, errorMsg)
+				}
+			}
+		}
+	}
+
+	compileOps := []map[string]any{
+		{
+			"obj":     logicType,
+			"type":    "compile",
+			"conv_id": v.ProcessID,
+			"node_id": nodeID,
+			"lang":    lang,
+			"src":     src,
+		},
+	}
+	compileResponse, err := v.req("compile_api_code", compileOps)
+	if err != nil {
+		return fmt.Errorf("failed to compile %s code: %w", logicType, err)
+	}
+	if compileResponse == nil {
+		return fmt.Errorf("failed to compile %s code: no response from server", logicType)
+	}
+	if requestProc, ok := compileResponse["request_proc"].(string); !ok || requestProc != "ok" {
+		return fmt.Errorf("failed to compile %s code: request_proc not ok", logicType)
+	}
+	if opsArray, ok := compileResponse["ops"].([]interface{}); ok {
+		for _, op := range opsArray {
+			if opMap, ok := op.(map[string]interface{}); ok {
+				if proc, ok := opMap["proc"].(string); !ok || proc != "ok" {
+					if errors, ok := opMap["errors"].(map[string]interface{}); ok {
+						var errorMsgs []string
+						for objID, errMsgs := range errors {
+							if errArray, ok := errMsgs.([]interface{}); ok {
+								for _, errMsg := range errArray {
+									if msg, ok := errMsg.(string); ok {
+										errorMsgs = append(errorMsgs, fmt.Sprintf("Node %s: %s", objID, msg))
+									}
+								}
+							}
+						}
+						if len(errorMsgs) > 0 {
+							return fmt.Errorf("failed to compile %s code:\n%s", logicType, strings.Join(errorMsgs, "\n"))
+						}
+					}
+					errorMsg := "unknown error"
+					if msg, ok := opMap["description"].(string); ok {
+						errorMsg = msg
+					}
+					return fmt.Errorf("failed to compile %s code: %s", logicType, errorMsg)
 				}
 			}
 		}
