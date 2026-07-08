@@ -2,6 +2,7 @@ package main
 
 import (
 	"archive/zip"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -79,11 +80,15 @@ func unzipFile(src, destDir string) error {
 	return nil
 }
 
-// findStageDir looks for a directory named *.stage up to maxDepth levels deep inside root.
+// findStageDir looks for the exported object's own directory up to maxDepth
+// levels deep inside root: *.stage when exporting a stage root, *.folder when
+// exporting a plain folder — the export zip wraps either one in an outer
+// directory named after the server's own temp file (no recognizable suffix),
+// so both suffixes have to be tried.
 func findStageDir(root string, maxDepth int) (string, error) {
 	var found string
 	err := walkDepth(root, 0, maxDepth, func(path string, d os.DirEntry) bool {
-		if d.IsDir() && strings.HasSuffix(d.Name(), ".stage") {
+		if d.IsDir() && (strings.HasSuffix(d.Name(), ".stage") || strings.HasSuffix(d.Name(), ".folder")) {
 			found = path
 			return true // stop
 		}
@@ -246,6 +251,137 @@ func downloadStageRecursively(e *Executor, folderID int, filePath string) error 
 	//	}
 	//	fmt.Println("Process saved to", filePath+"/"+title+".json")
 	//}
+}
+
+// downloadRootFoldersRecursively exports everything the workspace's virtual
+// root (obj_id 0) lists as a direct child, into filePath. obj_id 0 isn't a
+// real folder/stage object — the export endpoint rejects it outright ("Object
+// stage with id 0 does not exist") — so unlike downloadStageRecursively this
+// can't fetch the whole subtree in one export call. Instead it lists the
+// direct children and handles each by kind: real folders recurse through the
+// normal per-folder export; conv items sitting loose at the root (not
+// wrapped in any folder) are exported individually, same as pull-process.
+//
+// Returns the number of direct children found, so callers can tell "root is
+// genuinely empty" apart from "something's wrong" (e.g. WORKSPACE_ID isn't
+// set, so the request silently landed in the wrong company scope) — 0 is a
+// legitimate result but a surprising one, and callers should say so instead
+// of reporting a blanket success. aliasStatus always describes what
+// happened with the aliases — found-and-written, genuinely none, or the
+// fetch failed — so the caller can say so explicitly instead of leaving
+// alias handling silent (which reads as "forgot to check" either way).
+func downloadRootFoldersRecursively(ctx context.Context, filePath string) (count int, aliasStatus string, err error) {
+	e := NewValidator(ctx, 0)
+	children, err := e.ListFolder(0)
+	if err != nil {
+		return 0, "", fmt.Errorf("failed to list root folders: %w", err)
+	}
+	for _, c := range children {
+		if err := e.checkCancel(); err != nil {
+			return 0, "", err
+		}
+		switch c.Obj {
+		case "folder":
+			// Give each root-level folder its own named subdirectory so
+			// siblings (e.g. two folders that each contain a process) don't
+			// get merged together — downloadStageRecursively otherwise
+			// unwraps folderID's own name and drops its contents straight
+			// into filePath, which is only safe for a single, standalone pull.
+			childDir := filepath.Join(filePath, fmt.Sprintf("%d_%s", c.ObjID, sanitizePathSegment(c.Title)))
+			if err := os.MkdirAll(childDir, 0755); err != nil {
+				return 0, "", fmt.Errorf("failed to create directory for folder %q (#%d): %w", c.Title, c.ObjID, err)
+			}
+			if err := downloadStageRecursively(e, c.ObjID, childDir); err != nil {
+				return 0, "", fmt.Errorf("failed to pull folder %q (#%d): %w", c.Title, c.ObjID, err)
+			}
+		case "conv":
+			if err := downloadRootConv(ctx, c.ObjID, filePath); err != nil {
+				return 0, "", fmt.Errorf("failed to pull %q (#%d): %w", c.Title, c.ObjID, err)
+			}
+		}
+	}
+
+	if len(children) > 0 {
+		aliasCount, aerr := downloadRootAliases(ctx, filePath)
+		if aerr != nil {
+			aliasStatus = fmt.Sprintf("aliases.json was not written — fetching aliases failed: %v. Re-run pull-folder(folder_id=0) to retry just the aliases.", aerr)
+			logger.Warn("downloadRootFoldersRecursively: %s", aliasStatus)
+		} else if aliasCount == 0 {
+			aliasStatus = "no aliases exist in this workspace (aliases.json not written)."
+		} else {
+			aliasStatus = fmt.Sprintf("aliases.json written with %d alias(es).", aliasCount)
+		}
+	}
+
+	return len(children), aliasStatus, nil
+}
+
+// downloadRootAliases writes aliases.json into destDir with every alias in
+// the workspace, and returns how many it found. The "Aliases" entry the
+// Corezoid UI shows alongside Folders is exactly this — the full
+// company-wide list, not scoped to Folders — and the list-aliases API
+// confirms that: stage_id/project_id in the request don't actually filter
+// anything, every alias in the company comes back regardless. So this
+// mirrors the UI 1:1 rather than trying to guess which aliases are
+// "relevant" to what else got pulled.
+func downloadRootAliases(ctx context.Context, destDir string) (int, error) {
+	e := NewValidator(ctx, 0)
+	aliases, err := e.ListAliases()
+	if err != nil {
+		return 0, fmt.Errorf("failed to list aliases: %w", err)
+	}
+	if len(aliases) == 0 {
+		return 0, nil
+	}
+
+	data, err := json.MarshalIndent(aliases, "", "  ")
+	if err != nil {
+		return 0, fmt.Errorf("failed to marshal aliases: %w", err)
+	}
+	if err := os.WriteFile(filepath.Join(destDir, "aliases.json"), data, 0644); err != nil {
+		return 0, err
+	}
+	return len(aliases), nil
+}
+
+// downloadRootConv exports a single conv (process or state diagram) that
+// lives directly under the workspace root — not inside any folder — and
+// writes it as JSON into destDir.
+func downloadRootConv(ctx context.Context, processID int, destDir string) error {
+	v := NewValidator(ctx, processID)
+	procInfo1, err := v.ExportProcess()
+	if err != nil {
+		return err
+	}
+	var procInfo interface{}
+	if arr, ok := procInfo1.([]interface{}); ok && len(arr) > 0 {
+		procInfo = arr[0]
+	} else {
+		procInfo = procInfo1
+	}
+	data, err := json.MarshalIndent(procInfo, "", "  ")
+	if err != nil {
+		return err
+	}
+
+	fileName := fmt.Sprintf("%d.conv.json", processID)
+	if m, ok := procInfo.(map[string]interface{}); ok {
+		if title, _ := m["title"].(string); title != "" {
+			fileName = fmt.Sprintf("%d_%s.conv.json", processID, sanitizePathSegment(title))
+		}
+	}
+	return os.WriteFile(filepath.Join(destDir, fileName), data, 0644)
+}
+
+// sanitizePathSegment turns a Corezoid title into a single safe path segment:
+// spaces become underscores and any path separator embedded in the title
+// (some folders are legitimately named e.g. "Simulator / Smart Forms /
+// Filament") is replaced too, so it can't split into nested directories.
+func sanitizePathSegment(title string) string {
+	safe := strings.ReplaceAll(title, " ", "_")
+	safe = strings.ReplaceAll(safe, "/", "_")
+	safe = strings.ReplaceAll(safe, "\\", "_")
+	return safe
 }
 
 func renameFiles2Folders(filePath string) error {

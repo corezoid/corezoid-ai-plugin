@@ -1,6 +1,14 @@
 # Changelog
 
-## [2.7.0]
+## [2.8.0]
+
+- Feat: `corezoid-init` can pull everything under a workspace's root "Folders" — the folders/processes/state diagrams/aliases that live directly under the company, outside any Project. Declining the project picker now offers a "Pull Corezoid Folders contents?" confirmation; accepting pulls it all in one call, without needing a stage or project.
+- Feat: `pull-folder`/`list-folders`/`show-folder`/`pull-process` no longer require `COREZOID_STAGE_ID` — they take an explicit `folder_id`/`process_id`, so they now work before a stage/project has been chosen. `folder_id=0` is a special case for the workspace's virtual root.
+- Fix: `list-folders` read the wrong field for each entry's kind (a nonexistent per-item `obj` key instead of `obj_type`), so "folder" vs "conv" always showed blank in its output.
+- Fix: pulling a plain folder (as opposed to a stage) failed with "stage directory not found" — the export archive wraps content in a `*.folder` directory, not `*.stage`, which the unpacking step didn't recognize.
+- Fix: `updateEnvFile` could silently drop a write when more than one MCP server process is alive at once and both update `.env` around the same time; it now verifies the write landed and retries with a short backoff.
+- Fix: auth state (workspace, stage, token) is now refreshed from `.env` on every tool call instead of only on `login`, so a tool call handled by a different long-lived server process than the one that ran `login` no longer serves a stale, unset workspace.
+- Docs: `corezoid-init` documents the root-Folders pull path for both the native-elicitation and chat-driven setup flows, including persisting the chosen workspace immediately so a later "Folders" choice doesn't run against an unset workspace.
 
 - Feat: AWS Kiro support — the same plugin payload now installs on Kiro alongside Claude Code and Codex via a symmetric overlay (`plugins/corezoid/.kiro-plugin/plugin.json`, `plugins/corezoid/.mcp.kiro.json`, `plugins/corezoid/steering/corezoid.md`, and a root-level `POWER.md` distribution manifest for kiro.dev/powers).
 - Feat: `plugins/corezoid/scripts/install-kiro.sh` sets up an existing Kiro workspace from a cloned repo. Copies the MCP entry, symlinks steering files, and hard-copies each skill into `.kiro/skills/<name>/` while sed-substituting every `$CLAUDE_PLUGIN_ROOT` (and braced `${CLAUDE_PLUGIN_ROOT}`) token with the absolute plugin path so reference-doc paths resolve under Kiro. Idempotent.

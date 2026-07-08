@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"math/rand"
 	"os"
 	"path/filepath"
 	"strings"
@@ -40,8 +41,35 @@ func credentialsFilePath() (string, error) {
 }
 
 // updateEnvFile writes or updates key=value in the given .env file.
-// If the key already exists, its value is replaced; otherwise the line is appended.
+// If the key already exists, its value is replaced; otherwise the line is
+// appended. The host can keep more than one server process alive at once
+// (observed directly: up to 5 concurrently), and this read-modify-write has
+// no cross-process lock, so two processes updating different keys around
+// the same time can race — whichever writes last silently drops the other's
+// change. Retrying with a read-back-and-verify closes that window for the
+// common case without needing a real file lock.
 func updateEnvFile(path, key, value string) error {
+	const maxAttempts = 5
+	var lastErr error
+	for attempt := 0; attempt < maxAttempts; attempt++ {
+		if attempt > 0 {
+			// Small jittered backoff so a colliding writer's own attempt has
+			// time to finish before we retry, instead of both processes
+			// immediately re-racing each other.
+			time.Sleep(time.Duration(20+rand.Intn(60)) * time.Millisecond)
+		}
+		if err := writeEnvKey(path, key, value); err != nil {
+			return err
+		}
+		if envFileHasKeyValue(path, key, value) {
+			return nil
+		}
+		lastErr = fmt.Errorf("value did not stick — a concurrent writer likely overwrote it")
+	}
+	return fmt.Errorf("updateEnvFile: failed to persist %s after %d attempts: %w", key, maxAttempts, lastErr)
+}
+
+func writeEnvKey(path, key, value string) error {
 	var lines []string
 	if data, err := os.ReadFile(path); err == nil {
 		lines = strings.Split(string(data), "\n")
@@ -65,6 +93,21 @@ func updateEnvFile(path, key, value string) error {
 	}
 
 	return os.WriteFile(path, []byte(strings.Join(lines, "\n")+"\n"), 0600)
+}
+
+// envFileHasKeyValue reports whether path currently has key=value on disk.
+func envFileHasKeyValue(path, key, value string) bool {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return false
+	}
+	prefix := key + "="
+	for _, line := range strings.Split(string(data), "\n") {
+		if strings.HasPrefix(line, prefix) {
+			return line == prefix+value
+		}
+	}
+	return false
 }
 
 // removeEnvKey removes a key from the .env file.

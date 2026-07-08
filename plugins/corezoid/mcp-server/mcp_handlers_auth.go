@@ -26,6 +26,9 @@ func handleLogin(ctx context.Context, args map[string]interface{}) (string, bool
 	// write lock to keep concurrent readers consistent.
 	findAndLoadDotEnv()
 	var stageIDAtStart int
+	var rootFoldersPulled bool
+	var rootFoldersCount int
+	var rootAliasWarning string
 	withAuthLock(func() {
 		if apiToken == "" {
 			apiToken = os.Getenv("ACCESS_TOKEN")
@@ -356,34 +359,30 @@ func handleLogin(ctx context.Context, args map[string]interface{}) (string, bool
 				}
 			}
 
-			// Fallback: if stage still not set, ask for stage ID directly.
+			// No project/stage picked. Offer to pull everything under the
+			// workspace's root "Folders" (folder_id=0) instead — these are
+			// the plain folders/processes/state diagrams/dashboards/aliases
+			// that live directly under the company, outside any Project.
 			if snapStageID == 0 {
-				content, action, err := elicitValues(
-					"Enter your Stage ID (root folder ID for this project):",
+				_, action, err := elicitValues(
+					"Pull Corezoid Folders contents? This exports everything under \"Folders\" at the workspace root (folders, processes, state diagrams, dashboards, aliases) — excluding Projects.",
 					map[string]interface{}{
-						"type": "object",
-						"properties": map[string]interface{}{
-							"stage_id": map[string]interface{}{
-								"type":        "string",
-								"title":       "Stage ID",
-								"description": "Root folder ID for this project (numeric)",
-							},
-						},
-						"required": []string{"stage_id"},
+						"type":       "object",
+						"properties": map[string]interface{}{},
 					},
 				)
 				if err == nil && action == "accept" {
-					if v, _ := content["stage_id"].(string); v != "" {
-						if id, err := strconv.Atoi(v); err == nil && id != 0 {
-							snapStageID = id
-							withAuthLock(func() { stageID = id })
-							os.Setenv("COREZOID_STAGE_ID", v)
-							if err := updateEnvFile(envPath, "COREZOID_STAGE_ID", v); err != nil {
-								logger.Warn("login: could not save COREZOID_STAGE_ID: %v", err)
-							}
-						}
+					count, aliasWarning, pullErr := downloadRootFoldersRecursively(ctx, ".")
+					if pullErr != nil {
+						return fmt.Sprintf("Failed to pull root Folders contents: %v", pullErr), true
 					}
+					rootFoldersPulled = true
+					rootFoldersCount = count
+					rootAliasWarning = aliasWarning
 				}
+				// Decline (or elicitation error) — do nothing further. No stage
+				// is set; the user can still work with explicit folder_id/
+				// process_id values, or re-run login later to pick a project.
 			}
 		} else {
 			// No elicitation — list projects so LLM can collect stage from user.
@@ -408,6 +407,7 @@ func handleLogin(ctx context.Context, args map[string]interface{}) (string, bool
 				}
 				sb.WriteString(fmt.Sprintf("\nPlease ask the user which project to use. Call list-stages(project_id=<id>, company_id=%s) to see available stages, then ask the user to pick one and call login(workspace_id=%s, stage_id=<stage_id>).", snapWorkspaceID, snapWorkspaceID))
 			}
+			sb.WriteString("\n\nIf the user doesn't want to work inside a specific project, ask them whether to pull everything under the workspace's root \"Folders\" instead (folders, processes, state diagrams, dashboards, aliases that live directly under the company, excluding Projects). If they agree, call pull-folder(folder_id=0) and skip project/stage selection entirely — no COREZOID_STAGE_ID is needed for that.")
 			return sb.String(), false
 		}
 	}
@@ -421,6 +421,16 @@ func handleLogin(ctx context.Context, args map[string]interface{}) (string, bool
 	}
 
 	msg := fmt.Sprintf("Setup complete! Configuration saved to %s.", envPath)
+	if rootFoldersPulled {
+		if rootFoldersCount == 0 {
+			msg += " No project was selected, and the workspace's root Folders came back empty. If you expected content there, this usually means WORKSPACE_ID isn't set correctly — check with list-workspaces and re-run login(workspace_id=<id>)."
+		} else {
+			msg += fmt.Sprintf(" No project was selected — pulled everything under the workspace's root Folders instead (%d item(s), excluding Projects).", rootFoldersCount)
+			if rootAliasWarning != "" {
+				msg += " " + rootAliasWarning
+			}
+		}
+	}
 	if !tokenExpiry.IsZero() {
 		msg += fmt.Sprintf(" Token expires: %s.", tokenExpiry.Format("2006-01-02 15:04"))
 	}

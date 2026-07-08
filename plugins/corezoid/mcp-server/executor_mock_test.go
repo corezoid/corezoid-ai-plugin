@@ -264,19 +264,7 @@ func TestCreateAlias_OK(t *testing.T) {
 }
 
 func TestListAliasesByStage_Error(t *testing.T) {
-	// GetProjectIDByStageID calls ShowFolder first; must succeed or it panics (nil-deref bug).
-	// We satisfy the ShowFolder call, then fail the alias list call.
-	call := 0
 	_, e := mockAPIServer(t, func(ops []map[string]interface{}) interface{} {
-		call++
-		if call == 1 {
-			return map[string]interface{}{
-				"request_proc": "ok",
-				"ops": []interface{}{map[string]interface{}{
-					"proc": "ok", "obj_id": float64(1), "parent_obj_id": float64(0),
-				}},
-			}
-		}
 		return map[string]interface{}{"request_proc": "fail"}
 	})
 
