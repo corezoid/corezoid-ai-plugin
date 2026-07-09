@@ -1,0 +1,10 @@
+Lint results for: reply-literal-values
+Total nodes: 4
+
+=== API_RPC_REPLY LITERAL VALUES (2) ===
+  [bbbb0002513aa075cf400002] Reply literals
+  Issue: api_rpc_reply has literal non-string values (res_data.chars = 0, res_data.links = []) — pushing this scheme hangs the server commit ("no response from server"). Set the value in an upstream api_code/set_param node and reference it as "{{variable}}" with the real type in res_data_type
+  [bbbb0004513aa075cf400004] Reply extra literal
+  Issue: api_rpc_reply has literal non-string values (extra.meta = {}) — pushing this scheme hangs the server commit ("no response from server"). Set the value in an upstream api_code/set_param node and reference it as "{{variable}}" with the real type in res_data_type
+
+Total issues: 2
