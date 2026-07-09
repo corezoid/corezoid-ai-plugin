@@ -482,6 +482,14 @@ func fixStruct(dataBin string, inProcessID int) (string, []string) {
 										}
 									}
 								}
+								if logicMap["type"] == "git_call" || logicMap["type"] == "api_git" {
+									// git_call deploys via a separate container build (see BuildGitCallNodes).
+									// Mark the source valid so Commit accepts the node; the build runs
+									// between compile and commit.
+									if _, set := logicMap["code_error"]; !set {
+										logicMap["code_error"] = false
+									}
+								}
 								if logicMap["type"] == "api" {
 									if extra, ok := logicMap["extra"].(map[string]interface{}); ok {
 										if body, ok := extra["body"].(string); ok && len(extra) == 1 {
