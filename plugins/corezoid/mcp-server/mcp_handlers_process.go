@@ -201,8 +201,28 @@ func handleLintProcess(_ context.Context, args map[string]interface{}) (string, 
 	return FormatLintResult(result), false
 }
 
-// handleRunTask deploys the local process, fires a task at it, and reports
-// which node the task settled on. Used to smoke-test a process end-to-end.
+// runTaskDefaultWaitSec is how long run-task waits for the task to reach a
+// final node before reporting it as still in progress. Long enough to ride out
+// typical async hops (api / api_rpc / db_call), short enough not to stall an
+// interactive session.
+const runTaskDefaultWaitSec = 30
+
+// runTaskMaxWaitSec caps the user-supplied wait_sec so a single tool call
+// cannot pin the session for more than 10 minutes.
+const runTaskMaxWaitSec = 600
+
+// runTaskPollEvery is the interval between show_task polls while waiting.
+var runTaskPollEvery = 2 * time.Second
+
+// runTaskFirstPollAfter is the delay before the first show_task poll — short,
+// so a synchronous process that finishes in milliseconds returns immediately
+// instead of waiting out a full poll interval.
+var runTaskFirstPollAfter = 300 * time.Millisecond
+
+// handleRunTask deploys the local process, fires a task at it, and polls until
+// the task reaches a final node or wait_sec elapses. Used to smoke-test a
+// process end-to-end — including processes whose path crosses async nodes
+// (api, api_rpc, db_call, delay), which take longer than one scheduler tick.
 func handleRunTask(ctx context.Context, args map[string]interface{}) (string, bool) {
 	filePath, err := resolveProcessPath(args, "process_path")
 	if err != nil {
@@ -211,6 +231,20 @@ func handleRunTask(ctx context.Context, args map[string]interface{}) (string, bo
 	dataStr, err := strArg(args, "data")
 	if err != nil {
 		return "Error: " + err.Error(), true
+	}
+	waitSec := runTaskDefaultWaitSec
+	if _, ok := args["wait_sec"]; ok {
+		n, err := intArg(args, "wait_sec")
+		if err != nil {
+			return "Error: " + err.Error(), true
+		}
+		waitSec = n
+	}
+	if waitSec < 1 {
+		waitSec = 1
+	}
+	if waitSec > runTaskMaxWaitSec {
+		waitSec = runTaskMaxWaitSec
 	}
 
 	procID, errMsg := extractProcessIDFromPath(filePath)
@@ -239,16 +273,59 @@ func handleRunTask(ctx context.Context, args map[string]interface{}) (string, bo
 		return fmt.Sprintf("Error creating task: %v", err), true
 	}
 
-	time.Sleep(time.Second * 5)
+	// Poll until the task settles on a final node or the wait budget runs out.
+	// The first poll fires after a short beat so a synchronous process that
+	// completes in milliseconds returns without paying the full poll interval;
+	// subsequent polls run on the regular cadence.
+	deadline := time.Now().Add(time.Duration(waitSec) * time.Second)
+	var rspTask map[string]interface{}
+	sawTask := false
+	nextPoll := runTaskFirstPollAfter
+	for {
+		select {
+		case <-ctx.Done():
+			return fmt.Sprintf("Error: cancelled while waiting for task (ref %s): %v", ref, ctx.Err()), true
+		case <-time.After(nextPoll):
+		}
+		nextPoll = runTaskPollEvery
 
-	rspTask, err := v.showTask(ref)
-	if err != nil {
-		return fmt.Sprintf("Error getting task result: %v", err), true
+		rsp, err := v.showTask(ref)
+		if err != nil {
+			// A task that reached a final node without save_task is dropped by
+			// the platform, so show_task stops finding it. Once we have seen
+			// the task at least once, report that instead of failing with a
+			// confusing lookup error.
+			if sawTask {
+				return fmt.Sprintf(
+					"Task finished, but its final data is not available: the task left the process and show_task no longer finds it (ref %s).\n"+
+						"Most likely the final node has no save_task option. Enable {\"save_task\":true} on the final node or add an api_rpc_reply before it to inspect results.\n"+
+						"Last error: %v", ref, err), false
+			}
+			if time.Now().After(deadline) {
+				return fmt.Sprintf("Error getting task result (ref %s): %v", ref, err), true
+			}
+			continue
+		}
+		sawTask = true
+		rspTask = rsp
+
+		serverNodeID, _ := rsp["node_id"].(string)
+		if ni, ok := lookupNode(v, serverNodeID); ok && ni.Type == 2 {
+			break // final node reached
+		}
+		if time.Now().After(deadline) {
+			break // still in flight — report the parked node below
+		}
 	}
+
 	logger.Info("Task response: %+v", rspTask)
 	rspTaskData, _ := rspTask["data"].(map[string]interface{})
 	rspTaskDataBin, _ := json.Marshal(rspTaskData)
 	serverNodeID, _ := rspTask["node_id"].(string)
+	taskID := ""
+	if idv, ok := rspTask["obj_id"]; ok && idv != nil {
+		taskID = fmt.Sprintf("%v", idv)
+	}
 
 	if v.Debug {
 		for k, ni := range v.NodeIDMap {
@@ -256,19 +333,11 @@ func handleRunTask(ctx context.Context, args map[string]interface{}) (string, bo
 		}
 	}
 
-	nodeInfo, found := v.NodeIDMap[serverNodeID]
-	if !found {
-		for _, ni := range v.NodeIDMap {
-			if serverNodeID == ni.ServerID {
-				nodeInfo = ni
-				found = true
-				break
-			}
-		}
-	}
+	nodeInfo, found := lookupNode(v, serverNodeID)
 	logger.Info("Node info (found=%v): %+v", found, nodeInfo)
 	nodeType := "logic (not final)"
-	msg := "Task failed: it stopped at the non-final node"
+	msg := fmt.Sprintf("Task is still in progress after %ds: it is parked at a non-final node (an async node keeps it there). "+
+		"Re-check later with list-task-history or list-node-tasks, or re-run with a larger wait_sec", waitSec)
 	isErr := true
 	if nodeInfo.Type == 1 {
 		nodeType = "start"
@@ -283,9 +352,24 @@ func handleRunTask(ctx context.Context, args map[string]interface{}) (string, bo
 		}
 	}
 
-	summary := fmt.Sprintf("%s\nNodeID: %s\nNodeName: %s\nNodeType: %s\nProcessID: %d\nData: %s",
-		msg, serverNodeID, nodeInfo.Name, nodeType, v.ProcessID, string(rspTaskDataBin))
+	summary := fmt.Sprintf("%s\nNodeID: %s\nNodeName: %s\nNodeType: %s\nProcessID: %d\nTaskRef: %s\nTaskID: %s\nData: %s",
+		msg, serverNodeID, nodeInfo.Name, nodeType, v.ProcessID, ref, taskID, string(rspTaskDataBin))
 	return summary, isErr
+}
+
+// lookupNode resolves a server node ID against the validator's NodeIDMap,
+// falling back to a scan over ServerID values (the map is keyed by local IDs
+// after a push, but show_task returns server-side IDs).
+func lookupNode(v *Executor, serverNodeID string) (NodeInfo, bool) {
+	if ni, ok := v.NodeIDMap[serverNodeID]; ok {
+		return ni, true
+	}
+	for _, ni := range v.NodeIDMap {
+		if serverNodeID == ni.ServerID {
+			return ni, true
+		}
+	}
+	return NodeInfo{}, false
 }
 
 // handleCreateProcess creates an empty process in the given local folder and
