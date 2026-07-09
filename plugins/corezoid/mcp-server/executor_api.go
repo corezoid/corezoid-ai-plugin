@@ -55,8 +55,13 @@ func (v *Executor) req(method string, ops []map[string]any) (map[string]interfac
 	}
 
 	path := "json"
-	if method == "export_process" {
+	switch method {
+	case "export_process":
 		path = "download"
+	case "compare", "merge":
+		// The stage compare/merge (deploy) admin ops have their own endpoints —
+		// /api/2/compare and /api/2/merge — not the shared /api/2/json.
+		path = method
 	}
 	authURL := fmt.Sprintf("%s/api/2/%s", v.APIUrl, path)
 

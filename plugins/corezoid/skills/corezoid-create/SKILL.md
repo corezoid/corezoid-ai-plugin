@@ -58,8 +58,8 @@ Every process follows this base structure:
 | 2 | Code Node _(optional)_ | 0 | Prepare / transform input data |
 | 3 | **API Call** _or_ **Call a Process** | 0 | Core action (one or more) |
 | 4 | Reply to Process (Success) | 0 | Return result to caller |
-| 5 | Reply to Process (Error) | 0 | Return error to caller (one per failure point) |
-| 6 | Error | 2 | Terminal error node |
+| 5 | Reply to Process (Error) | 0 | Return error to caller — **one dedicated node per failure point** |
+| 6 | Error | 2 | Terminal error node — **one dedicated, descriptively-named node per failure point** |
 | 7 | Final | 2 | Terminal success node |
 
 **API connector** uses `type: "api"` in Step 3.
@@ -104,20 +104,28 @@ Produce a valid `.conv.json` file.
 }
 ```
 
+Fill in `description` based on the requirements gathered in Step 1 (see Description Update Rule in `corezoid/SKILL.md`): 1–2 sentences starting with a verb, under 200 characters, no *"This process…"* preamble.
+
 `params` — declare all input parameters the caller must pass. See `${CLAUDE_PLUGIN_ROOT}/docs/process/process-with-parameters.md`.
 
 ### Core rules
 
 - Node IDs must be unique 24-character hex strings: `^[0-9a-f]{24}$`. These are **temporary placeholders** for new nodes — on `push-process` Corezoid reassigns its own canonical IDs (and rewires references within the push). Run `pull-process` after pushing to get the canonical IDs before any further edits. See [Node ID Lifecycle](${CLAUDE_PLUGIN_ROOT}/docs/process/process-development-guide.md#node-id-lifecycle-server-assignment--stability-on-push).
 - Connect nodes only through the `go` field
-- Every node that can fail must have `err_node_id` — point it **directly at a Final Error node** (`obj_type: 2`) unless the error path needs logic (reply to caller, retry routing). Never create an Escalation node (`obj_type: 3`) that only contains a bare `go` — that is a passthrough anti-pattern flagged by `lint-process`
+- **Dedicated error cluster per error-prone node.** Every node that can fail (`set_param`, `api`, `api_rpc`, `api_code`, `api_copy`, `db_call`, `git_call`, `api_sum`) gets its **own** error path — never funnel several failing nodes into one shared Reply/Error node. Each cluster is:
+  1. A **Reply to Process** node (`api_rpc_reply`) that returns the error to the caller — set to **collapsed**: `"extra": "{\"modeForm\":\"collapse\",\"icon\":\"\"}"`.
+  2. → an **Error** end node (`obj_type: 2`, **expanded** so its name is visible: `"extra": "{\"modeForm\":\"expand\",\"icon\":\"error\"}"`) **named after the specific failure** so the error is obvious at a glance (e.g. `Charge Payment Error`, not generic `Error`).
+  - Wire `err_node_id` of the failing node → its Reply node; the Reply node's `go` → its Error node.
+  - Separate Error nodes per failure point (instead of one shared terminal) make the process far more readable.
+  - For fire-and-forget processes that do not reply to a caller, skip the Reply node and wire `err_node_id` directly to the dedicated named Error node.
+  - Never create an Escalation node (`obj_type: 3`) that only contains a bare `go` — that is a passthrough anti-pattern flagged by `lint-process`.
 - All constants (URLs, tokens, IDs) must be Corezoid variables — never hardcoded:
   1. Check for existing variables: read `_ENV_VARS_.json` (from `pull-folder`) or `.processes/variables.json` (from this session)
   2. Create a new variable if needed: call MCP tool **`create-variable`** with `name`, `description`, `value`
   3. Reference in logic: `{{env_var[@variable-name]}}`
 - Use descriptive `title` values (e.g., "Call Payment Process", not "RPC")
-- Position nodes top-to-bottom, incrementing `y` by 200–250px; place error nodes to the right (`x + 300`)
-- Place each Reply Error node at the **same `y`** as the Call/API node it handles — this creates a straight horizontal connector line for the error path
+- Position main-flow nodes top-to-bottom, incrementing `y` by 200–250px
+- **Pin each error cluster tight to the node it protects.** Place the Reply node at the **same `y`** as its failing node and just to the right (`x + ~250`) so the collapsed Reply sits right next to it; place its Error node immediately to the right of the Reply (`x + ~500`), same `y`. Same `y` gives a straight horizontal connector; the small offset keeps the cluster visually attached instead of drifting off with a large gap
 
 ### Common pitfalls
 

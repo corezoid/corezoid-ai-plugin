@@ -178,7 +178,13 @@ func handlePushProcess(ctx context.Context, args map[string]interface{}) (string
 		return fmt.Sprintf("Error deploying process: %v", err), true
 	}
 
-	return fmt.Sprintf("Process deployed successfully, ProcessID: %d", procID), false
+	result := fmt.Sprintf("Process deployed successfully, ProcessID: %d", procID)
+	// Surface the git_call container build log so the user sees what the build
+	// service reported (progress + result), not just silence on success.
+	if len(v.gitCallBuildLog) > 0 {
+		result += "\n\ngit_call build:\n" + strings.Join(v.gitCallBuildLog, "\n")
+	}
+	return result, false
 }
 
 // handleLintProcess validates a local .conv.json without touching the server.

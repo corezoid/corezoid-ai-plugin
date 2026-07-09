@@ -82,7 +82,25 @@ For complete JSON structures see `${CLAUDE_PLUGIN_ROOT}/docs/node-structures.md`
 
 ---
 
-## Step 3: Deploy the Changes
+## Step 3: Update the Description
+
+Before deploying, update the root-level `description` field in `PROCESS_PATH` to reflect the process's current behaviour after your edits.
+
+**Guard — preserve existing descriptions when appropriate:** if the process already has a non-empty description and your edits did not change the overall purpose (e.g. you fixed a bug, adjusted a timeout, or rewired an error path without altering what the process fundamentally does), preserve the existing description rather than replacing it.
+
+Follow the **Description Update Rule** from the `corezoid` skill:
+- 1–2 sentences, starting with a verb (*Calls*, *Creates*, *Validates*, *Routes*, *Aggregates*)
+- Sentence 1: what the process does — verb + action + subject
+- Sentence 2 (optional): key inputs/outputs or notable behaviour
+- Under 200 characters, no *"This process…"* preamble
+
+Write the updated `description` directly into the JSON file. This costs nothing extra — the description rides the same `push-process` call.
+
+If the parent folder was structurally affected (process added, removed, or renamed), also call MCP tool **`modify-folder`** with a one-sentence `description` of what the folder contains.
+
+---
+
+## Step 4: Deploy the Changes
 
 **MANDATORY: Always run this step whenever any changes were made to the process file — even if there are open questions or the work is not fully complete. Without deploying, all changes are lost.**
 

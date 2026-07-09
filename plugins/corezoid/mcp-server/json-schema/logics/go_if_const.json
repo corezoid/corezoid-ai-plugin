@@ -39,7 +39,7 @@
           },
           "cast": {
             "type": "string",
-            "enum": ["string", "number", "boolean", "array"],
+            "enum": ["string", "number", "boolean", "array", "object"],
             "description": "Data type to cast the parameter to for comparison"
           }
         }
