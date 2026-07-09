@@ -198,6 +198,8 @@ validation errors, and summarize what each process does.
 | `logout`            | Remove saved credentials                           |
 | `list-workspaces`   | List available workspaces and stages               |
 | `list-stages`       | List stages in a workspace                         |
+| `deploy-stage`      | Deploy/promote one stage onto another (develop→production); dry-run by default, requires explicit confirm to apply |
+| `set-stage-immutable` | Make a stage read-only (immutable) or editable; immutable stages are the only valid deploy targets; requires explicit confirm |
 | `list-projects`     | List folders and processes in a stage              |
 | `create-project`    | Create a new project (with optional stages) in a workspace |
 | `modify-project`    | Update a project's title, short_name and/or description |
