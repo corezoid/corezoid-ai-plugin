@@ -164,6 +164,52 @@ func TestFindStageDir_NotFound(t *testing.T) {
 	}
 }
 
+func TestFindStageDir_SkipsHiddenDirs(t *testing.T) {
+	// Simulates $HOME layout: a .Trash sibling next to the real stage dir.
+	// findStageDir must skip the hidden dir and still find the stage.
+	root := t.TempDir()
+	hiddenDir := filepath.Join(root, ".Trash")
+	if err := os.MkdirAll(hiddenDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	stageDir := filepath.Join(root, "12345_myproject.stage")
+	if err := os.MkdirAll(stageDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := findStageDir(root, 2)
+	if err != nil {
+		t.Fatalf("findStageDir returned unexpected error: %v", err)
+	}
+	if got != stageDir {
+		t.Errorf("got %q, want %q", got, stageDir)
+	}
+}
+
+func TestWalkDepth_SkipsPermissionDenied(t *testing.T) {
+	if os.Getuid() == 0 {
+		t.Skip("running as root — chmod 000 has no effect")
+	}
+	root := t.TempDir()
+	locked := filepath.Join(root, "locked")
+	if err := os.MkdirAll(locked, 0000); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chmod(locked, 0755) }) //nolint:errcheck
+
+	// walkDepth must not return an error when it encounters a permission-denied dir.
+	var visited []string
+	err := walkDepth(root, 0, 2, func(path string, d os.DirEntry) bool {
+		visited = append(visited, path)
+		return false
+	})
+	if err != nil {
+		t.Fatalf("walkDepth returned unexpected error: %v", err)
+	}
+	// "locked" itself should appear (we see it via the parent's ReadDir)
+	// but no error should propagate from trying to descend into it.
+}
+
 // ---- moveContents ----------------------------------------------------------
 
 func TestMoveContents(t *testing.T) {

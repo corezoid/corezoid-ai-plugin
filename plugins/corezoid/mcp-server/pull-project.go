@@ -98,9 +98,22 @@ func walkDepth(dir string, depth, maxDepth int, fn func(string, os.DirEntry) boo
 	}
 	entries, err := os.ReadDir(dir)
 	if err != nil {
+		// Skip directories that the OS refuses to list (e.g. macOS .Trash when
+		// the MCP server is launched from $HOME). Returning nil lets the caller
+		// continue scanning other siblings instead of aborting.
+		if os.IsPermission(err) {
+			return nil
+		}
 		return err
 	}
 	for _, e := range entries {
+		// Skip hidden/system directories (names starting with ".") such as
+		// .Trash, .Spotlight-V100, .TemporaryItems on macOS. The *.stage
+		// directories we are looking for never begin with a dot, so this
+		// filter is safe and avoids permission errors at $HOME depth.
+		if e.IsDir() && strings.HasPrefix(e.Name(), ".") {
+			continue
+		}
 		p := filepath.Join(dir, e.Name())
 		if fn(p, e) {
 			return nil
@@ -182,7 +195,10 @@ func downloadStageRecursively(e *Executor, folderID int, filePath string) error 
 		return fmt.Errorf("failed to find stage dir: %v", err)
 	}
 	if stageDir == "" {
-		return fmt.Errorf("stage directory not found (*.stage)")
+		return fmt.Errorf("stage directory not found (*.stage) — " +
+			"if COREZOID_WORK_DIR (or the MCP server launch directory) is $HOME " +
+			"or another large directory, set it to a dedicated project folder and " +
+			"restart Claude Code / the MCP server")
 	}
 	// stagesDir is the parent of stageDir (needed for cleanup)
 	stagesDir := filepath.Dir(stageDir)
