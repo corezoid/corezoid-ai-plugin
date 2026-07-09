@@ -131,6 +131,7 @@ For domain-specific workflows use the specialized skills:
 - `/corezoid-variable-manager` — creating, listing, modifying, deleting variables (visible/secret, raw/json)
 - `/corezoid-process-optimizer` — reduce tacts (merge nodes), clean data flow, fill names, add semaphors
 - `/corezoid-api-connector` — build processes that call the Corezoid public API (`/api/2/json/`) using `api_secret_outer`
+- `/corezoid-describe` — update or create the description of a process, folder, or project without editing its logic
 
 ## Reference Documents
 
@@ -154,6 +155,17 @@ Use the `Read` tool to load these files when you need deeper detail:
 | `${CLAUDE_PLUGIN_ROOT}/docs/state-diagrams/state-diagram-node-structures.md` | JSON schemas for nodes inside a state diagram |
 | `${CLAUDE_PLUGIN_ROOT}/docs/state-diagrams/state-diagram-process-interaction.md` | How driver processes read / create / modify state tasks |
 | `${CLAUDE_PLUGIN_ROOT}/docs/variables-guide.md` | Variable naming rules, creation workflow, usage examples |
+
+## Description Update Rule
+
+After any successful change to a process, folder, or project, always set or refresh its description. Full authoring rules are in `/corezoid-describe`.
+
+Summary:
+- **Process** — update `description` in `.conv.json` root **before** `push-process` (no second push needed). 1–2 sentences, start with a verb (*Calls*, *Creates*, *Validates*…), under 200 characters, no *"This process…"*
+- **Folder** — call `modify-folder` with `description` if the folder was structurally changed. Resolve `folder_id` from the process's parent or by name via `list-folders`; if unresolvable, skip.
+- **Project** — call `modify-project` with `description` if project scope changed.
+
+---
 
 ## Tips
 

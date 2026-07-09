@@ -104,6 +104,8 @@ Produce a valid `.conv.json` file.
 }
 ```
 
+Fill in `description` based on the requirements gathered in Step 1 (see Description Update Rule in `corezoid/SKILL.md`): 1–2 sentences starting with a verb, under 200 characters, no *"This process…"* preamble.
+
 `params` — declare all input parameters the caller must pass. See `${CLAUDE_PLUGIN_ROOT}/docs/process/process-with-parameters.md`.
 
 ### Core rules
