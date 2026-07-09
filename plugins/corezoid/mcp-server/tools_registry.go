@@ -88,7 +88,7 @@ var toolRegistry = []mcpTool{
 	},
 	{
 		Name:        "run-task",
-		Description: "Run a task on an already-deployed Corezoid process (without re-deploying).",
+		Description: "Run a task on an already-deployed Corezoid process (without re-deploying) and wait for it to reach a final node. Polls up to wait_sec (default 30), so tasks that cross async nodes (api, api_rpc, db_call, delay) still return their final result. On timeout reports the node the task is parked at, plus TaskRef/TaskID for follow-up via list-task-history.",
 		InputSchema: map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
@@ -99,6 +99,10 @@ var toolRegistry = []mcpTool{
 				"data": map[string]interface{}{
 					"type":        "string",
 					"description": "JSON string with task input parameters",
+				},
+				"wait_sec": map[string]interface{}{
+					"type":        "integer",
+					"description": "How long to wait (seconds) for the task to reach a final node before reporting it as in progress. Default 30, max 600. Raise it for processes with slow external calls or delay nodes.",
 				},
 			},
 			"required": []string{"process_path", "data"},
