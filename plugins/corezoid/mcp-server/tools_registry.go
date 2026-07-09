@@ -60,13 +60,13 @@ var toolRegistry = []mcpTool{
 	},
 	{
 		Name:        "push-process",
-		Description: "Validate and deploy a process file to Corezoid.",
+		Description: "Validate and deploy a process file to Corezoid. Note: the server regenerates node IDs on every push and the local file is rewritten in place with the server's canonical scheme — reference nodes by title when iterating, and re-read the file after a push instead of reusing old node IDs.",
 		InputSchema: map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
 				"process_path": map[string]interface{}{
 					"type":        "string",
-					"description": "Relative path to the process JSON file.",
+					"description": "Path to the process JSON file, relative to the project root (absolute paths are accepted when they point inside the project).",
 				},
 			},
 			"required": []string{"process_path"},
