@@ -161,3 +161,36 @@ func TestFormatLintResult_Golden(t *testing.T) {
 		})
 	}
 }
+
+// TestLintProcess_NodeExtraNull verifies that a node-level "extra": null passes
+// schema validation. The platform itself emits null for some nodes, and
+// pull-process writes it verbatim — so the plugin must accept its own pull
+// output (previously: 'at /scheme/nodes/0/extra: got null, want string').
+func TestLintProcess_NodeExtraNull(t *testing.T) {
+	f, err := os.CreateTemp("", "extra-null-*.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.Remove(f.Name())
+	f.WriteString(`{
+		"obj_type": 1, "obj_id": 1, "conv_type": "process", "title": "extra-null", "status": "active",
+		"params": [], "ref_mask": true,
+		"scheme": {"web_settings": [[],[]], "nodes": [
+			{"id": "aaaa0001513aa075cf400001", "obj_type": 1, "title": "Start", "x": 0, "y": 0,
+			 "extra": null, "options": null,
+			 "condition": {"logics": [{"type": "go", "to_node_id": "aaaa0002513aa075cf400002"}], "semaphors": []}},
+			{"id": "aaaa0002513aa075cf400002", "obj_type": 2, "title": "Final", "x": 0, "y": 100,
+			 "extra": "{}", "options": null,
+			 "condition": {"logics": [], "semaphors": []}}
+		]}
+	}`)
+	f.Close()
+
+	result, err := lintProcess(f.Name())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !result.SchemaValid {
+		t.Errorf("extra:null must pass schema validation, got: %s", result.SchemaError)
+	}
+}
