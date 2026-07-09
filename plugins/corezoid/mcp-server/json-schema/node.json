@@ -39,8 +39,8 @@
       "description": "Y coordinate on canvas"
     },
     "extra": {
-      "type": "string",
-      "description": "UI settings in JSON string format"
+      "type": ["string", "null"],
+      "description": "UI settings in JSON string format. The platform itself emits null for some nodes (pull-process writes it verbatim), so null must round-trip."
     },
     "options": {
       "type": ["string", "null"],
