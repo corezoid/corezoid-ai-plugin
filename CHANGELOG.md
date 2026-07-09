@@ -1,32 +1,9 @@
 # Changelog
 
-## [2.7.0]
+## [2.5.1]
 
-- Feat: AWS Kiro support — the same plugin payload now installs on Kiro alongside Claude Code and Codex via a symmetric overlay (`plugins/corezoid/.kiro-plugin/plugin.json`, `plugins/corezoid/.mcp.kiro.json`, `plugins/corezoid/steering/corezoid.md`, and a root-level `POWER.md` distribution manifest for kiro.dev/powers).
-- Feat: `plugins/corezoid/scripts/install-kiro.sh` sets up an existing Kiro workspace from a cloned repo. Copies the MCP entry, symlinks steering files, and hard-copies each skill into `.kiro/skills/<name>/` while sed-substituting every `$CLAUDE_PLUGIN_ROOT` (and braced `${CLAUDE_PLUGIN_ROOT}`) token with the absolute plugin path so reference-doc paths resolve under Kiro. Idempotent.
-- Feat: `corezoid-stage-scan` skill — offline pre-merge/pre-deploy static validator for exported stage `.zip`s (or extracted dirs). Detects non-active processes, empty/battered processes, broken intra-process node links (`to_node_id`/`err_node_id`), and broken/inactive cross-process `conv_id` references. Maps findings to the platform's merge "Errors list" messages. Ships a stdlib-only Python scanner with CI-friendly exit codes (`scripts/scan_stage.py`); each finding carries a `folder` field with the human-readable folder path in the stage tree.
-- Feat: `delete-process` MCP tool — move a process to Trash without leaving the IDE.
-- Docs: `$CLAUDE_PLUGIN_ROOT` inside SKILL.md is a host-side text substitution Claude Code performs at skill-load time (anthropics/claude-code#48230). Codex resolves the same token by the same name; there is currently no mechanism to register a host-neutral alias, so the token name stays as `$CLAUDE_PLUGIN_ROOT` across all skills and `install-kiro.sh` resolves it at install time for Kiro.
-- CI: package and attach the `.kiro` overlay and `POWER.md` to GitHub Releases; ignore `${VAR}` placeholder paths in the markdown link check.
-
-## [2.6.0]
-
-- Feat: `send-feedback` MCP tool — submits user feedback to a dedicated Corezoid process (`conv_id 1871779`) and returns a ticket id. Does not require authentication so users can report auth-related issues too.
-- Feat: `corezoid-feedback` skill — UX layer for the feedback flow: detects when a result was unexpected, collects problem/expected/solution, shows the full payload for confirmation, then calls `send-feedback`.
-- Feat: opt-in email telemetry — after first successful login, users are asked (via elicitation) if they want to share their email with the Corezoid team; stored in `~/.corezoid/preferences.json`, included as `user_email` in analytics events.
-- Refactor: all telemetry values (analytics + feedback endpoint and conv_id) centralised in `telemetry_config.go`; individually overridable via `COREZOID_ANALYTICS_ENDPOINT`, `COREZOID_ANALYTICS_CONV_ID`, `COREZOID_FEEDBACK_ENDPOINT`, `COREZOID_FEEDBACK_CONV_ID`. Existing default behavior unchanged.
-- Security: secret redaction applied to all feedback fields before transmission (Bearer tokens, JWTs, `api_key`/`token`/`password`/`secret` values, hex strings ≥ 32 chars). Feedback disabled by `COREZOID_FEEDBACK_DISABLED=1`.
-- Fix: allow templated/dynamic `conv_id` in `api_copy` nodes (align schema with `api_rpc`).
-- Fix: detect and disallow passthrough escalation nodes during lint.
-- Docs: api-call — require the full canonical api logic shape; a "light" node fails the deploy.
-- Docs: api-call — correct `customize_response=false` behavior; document response-body placement and silent mapping failure.
-- Docs: params — document the exact valid params element shape and that params are optional for receiving data.
-- Docs: set-param — document nested env_var keys and expand `conv[].ref[]` rules.
-- Docs: delay-node — clarify the 30s limit is static-literal only; document dynamic absolute-timestamp timers.
-- Docs: delay-node — make timestamp source explicitly irrelevant (set_param is one example).
-- Docs: node-ids — document server reassignment and stability of node IDs on push.
-- Docs: updated SECURITY.md telemetry section to disclose optional email opt-in and how to remove it.
-- Chore: MCP server log file moved from `/tmp/corezoid.log` to `~/.corezoid/mcp.log` for easier discoverability.
+- Docs: Standardise error handling on a dedicated per-node error cluster — each error-prone node gets its own collapsed Reply to Process node leading to its own descriptively-named (expanded) Error node, instead of funnelling failures into one shared terminal.
+- Docs: Pin each error cluster tight to the node it protects (same `y`, small `x` offset) for cleaner, more readable process layouts.
 
 ## [2.5.0]
 

@@ -327,17 +327,31 @@ Standardize error responses using this format:
 | Process call error        | Invalid process ID, access denied   | Verify process ID, check permissions                     |
 | Validation error          | Invalid input data                  | Improve input validation, provide clear error messages   |
 
-## Dedicated Error Nodes Pattern
+## Dedicated Error Cluster Pattern (standard)
 
-Each Code node should have its own dedicated error escalation node rather than sharing a common
-error node:
+Every node that can return an error must have its **own** error cluster — never funnel several
+failing nodes into a single shared Reply/Error node. Each failure point gets a distinct, descriptively
+named Error node so the diagram reads clearly.
 
-1. Create a basic "error" END node positioned to the right of each Code node
-2. Connect the Code node's error path (via the "err_node_id" parameter) to its dedicated error node
-3. This one-to-one mapping between Code nodes and their error nodes improves error isolation and
-   troubleshooting
+A cluster is two nodes pinned tight to the node they protect:
 
-Example Code Node with Dedicated Error Node:
+1. **Reply to Process** node (`api_rpc_reply`) that returns the error to the caller, kept
+   **collapsed** (`"extra": "{\"modeForm\":\"collapse\",\"icon\":\"\"}"`). Placed at the **same `y`**
+   as the failing node, just to its right (`x + ~250`) so the small collapsed node sits right next to it.
+2. **Error** END node (`obj_type: 2`, **expanded** so its name stays visible:
+   `"extra": "{\"modeForm\":\"expand\",\"icon\":\"error\"}"`) **named after the specific failure**
+   (e.g. `Charge Payment Error`, not a generic `Error`/`Final`). Placed immediately to the right of
+   the Reply node (`x + ~500`), same `y`.
+
+Wiring: failing node `err_node_id` → its Reply node; the Reply node's `go` → its Error node.
+
+For fire-and-forget processes that do not reply to a caller, omit the Reply node and wire
+`err_node_id` directly to the dedicated named Error node.
+
+This one-to-one mapping between each error-prone node and its named Error node — instead of one shared
+terminal — improves error isolation, troubleshooting, and readability.
+
+Example Code Node with its dedicated Reply + Error cluster (Reply collapsed and pinned to the node):
 
 ```json
 {
@@ -348,7 +362,7 @@ Example Code Node with Dedicated Error Node:
       {
         "type": "api_code",
         "code": "data.result = data.a + data.b;",
-        "err_node_id": "code_error_node_id",
+        "err_node_id": "code_reply_error_node_id",
         "extra": {},
         "extra_type": {}
       },
@@ -365,7 +379,42 @@ Example Code Node with Dedicated Error Node:
 }
 ```
 
-Corresponding dedicated error node:
+Its dedicated **Reply** node (collapsed, pinned to the right of the failing node, same `y`):
+
+```json
+{
+  "id": "code_reply_error_node_id",
+  "obj_type": 0,
+  "condition": {
+    "logics": [
+      {
+        "type": "api_rpc_reply",
+        "mode": "key_value",
+        "res_data": {
+          "status": "error",
+          "description": "{{__conveyor_code_return_description__}}"
+        },
+        "res_data_type": {
+          "status": "string",
+          "description": "string"
+        },
+        "throw_exception": false
+      },
+      {
+        "type": "go",
+        "to_node_id": "code_error_node_id"
+      }
+    ],
+    "semaphors": []
+  },
+  "title": "Reply: Calculate Sum Error",
+  "x": 450,
+  "y": 300,
+  "extra": "{\"modeForm\":\"collapse\",\"icon\":\"\"}"
+}
+```
+
+Its dedicated, descriptively-named **Error** node (expanded so the name is visible, immediately to the right, same `y`):
 
 ```json
 {
@@ -376,12 +425,14 @@ Corresponding dedicated error node:
     "semaphors": []
   },
   "title": "Calculate Sum Error",
-  "x": 450,
-  "y": 300
+  "x": 700,
+  "y": 300,
+  "extra": "{\"modeForm\":\"expand\",\"icon\":\"error\"}"
 }
 ```
 
-This dedicated error node pattern is the standard practice for error handling in Corezoid processes.
+This dedicated error cluster pattern — one Reply + one named Error node per error-prone node — is the
+standard practice for error handling in Corezoid processes.
 
 ## Related Documentation
 
