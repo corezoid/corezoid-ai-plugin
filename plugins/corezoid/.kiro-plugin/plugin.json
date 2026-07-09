@@ -11,5 +11,10 @@
   "license": "MIT",
   "keywords": ["corezoid", "process", "bpm", "workflow", "automation", "mcp"],
   "skills": "./skills/",
-  "mcpServers": "./.mcp.json"
+  "mcpServers": "./.mcp.kiro.json",
+  "kiro": {
+    "steering": "./steering/corezoid.md",
+    "skills": "./skills/",
+    "mcpServers": "./.mcp.kiro.json"
+  }
 }

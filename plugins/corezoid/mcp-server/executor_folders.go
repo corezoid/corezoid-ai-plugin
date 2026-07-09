@@ -153,6 +153,27 @@ func (v *Executor) ModifyFolder(folderID int, title, description string) error {
 	return nil
 }
 
+// DeleteProcess moves a process (conv) to the recycle bin. The operation is
+// reversible from the Corezoid UI's Trash. Permanent destruction is not
+// exposed via this tool — the same intentional policy as delete-folder and
+// delete-project.
+func (v *Executor) DeleteProcess(processID int) error {
+	op := map[string]any{
+		"type":       "delete",
+		"obj":        "conv",
+		"obj_id":     processID,
+		"company_id": v.WorkspaceID,
+	}
+	resp, err := v.req("delete_conv", []map[string]any{op})
+	if err != nil {
+		return fmt.Errorf("DeleteProcess request failed: %w", err)
+	}
+	if _, err := firstOp(resp); err != nil {
+		return err
+	}
+	return nil
+}
+
 // DeleteFolder moves a folder to the recycle bin. Like delete-project this is
 // reversible from the Corezoid UI's Trash; permanent destruction is not
 // exposed via this tool.

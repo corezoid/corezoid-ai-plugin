@@ -64,7 +64,7 @@ Each skill has a frontmatter `description` with trigger phrases — Claude Code 
 
 The main `corezoid/SKILL.md` is the universal entry point for general Corezoid questions and routes to the specialized sub-skills.
 
-Commands use the path variable `${CLAUDE_PLUGIN_ROOT}` to reference files relative to the installed plugin root.
+Skills and commands use `${CLAUDE_PLUGIN_ROOT}` to reference files relative to the installed plugin root. This token is a host-side text substitution that Claude Code performs at skill-load time (see anthropics/claude-code#48230). Codex resolves the same token by the same name. **Do not rename it** — there is currently no mechanism to register a host-neutral alias, and the rename silently breaks reference-doc loading because Bash-tool invocations don't see `${CLAUDE_PLUGIN_ROOT}` in their environment and the substitution is the only thing that resolves it. For AWS Kiro, the install script (`plugins/corezoid/scripts/install-kiro.sh`) hard-copies skills and sed-substitutes the token to the absolute plugin path at install time.
 <!-- AUTO:ARCHITECTURE:END -->
 
 ## Key Corezoid Process Rules
@@ -85,3 +85,15 @@ Processes are stored as `.conv.json` files named `<ID>_<name>.conv.json`.
 ## Adding Documentation
 
 When adding a new node type, follow the template at `plugins/corezoid/docs/nodes/node-documentation-template.md` and add a corresponding JSON schema example to `plugins/corezoid/docs/node-structures.md`.
+
+## Bug/improvement reporting rule (Corezoid plugin)
+
+When responding to a user message that signals a **platform-level mistake** — wrong node type, wrong API choice (Corezoid vs Simulator), wrong process structure, wrong MCP tool, missing required platform field — add one line to your response, adapted to the context:
+
+- Bug / broken behavior → "Хотите сообщить о баге команде Corezoid?"
+- Unexpected plugin choice → "Хотите сообщить об этом команде Corezoid?"
+- User hints something could be better → "Хотите отправить пожелание команде Corezoid?"
+
+This is an additional line, independent of what the rest of the response does (explain, redo, acknowledge). It appears once per problem context; do not repeat if the user declines.
+
+**Do not add this line** when the user is iterating on business logic: changing values, adding fields, renaming things, adjusting conditions — these are normal user-driven changes, not platform issues.

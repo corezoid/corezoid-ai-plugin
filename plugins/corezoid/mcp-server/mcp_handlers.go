@@ -36,6 +36,7 @@ var toolHandlers = map[string]toolHandler{
 	"list-folders":         handleListFolders,
 	"modify-folder":        handleModifyFolder,
 	"delete-folder":        handleDeleteFolder,
+	"delete-process":       handleDeleteProcess,
 	"create-alias":         handleCreateAlias,
 
 	// discovery
@@ -78,14 +79,20 @@ var toolHandlers = map[string]toolHandler{
 	"list-api-keys":      handleListAPIKeys,
 	"find-principal":     handleFindPrincipal,
 	"invite-user":        handleInviteUser,
+
+	// feedback
+	"send-feedback": handleSendFeedback,
 }
 
 // noAuthTools don't need any credentials. lint runs entirely on local files;
 // login/logout manage credentials themselves.
+// send-feedback must not require auth so users can report problems that
+// occurred before or during the login flow.
 var noAuthTools = map[string]struct{}{
-	"lint-process": {},
-	"login":        {},
-	"logout":       {},
+	"lint-process":  {},
+	"login":         {},
+	"logout":        {},
+	"send-feedback": {},
 }
 
 // tokenOnlyTools need an OAuth token but not a fully configured workspace or
@@ -145,6 +152,7 @@ func handleToolCall(ctx context.Context, name string, args map[string]interface{
 			Transport:      analyticsTransport,
 			ServerVersion:  mcpServerVersion,
 			InstallationID: installationID,
+			UserEmail:      telemetryEmail,
 		}
 		if isError {
 			e.ErrorType = classifyError(result)

@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "corezoid": {
+      "command": "sh",
+      "args": ["-c", "export PLUGIN_ROOT=\"${KIRO_PLUGIN_ROOT:-$PWD/.kiro/..}\"; export COREZOID_WORK_DIR=\"$PWD\"; exec sh \"$PLUGIN_ROOT/mcp-server/run.sh\""]
+    }
+  }
+}

@@ -210,7 +210,8 @@ func main() {
 	// Debug level is opt-in: set COREZOID_DEBUG=1 to enable.
 	logPath := os.Getenv("COREZOID_DEBUG_LOG")
 	if logPath == "" {
-		logPath = filepath.Join(os.TempDir(), "corezoid.log")
+		home, _ := os.UserHomeDir()
+		logPath = filepath.Join(home, ".corezoid", "mcp.log")
 	}
 	if f, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0600); err == nil {
 		logger.writer = f

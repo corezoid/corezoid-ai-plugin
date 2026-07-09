@@ -487,6 +487,22 @@ func handleModifyFolder(ctx context.Context, args map[string]interface{}) (strin
 	return fmt.Sprintf("Folder #%d updated (%s)", folderID, strings.Join(parts, ", ")), false
 }
 
+// handleDeleteProcess moves a process (conv) to the Corezoid recycle bin
+// (Trash). The operation is reversible from the UI; permanent destruction is
+// intentionally not exposed via this tool.
+func handleDeleteProcess(ctx context.Context, args map[string]interface{}) (string, bool) {
+	processID, err := intArg(args, "process_id")
+	if err != nil {
+		return "Error: " + err.Error(), true
+	}
+
+	v := NewValidator(ctx, 0)
+	if err := v.DeleteProcess(processID); err != nil {
+		return fmt.Sprintf("Error: %v", err), true
+	}
+	return fmt.Sprintf("Process #%d moved to Trash.", processID), false
+}
+
 // handleDeleteFolder moves a folder to the recycle bin. The Corezoid UI's
 // Trash view restores it; permanent destruction is intentionally not exposed.
 func handleDeleteFolder(ctx context.Context, args map[string]interface{}) (string, bool) {

@@ -12,7 +12,11 @@
       "name": "corezoid",
       "source": "./plugins/corezoid",
       "description": "Corezoid BPM platform skills, MCP server, docs, and samples for Claude Code.",
+<<<<<<< feat/corezoid-plugin
       "version": "2.5.1",
+=======
+      "version": "2.7.0",
+>>>>>>> main
       "author": {
         "name": "Corezoid",
         "email": "support@corezoid.com"

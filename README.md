@@ -16,6 +16,7 @@ The plugin bundles a Go MCP server that exposes Corezoid operations as MCP tools
 | `corezoid-edit`                | "edit", "modify", "update" a process     | Modifying existing `.conv.json` files             |
 | `corezoid-review`              | "review", "audit", "check" a process     | Analysis, dead code, best-practice violations     |
 | `corezoid-project-review`      | "review project", "audit folder"         | Cross-process audit of an entire folder           |
+| `corezoid-stage-scan`          | "scan stage", "check stage before merge", "why does the merge fail" | Offline pre-merge validation of exported stage `.zip`s: non-active/empty processes, broken node links, broken/inactive `conv_id` refs |
 | `corezoid-dashboard-manager`   | "create dashboard", "add chart", "visualize metrics" | Dashboards, charts, node metrics, real-time monitoring |
 | `corezoid-process-tech-writer` | "document", "write docs", "describe process" | Markdown docs + enriched JSON with node descriptions |
 
@@ -210,6 +211,7 @@ validation errors, and summarize what each process does.
 | `list-folders`      | List immediate children of a folder (no disk I/O)  |
 | `modify-folder`     | Rename a folder or update its description          |
 | `delete-folder`     | Move a folder to the recycle bin                   |
+| `delete-process`    | Move a process or state diagram to the recycle bin |
 | `create-alias`      | Create a short alias for a process                 |
 | `create-variable`   | Create a Corezoid environment variable             |
 | `create-dashboard`  | Create a new dashboard for visualizing node metrics |
@@ -233,6 +235,28 @@ validation errors, and summarize what each process does.
 | `list-api-keys`     | List API keys in the workspace                     |
 | `find-principal`    | Resolve user / group / API-key name to obj_id      |
 | `invite-user`       | Invite an external email and share an object in one call |
+| `send-feedback`     | Submit feedback about plugin behavior (returns ticket id) |
+
+## Feedback
+
+When the plugin does something unexpected, the `corezoid-feedback` skill guides you through collecting a description of the problem and sends it to the Corezoid team via the `send-feedback` MCP tool.
+
+**Privacy guarantees:**
+
+- Feedback is sent **only after your explicit confirmation**. Nothing is sent automatically.
+- All fields are scanned for tokens, API keys, JWTs, and long hex secrets before transmission — any matches are replaced with `[REDACTED]`.
+- To disable feedback entirely (e.g. in corporate environments), set `COREZOID_FEEDBACK_DISABLED=1`.
+
+**Telemetry environment variables:**
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `COREZOID_ANALYTICS_DISABLED` | — | Opt out of anonymous tool-call telemetry |
+| `COREZOID_ANALYTICS_ENDPOINT` | built-in prod URL | Override analytics endpoint |
+| `COREZOID_ANALYTICS_CONV_ID` | `1852976` | Override analytics conv_id |
+| `COREZOID_FEEDBACK_DISABLED` | — | Disable user-initiated feedback submission |
+| `COREZOID_FEEDBACK_ENDPOINT` | built-in prod URL | Override feedback endpoint |
+| `COREZOID_FEEDBACK_CONV_ID` | `1871779` | Override feedback conv_id |
 
 ## Architecture
 
@@ -244,16 +268,17 @@ Claude Code / Codex
         │                 create-project, modify-project, delete-project, show-project
         ├── Processes     pull-process, pull-folder, push-process, lint-process
         │                 create-process, create-folder, create-alias, create-variable
-        │                 show-folder, list-folders, modify-folder, delete-folder
+        │                 show-folder, list-folders, modify-folder, delete-folder, delete-process
         ├── Tasks         run-task, list-node-tasks, list-task-history
         │                 modify-task, delete-task
         ├── Dashboards    create-dashboard, get-dashboard, add-chart,
         │                 modify-chart, get-chart, set-dashboard-layout
-        └── Access        share-object, list-shares,
-                          create-group, modify-group, delete-group, list-group-objects,
-                          add-to-group, remove-from-group, list-groups,
-                          create-api-key, modify-api-key, delete-api-key, list-api-keys,
-                          find-principal, invite-user
+        ├── Access        share-object, list-shares,
+        │                 create-group, modify-group, delete-group, list-group-objects,
+        │                 add-to-group, remove-from-group, list-groups,
+        │                 create-api-key, modify-api-key, delete-api-key, list-api-keys,
+        │                 find-principal, invite-user
+        └── Feedback      send-feedback
 ```
 
 ## Project structure
