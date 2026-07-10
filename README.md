@@ -248,6 +248,10 @@ validation errors, and summarize what each process does.
 | `find-principal`    | Resolve user / group / API-key name to obj_id      |
 | `invite-user`       | Invite an external email and share an object in one call |
 | `send-feedback`     | Submit feedback about plugin behavior (returns ticket id) |
+| `create-snapshot`   | Create a snapshot of the current server state of a process (auto-created before every push-process on existing processes) |
+| `list-snapshots`    | List all snapshots for a process with version, title, author and creation time |
+| `delete-snapshot`   | Delete a snapshot by its obj_id |
+| `get-snapshot`      | Get the node list of a specific snapshot for diff comparison |
 
 ## Feedback
 

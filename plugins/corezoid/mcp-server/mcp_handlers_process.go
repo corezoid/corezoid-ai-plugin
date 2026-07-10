@@ -102,6 +102,11 @@ func handlePullFolder(ctx context.Context, args map[string]interface{}) (string,
 	}
 
 	v := NewValidator(ctx, 0)
+
+	// Pre-warm project_id cache so push-process never needs an extra API call.
+	// folderID is the stage; its parent is the project.
+	resolveAndCacheProjectID(v)
+
 	if err := downloadStageRecursively(v, folderID, "."); err != nil {
 		return fmt.Sprintf("Error fetching folder: %v", err), true
 	}
@@ -172,6 +177,20 @@ func handlePushProcess(ctx context.Context, args map[string]interface{}) (string
 
 	if err := v.BeforeValidation(jsonContent, nil); err != nil {
 		return fmt.Sprintf("Validation failed: %v", err), true
+	}
+
+	// Auto-snapshot: if process already exists on server (obj_id != null/0),
+	// capture current server state before overwriting. Never blocks on failure.
+	if existingObjID := extractObjIDFromJSON(jsonContent); existingObjID != 0 {
+		if projectID := resolveAndCacheProjectID(v); projectID != 0 && v.StageID != 0 {
+			name := extractProcessNameFromPath(filePath)
+			title := fmt.Sprintf("pre-push %s %s", name, time.Now().UTC().Format("2006-01-02"))
+			if snapObjID, snapVer, snapErr := v.CreateSnapshot(existingObjID, projectID, v.StageID, title); snapErr != nil {
+				logger.Warn("[snapshot] auto-snapshot failed, continuing: %v", snapErr)
+			} else {
+				logger.Info("[snapshot] created version %d (obj_id=%d) for process %d", snapVer, snapObjID, existingObjID)
+			}
+		}
 	}
 
 	if _, err := v.ProcessJSON(filePath, jsonContent); err != nil {
