@@ -1,5 +1,9 @@
 # Changelog
 
+## [2.7.6]
+
+- Fix: return HTTP 404 when a request carries an `Mcp-Session-Id` the server doesn't recognize (evicted by the idle sweep, orphaned by a restart, or invented by a non-compliant client), per the Streamable HTTP spec — previously this silently degraded to the process-global client identity forever, with no signal to the client that its session was gone. A compliant client treats 404 as a cue to discard the stale ID and call `initialize` again on its own. Requests with no session header at all, `initialize` itself, and notifications are exempt and keep the existing graceful-fallback behavior.
+
 ## [2.7.5]
 
 - Fix: `clientName`/`clientVersion` were still process-global even after the `clientStateMu` mutex fix, so in HTTP mode — where one server process can serve multiple concurrent MCP clients — whichever client's `initialize` ran most recently silently overwrote every other connected client's attribution in analytics. Track identity per HTTP session instead, keyed by `Mcp-Session-Id` (minted at `initialize`, threaded through `context.Context` into `handleToolCall`), with a fallback to the old global for stdio and non-compliant clients. Added an idle-session sweep (1hr timeout) since persistent session state needed a bound the previous stateless design didn't. Verified with a real end-to-end concurrency test (20 simulated clients through an `httptest.Server`) that reproduces the cross-attribution bug when the fix is disabled.

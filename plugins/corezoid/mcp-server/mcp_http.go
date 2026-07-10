@@ -210,6 +210,23 @@ func httpHandlePost(w http.ResponseWriter, r *http.Request) {
 	if req.Method == "initialize" {
 		sessionID = generateUUIDv4()
 		w.Header().Set("Mcp-Session-Id", sessionID)
+	} else if sessionID != "" && !strings.HasPrefix(req.Method, "notifications/") {
+		// The client is asserting an existing session (evicted by idle
+		// eviction, orphaned by a server restart, or simply invented) that we
+		// don't recognize. Per the Streamable HTTP spec this must be a 404,
+		// not a silent degrade — a compliant client treats 404 as a signal to
+		// discard the stale ID and call initialize again on its own, instead
+		// of quietly getting worse analytics attribution forever. A request
+		// with NO session header at all is a different case (a client that
+		// never implemented the session protocol) and is intentionally left
+		// alone here — it still falls back to the global client identity via
+		// clientIdentityFor, same as before this check existed. Notifications
+		// are exempt: they get no JSON-RPC response to signal recovery on,
+		// and 202-with-empty-body is already the correct reply either way.
+		if _, found := httpSessionIdentity(sessionID); !found {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
 	}
 
 	ctx := r.Context()

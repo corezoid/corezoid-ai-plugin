@@ -320,6 +320,100 @@ func TestHTTPToolsCall_NoSessionFallsBackToGlobal(t *testing.T) {
 	}
 }
 
+// ---- 404 on an unrecognized (but present) Mcp-Session-Id -------------------
+
+func postMCP(t *testing.T, body string, sessionID string) *httptest.ResponseRecorder {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodPost, "/mcp", bytes.NewReader([]byte(body)))
+	req.Header.Set("Content-Type", "application/json")
+	if sessionID != "" {
+		req.Header.Set("Mcp-Session-Id", sessionID)
+	}
+	w := httptest.NewRecorder()
+	httpHandlePost(w, req)
+	return w
+}
+
+func TestHTTPHandlePost_UnrecognizedSessionID_Returns404(t *testing.T) {
+	withCleanHTTPSessions(t)
+
+	body := `{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}`
+	w := postMCP(t, body, "session-that-was-never-registered")
+
+	if w.Code != http.StatusNotFound {
+		t.Errorf("expected 404 for unrecognized session ID, got %d", w.Code)
+	}
+}
+
+func TestHTTPHandlePost_EvictedSessionID_Returns404(t *testing.T) {
+	withCleanHTTPSessions(t)
+
+	registerHTTPSession("sess-evicted", "Claude Code", "1.0.0")
+	pruneIdleHTTPSessions(time.Now().Add(time.Hour)) // cutoff in the future: prune everything
+
+	body := `{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}`
+	w := postMCP(t, body, "sess-evicted")
+
+	if w.Code != http.StatusNotFound {
+		t.Errorf("expected 404 for an evicted session ID, got %d", w.Code)
+	}
+}
+
+func TestHTTPHandlePost_NoSessionID_NotRejected(t *testing.T) {
+	withCleanHTTPSessions(t)
+
+	// A client that never implemented the session protocol at all (no
+	// Mcp-Session-Id header whatsoever) must NOT be rejected — this is the
+	// existing graceful-fallback-to-global-identity path, unrelated to the
+	// "session ID present but unrecognized" case that 404s.
+	body := `{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}`
+	w := postMCP(t, body, "")
+
+	if w.Code != http.StatusOK {
+		t.Errorf("expected 200 for a request with no session header, got %d", w.Code)
+	}
+}
+
+func TestHTTPHandlePost_Initialize_ExemptFromSessionCheck(t *testing.T) {
+	withCleanHTTPSessions(t)
+
+	// initialize always mints a fresh session regardless of what the client
+	// sends — even a stray/unrecognized Mcp-Session-Id header must not 404.
+	body := `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{}}}`
+	w := postMCP(t, body, "some-id-the-server-has-never-seen")
+
+	if w.Code != http.StatusOK {
+		t.Errorf("expected 200 for initialize regardless of session header, got %d", w.Code)
+	}
+	if w.Header().Get("Mcp-Session-Id") == "" {
+		t.Error("expected initialize to mint a fresh Mcp-Session-Id")
+	}
+}
+
+func TestHTTPHandlePost_Notification_ExemptFromSessionCheck(t *testing.T) {
+	withCleanHTTPSessions(t)
+
+	body := `{"jsonrpc":"2.0","method":"notifications/initialized","params":{}}`
+	w := postMCP(t, body, "unrecognized-session-id")
+
+	if w.Code != http.StatusAccepted {
+		t.Errorf("expected 202 for a notification regardless of session header, got %d", w.Code)
+	}
+}
+
+func TestHTTPHandlePost_RecognizedSessionID_NotRejected(t *testing.T) {
+	withCleanHTTPSessions(t)
+
+	registerHTTPSession("sess-good", "Claude Code", "1.0.0")
+
+	body := `{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}`
+	w := postMCP(t, body, "sess-good")
+
+	if w.Code != http.StatusOK {
+		t.Errorf("expected 200 for a recognized session ID, got %d", w.Code)
+	}
+}
+
 // mustMarshal is a small json.RawMessage helper to keep the request-building
 // code above readable.
 func mustMarshal(t *testing.T, v interface{}) json.RawMessage {
