@@ -465,9 +465,11 @@ func createConv(ctx context.Context, args map[string]interface{}, convType strin
 	}
 
 	v := NewValidator(ctx, 0)
-	processID := v.CreateEmptyConv(folderID, processName, "", convType)
+	processID, cerr := v.CreateEmptyConv(folderID, processName, "", convType)
 	if processID == 0 {
-		return fmt.Sprintf("Error: failed to create %s '%s'", convType, processName), true
+		// Pass the server's reason through: "Stage is immutable" in the tool
+		// result is actionable, "failed to create" alone is not.
+		return fmt.Sprintf("Error: failed to create %s '%s' in folder #%d (%s): %v", convType, processName, folderID, resolvedFrom, cerr), true
 	}
 
 	procInfo1, err := v.ExportProcess()

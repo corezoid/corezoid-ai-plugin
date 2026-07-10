@@ -63,10 +63,51 @@ func TestCreateEmptyConv_SendsGivenFolderID(t *testing.T) {
 			"ops":          []interface{}{map[string]interface{}{"proc": "ok", "obj_id": float64(777)}},
 		}
 	})
-	if id := e.CreateEmptyConv(685228, "t", "", "process"); id != 777 {
-		t.Fatalf("CreateEmptyConv returned %d, want 777", id)
+	if id, err := e.CreateEmptyConv(685228, "t", "", "process"); id != 777 || err != nil {
+		t.Fatalf("CreateEmptyConv returned (%d, %v), want (777, nil)", id, err)
 	}
 	if got, ok := gotFolderID.(float64); !ok || int(got) != 685228 {
 		t.Errorf("folder_id on the wire = %v, want 685228", gotFolderID)
+	}
+}
+
+// ---- the server's reason reaches the tool result -------------------------------
+
+// The server explains WHY a create failed ("Stage is immutable", access
+// denied, ...). Burying that in mcp.log while the tool said only "failed to
+// create" cost real field-debugging time — the reason must be in the result.
+func TestCreateEmptyConv_SurfacesServerReason(t *testing.T) {
+	_, e := mockAPIServer(t, func(ops []map[string]interface{}) interface{} {
+		return map[string]interface{}{"request_proc": "ok", "ops": []interface{}{
+			map[string]interface{}{"proc": "error", "description": "Stage is immutable"}}}
+	})
+	id, err := e.CreateEmptyConv(685227, "t", "", "process")
+	if id != 0 || err == nil {
+		t.Fatalf("expected (0, err), got (%d, %v)", id, err)
+	}
+	if !strings.Contains(err.Error(), "Stage is immutable") {
+		t.Errorf("error must carry the server's reason, got: %v", err)
+	}
+}
+
+// ---- CLI boolean coercion -------------------------------------------------------
+
+// CLI args arrive as strings, but handlers type-assert booleans — before the
+// coercion, `deploy-stage apply=true` silently ran as a dry-run.
+func TestCoerceCLIArgs_Booleans(t *testing.T) {
+	args := map[string]interface{}{
+		"apply":   "true",  // boolean in deploy-stage's schema
+		"confirm": "true",  // string in the schema — must stay a string
+		"company_id": "c1", // untouched
+	}
+	coerceCLIArgs("deploy-stage", args)
+	if args["apply"] != true {
+		t.Errorf(`apply = %v (%T), want true (bool)`, args["apply"], args["apply"])
+	}
+	if args["confirm"] != "true" {
+		t.Errorf(`confirm = %v, must stay the string "true"`, args["confirm"])
+	}
+	if args["company_id"] != "c1" {
+		t.Errorf("company_id changed: %v", args["company_id"])
 	}
 }

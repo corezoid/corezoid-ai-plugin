@@ -14,18 +14,26 @@ var (
 	toolAllowedArgsOnce sync.Once
 	toolAllowedArgs     map[string]map[string]bool
 	toolRequiredArgs    map[string]map[string]bool
+	toolArgTypes        map[string]map[string]string
 )
 
 func buildToolAllowedArgs() {
 	toolAllowedArgs = make(map[string]map[string]bool, len(toolRegistry))
 	toolRequiredArgs = make(map[string]map[string]bool, len(toolRegistry))
+	toolArgTypes = make(map[string]map[string]string, len(toolRegistry))
 	for _, t := range toolRegistry {
 		allowed := make(map[string]bool)
 		required := make(map[string]bool)
+		argTypes := make(map[string]string)
 		if schema, ok := t.InputSchema.(map[string]interface{}); ok {
 			if props, ok := schema["properties"].(map[string]interface{}); ok {
-				for k := range props {
+				for k, p := range props {
 					allowed[k] = true
+					if pm, ok := p.(map[string]interface{}); ok {
+						if typ, ok := pm["type"].(string); ok {
+							argTypes[k] = typ
+						}
+					}
 				}
 			}
 			if req, ok := schema["required"].([]string); ok {
@@ -36,6 +44,31 @@ func buildToolAllowedArgs() {
 		}
 		toolAllowedArgs[t.Name] = allowed
 		toolRequiredArgs[t.Name] = required
+		toolArgTypes[t.Name] = argTypes
+	}
+}
+
+// coerceCLIArgs converts CLI-supplied string values to the type the tool's
+// InputSchema declares. CLI args always arrive as strings ("apply=true"), but
+// handlers type-assert booleans (`args["apply"].(bool)`) — so before this,
+// boolean flags passed on the CLI were silently ignored: deploy-stage
+// apply=true ran as a dry-run. Integers are left alone (intArg already parses
+// strings); only booleans need the conversion.
+func coerceCLIArgs(tool string, args map[string]interface{}) {
+	toolAllowedArgsOnce.Do(buildToolAllowedArgs)
+	for k, v := range args {
+		s, ok := v.(string)
+		if !ok {
+			continue
+		}
+		if toolArgTypes[tool][k] == "boolean" {
+			switch s {
+			case "true":
+				args[k] = true
+			case "false":
+				args[k] = false
+			}
+		}
 	}
 }
 

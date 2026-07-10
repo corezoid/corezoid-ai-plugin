@@ -257,10 +257,12 @@ func (validator *Executor) ProcessJSON(filePath, jsonContent string) (newProcess
 	if validator.ProcessID == 0 {
 		validator.NewProc = true
 		title, _ := processDataOfAI["title"].(string)
-		validator.ProcessID = validator.CreateEmptyProcess(0, title, "")
+		validator.ProcessID, err = validator.CreateEmptyProcess(0, title, "")
 		if validator.ProcessID == 0 {
-			err = fmt.Errorf("failed to create process")
-			return nil, err
+			if err == nil {
+				err = fmt.Errorf("failed to create process")
+			}
+			return nil, fmt.Errorf("failed to create process: %v", err)
 		}
 	} else {
 		oldProcessData, err := validator.GetProcessByID(validator.ProcessID)
@@ -485,7 +487,7 @@ func (v *Executor) GetProcessByID(id int) (rsp map[string]any, err error) {
 	return nil, fmt.Errorf("failed to get process: no response from server")
 }
 
-func (v *Executor) CreateEmptyProcess(folderID int, title, desc string) int {
+func (v *Executor) CreateEmptyProcess(folderID int, title, desc string) (int, error) {
 	return v.CreateEmptyConv(folderID, title, desc, "process")
 }
 
@@ -493,7 +495,7 @@ func (v *Executor) CreateEmptyProcess(folderID int, title, desc string) int {
 // ("process" for a regular process, "state" for a state diagram).
 // CreateEmptyProcess is preserved as a backward-compatible wrapper that
 // defaults to conv_type "process".
-func (v *Executor) CreateEmptyConv(folderID int, title, desc, convType string) int {
+func (v *Executor) CreateEmptyConv(folderID int, title, desc, convType string) (int, error) {
 	if title == "" {
 		title = time.Now().String()
 	}
@@ -519,8 +521,12 @@ func (v *Executor) CreateEmptyConv(folderID int, title, desc, convType string) i
 	}
 	response, err := v.req("create_process", ops)
 	if err != nil {
+		// The op error carries the server's actual reason ("Stage is immutable",
+		// "Folder not found", access denied, ...). Return it — burying it in the
+		// log while the tool reports a bare "failed to create" cost real
+		// debugging time in the field.
 		logger.Error("Failed to create empty process: %v", err)
-		return 0
+		return 0, err
 	}
 	if response != nil && response["ops"] != nil {
 		if opsArray, ok := response["ops"].([]interface{}); ok && len(opsArray) > 0 {
@@ -528,13 +534,13 @@ func (v *Executor) CreateEmptyConv(folderID int, title, desc, convType string) i
 				if objID, ok := firstOp["obj_id"].(float64); ok {
 					v.ProcessID = int(objID)
 					logger.Debug("Empty process created: %d", v.ProcessID)
-					return v.ProcessID
+					return v.ProcessID, nil
 				}
 			}
 		}
 	}
 	logger.Error("Failed to create empty process")
-	return 0
+	return 0, fmt.Errorf("create returned no obj_id")
 }
 
 func (v *Executor) SetParams(params []interface{}) error {
