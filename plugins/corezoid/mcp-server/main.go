@@ -205,8 +205,12 @@ func runCLI(toolName string, rawArgs []string) {
 		k, v, _ := strings.Cut(a, "=")
 		args[k] = v
 	}
-	// Apply env-based defaults so the tool works with zero arguments.
-	if _, ok := args["folder_id"]; !ok && stageID != 0 {
+	// Apply env-based defaults so folder tools work with zero arguments —
+	// but only where the schema REQUIRES folder_id (pull-folder & friends).
+	// Injecting it blindly into every call passed a junk argument to tools
+	// like login, and would silently redirect create-process away from its
+	// documented directory-based target resolution.
+	if _, ok := args["folder_id"]; !ok && stageID != 0 && toolRequiresArg(toolName, "folder_id") {
 		args["folder_id"] = stageID
 	}
 	// CLI mode runs to completion or until the user kills the process; we

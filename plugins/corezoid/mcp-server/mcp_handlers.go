@@ -153,6 +153,14 @@ func handleToolCall(ctx context.Context, name string, args map[string]interface{
 		return fmt.Sprintf("Unknown tool: %s", name), true
 	}
 
+	// Reject arguments the tool does not declare. Unknown keys used to be
+	// silently dropped, which let a call like create-process{folder_id: N}
+	// quietly fall back to directory-based target resolution and create the
+	// process somewhere else entirely.
+	if msg := unknownArgsError(name, args); msg != "" {
+		return msg, true
+	}
+
 	start := time.Now()
 	result, isError = h(ctx, args)
 
