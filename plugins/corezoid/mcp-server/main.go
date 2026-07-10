@@ -44,7 +44,17 @@ var apiURL string
 var accountURL string
 var apiToken string
 var workspaceID string
-var debug bool
+
+// debug gates the Executor's detailed API request/response tracing (full
+// payload dumps via the `if v.Debug` guards). It shares the COREZOID_DEBUG
+// switch with logger.IsDebug — before this assignment the var was never set,
+// so the executor trace was unreachable dead code and API-level issues could
+// not be diagnosed at all.
+var debug = debugFromEnv()
+
+// debugFromEnv reports whether COREZOID_DEBUG requests the detailed trace.
+// Split out so tests can exercise the wiring with t.Setenv.
+func debugFromEnv() bool { return os.Getenv("COREZOID_DEBUG") != "" }
 var apigwURL string
 var stageID int
 var insecureTLS bool
@@ -161,6 +171,7 @@ func loadConfig() {
 		apigwURL = "https://api-apigw.corezoid.com"
 	}
 	stageID, _ = strconv.Atoi(os.Getenv("COREZOID_STAGE_ID"))
+	debug = debugFromEnv() // executor API trace; same switch as logger.IsDebug
 	insecureTLS = os.Getenv("COREZOID_INSECURE_TLS") != ""
 	cachedProjectID = 0              // reset on workspace switch so it is re-resolved
 	os.Unsetenv("COREZOID_PROJECT_ID") // prevent stale process env from short-circuiting resolution
