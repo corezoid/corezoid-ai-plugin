@@ -573,10 +573,14 @@ var toolRegistry = []mcpTool{
 	},
 	{
 		Name:        "login",
-		Description: "Authenticate with Corezoid via OAuth2 browser flow. Opens a browser window and saves the token so it persists across sessions. Optionally accepts account_url, workspace_id, and stage_id to skip interactive prompts.",
+		Description: "Authenticate with Corezoid via OAuth2 browser flow. An existing token is validated with a probe call first — a stale/revoked token triggers a fresh OAuth login instead of a false \"Setup complete\". Opens a browser window and saves the token so it persists across sessions. Optionally accepts account_url, workspace_id, and stage_id to skip interactive prompts; force=true discards the current token and re-authenticates unconditionally.",
 		InputSchema: map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
+				"force": map[string]interface{}{
+					"type":        "boolean",
+					"description": "Discard the existing token and run the OAuth flow unconditionally (switch accounts / recover from a bad token)",
+				},
 				"account_url": map[string]interface{}{
 					"type":        "string",
 					"description": "Account API URL, e.g. https://account.corezoid.com",
@@ -730,7 +734,7 @@ var toolRegistry = []mcpTool{
 	},
 	{
 		Name:        "logout",
-		Description: "Remove saved Corezoid credentials from disk.",
+		Description: "Remove saved Corezoid credentials from disk — both ~/.corezoid/credentials and an ACCESS_TOKEN carried by the project .env (which would otherwise silently re-authenticate the next login) — and clear the in-memory session.",
 		InputSchema: map[string]interface{}{
 			"type":       "object",
 			"properties": map[string]interface{}{},

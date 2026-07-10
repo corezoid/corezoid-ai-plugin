@@ -14,15 +14,18 @@ func resetGlobals(t *testing.T) {
 	origAPIURL := apiURL
 	origWorkspaceID := workspaceID
 	origStageID := stageID
+	origAccountURL := accountURL
 	apiToken = ""
 	apiURL = ""
 	workspaceID = ""
 	stageID = 0
+	accountURL = ""
 	t.Cleanup(func() {
 		apiToken = origAPIToken
 		apiURL = origAPIURL
 		workspaceID = origWorkspaceID
 		stageID = origStageID
+		accountURL = origAccountURL
 	})
 }
 

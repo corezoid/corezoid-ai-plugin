@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -124,7 +125,43 @@ func handleLogin(ctx context.Context, args map[string]interface{}) (string, bool
 		}
 	}
 
-	// Step 2: OAuth2 PKCE browser flow (skipped if already authenticated).
+	// Step 2: OAuth2 PKCE browser flow. Skipped only when an existing token
+	// actually WORKS: a non-empty token is probed with a cheap authenticated
+	// call first. Trusting any non-empty token made re-login impossible — a
+	// stale/revoked token in .env or credentials produced "Setup complete"
+	// while every subsequent call failed with "cookie or headers are not
+	// valid", and the only way out was hand-deleting files.
+	force := false
+	if b, ok := args["force"].(bool); ok {
+		force = b
+	} else if fs, ok := args["force"].(string); ok {
+		// CLI mode passes args as strings; a silently ignored force defeats
+		// its whole purpose (recovering from a bad token).
+		force = strings.EqualFold(fs, "true") || fs == "1"
+	}
+	staleNote := ""
+	if snapToken != "" && force {
+		staleNote = "\nRe-authentication forced (force=true) — previous token discarded."
+		snapToken = ""
+		withAuthLock(func() { apiToken = "" })
+	}
+	if snapToken != "" {
+		rejected, perr := probeExistingToken(ctx, snapAccountURL, snapToken)
+		switch {
+		case perr == nil:
+			// Token verified — proceed without OAuth.
+		case rejected:
+			logger.Warn("login: existing token rejected by the server: %v — starting OAuth", perr)
+			staleNote = "\nThe existing token was rejected by the server (stale or revoked) — a fresh OAuth login was performed."
+			snapToken = ""
+			withAuthLock(func() { apiToken = "" })
+		default:
+			// Transport/config trouble — keep the session; destroying a working
+			// token (and popping a browser) over a network blip is worse.
+			logger.Warn("login: could not verify the existing token (%v) — keeping it", perr)
+			staleNote = fmt.Sprintf("\n⚠ The existing token could not be verified (%v) — keeping it. If calls fail, re-run login with force=true.", perr)
+		}
+	}
 	var tokenExpiry time.Time
 	if snapToken == "" {
 		res, err := oauthPKCEFlow(snapAccountURL, oauthClientID)
@@ -138,6 +175,23 @@ func handleLogin(ctx context.Context, args map[string]interface{}) (string, bool
 		}
 		if saveErr := saveCredentials(creds); saveErr != nil {
 			logger.Warn("login: failed to save credentials: %v", saveErr)
+		}
+		// A project .env that carries its own ACCESS_TOKEN overrides the
+		// user-level credentials on every load — left in place, it would
+		// shadow the fresh token on the next restart and resurrect the stale
+		// session this login just replaced. REMOVE it rather than update it:
+		// credentials were deliberately moved out of the project tree so a
+		// token can never be committed to git, and writing the new secret
+		// back into a repo-local file would undo that decision (it would also
+		// clobber ${VAR} placeholders users manage themselves).
+		tokenEnvPath := dotEnvPathInUse()
+		if envHasKey(tokenEnvPath, "ACCESS_TOKEN") {
+			if err := removeEnvKey(tokenEnvPath, "ACCESS_TOKEN"); err != nil {
+				logger.Warn("login: could not remove stale ACCESS_TOKEN from %s: %v", tokenEnvPath, err)
+			} else {
+				_ = removeEnvKey(tokenEnvPath, "ACCESS_TOKEN_EXPIRES_AT")
+				staleNote += fmt.Sprintf("\nStale ACCESS_TOKEN removed from %s — ~/.corezoid/credentials is now the single token source.", tokenEnvPath)
+			}
 		}
 		snapToken = res.AccessToken
 		tokenExpiry = res.ExpiresAt
@@ -420,7 +474,7 @@ func handleLogin(ctx context.Context, args map[string]interface{}) (string, bool
 		}
 	}
 
-	msg := fmt.Sprintf("Setup complete! Configuration saved to %s.", envPath)
+	msg := fmt.Sprintf("Setup complete! Configuration saved to %s.%s", envPath, staleNote)
 	if !tokenExpiry.IsZero() {
 		msg += fmt.Sprintf(" Token expires: %s.", tokenExpiry.Format("2006-01-02 15:04"))
 	}
@@ -467,9 +521,9 @@ func handleLogout(_ context.Context, _ map[string]interface{}) (string, bool) {
 	if err != nil {
 		credPath = "~/.corezoid/credentials"
 	}
-	if err := deleteCredentials(); err != nil {
-		return fmt.Sprintf("Failed to remove credentials: %v", err), true
-	}
+	// Kill the live session BEFORE any file operation: whatever fails below,
+	// the user must already be logged out in this process — reporting a
+	// failed logout while every tool call keeps working would be a lie.
 	withAuthLock(func() {
 		apiToken = ""
 		accountURL = ""
@@ -477,5 +531,126 @@ func handleLogout(_ context.Context, _ map[string]interface{}) (string, bool) {
 		stageID = 0
 		apiURL = ""
 	})
-	return fmt.Sprintf("Logged out. ACCESS_TOKEN removed from %s.", credPath), false
+	if err := deleteCredentials(); err != nil {
+		return fmt.Sprintf("Logged out of this session, but failed to remove the credentials file: %v — remove %s manually or the next start will silently reuse it.", err, credPath), true
+	}
+	// The .env that actually feeds tokens into this process is the one
+	// findAndLoadDotEnv resolves (it walks UP from cwd) — not blindly
+	// cwd/.env. Leaving a token there means the very next login — or a
+	// server restart — silently resurrects the session the user just ended.
+	envPath := dotEnvPathInUse()
+	envNote := ""
+	if envHasKey(envPath, "ACCESS_TOKEN") {
+		if err := removeEnvKey(envPath, "ACCESS_TOKEN"); err != nil {
+			return fmt.Sprintf("Logged out of this session, but failed to remove ACCESS_TOKEN from %s: %v — remove it manually or the next login will silently reuse it.", envPath, err), true
+		}
+		_ = removeEnvKey(envPath, "ACCESS_TOKEN_EXPIRES_AT")
+		envNote = fmt.Sprintf(" ACCESS_TOKEN also removed from %s (it would have silently re-authenticated the next login).", envPath)
+	}
+	return fmt.Sprintf("Logged out. ACCESS_TOKEN removed from %s.%s", credPath, envNote), false
+}
+
+// probeExistingToken answers "does this token still work?" with one cheap
+// AUTHENTICATED call before login trusts it. Without the probe, any non-empty
+// token — including one revoked server-side — made login report success while
+// every later tool call failed with the opaque "cookie or headers are not
+// valid", and re-login was impossible short of hand-deleting files.
+//
+// The probe is the Corezoid workspace list. The account clients endpoint is
+// NOT usable as a probe: it answers 200 even without a token (verified live),
+// so it is only used to derive COREZOID_API_URL when missing — a derivation
+// failure says nothing about the token and is reported as transport trouble.
+//
+// rejected=true means the server explicitly refused the token; err != nil
+// with rejected=false is transport/config trouble — the caller must KEEP the
+// token in that case: discarding a working session over a network blip (and
+// popping a surprise OAuth browser window) is worse than the disease.
+func probeExistingToken(ctx context.Context, accountURL, token string) (rejected bool, err error) {
+	authStateMu.RLock()
+	haveAPIURL := apiURL != ""
+	authStateMu.RUnlock()
+	if !haveAPIURL {
+		corezoidURL, derr := fetchCorezoidAPIURL(accountURL, token)
+		if derr != nil {
+			return false, fmt.Errorf("could not derive COREZOID_API_URL: %w", derr)
+		}
+		withAuthLock(func() { apiURL = corezoidURL })
+		os.Setenv("COREZOID_API_URL", corezoidURL)
+		if uerr := updateEnvFile(envFilePath(), "COREZOID_API_URL", corezoidURL); uerr != nil {
+			logger.Warn("login: could not save COREZOID_API_URL: %v", uerr)
+		}
+	}
+	// Probe with the token we were HANDED, not whatever the global happens to
+	// hold — callers keep them in sync today, but that is a trap to rely on.
+	v := NewValidator(ctx, 0)
+	v.Token = token
+	_, perr := v.req("login_probe", []map[string]any{{"type": "list", "obj": "company"}})
+	if perr == nil {
+		return false, nil
+	}
+	if isAuthRejection(perr) {
+		return true, perr
+	}
+	return false, perr
+}
+
+// isAuthRejection classifies an API error as an explicit token refusal.
+// Conservative on purpose: anything unrecognized is treated as transport
+// trouble so a valid session is never destroyed by a blip or a 5xx.
+func isAuthRejection(err error) bool {
+	msg := strings.ToLower(err.Error())
+	for _, marker := range []string{
+		"cookie or headers are not valid",
+		"unauthorized",
+		"access denied",
+		"token is not valid",
+		"invalid token",
+	} {
+		if strings.Contains(msg, marker) {
+			return true
+		}
+	}
+	return false
+}
+
+// dotEnvPathInUse returns the .env file findAndLoadDotEnv would load: the
+// walk-up from cwd stops at the first .env or the project root. Token cleanup
+// must target THIS file — blindly using cwd/.env misses a shadowing token in
+// a parent directory and reports a clean logout that isn't.
+func dotEnvPathInUse() string {
+	cwd, err := os.Getwd()
+	if err != nil {
+		return envFilePath()
+	}
+	dir := cwd
+	for {
+		p := filepath.Join(dir, ".env")
+		if _, err := os.Stat(p); err == nil {
+			return p
+		}
+		if isProjectRoot(dir) {
+			break
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			break
+		}
+		dir = parent
+	}
+	return envFilePath()
+}
+
+// envHasKey reports whether the .env file at path contains the key.
+func envHasKey(path, key string) bool {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return false
+	}
+	prefix := key + "="
+	for _, line := range strings.Split(string(data), "\n") {
+		if strings.HasPrefix(strings.TrimSpace(line), prefix) {
+			return true
+		}
+	}
+	return false
 }

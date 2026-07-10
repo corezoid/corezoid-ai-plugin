@@ -54,7 +54,7 @@ func updateEnvFile(path, key, value string) error {
 	prefix := key + "="
 	found := false
 	for i, line := range lines {
-		if strings.HasPrefix(line, prefix) {
+		if strings.HasPrefix(strings.TrimSpace(line), prefix) {
 			lines[i] = prefix + value
 			found = true
 			break
@@ -78,10 +78,12 @@ func removeEnvKey(path, key string) error {
 		return err
 	}
 
+	// Match like loadDotEnv does (it trims leading whitespace) — an indented
+	// "  ACCESS_TOKEN=..." line still feeds the process and must be removed.
 	prefix := key + "="
 	var kept []string
 	for _, line := range strings.Split(string(data), "\n") {
-		if !strings.HasPrefix(line, prefix) {
+		if !strings.HasPrefix(strings.TrimSpace(line), prefix) {
 			kept = append(kept, line)
 		}
 	}
@@ -155,6 +157,14 @@ func deleteCredentials() error {
 	}
 	os.Unsetenv("ACCESS_TOKEN")
 	os.Unsetenv("ACCESS_TOKEN_EXPIRES_AT")
+	// removeEnvKey leaves a 0-byte file when the last key is removed — a
+	// confusing artifact (observed in the field as a mysteriously empty
+	// credentials file). Remove the husk entirely.
+	if data, rerr := os.ReadFile(path); rerr == nil && strings.TrimSpace(string(data)) == "" {
+		if rmErr := os.Remove(path); rmErr != nil {
+			logger.Warn("logout: could not remove empty credentials file %s: %v", path, rmErr)
+		}
+	}
 	return nil
 }
 
