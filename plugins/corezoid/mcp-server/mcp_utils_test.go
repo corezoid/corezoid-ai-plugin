@@ -143,9 +143,12 @@ func TestResolveFolderIDFromDir_Found(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "12345_my-stage.stage.json"), []byte("{}"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	id, err := resolveFolderIDFromDir(dir)
+	id, marker, err := resolveFolderIDFromDir(dir)
 	if err != nil || id != 12345 {
 		t.Errorf("got (%d, %v), want (12345, nil)", id, err)
+	}
+	if marker != "12345_my-stage.stage.json" {
+		t.Errorf("marker = %q, want the matched file name", marker)
 	}
 }
 
@@ -154,22 +157,25 @@ func TestResolveFolderIDFromDir_FolderJSON(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "999_my-folder.folder.json"), []byte("{}"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	id, err := resolveFolderIDFromDir(dir)
+	id, marker, err := resolveFolderIDFromDir(dir)
 	if err != nil || id != 999 {
 		t.Errorf("got (%d, %v), want (999, nil)", id, err)
+	}
+	if marker != "999_my-folder.folder.json" {
+		t.Errorf("marker = %q, want the matched file name", marker)
 	}
 }
 
 func TestResolveFolderIDFromDir_NotFound(t *testing.T) {
 	dir := t.TempDir()
-	_, err := resolveFolderIDFromDir(dir)
+	_, _, err := resolveFolderIDFromDir(dir)
 	if err == nil {
 		t.Error("expected error when no folder/stage json present, got nil")
 	}
 }
 
 func TestResolveFolderIDFromDir_BadDir(t *testing.T) {
-	_, err := resolveFolderIDFromDir("/nonexistent_dir_xyz_abc")
+	_, _, err := resolveFolderIDFromDir("/nonexistent_dir_xyz_abc")
 	if err == nil {
 		t.Error("expected error for non-existent directory, got nil")
 	}

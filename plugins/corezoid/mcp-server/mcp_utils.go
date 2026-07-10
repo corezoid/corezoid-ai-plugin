@@ -78,13 +78,24 @@ func relativeToCwd(p string) (string, error) {
 }
 
 // resolveFolderIDFromDir looks for a file matching <id>_<name>.folder.json or
-// <id>_<name>.stage.json in the given directory and returns the numeric id.
-func resolveFolderIDFromDir(dir string) (int, error) {
+// <id>_<name>.stage.json in the given directory and returns the numeric id
+// together with the marker file name it was resolved from.
+//
+// When the directory contains MORE than one marker, the target is ambiguous
+// and we refuse to guess: silently picking the first match once sent creates
+// into a production stage (the marker files sorted production before develop)
+// where the only symptom was a misleading "Stage is immutable" error.
+func resolveFolderIDFromDir(dir string) (int, string, error) {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
-		return 0, fmt.Errorf("failed to read directory '%s': %v", dir, err)
+		return 0, "", fmt.Errorf("failed to read directory '%s': %v", dir, err)
 	}
 	reFolderFile := regexp.MustCompile(`^(\d+)_.*\.(folder|stage)\.json$`)
+	type match struct {
+		id   int
+		name string
+	}
+	var found []match
 	for _, e := range entries {
 		if e.IsDir() {
 			continue
@@ -97,9 +108,20 @@ func resolveFolderIDFromDir(dir string) (int, error) {
 		if err != nil {
 			continue
 		}
-		return id, nil
+		found = append(found, match{id: id, name: e.Name()})
 	}
-	return 0, fmt.Errorf("no <id>_<name>.folder.json file found in '%s'; cannot determine folder ID", dir)
+	switch len(found) {
+	case 0:
+		return 0, "", fmt.Errorf("no <id>_<name>.folder.json file found in '%s'; cannot determine folder ID — pass folder_id explicitly", dir)
+	case 1:
+		return found[0].id, found[0].name, nil
+	default:
+		names := make([]string, len(found))
+		for i, f := range found {
+			names[i] = f.name
+		}
+		return 0, "", fmt.Errorf("ambiguous target: directory '%s' contains %d folder/stage markers (%s) — pass folder_id explicitly or run from the specific folder's directory", dir, len(found), strings.Join(names, ", "))
+	}
 }
 
 // intArg extracts an integer argument from args map.

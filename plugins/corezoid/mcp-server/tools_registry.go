@@ -231,6 +231,10 @@ var toolRegistry = []mcpTool{
 		InputSchema: map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
+				"folder_id": map[string]interface{}{
+					"type":        "integer",
+					"description": "Explicit Corezoid folder/stage ID to create in; overrides folder_path resolution",
+				},
 				"folder_path": map[string]interface{}{
 					"type":        "string",
 					"description": "Relative path to the folder directory. Omit to use the current directory.",
@@ -249,6 +253,10 @@ var toolRegistry = []mcpTool{
 		InputSchema: map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
+				"folder_id": map[string]interface{}{
+					"type":        "integer",
+					"description": "Explicit Corezoid folder/stage ID to create in; overrides folder_path resolution",
+				},
 				"folder_path": map[string]interface{}{
 					"type":        "string",
 					"description": "Relative path to the folder directory. Omit to use the current directory.",
@@ -267,6 +275,10 @@ var toolRegistry = []mcpTool{
 		InputSchema: map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
+				"folder_id": map[string]interface{}{
+					"type":        "integer",
+					"description": "Explicit Corezoid folder/stage ID to create the folder in; overrides parent_path resolution",
+				},
 				"parent_path": map[string]interface{}{
 					"type":        "string",
 					"description": "Relative path to the parent folder directory. Omit to use the current directory.",
