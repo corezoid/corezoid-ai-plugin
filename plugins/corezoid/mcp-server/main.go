@@ -8,11 +8,13 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 
 	"github.com/santhosh-tekuri/jsonschema/v6"
 )
@@ -185,6 +187,21 @@ func runCLI(toolName string, rawArgs []string) {
 	os.Exit(0)
 }
 
+// installShutdownFlush flushes buffered analytics events before the process
+// exits on SIGINT/SIGTERM (e.g. the MCP client terminating the server).
+// Go's default signal handling terminates immediately without running
+// deferred calls, so this is the only chance to send events queued right
+// before shutdown.
+func installShutdownFlush() {
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
+	go func() {
+		<-sigCh
+		stopAnalytics()
+		os.Exit(0)
+	}()
+}
+
 func main() {
 	if workDir := os.Getenv("COREZOID_WORK_DIR"); workDir != "" {
 		_ = os.Chdir(workDir)
@@ -220,6 +237,13 @@ func main() {
 	}
 	logger.IsDebug = os.Getenv("COREZOID_DEBUG") != ""
 
+	// Flush any buffered analytics events before exit. Covers both a normal
+	// return (stdio EOF, HTTP server closed cleanly) via defer, and the
+	// client killing the process with SIGINT/SIGTERM, which by default
+	// terminates immediately without running deferred calls.
+	defer stopAnalytics()
+	installShutdownFlush()
+
 	cwd, _ := os.Getwd()
 	logger.Debug("Starting corezoid-mcp server, cwd=%s", cwd)
 
@@ -240,6 +264,7 @@ func main() {
 		addr := "127.0.0.1:" + port
 		if err := runHTTPServer(addr); err != nil {
 			fmt.Fprintf(os.Stderr, "[corezoid-mcp] HTTP server error: %v\n", err)
+			stopAnalytics()
 			os.Exit(1)
 		}
 		return

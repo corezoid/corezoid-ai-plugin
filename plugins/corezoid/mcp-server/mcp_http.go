@@ -143,6 +143,11 @@ func httpHandleSSE(w http.ResponseWriter, r *http.Request) {
 func httpDispatch(reqCtx context.Context, req mcpRequest) interface{} {
 	switch req.Method {
 	case "initialize":
+		// Read client identity for analytics attribution. Elicitation support
+		// is intentionally ignored here — the comment on httpHandleSSE explains
+		// why server-initiated elicitation isn't wired up over HTTP.
+		parseInitializeParams(req.Params)
+		logger.Info("initialize: clientName=%q clientVersion=%q", clientName, clientVersion)
 		return mcpResponse{
 			JSONRPC: "2.0",
 			ID:      req.ID,

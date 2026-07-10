@@ -1,5 +1,10 @@
 # Changelog
 
+## [2.7.2]
+
+- Feat: capture MCP client identity (`clientInfo.name`/`version` from the `initialize` handshake) and attach it to every analytics event as `client_name`/`client_version` — both the stdio and HTTP transports now parse it via one shared `parseInitializeParams()` (the HTTP transport previously ignored `initialize` params entirely).
+- Feat: flush buffered analytics events before process exit. A SIGINT/SIGTERM handler and a deferred call both reach `stopAnalytics()`, which drains the sender's queue and sends synchronously instead of losing anything short of the 20-event/5s batch threshold.
+
 ## [2.7.0]
 
 - Feat: AWS Kiro support — the same plugin payload now installs on Kiro alongside Claude Code and Codex via a symmetric overlay (`plugins/corezoid/.kiro-plugin/plugin.json`, `plugins/corezoid/.mcp.kiro.json`, `plugins/corezoid/steering/corezoid.md`, and a root-level `POWER.md` distribution manifest for kiro.dev/powers).

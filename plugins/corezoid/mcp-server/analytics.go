@@ -25,6 +25,11 @@ var installationID string
 var telemetryEmail string
 var analyticsCh chan AnalyticsEvent
 
+// analyticsFlushCh lets stopAnalytics ask the sender goroutine to drain and
+// flush synchronously before process exit, avoiding the loss of events that
+// would otherwise still be sitting in analyticsCh or the sender's local batch.
+var analyticsFlushCh chan chan struct{}
+
 // analyticsEndpoint and analyticsConvID are set from telemetryConfig during initAnalytics.
 var analyticsEndpoint string
 var analyticsConvID int
@@ -45,6 +50,8 @@ type AnalyticsEvent struct {
 	ServerVersion  string `json:"server_version"`
 	InstallationID string `json:"installation_id"`
 	UserEmail      string `json:"user_email,omitempty"`
+	ClientName     string `json:"client_name,omitempty"`
+	ClientVersion  string `json:"client_version,omitempty"`
 }
 
 // userPreferences holds user-level opt-in settings persisted in ~/.corezoid/preferences.json.
@@ -179,6 +186,7 @@ func initAnalytics() {
 	prefs := loadUserPreferences()
 	telemetryEmail = prefs.TelemetryEmail
 	analyticsCh = make(chan AnalyticsEvent, 100)
+	analyticsFlushCh = make(chan chan struct{})
 	analyticsEnabled.Store(true)
 	go runAnalyticsSender()
 	logger.Debug("analytics: enabled, installation_id=%s transport=%s has_email=%v", installationID, analyticsTransport, telemetryEmail != "")
@@ -196,7 +204,10 @@ func emitAnalyticsEvent(e AnalyticsEvent) {
 	}
 }
 
-// runAnalyticsSender drains analyticsCh and flushes batches every 5 s or 20 events.
+// runAnalyticsSender drains analyticsCh and flushes batches every 5 s or 20
+// events, until asked to flush for shutdown via analyticsFlushCh, at which
+// point it sends whatever remains and returns — stopAnalytics is only ever
+// called right before process exit, so there's no more work for it to do.
 func runAnalyticsSender() {
 	ticker := time.NewTicker(analyticsFlushInterval)
 	defer ticker.Stop()
@@ -220,7 +231,43 @@ func runAnalyticsSender() {
 			}
 		case <-ticker.C:
 			flush()
+		case done := <-analyticsFlushCh:
+			// Drain whatever is already queued before flushing, so events
+			// emitted right before shutdown aren't left behind in the channel.
+		drain:
+			for {
+				select {
+				case e := <-analyticsCh:
+					batch = append(batch, e)
+				default:
+					break drain
+				}
+			}
+			flush()
+			close(done)
+			return
 		}
+	}
+}
+
+// stopAnalytics flushes any events queued in the channel or buffered in the
+// sender's in-memory batch, sending them synchronously, then stops the sender
+// goroutine for good. Intended to be called exactly once, right before
+// process exit. Bounded by short timeouts so a wedged network call or dead
+// goroutine can never hang shutdown; safe to call even if analytics was never
+// enabled.
+func stopAnalytics() {
+	if !analyticsEnabled.Load() {
+		return
+	}
+	done := make(chan struct{})
+	select {
+	case analyticsFlushCh <- done:
+		select {
+		case <-done:
+		case <-time.After(6 * time.Second):
+		}
+	case <-time.After(1 * time.Second):
 	}
 }
 

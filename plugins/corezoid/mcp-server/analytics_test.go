@@ -1,6 +1,9 @@
 package main
 
 import (
+	"io"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -206,5 +209,71 @@ func TestEmitAnalyticsEvent_FullChannelDoesNotBlock(t *testing.T) {
 		// pass
 	case <-time.After(time.Second):
 		t.Fatal("emitAnalyticsEvent blocked on a full channel")
+	}
+}
+
+// ---- stopAnalytics ----------------------------------------------------------
+
+func TestStopAnalytics_DisabledIsNoOp(t *testing.T) {
+	prev := analyticsEnabled.Load()
+	analyticsEnabled.Store(false)
+	t.Cleanup(func() { analyticsEnabled.Store(prev) })
+
+	done := make(chan struct{})
+	go func() {
+		stopAnalytics()
+		close(done)
+	}()
+	select {
+	case <-done:
+		// pass
+	case <-time.After(time.Second):
+		t.Fatal("stopAnalytics blocked when analytics is disabled")
+	}
+}
+
+// TestStopAnalytics_FlushesPendingEvent starts a real sender goroutine against
+// a local test server to verify stopAnalytics drains a queued event and sends
+// it synchronously, instead of leaving it stranded when the process exits.
+func TestStopAnalytics_FlushesPendingEvent(t *testing.T) {
+	prevEnabled := analyticsEnabled.Load()
+	prevCh := analyticsCh
+	prevFlushCh := analyticsFlushCh
+	prevEndpoint := analyticsEndpoint
+	t.Cleanup(func() {
+		analyticsEnabled.Store(prevEnabled)
+		analyticsCh = prevCh
+		analyticsFlushCh = prevFlushCh
+		analyticsEndpoint = prevEndpoint
+	})
+
+	received := make(chan []byte, 1)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		received <- body
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	analyticsEndpoint = srv.URL
+	analyticsCh = make(chan AnalyticsEvent, 10)
+	analyticsFlushCh = make(chan chan struct{})
+	analyticsEnabled.Store(true)
+	// The sender goroutine has no shutdown path of its own — stopAnalytics only
+	// asks it to flush once — so it intentionally outlives this test, same as
+	// it would outlive a single request in the real server.
+	go runAnalyticsSender()
+
+	analyticsCh <- AnalyticsEvent{Tool: "test-tool", InstallationID: "abc", Ts: "2024-01-01T00:00:00Z"}
+
+	stopAnalytics()
+
+	select {
+	case body := <-received:
+		if !strings.Contains(string(body), "test-tool") {
+			t.Errorf("expected flushed batch to contain the queued event, got: %s", body)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("stopAnalytics did not flush the pending event before returning")
 	}
 }

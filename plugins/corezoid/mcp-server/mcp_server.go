@@ -70,6 +70,32 @@ var reqCounter int64
 // clientSupportsElicitation is set during initialize based on the client's declared capabilities.
 var clientSupportsElicitation bool
 
+// clientName and clientVersion capture the connecting MCP client's declared
+// identity (e.g. "Claude Code", "1.2.3") from the initialize handshake, for
+// attribution in analytics events. Empty if the client omitted clientInfo.
+var clientName string
+var clientVersion string
+
+// parseInitializeParams extracts elicitation support and client identity from
+// an initialize request's params. Shared by the stdio and HTTP transports.
+// Fields the client omitted decode to "" (clientInfo is optional in the MCP
+// spec); if raw itself fails to parse, the globals are left unchanged.
+func parseInitializeParams(raw json.RawMessage) {
+	var params struct {
+		Capabilities map[string]json.RawMessage `json:"capabilities"`
+		ClientInfo   struct {
+			Name    string `json:"name"`
+			Version string `json:"version"`
+		} `json:"clientInfo"`
+	}
+	if err := json.Unmarshal(raw, &params); err != nil {
+		return
+	}
+	_, clientSupportsElicitation = params.Capabilities["elicitation"]
+	clientName = params.ClientInfo.Name
+	clientVersion = params.ClientInfo.Version
+}
+
 // activeCancels maps in-progress tools/call request IDs to their cancel functions.
 var activeCancels sync.Map
 
@@ -200,14 +226,9 @@ func runMCPServer() {
 
 		switch req.Method {
 		case "initialize":
-			// Read client capabilities to detect elicitation support.
-			var initParams struct {
-				Capabilities map[string]json.RawMessage `json:"capabilities"`
-			}
-			if err := json.Unmarshal(req.Params, &initParams); err == nil {
-				_, clientSupportsElicitation = initParams.Capabilities["elicitation"]
-			}
-			logger.Info("initialize: clientSupportsElicitation=%v", clientSupportsElicitation)
+			// Read client capabilities and identity (elicitation support, name/version).
+			parseInitializeParams(req.Params)
+			logger.Info("initialize: clientSupportsElicitation=%v clientName=%q clientVersion=%q", clientSupportsElicitation, clientName, clientVersion)
 
 			serverSend(mcpResponse{
 				JSONRPC: "2.0",
