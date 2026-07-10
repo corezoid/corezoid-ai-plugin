@@ -1,5 +1,10 @@
 # Changelog
 
+## [2.8.1]
+
+- Fix: AWS Kiro MCP server failed to start after `install-kiro.sh` — the `.mcp.kiro.json` fallback path pointed two directory levels above the actual `mcp-server/run.sh` location. The installer now resolves `PLUGIN_ROOT` to an absolute path and bakes it into the generated `.kiro/settings/mcp.json` at install time, matching how skills are already handled.
+- Docs: add AWS Kiro install/update instructions to `README.md`.
+
 ## [2.8.0]
 
 - Feat: process snapshots — new MCP handlers (`create-snapshot`, `list-snapshots`, `restore-snapshot`) and an auto-snapshot taken before every `push-process`; snapshot titles include a timestamp and the `.env` write notice is surfaced back to the user.

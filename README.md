@@ -39,7 +39,7 @@ workflows through natural conversation.
 
 ## Requirements
 
-- [Claude Code](https://claude.ai/code) or [Codex](https://openai.com/codex) installed
+- [Claude Code](https://claude.ai/code), [Codex](https://openai.com/codex), or [AWS Kiro](https://kiro.dev) installed
 - A Corezoid account
 
 ## Installation
@@ -85,11 +85,25 @@ No build step, no extra setup. The MCP server starts automatically on first use.
 > export COREZOID_ANALYTICS_DISABLED=1   # add to ~/.zshrc or ~/.bashrc to persist
 > ```
 
+### AWS Kiro
+
+```bash
+git clone https://github.com/corezoid/corezoid-ai-plugin
+cd corezoid-ai-plugin
+sh plugins/corezoid/scripts/install-kiro.sh .
+```
+
+Open the workspace in Kiro — the `corezoid` MCP server, skills, and steering are picked up automatically.
+
 ### Updating
 
 ```bash
 claude plugin update corezoid@corezoid   # Claude Code
 codex plugin update corezoid@corezoid    # Codex
+```
+
+```bash
+git pull && sh plugins/corezoid/scripts/install-kiro.sh .   # AWS Kiro
 ```
 
 Restart Claude Code / Codex after updating to apply the new version.

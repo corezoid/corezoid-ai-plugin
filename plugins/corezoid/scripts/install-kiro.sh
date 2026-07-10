@@ -6,7 +6,8 @@
 #
 # If workspace-dir is omitted, defaults to $KIRO_WORKSPACE_DIR or $PWD.
 # Creates the following under <workspace>/.kiro/:
-#   settings/mcp.json        ← copy of .mcp.kiro.json
+#   settings/mcp.json        ← generated from .mcp.kiro.json with PLUGIN_ROOT
+#                              resolved to an absolute path
 #   steering/<name>.md       ← symlinked from this plugin's steering/
 #   skills/<name>/SKILL.md   ← HARD-COPIED with $CLAUDE_PLUGIN_ROOT resolved
 #                              to the absolute plugin path
@@ -37,8 +38,18 @@ fi
 
 mkdir -p "$KIRO_DIR/settings" "$KIRO_DIR/steering" "$KIRO_DIR/skills"
 
-# 1) MCP entry — always plain copy (workspace-local edits must not leak back).
-cp "$PLUGIN_ROOT/.mcp.kiro.json" "$KIRO_DIR/settings/mcp.json"
+# 1) MCP entry — generate with resolved PLUGIN_ROOT so the server starts
+#    without needing KIRO_PLUGIN_ROOT in the environment.
+cat > "$KIRO_DIR/settings/mcp.json" <<EOF
+{
+  "mcpServers": {
+    "corezoid": {
+      "command": "sh",
+      "args": ["-c", "export PLUGIN_ROOT=\"$PLUGIN_ROOT\"; export COREZOID_WORK_DIR=\"\$PWD\"; exec sh \"\$PLUGIN_ROOT/mcp-server/run.sh\""]
+    }
+  }
+}
+EOF
 
 # 2) Steering — small, stable, no token substitution needed. Symlink on POSIX,
 #    hard-copy on Windows shells.
@@ -73,6 +84,3 @@ done
 echo "Installed corezoid plugin into: $KIRO_DIR"
 echo "Open this workspace in Kiro and the corezoid MCP server, skills, and steering will be picked up."
 echo "Reference-doc paths in skills were resolved to: $PLUGIN_ROOT"
-echo
-echo "If your shell does not already set KIRO_PLUGIN_ROOT, add:"
-echo "  export KIRO_PLUGIN_ROOT=\"$PLUGIN_ROOT\""
