@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -18,11 +19,104 @@ import (
 // timeout and is well above any reasonable interactive tool call.
 const httpToolCallTimeout = 10 * time.Minute
 
+// httpSessionIDContextKey holds the Mcp-Session-Id string for the current
+// request, attached in httpHandlePost so httpDispatch can resolve it into a
+// per-session client identity without needing the *http.Request itself.
+const httpSessionIDContextKey contextKey = "mcpHTTPSessionID"
+
+// httpClientIdentity is one HTTP session's declared client name/version,
+// plus when it was last confirmed active (for idle eviction).
+type httpClientIdentity struct {
+	Name     string
+	Version  string
+	LastSeen time.Time
+}
+
+const httpSessionIdleTimeout = 1 * time.Hour
+const httpSessionSweepInterval = 10 * time.Minute
+
+// httpSessionsMu guards httpSessions. The Streamable HTTP transport can serve
+// multiple concurrent MCP clients against one server process — unlike stdio,
+// where one process is definitionally one client — so client identity has to
+// be tracked per session (keyed by the Mcp-Session-Id minted at initialize)
+// rather than as a process-global, or whichever client's handshake ran most
+// recently would silently overwrite every other connected client's identity.
+var httpSessionsMu sync.Mutex
+var httpSessions = map[string]httpClientIdentity{}
+
+// registerHTTPSession stores/refreshes the client identity for a session,
+// called once from httpDispatch's initialize case.
+func registerHTTPSession(sessionID, name, version string) {
+	if sessionID == "" {
+		return
+	}
+	httpSessionsMu.Lock()
+	defer httpSessionsMu.Unlock()
+	httpSessions[sessionID] = httpClientIdentity{Name: name, Version: version, LastSeen: time.Now()}
+}
+
+// httpSessionIdentity returns the stored identity for a session and refreshes
+// its LastSeen timestamp, so an actively-used session is never evicted by
+// sweepIdleHTTPSessions regardless of how long ago it last called initialize.
+func httpSessionIdentity(sessionID string) (identity httpClientIdentity, ok bool) {
+	if sessionID == "" {
+		return httpClientIdentity{}, false
+	}
+	httpSessionsMu.Lock()
+	defer httpSessionsMu.Unlock()
+	id, found := httpSessions[sessionID]
+	if !found {
+		return httpClientIdentity{}, false
+	}
+	id.LastSeen = time.Now()
+	httpSessions[sessionID] = id
+	return id, true
+}
+
+// endHTTPSession removes a session's tracked identity. Called when the
+// client sends DELETE /mcp per the Streamable HTTP session-termination flow.
+func endHTTPSession(sessionID string) {
+	if sessionID == "" {
+		return
+	}
+	httpSessionsMu.Lock()
+	defer httpSessionsMu.Unlock()
+	delete(httpSessions, sessionID)
+}
+
+// sweepIdleHTTPSessions periodically evicts sessions that haven't been seen
+// in httpSessionIdleTimeout, so a client that vanishes without sending DELETE
+// (crash, dropped connection, a client that doesn't implement session
+// termination) doesn't leak memory in httpSessions forever. Started once
+// from runHTTPServer.
+func sweepIdleHTTPSessions() {
+	ticker := time.NewTicker(httpSessionSweepInterval)
+	defer ticker.Stop()
+	for range ticker.C {
+		pruneIdleHTTPSessions(time.Now().Add(-httpSessionIdleTimeout))
+	}
+}
+
+// pruneIdleHTTPSessions removes every session last seen before cutoff. Split
+// out from sweepIdleHTTPSessions so the eviction logic is directly testable
+// without waiting on the real ticker interval.
+func pruneIdleHTTPSessions(cutoff time.Time) {
+	httpSessionsMu.Lock()
+	defer httpSessionsMu.Unlock()
+	for id, ci := range httpSessions {
+		if ci.LastSeen.Before(cutoff) {
+			delete(httpSessions, id)
+		}
+	}
+}
+
 // runHTTPServer starts the Streamable-HTTP MCP transport on addr.
 // Activate by setting COREZOID_HTTP_PORT (e.g. "8080").
 // In hosted environments credentials must be pre-configured via env vars;
 // the login tool (browser OAuth) is not usable from a remote server.
 func runHTTPServer(addr string) error {
+	go sweepIdleHTTPSessions()
+
 	// Load saved OAuth credentials the same way stdio mode does.
 	// Lock the check-then-set so the race detector sees a happens-before edge
 	// against the HTTP handlers we're about to start.
@@ -92,7 +186,7 @@ func httpMCPEndpoint(w http.ResponseWriter, r *http.Request) {
 	case http.MethodGet:
 		httpHandleSSE(w, r)
 	case http.MethodDelete:
-		// Session termination — stateless server has nothing to tear down.
+		endHTTPSession(r.Header.Get("Mcp-Session-Id"))
 		w.WriteHeader(http.StatusNoContent)
 	default:
 		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
@@ -106,7 +200,41 @@ func httpHandlePost(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	resp := httpDispatch(r.Context(), req)
+	// A new logical session begins at every initialize; the server mints the
+	// ID and the client is expected to echo it back on every later request
+	// for this session (per the Streamable HTTP transport spec). Otherwise
+	// use whatever the client already sent — an empty string here just means
+	// httpDispatch's session lookups below will all miss, falling back to
+	// the process-global client identity.
+	sessionID := r.Header.Get("Mcp-Session-Id")
+	if req.Method == "initialize" {
+		sessionID = generateUUIDv4()
+		w.Header().Set("Mcp-Session-Id", sessionID)
+	} else if sessionID != "" && !strings.HasPrefix(req.Method, "notifications/") {
+		// The client is asserting an existing session (evicted by idle
+		// eviction, orphaned by a server restart, or simply invented) that we
+		// don't recognize. Per the Streamable HTTP spec this must be a 404,
+		// not a silent degrade — a compliant client treats 404 as a signal to
+		// discard the stale ID and call initialize again on its own, instead
+		// of quietly getting worse analytics attribution forever. A request
+		// with NO session header at all is a different case (a client that
+		// never implemented the session protocol) and is intentionally left
+		// alone here — it still falls back to the global client identity via
+		// clientIdentityFor, same as before this check existed. Notifications
+		// are exempt: they get no JSON-RPC response to signal recovery on,
+		// and 202-with-empty-body is already the correct reply either way.
+		if _, found := httpSessionIdentity(sessionID); !found {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+	}
+
+	ctx := r.Context()
+	if sessionID != "" {
+		ctx = context.WithValue(ctx, httpSessionIDContextKey, sessionID)
+	}
+
+	resp := httpDispatch(ctx, req)
 	if resp == nil {
 		// Notification — accepted, no body.
 		w.WriteHeader(http.StatusAccepted)
@@ -143,6 +271,20 @@ func httpHandleSSE(w http.ResponseWriter, r *http.Request) {
 func httpDispatch(reqCtx context.Context, req mcpRequest) interface{} {
 	switch req.Method {
 	case "initialize":
+		// Read client identity for analytics attribution. Elicitation support
+		// is intentionally ignored here — the comment on httpHandleSSE explains
+		// why server-initiated elicitation isn't wired up over HTTP.
+		//
+		// parseInitializeParams also updates the process-global clientName/
+		// clientVersion (shared with stdio). In HTTP mode that global is no
+		// longer authoritative — registerHTTPSession below is — but it's kept
+		// as clientIdentityFor's fallback for a request that arrives without
+		// a recognized session, and for the initialize log line right below.
+		_, name, version := parseInitializeParams(req.Params)
+		if sid, ok := reqCtx.Value(httpSessionIDContextKey).(string); ok {
+			registerHTTPSession(sid, name, version)
+		}
+		logger.Info("initialize: clientName=%q clientVersion=%q", name, version)
 		return mcpResponse{
 			JSONRPC: "2.0",
 			ID:      req.ID,
@@ -180,6 +322,16 @@ func httpDispatch(reqCtx context.Context, req mcpRequest) interface{} {
 		}
 		callCtx, cancel := context.WithTimeout(reqCtx, httpToolCallTimeout)
 		defer cancel()
+		sid, hasSID := reqCtx.Value(httpSessionIDContextKey).(string)
+		identity, foundSession := httpSessionIdentity(sid)
+		if foundSession {
+			callCtx = context.WithValue(callCtx, clientIdentityContextKey, clientIdentity{Name: identity.Name, Version: identity.Version})
+		} else {
+			// No (or unrecognized) Mcp-Session-Id — falls back to the
+			// process-global client identity in clientIdentityFor, same as
+			// before this fix. Logged so the degrade path is diagnosable.
+			logger.Debug("tools/call: no session identity for sessionID=%q (hasSID=%v) — falling back to global client identity", sid, hasSID)
+		}
 		result, isErr := handleToolCall(callCtx, params.Name, params.Arguments)
 		return mcpResponse{
 			JSONRPC: "2.0",

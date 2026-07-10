@@ -67,8 +67,104 @@ var pendingReqs sync.Map
 // reqCounter generates unique IDs for server-initiated requests.
 var reqCounter int64
 
-// clientSupportsElicitation is set during initialize based on the client's declared capabilities.
+// clientStateMu guards clientSupportsElicitation, clientName, and
+// clientVersion. They're written once per connection during the initialize
+// handshake but read afterwards from concurrent tool-call goroutines in HTTP
+// mode (net/http dispatches each request on its own goroutine, same reason
+// authStateMu exists for the auth-state globals above). Read paths take
+// RLock; the write path (parseInitializeParams) takes Lock.
+var clientStateMu sync.RWMutex
+
+// clientSupportsElicitation is set during initialize based on the client's
+// declared capabilities. Read it via clientElicitationSupported(), never
+// directly — see clientStateMu.
 var clientSupportsElicitation bool
+
+// clientName and clientVersion capture the connecting MCP client's declared
+// identity (e.g. "Claude Code", "1.2.3") from the initialize handshake, for
+// attribution in analytics events. Empty if the client omitted clientInfo.
+// Read them via clientIdentitySnapshot(), never directly — see clientStateMu.
+var clientName string
+var clientVersion string
+
+// clientElicitationSupported reports whether the connected client declared
+// elicitation support during initialize.
+func clientElicitationSupported() bool {
+	clientStateMu.RLock()
+	defer clientStateMu.RUnlock()
+	return clientSupportsElicitation
+}
+
+// clientIdentitySnapshot returns the connected client's declared name and
+// version, taken under the read lock. In HTTP mode this reflects whichever
+// session last called initialize — callers that have a per-request ctx
+// should use clientIdentityFor instead, which is session-aware.
+func clientIdentitySnapshot() (name, version string) {
+	clientStateMu.RLock()
+	defer clientStateMu.RUnlock()
+	return clientName, clientVersion
+}
+
+// contextKey namespaces values stored on context.Context so they can't
+// collide with keys another package might use.
+type contextKey string
+
+// clientIdentity is a transport-neutral client name/version pair. HTTP mode
+// converts its session-store entry (mcp_http.go's httpClientIdentity, which
+// also carries bookkeeping like LastSeen that has no meaning here) into this
+// shape before attaching it to a request context.
+type clientIdentity struct {
+	Name    string
+	Version string
+}
+
+// clientIdentityContextKey holds a resolved per-session clientIdentity,
+// attached to the context for a tools/call request in HTTP mode once the
+// caller's session has been resolved (see httpDispatch's tools/call case).
+const clientIdentityContextKey contextKey = "mcpClientIdentity"
+
+// clientIdentityFor resolves the calling client's identity for the given
+// request context. HTTP mode can serve multiple concurrent MCP clients
+// against one server process — net/http dispatches each request on its own
+// goroutine — so a single process-global clientName/clientVersion (as used
+// by clientIdentitySnapshot) would let whichever client initialized most
+// recently silently overwrite every other connected client's attribution in
+// analytics. If ctx carries a resolved per-session identity, that's used;
+// otherwise this falls back to the process-global snapshot, which is always
+// correct for stdio (one process is definitionally one client) and is the
+// best available answer for an HTTP request that arrived without a
+// recognized session.
+func clientIdentityFor(ctx context.Context) (name, version string) {
+	if ci, ok := ctx.Value(clientIdentityContextKey).(clientIdentity); ok {
+		return ci.Name, ci.Version
+	}
+	return clientIdentitySnapshot()
+}
+
+// parseInitializeParams extracts elicitation support and client identity from
+// an initialize request's params and stores them under clientStateMu. Shared
+// by the stdio and HTTP transports. Fields the client omitted decode to ""
+// (clientInfo is optional in the MCP spec); if raw itself fails to parse, the
+// stored values are left unchanged. Returns the values it stored so callers
+// can log them without a second locked read.
+func parseInitializeParams(raw json.RawMessage) (supportsElicitation bool, name, version string) {
+	var params struct {
+		Capabilities map[string]json.RawMessage `json:"capabilities"`
+		ClientInfo   struct {
+			Name    string `json:"name"`
+			Version string `json:"version"`
+		} `json:"clientInfo"`
+	}
+
+	clientStateMu.Lock()
+	defer clientStateMu.Unlock()
+	if err := json.Unmarshal(raw, &params); err == nil {
+		_, clientSupportsElicitation = params.Capabilities["elicitation"]
+		clientName = params.ClientInfo.Name
+		clientVersion = params.ClientInfo.Version
+	}
+	return clientSupportsElicitation, clientName, clientVersion
+}
 
 // activeCancels maps in-progress tools/call request IDs to their cancel functions.
 var activeCancels sync.Map
@@ -200,14 +296,9 @@ func runMCPServer() {
 
 		switch req.Method {
 		case "initialize":
-			// Read client capabilities to detect elicitation support.
-			var initParams struct {
-				Capabilities map[string]json.RawMessage `json:"capabilities"`
-			}
-			if err := json.Unmarshal(req.Params, &initParams); err == nil {
-				_, clientSupportsElicitation = initParams.Capabilities["elicitation"]
-			}
-			logger.Info("initialize: clientSupportsElicitation=%v", clientSupportsElicitation)
+			// Read client capabilities and identity (elicitation support, name/version).
+			supportsElicitation, name, version := parseInitializeParams(req.Params)
+			logger.Info("initialize: clientSupportsElicitation=%v clientName=%q clientVersion=%q", supportsElicitation, name, version)
 
 			serverSend(mcpResponse{
 				JSONRPC: "2.0",

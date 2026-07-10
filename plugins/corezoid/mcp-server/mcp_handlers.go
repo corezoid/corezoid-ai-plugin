@@ -153,6 +153,7 @@ func handleToolCall(ctx context.Context, name string, args map[string]interface{
 
 	if analyticsEnabled.Load() {
 		apiURLv, _, _, _, _ := authSnapshot()
+		clientNameV, clientVersionV := clientIdentityFor(ctx)
 		e := AnalyticsEvent{
 			Ts:             start.UTC().Format(time.RFC3339),
 			Tool:           name,
@@ -163,6 +164,8 @@ func handleToolCall(ctx context.Context, name string, args map[string]interface{
 			ServerVersion:  mcpServerVersion,
 			InstallationID: installationID,
 			UserEmail:      telemetryEmail,
+			ClientName:     clientNameV,
+			ClientVersion:  clientVersionV,
 		}
 		if isError {
 			e.ErrorType = classifyError(result)

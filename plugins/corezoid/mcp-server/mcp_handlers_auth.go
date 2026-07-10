@@ -84,7 +84,7 @@ func handleLogin(ctx context.Context, args map[string]interface{}) (string, bool
 	// Step 1: ensure Account API URL.
 	if snapAccountURL == "" {
 		var resolved string
-		if clientSupportsElicitation {
+		if clientElicitationSupported() {
 			content, action, err := elicitValues(
 				"Enter your Account API URL to get started:",
 				map[string]interface{}{
@@ -183,7 +183,7 @@ func handleLogin(ctx context.Context, args map[string]interface{}) (string, bool
 
 	// Step 3: workspace selection.
 	if snapWorkspaceID == "" {
-		if clientSupportsElicitation {
+		if clientElicitationSupported() {
 			workspaces, fetchErr := fetchWorkspaceList(ctx)
 			if fetchErr != nil {
 				logger.Warn("login: fetchWorkspaceList failed: %v — falling back to text input", fetchErr)
@@ -262,7 +262,7 @@ func handleLogin(ctx context.Context, args map[string]interface{}) (string, bool
 
 	// Steps 4 & 5: pick project then stage.
 	if snapStageID == 0 {
-		if clientSupportsElicitation {
+		if clientElicitationSupported() {
 			var selectedProjectID int64
 
 			// Step 4: fetch project list and elicit selection.
@@ -427,7 +427,7 @@ func handleLogin(ctx context.Context, args map[string]interface{}) (string, bool
 
 	// One-time opt-in: ask for email to include in telemetry.
 	// Only shown once per installation; skipping is always valid.
-	if clientSupportsElicitation {
+	if clientElicitationSupported() {
 		prefs := loadUserPreferences()
 		if !prefs.TelemetryEmailAsked {
 			content, action, err := elicitValues(

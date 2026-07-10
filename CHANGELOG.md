@@ -1,5 +1,26 @@
 # Changelog
 
+## [2.7.6]
+
+- Fix: return HTTP 404 when a request carries an `Mcp-Session-Id` the server doesn't recognize (evicted by the idle sweep, orphaned by a restart, or invented by a non-compliant client), per the Streamable HTTP spec — previously this silently degraded to the process-global client identity forever, with no signal to the client that its session was gone. A compliant client treats 404 as a cue to discard the stale ID and call `initialize` again on its own. Requests with no session header at all, `initialize` itself, and notifications are exempt and keep the existing graceful-fallback behavior.
+
+## [2.7.5]
+
+- Fix: `clientName`/`clientVersion` were still process-global even after the `clientStateMu` mutex fix, so in HTTP mode — where one server process can serve multiple concurrent MCP clients — whichever client's `initialize` ran most recently silently overwrote every other connected client's attribution in analytics. Track identity per HTTP session instead, keyed by `Mcp-Session-Id` (minted at `initialize`, threaded through `context.Context` into `handleToolCall`), with a fallback to the old global for stdio and non-compliant clients. Added an idle-session sweep (1hr timeout) since persistent session state needed a bound the previous stateless design didn't. Verified with a real end-to-end concurrency test (20 simulated clients through an `httptest.Server`) that reproduces the cross-attribution bug when the fix is disabled.
+
+## [2.7.4]
+
+- Fix: guard `stopAnalytics()` with a `sync.Once`. `main.go` calls it from up to three places (a deferred call, the SIGINT/SIGTERM handler, and the HTTP-server-error path), and the sender goroutine exits after its first flush — so a second or third call found no receiver on `analyticsFlushCh` and blocked out a full 1s timeout for nothing, up to 2s on the HTTP-error path if a signal arrived concurrently. Verified with a new test that fails against the pre-fix code and passes clean with the guard.
+
+## [2.7.3]
+
+- Fix: guard the MCP client-identity state (`clientSupportsElicitation`, `clientName`, `clientVersion`) with a mutex. HTTP mode dispatches each request on its own goroutine, so concurrent `initialize` calls from different clients could race on these globals — caught by `-race` and reproduced with a new concurrency test showing torn name/version pairs from two different clients. Reads now go through `clientElicitationSupported()`/`clientIdentitySnapshot()` instead of touching the globals directly, mirroring the existing `authStateMu`/`withAuthLock` pattern.
+
+## [2.7.2]
+
+- Feat: capture MCP client identity (`clientInfo.name`/`version` from the `initialize` handshake) and attach it to every analytics event as `client_name`/`client_version` — both the stdio and HTTP transports now parse it via one shared `parseInitializeParams()` (the HTTP transport previously ignored `initialize` params entirely).
+- Feat: flush buffered analytics events before process exit. A SIGINT/SIGTERM handler and a deferred call both reach `stopAnalytics()`, which drains the sender's queue and sends synchronously instead of losing anything short of the 20-event/5s batch threshold.
+
 ## [2.7.0]
 
 - Feat: AWS Kiro support — the same plugin payload now installs on Kiro alongside Claude Code and Codex via a symmetric overlay (`plugins/corezoid/.kiro-plugin/plugin.json`, `plugins/corezoid/.mcp.kiro.json`, `plugins/corezoid/steering/corezoid.md`, and a root-level `POWER.md` distribution manifest for kiro.dev/powers).
