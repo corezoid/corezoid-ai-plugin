@@ -236,6 +236,10 @@ validation errors, and summarize what each process does.
 | `find-principal`    | Resolve user / group / API-key name to obj_id      |
 | `invite-user`       | Invite an external email and share an object in one call |
 | `send-feedback`     | Submit feedback about plugin behavior (returns ticket id) |
+| `git-pull-context`  | Pull CLAUDE.md + `_ext/` from the Corezoid git mirror for the current stage |
+| `git-push-context`  | Commit and push local `_ext/` changes to the git mirror |
+| `read-context-file` | Read a file from `_ext/` of the current stage |
+| `update-context-file` | Write or append content to a file in `_ext/docs/` |
 
 ## Feedback
 

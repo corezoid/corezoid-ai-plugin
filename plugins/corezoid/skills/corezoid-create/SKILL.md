@@ -170,6 +170,15 @@ Use the `Read` tool to load these files when specific node or validation details
 | `${CLAUDE_PLUGIN_ROOT}/docs/process/node-positioning-best-practices.md` | Coordinate system and layout guidelines |
 | `${CLAUDE_PLUGIN_ROOT}/docs/variables-guide.md` | Variable naming rules, creation workflow, usage examples |
 
+## Git Context Update (if configured)
+
+If `COREZOID_LOGIN` is set, after successful deployment:
+- Use `update-context-file` with `mode="append"` to record what this process does (`_ext/docs/context.md`), any external dependencies (`_ext/docs/dependencies.md`), or notable decisions made during creation (`_ext/docs/decisions.md`)
+- Then call `git-push-context`
+- On push failure (403): warn the user, do not block
+
+---
+
 ## Example Processes
 
 | Path | Description |

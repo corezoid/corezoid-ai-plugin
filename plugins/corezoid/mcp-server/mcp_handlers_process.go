@@ -102,6 +102,20 @@ func handlePullFolder(ctx context.Context, args map[string]interface{}) (string,
 	}
 
 	v := NewValidator(ctx, 0)
+
+	// Pull git context before Corezoid processes — never blocks on failure.
+	gitCfg := loadGitSyncConfig()
+	if gitCfg.IsConfigured() {
+		if stagePath, err := buildGitStagePath(v, folderID); err != nil {
+			logger.Warn("[git-sync] could not resolve stage path: %v", err)
+		} else {
+			gitCfg.StagePath = stagePath
+		}
+		if err := GitPull(gitCfg); err != nil {
+			logger.Warn("[git-sync] pull failed, continuing without git context: %v", err)
+		}
+	}
+
 	if err := downloadStageRecursively(v, folderID, "."); err != nil {
 		return fmt.Sprintf("Error fetching folder: %v", err), true
 	}

@@ -49,6 +49,10 @@ You have access to the Corezoid API via the `corezoid` MCP server.
 | `list-api-keys` | List API keys in the workspace |
 | `find-principal` | Resolve user / group / API-key name → obj_id (call before share-object) |
 | `invite-user` | Invite an external email AND share an object in one call |
+| `git-pull-context` | Pull CLAUDE.md + `_ext/` from the git mirror for the current stage |
+| `git-push-context` | Commit and push local `_ext/` changes to the git mirror |
+| `read-context-file` | Read a file from `_ext/` of the current stage |
+| `update-context-file` | Write or append content to a file in `_ext/docs/` |
 
 ## Platform Architecture
 
@@ -131,6 +135,7 @@ For domain-specific workflows use the specialized skills:
 - `/corezoid-variable-manager` — creating, listing, modifying, deleting variables (visible/secret, raw/json)
 - `/corezoid-process-optimizer` — reduce tacts (merge nodes), clean data flow, fill names, add semaphors
 - `/corezoid-api-connector` — build processes that call the Corezoid public API (`/api/2/json/`) using `api_secret_outer`
+- `/corezoid-git-context` — explicitly update `_ext/docs/` files for the current stage (context, dependencies, decisions, invariants, issues)
 
 ## Reference Documents
 
@@ -154,6 +159,26 @@ Use the `Read` tool to load these files when you need deeper detail:
 | `${CLAUDE_PLUGIN_ROOT}/docs/state-diagrams/state-diagram-node-structures.md` | JSON schemas for nodes inside a state diagram |
 | `${CLAUDE_PLUGIN_ROOT}/docs/state-diagrams/state-diagram-process-interaction.md` | How driver processes read / create / modify state tasks |
 | `${CLAUDE_PLUGIN_ROOT}/docs/variables-guide.md` | Variable naming rules, creation workflow, usage examples |
+
+## Git Context Update (if configured)
+
+After completing any task that involved creating, editing, or reviewing processes:
+
+1. Determine what new knowledge was gained in this session
+2. For each relevant update call `update-context-file` with `mode="append"`:
+   - `_ext/docs/context.md` — if you understood the stage's business purpose
+   - `_ext/docs/dependencies.md` — if you discovered an external API call or integration
+   - `_ext/docs/decisions.md` — if a non-obvious architectural decision was made
+   - `_ext/docs/invariants.md` — if you found a constraint that must not be violated
+   - `_ext/docs/issues.md` — if you found a bug or left a TODO
+3. Call `git-push-context` to persist changes
+
+**Rules:**
+- Only update if something genuinely new was learned — do not duplicate existing content
+- If `COREZOID_LOGIN` is not set, skip this section silently
+- On push failure (403 = not yet enabled): warn the user, do not block the session
+
+---
 
 ## Tips
 

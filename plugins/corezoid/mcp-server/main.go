@@ -46,6 +46,8 @@ var debug bool
 var apigwURL string
 var stageID int
 var insecureTLS bool
+var gitLoginID string
+var gitSecret string
 
 // authSnapshot returns a coherent snapshot of the auth-state globals taken
 // under the read lock. Callers that subsequently need to mutate state must
@@ -157,6 +159,8 @@ func loadConfig() {
 	}
 	stageID, _ = strconv.Atoi(os.Getenv("COREZOID_STAGE_ID"))
 	insecureTLS = os.Getenv("COREZOID_INSECURE_TLS") != ""
+	gitLoginID = os.Getenv("COREZOID_LOGIN")
+	gitSecret = os.Getenv("COREZOID_SECRET")
 }
 
 // runCLI executes a single MCP tool from the command line and exits.
@@ -519,4 +523,52 @@ func fixStruct(dataBin string, inProcessID int) (string, []string) {
 		return dataBin, messages
 	}
 	return string(dataRspBin), messages
+}
+
+// loadGitSyncConfig builds a GitSyncConfig from the current auth globals.
+// StagePath is left empty — callers set it from the resolved project/stage names.
+func loadGitSyncConfig() GitSyncConfig {
+	authStateMu.RLock()
+	loginID := gitLoginID
+	secret := gitSecret
+	wsID := workspaceID
+	baseURL := apiURL
+	authStateMu.RUnlock()
+
+	workDir, _ := os.Getwd()
+	return GitSyncConfig{
+		LoginID:   loginID,
+		Secret:    secret,
+		CompanyID: wsID,
+		BaseURL:   baseURL,
+		WorkDir:   workDir,
+	}
+}
+
+// buildGitStagePath resolves the git mirror path for the given Corezoid folder.
+// It calls ShowFolder to walk up to the stage and project and formats:
+// "projects/<projectId>_<ProjectName>/stages/<stageId>_<StageName>"
+func buildGitStagePath(v *Executor, folderID int) (string, error) {
+	stageInfo, err := v.ShowFolder(folderID)
+	if err != nil {
+		return "", fmt.Errorf("ShowFolder(%d): %w", folderID, err)
+	}
+
+	// obj_type 3 = stage
+	if stageInfo.ObjType != 3 {
+		return "", fmt.Errorf("folder %d is not a stage (obj_type=%d)", folderID, stageInfo.ObjType)
+	}
+
+	projectInfo, err := v.ShowFolder(stageInfo.ParentObjID)
+	if err != nil {
+		return "", fmt.Errorf("ShowFolder(project %d): %w", stageInfo.ParentObjID, err)
+	}
+
+	stageName := strings.ReplaceAll(stageInfo.Title, " ", "_")
+	projectName := strings.ReplaceAll(projectInfo.Title, " ", "_")
+
+	return fmt.Sprintf("projects/%d_%s/stages/%d_%s",
+		projectInfo.ObjID, projectName,
+		stageInfo.ObjID, stageName,
+	), nil
 }

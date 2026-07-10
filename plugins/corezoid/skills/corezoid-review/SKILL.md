@@ -354,3 +354,14 @@ Use the `Read` tool to load these files when specific node or validation details
 | `${CLAUDE_PLUGIN_ROOT}/docs/nodes/api-call-node.md` | HTTP API call configuration |
 | `${CLAUDE_PLUGIN_ROOT}/docs/process/error-handling.md` | Error handling patterns |
 | `${CLAUDE_PLUGIN_ROOT}/docs/process/process-json-validation.md` | Validation rules and common errors |
+
+
+---
+
+## Git Context Update (if configured)
+
+If `COREZOID_LOGIN` is set, after completing the review:
+- Record discovered issues with `update-context-file("_ext/docs/issues.md", ..., mode="append")`
+- Record violated invariants with `update-context-file("_ext/docs/invariants.md", ..., mode="append")`
+- Then call `git-push-context`
+- On push failure (403): warn the user, do not block

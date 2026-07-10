@@ -75,7 +75,28 @@ When `login` returns "Setup complete", proceed to **Step 2**.
 
 ---
 
-## Step 2 — Pull the project
+## Step 2 — Configure Git context (optional)
+
+After login completes, offer the user Git context integration:
+
+> "Хотите подключить Git-контекст для этого стейджа? Это позволит агенту автоматически читать документацию (`_ext/docs/`) и сохранять выводы после работы с процессами. Вам потребуется Corezoid API key (login_id / secret).
+> **[Y] Настроить  [N] Пропустить**"
+
+If the user agrees:
+1. Offer to create a new API key via **`create-api-key`** or use an existing one
+2. Ask for `login_id` (numeric key ID) and `secret`
+3. Save to the correct locations:
+   - `COREZOID_LOGIN=<login_id>` → append to project `.env`
+   - `COREZOID_SECRET=<secret>` → append to `~/.corezoid/credentials` (**never** in `.env`)
+4. Verify access: call **`git-pull-context`** (timeout 5 sec)
+5. If successful → "Git context configured. CLAUDE.md and _ext/ will be loaded on every pull-folder."
+6. If failed → "Git context unavailable — setup skipped. You can add COREZOID_LOGIN / COREZOID_SECRET later."
+
+If the user skips, proceed to Step 3.
+
+---
+
+## Step 3 — Pull the project
 
 After `login` returns "Setup complete", call MCP tool **`pull-folder`** with:
 - `folder_id`: value of `COREZOID_STAGE_ID` (now set in `.env`)
@@ -167,3 +188,5 @@ The server appends `/api/2/json` or `/api/2/download` automatically.
 | `WORKSPACE_ID` | project `.env` | login step 3 — workspace selection |
 | `COREZOID_STAGE_ID` | project `.env` | login step 4 — stage selection |
 | `COREZOID_OAUTH_CLIENT_ID` | project `.env` | pre-login (on-prem only) — OAuth2 client ID for deployments with a custom authorization server; cloud users do not need this |
+| `COREZOID_LOGIN` | project `.env` | Step 2 — git context setup — API key login_id |
+| `COREZOID_SECRET` | `~/.corezoid/credentials` | Step 2 — git context setup — API key secret (never in `.env`) |

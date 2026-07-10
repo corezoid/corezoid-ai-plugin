@@ -1002,4 +1002,62 @@ var toolRegistry = []mcpTool{
 			"required": []string{"problem"},
 		},
 	},
+	{
+		Name:        "git-pull-context",
+		Description: "Pull CLAUDE.md and _ext/ from the Corezoid git mirror for the current stage. Requires COREZOID_LOGIN and COREZOID_SECRET env vars. Silently skipped if not configured.",
+		InputSchema: map[string]interface{}{
+			"type":       "object",
+			"properties": map[string]interface{}{},
+		},
+	},
+	{
+		Name:        "git-push-context",
+		Description: "Commit and push local _ext/ changes to the Corezoid git mirror. Requires COREZOID_LOGIN and COREZOID_SECRET. Returns a warning (not an error) if server-side push is not yet enabled.",
+		InputSchema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"message": map[string]interface{}{
+					"type":        "string",
+					"description": "Optional git commit message. Defaults to 'docs: update _ext/docs/ after task session <timestamp>'.",
+				},
+			},
+		},
+	},
+	{
+		Name:        "read-context-file",
+		Description: "Read a file from _ext/ of the current stage in the git mirror. Returns content and a found flag.",
+		InputSchema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"path": map[string]interface{}{
+					"type":        "string",
+					"description": "Relative path inside the stage directory, e.g. '_ext/docs/context.md'.",
+				},
+			},
+			"required": []string{"path"},
+		},
+	},
+	{
+		Name:        "update-context-file",
+		Description: "Write or append content to a file in _ext/docs/ of the current stage. Use mode='append' to add new information, mode='replace' to overwrite.",
+		InputSchema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"path": map[string]interface{}{
+					"type":        "string",
+					"description": "Relative path inside the stage directory, e.g. '_ext/docs/context.md'.",
+				},
+				"content": map[string]interface{}{
+					"type":        "string",
+					"description": "Text to write or append.",
+				},
+				"mode": map[string]interface{}{
+					"type":        "string",
+					"enum":        []string{"append", "replace"},
+					"description": "append (default) — add to end of file; replace — overwrite the file.",
+				},
+			},
+			"required": []string{"path", "content"},
+		},
+	},
 }

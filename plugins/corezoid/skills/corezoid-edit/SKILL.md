@@ -96,6 +96,16 @@ After a successful deploy, notify the user:
 
 ---
 
+## Step 5: Update Git Context (if configured)
+
+If `COREZOID_LOGIN` is set, update `_ext/docs/` with any new knowledge from this session:
+- Use `update-context-file` with `mode="append"` for the relevant files
+- Then call `git-push-context`
+- On push failure (403): warn the user, do not block
+- If nothing new was learned, skip this step
+
+---
+
 ## Reference Documents
 
 Use the `Read` tool to load these files when specific node or validation details are needed:

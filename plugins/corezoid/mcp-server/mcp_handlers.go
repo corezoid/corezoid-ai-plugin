@@ -82,6 +82,12 @@ var toolHandlers = map[string]toolHandler{
 
 	// feedback
 	"send-feedback": handleSendFeedback,
+
+	// git mirror context
+	"git-pull-context":     handleGitPullContext,
+	"git-push-context":     handleGitPushContext,
+	"read-context-file":    handleReadContextFile,
+	"update-context-file":  handleUpdateContextFile,
 }
 
 // noAuthTools don't need any credentials. lint runs entirely on local files;
@@ -89,10 +95,14 @@ var toolHandlers = map[string]toolHandler{
 // send-feedback must not require auth so users can report problems that
 // occurred before or during the login flow.
 var noAuthTools = map[string]struct{}{
-	"lint-process":  {},
-	"login":         {},
-	"logout":        {},
-	"send-feedback": {},
+	"lint-process":        {},
+	"login":               {},
+	"logout":              {},
+	"send-feedback":       {},
+	"git-pull-context":    {},
+	"git-push-context":    {},
+	"read-context-file":   {},
+	"update-context-file": {},
 }
 
 // tokenOnlyTools need an OAuth token but not a fully configured workspace or
