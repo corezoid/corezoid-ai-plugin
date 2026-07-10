@@ -1,5 +1,9 @@
 # Changelog
 
+## [2.7.4]
+
+- Fix: guard `stopAnalytics()` with a `sync.Once`. `main.go` calls it from up to three places (a deferred call, the SIGINT/SIGTERM handler, and the HTTP-server-error path), and the sender goroutine exits after its first flush — so a second or third call found no receiver on `analyticsFlushCh` and blocked out a full 1s timeout for nothing, up to 2s on the HTTP-error path if a signal arrived concurrently. Verified with a new test that fails against the pre-fix code and passes clean with the guard.
+
 ## [2.7.3]
 
 - Fix: guard the MCP client-identity state (`clientSupportsElicitation`, `clientName`, `clientVersion`) with a mutex. HTTP mode dispatches each request on its own goroutine, so concurrent `initialize` calls from different clients could race on these globals — caught by `-race` and reproduced with a new concurrency test showing torn name/version pairs from two different clients. Reads now go through `clientElicitationSupported()`/`clientIdentitySnapshot()` instead of touching the globals directly, mirroring the existing `authStateMu`/`withAuthLock` pattern.

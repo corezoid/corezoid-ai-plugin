@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 )
@@ -250,25 +251,35 @@ func runAnalyticsSender() {
 	}
 }
 
+// stopAnalyticsOnce ensures the flush-and-stop sequence below runs exactly
+// once. main.go calls stopAnalytics() from up to three places (a deferred
+// call, the SIGINT/SIGTERM handler goroutine, and the HTTP-server-error
+// path), and a signal can arrive concurrently with either of the others. The
+// sender goroutine exits after its first flush, so a second call would find
+// no receiver on analyticsFlushCh and block out its full timeout for nothing.
+var stopAnalyticsOnce sync.Once
+
 // stopAnalytics flushes any events queued in the channel or buffered in the
 // sender's in-memory batch, sending them synchronously, then stops the sender
-// goroutine for good. Intended to be called exactly once, right before
-// process exit. Bounded by short timeouts so a wedged network call or dead
-// goroutine can never hang shutdown; safe to call even if analytics was never
-// enabled.
+// goroutine for good. Safe to call more than once or concurrently — only the
+// first call does any work — and safe to call even if analytics was never
+// enabled. Bounded by short timeouts so a wedged network call or dead
+// goroutine can never hang shutdown.
 func stopAnalytics() {
-	if !analyticsEnabled.Load() {
-		return
-	}
-	done := make(chan struct{})
-	select {
-	case analyticsFlushCh <- done:
-		select {
-		case <-done:
-		case <-time.After(6 * time.Second):
+	stopAnalyticsOnce.Do(func() {
+		if !analyticsEnabled.Load() {
+			return
 		}
-	case <-time.After(1 * time.Second):
-	}
+		done := make(chan struct{})
+		select {
+		case analyticsFlushCh <- done:
+			select {
+			case <-done:
+			case <-time.After(6 * time.Second):
+			}
+		case <-time.After(1 * time.Second):
+		}
+	})
 }
 
 type analyticsOp struct {
