@@ -84,6 +84,12 @@ var toolHandlers = map[string]toolHandler{
 
 	// feedback
 	"send-feedback": handleSendFeedback,
+
+	// process snapshots
+	"create-snapshot": handleCreateSnapshot,
+	"list-snapshots":  handleListSnapshots,
+	"delete-snapshot": handleDeleteSnapshot,
+	"get-snapshot":    handleGetSnapshot,
 }
 
 // noAuthTools don't need any credentials. lint runs entirely on local files;

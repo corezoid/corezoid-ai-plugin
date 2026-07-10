@@ -102,6 +102,11 @@ func handlePullFolder(ctx context.Context, args map[string]interface{}) (string,
 	}
 
 	v := NewValidator(ctx, 0)
+
+	// Pre-warm project_id cache so push-process never needs an extra API call.
+	// folderID is the stage; its parent is the project.
+	_, _ = resolveAndCacheProjectID(v)
+
 	if err := downloadStageRecursively(v, folderID, "."); err != nil {
 		return fmt.Sprintf("Error fetching folder: %v", err), true
 	}
@@ -174,11 +179,36 @@ func handlePushProcess(ctx context.Context, args map[string]interface{}) (string
 		return fmt.Sprintf("Validation failed: %v", err), true
 	}
 
+	// Auto-snapshot: if process already exists on server (obj_id != null/0),
+	// capture current server state before overwriting. Never blocks on failure.
+	var snapshotNote string
+	if existingObjID := extractObjIDFromJSON(jsonContent); existingObjID != 0 {
+		if projectID, envNotice := resolveAndCacheProjectID(v); projectID != 0 && v.StageID != 0 {
+			name := extractProcessNameFromPath(filePath)
+			title := fmt.Sprintf("pre-push %s %s", name, time.Now().UTC().Format("2006-01-02 15:04"))
+			if snapObjID, snapVer, snapErr := v.CreateSnapshot(existingObjID, projectID, v.StageID, title); snapErr != nil {
+				logger.Warn("[snapshot] auto-snapshot failed, continuing: %v", snapErr)
+				snapshotNote = fmt.Sprintf("Warning: auto-snapshot failed (%v).", snapErr)
+			} else {
+				logger.Info("[snapshot] created version %d (obj_id=%d) for process %d", snapVer, snapObjID, existingObjID)
+				snapshotNote = fmt.Sprintf("Snapshot created before push (version %d, obj_id=%d).", snapVer, snapObjID)
+			}
+			if envNotice != "" && snapshotNote != "" {
+				snapshotNote += " " + envNotice
+			}
+		} else {
+			snapshotNote = "Warning: auto-snapshot skipped (project_id unresolved)."
+		}
+	}
+
 	if _, err := v.ProcessJSON(filePath, jsonContent); err != nil {
 		return fmt.Sprintf("Error deploying process: %v", err), true
 	}
 
 	result := fmt.Sprintf("Process deployed successfully, ProcessID: %d", procID)
+	if snapshotNote != "" {
+		result += "\n" + snapshotNote
+	}
 	// Surface the git_call container build log so the user sees what the build
 	// service reported (progress + result), not just silence on success.
 	if len(v.gitCallBuildLog) > 0 {

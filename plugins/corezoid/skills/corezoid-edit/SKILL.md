@@ -108,6 +108,8 @@ Deploy the modified process by calling MCP tool **`push-process`** with `process
 
 If deployment fails, fix the reported errors and re-run `push-process` until it succeeds. Do not skip this step or postpone it — changes exist only in memory until pushed.
 
+> **Auto-snapshot:** if the process already existed on the server (`obj_id` ≠ null), `push-process` automatically creates a snapshot of the current server state before deploying your changes. No action needed — this is transparent. The snapshot appears in the Corezoid UI and can be managed with `list-snapshots` / `get-snapshot` / `delete-snapshot`.
+
 After a successful deploy, notify the user:
 
 > "Changes have been deployed. Please **refresh the page** in Corezoid to see the updated process."

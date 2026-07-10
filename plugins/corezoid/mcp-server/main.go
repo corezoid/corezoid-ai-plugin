@@ -46,6 +46,9 @@ var debug bool
 var apigwURL string
 var stageID int
 var insecureTLS bool
+// cachedProjectID is written once (protected by authStateMu) and then read-only.
+// Reset to 0 on every loadConfig so a workspace switch gets a fresh value.
+var cachedProjectID int
 
 // authSnapshot returns a coherent snapshot of the auth-state globals taken
 // under the read lock. Callers that subsequently need to mutate state must
@@ -157,6 +160,8 @@ func loadConfig() {
 	}
 	stageID, _ = strconv.Atoi(os.Getenv("COREZOID_STAGE_ID"))
 	insecureTLS = os.Getenv("COREZOID_INSECURE_TLS") != ""
+	cachedProjectID = 0              // reset on workspace switch so it is re-resolved
+	os.Unsetenv("COREZOID_PROJECT_ID") // prevent stale process env from short-circuiting resolution
 }
 
 // runCLI executes a single MCP tool from the command line and exits.
@@ -527,4 +532,112 @@ func fixStruct(dataBin string, inProcessID int) (string, []string) {
 		return dataBin, messages
 	}
 	return string(dataRspBin), messages
+}
+
+// resolveAndCacheProjectID returns the project ID for the current stage and an
+// optional user-visible notice when COREZOID_PROJECT_ID is written to .env for
+// the first time. The notice is non-empty only on the first API resolution.
+// Priority: in-memory cache → COREZOID_PROJECT_ID env var → API (ShowFolder).
+// Thread-safe: reads under RLock, writes under Lock.
+func resolveAndCacheProjectID(v *Executor) (int, string) {
+	// Fast path: cache hit (read lock only).
+	authStateMu.RLock()
+	id := cachedProjectID
+	authStateMu.RUnlock()
+	if id != 0 {
+		return id, ""
+	}
+
+	// Try env var (no API call needed).
+	if s := os.Getenv("COREZOID_PROJECT_ID"); s != "" {
+		if parsed, err := strconv.Atoi(s); err == nil && parsed != 0 {
+			withAuthLock(func() { cachedProjectID = parsed })
+			return parsed, ""
+		}
+	}
+
+	// Resolve via API — must not hold the lock during I/O.
+	if v.StageID == 0 {
+		return 0, ""
+	}
+	resolved := v.GetProjectIDByStageID(v.StageID)
+	if resolved == 0 {
+		return 0, ""
+	}
+	withAuthLock(func() { cachedProjectID = resolved })
+	os.Setenv("COREZOID_PROJECT_ID", strconv.Itoa(resolved))
+	if written := appendToDotEnv("COREZOID_PROJECT_ID", strconv.Itoa(resolved)); written {
+		notice := fmt.Sprintf("(COREZOID_PROJECT_ID=%d saved to .env for future use)", resolved)
+		return resolved, notice
+	}
+	return resolved, ""
+}
+
+// appendToDotEnv appends key=value to the nearest .env file if the key is absent.
+// Returns true when the value was actually written (first time only).
+// The read-check-write is serialised under authStateMu to prevent duplicate entries
+// from concurrent resolveAndCacheProjectID calls.
+func appendToDotEnv(key, value string) bool {
+	authStateMu.Lock()
+	defer authStateMu.Unlock()
+
+	envPath := findDotEnvPath()
+	if envPath == "" {
+		return false
+	}
+	data, _ := os.ReadFile(envPath)
+	// Skip if key already present.
+	for _, line := range strings.Split(string(data), "\n") {
+		if strings.HasPrefix(strings.TrimSpace(line), key+"=") {
+			return false
+		}
+	}
+	f, err := os.OpenFile(envPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if err != nil {
+		logger.Warn("[snapshot] could not update .env: %v", err)
+		return false
+	}
+	defer f.Close()
+	_, _ = fmt.Fprintf(f, "\n%s=%s\n", key, value)
+	logger.Info("[snapshot] wrote %s=%s to %s", key, value, envPath)
+	return true
+}
+
+// findDotEnvPath returns the path of the nearest .env file by walking up from cwd.
+func findDotEnvPath() string {
+	cwd, err := os.Getwd()
+	if err != nil {
+		return ""
+	}
+	dir := cwd
+	for {
+		candidate := filepath.Join(dir, ".env")
+		if _, err := os.Stat(candidate); err == nil {
+			return candidate
+		}
+		if isProjectRoot(dir) {
+			// Create .env at project root if none exists yet.
+			return filepath.Join(dir, ".env")
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			return filepath.Join(cwd, ".env")
+		}
+		dir = parent
+	}
+}
+
+// extractObjIDFromJSON returns the obj_id from a process JSON string.
+// Returns 0 if obj_id is null or missing (new / unsaved process).
+func extractObjIDFromJSON(jsonContent string) int {
+	var m map[string]interface{}
+	if err := json.Unmarshal([]byte(jsonContent), &m); err != nil {
+		return 0
+	}
+	switch v := m["obj_id"].(type) {
+	case float64:
+		return int(v)
+	default:
+		return 0
+	}
 }
