@@ -1,25 +1,26 @@
 # Changelog
 
-## [2.7.6]
+## [2.8.0]
 
-- Fix: return HTTP 404 when a request carries an `Mcp-Session-Id` the server doesn't recognize (evicted by the idle sweep, orphaned by a restart, or invented by a non-compliant client), per the Streamable HTTP spec — previously this silently degraded to the process-global client identity forever, with no signal to the client that its session was gone. A compliant client treats 404 as a cue to discard the stale ID and call `initialize` again on its own. Requests with no session header at all, `initialize` itself, and notifications are exempt and keep the existing graceful-fallback behavior.
-
-## [2.7.5]
-
-- Fix: `clientName`/`clientVersion` were still process-global even after the `clientStateMu` mutex fix, so in HTTP mode — where one server process can serve multiple concurrent MCP clients — whichever client's `initialize` ran most recently silently overwrote every other connected client's attribution in analytics. Track identity per HTTP session instead, keyed by `Mcp-Session-Id` (minted at `initialize`, threaded through `context.Context` into `handleToolCall`), with a fallback to the old global for stdio and non-compliant clients. Added an idle-session sweep (1hr timeout) since persistent session state needed a bound the previous stateless design didn't. Verified with a real end-to-end concurrency test (20 simulated clients through an `httptest.Server`) that reproduces the cross-attribution bug when the fix is disabled.
-
-## [2.7.4]
-
-- Fix: guard `stopAnalytics()` with a `sync.Once`. `main.go` calls it from up to three places (a deferred call, the SIGINT/SIGTERM handler, and the HTTP-server-error path), and the sender goroutine exits after its first flush — so a second or third call found no receiver on `analyticsFlushCh` and blocked out a full 1s timeout for nothing, up to 2s on the HTTP-error path if a signal arrived concurrently. Verified with a new test that fails against the pre-fix code and passes clean with the guard.
-
-## [2.7.3]
-
-- Fix: guard the MCP client-identity state (`clientSupportsElicitation`, `clientName`, `clientVersion`) with a mutex. HTTP mode dispatches each request on its own goroutine, so concurrent `initialize` calls from different clients could race on these globals — caught by `-race` and reproduced with a new concurrency test showing torn name/version pairs from two different clients. Reads now go through `clientElicitationSupported()`/`clientIdentitySnapshot()` instead of touching the globals directly, mirroring the existing `authStateMu`/`withAuthLock` pattern.
-
-## [2.7.2]
-
-- Feat: capture MCP client identity (`clientInfo.name`/`version` from the `initialize` handshake) and attach it to every analytics event as `client_name`/`client_version` — both the stdio and HTTP transports now parse it via one shared `parseInitializeParams()` (the HTTP transport previously ignored `initialize` params entirely).
-- Feat: flush buffered analytics events before process exit. A SIGINT/SIGTERM handler and a deferred call both reach `stopAnalytics()`, which drains the sender's queue and sends synchronously instead of losing anything short of the 20-event/5s batch threshold.
+- Feat: process snapshots — new MCP handlers (`create-snapshot`, `list-snapshots`, `restore-snapshot`) and an auto-snapshot taken before every `push-process`; snapshot titles include a timestamp and the `.env` write notice is surfaced back to the user.
+- Feat: `deploy-stage` and `set-stage-immutable` MCP tools — deploy from one stage to another (with a source-stage-deployed precheck) and mark a stage immutable without leaving the IDE.
+- Feat: `git_call` node support in `push-process` — schema validation for `api_git`/`git_call` (including `code_error`), multi-language build-log integration tests across all runtimes, and the build log is surfaced in the push result on failure.
+- Feat: `run-task` polls for the final node and accepts a `wait_sec` parameter for long-running tasks.
+- Feat: capture MCP client identity (`clientInfo.name`/`version` from the `initialize` handshake) and attach it as `client_name`/`client_version` to every analytics event; both stdio and HTTP transports parse it via one shared `parseInitializeParams()`.
+- Feat: flush buffered analytics events on shutdown — SIGINT/SIGTERM and deferred exit paths drain the sender queue synchronously instead of losing anything short of the 20-event/5s batch threshold.
+- Feat: new skills — `corezoid-gitcall` (build/publish git_call nodes), `corezoid-describe` (safe process-description updates), and `corezoid-retro` (retrospective analysis).
+- Fix: return HTTP 404 when a request carries an `Mcp-Session-Id` the server doesn't recognize, per the Streamable HTTP spec. Previously it silently degraded to the process-global client identity with no signal to the client that its session was gone. `initialize`, notifications, and unsessioned requests keep the existing graceful-fallback behaviour.
+- Fix: track MCP client identity per HTTP session (keyed by `Mcp-Session-Id`, threaded through `context.Context` into `handleToolCall`) instead of a single process-global. In HTTP mode one server process serves many concurrent clients, and the previous global let the most recent `initialize` silently overwrite every other client's analytics attribution. Adds a 1h idle-session sweep. Covered by a 20-client concurrency test through `httptest.Server`.
+- Fix: guard the remaining MCP client-identity globals with a mutex (`clientSupportsElicitation`, `clientName`, `clientVersion`); reads go through `clientElicitationSupported()`/`clientIdentitySnapshot()`, mirroring the existing `authStateMu` pattern. Caught by `-race` and reproduced with a torn-pair concurrency test.
+- Fix: guard `stopAnalytics()` with a `sync.Once` — three call sites (deferred, signal handler, HTTP-error path) previously blocked on `analyticsFlushCh` for up to 2s after the sender goroutine had already exited.
+- Fix: `api_copy` compare/merge operations now route to their own `/api/2` endpoints.
+- Fix: allow object cast in `go_if_const` conditions.
+- Fix: `pull-folder` skips hidden directories and handles permission errors instead of aborting the walk.
+- Fix: accept absolute paths that resolve inside the project root.
+- Docs: expand `corezoid-api-integration.md` to a full pattern reference.
+- Docs: dedicated per-node error-cluster pattern in `error-handling.md`.
+- Docs: node-positioning best-practices note.
+- Docs: `README.md` lists the new `corezoid-gitcall` skill.
 
 ## [2.7.0]
 
