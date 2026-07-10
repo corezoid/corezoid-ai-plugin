@@ -205,7 +205,10 @@ func runCLI(toolName string, rawArgs []string) {
 		k, v, _ := strings.Cut(a, "=")
 		args[k] = v
 	}
-	coerceCLIArgs(toolName, args)
+	if cerr := coerceCLIArgs(toolName, args); cerr != nil {
+		fmt.Println("Error:", cerr)
+		os.Exit(1)
+	}
 	// Apply env-based defaults so folder tools work with zero arguments —
 	// but only where the schema REQUIRES folder_id (pull-folder & friends).
 	// Injecting it blindly into every call passed a junk argument to tools

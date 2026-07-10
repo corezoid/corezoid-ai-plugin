@@ -531,7 +531,7 @@ func handleCreateFolder(ctx context.Context, args map[string]interface{}) (strin
 		return "Error: " + err.Error(), true
 	}
 
-	parentFolderID, parentResolvedFrom, err := resolveCreateTargetForFolder(args, parentPath)
+	parentFolderID, parentResolvedFrom, err := resolveCreateTarget(args, parentPath)
 	if err != nil {
 		return fmt.Sprintf("Error resolving parent folder ID: %v", err), true
 	}
@@ -577,11 +577,6 @@ func handleCreateFolder(ctx context.Context, args map[string]interface{}) (strin
 		folderName, parentFolderID, parentResolvedFrom, filePath), false
 }
 
-// resolveCreateTargetForFolder is resolveCreateTarget for create-folder, whose
-// explicit-parent argument is also called folder_id.
-func resolveCreateTargetForFolder(args map[string]interface{}, dir string) (int, string, error) {
-	return resolveCreateTarget(args, dir)
-}
 
 // handleShowFolder returns metadata for a single folder (title, obj_type,
 // parent). Used to introspect folders without writing anything to disk.

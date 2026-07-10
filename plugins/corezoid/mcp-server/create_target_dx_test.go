@@ -100,7 +100,9 @@ func TestCoerceCLIArgs_Booleans(t *testing.T) {
 		"confirm": "true",  // string in the schema — must stay a string
 		"company_id": "c1", // untouched
 	}
-	coerceCLIArgs("deploy-stage", args)
+	if err := coerceCLIArgs("deploy-stage", args); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 	if args["apply"] != true {
 		t.Errorf(`apply = %v (%T), want true (bool)`, args["apply"], args["apply"])
 	}
@@ -109,5 +111,17 @@ func TestCoerceCLIArgs_Booleans(t *testing.T) {
 	}
 	if args["company_id"] != "c1" {
 		t.Errorf("company_id changed: %v", args["company_id"])
+	}
+}
+
+// Unparseable boolean strings must fail loudly — a boolean the handler cannot
+// read is exactly how `apply=True` degraded to a silent dry-run.
+func TestCoerceCLIArgs_CaseAndErrors(t *testing.T) {
+	args := map[string]interface{}{"apply": "True"}
+	if err := coerceCLIArgs("deploy-stage", args); err != nil || args["apply"] != true {
+		t.Fatalf("mixed-case True must coerce, got err=%v apply=%v", err, args["apply"])
+	}
+	if err := coerceCLIArgs("deploy-stage", map[string]interface{}{"apply": "yep"}); err == nil {
+		t.Fatal("unparseable boolean must be an error, not a silent string")
 	}
 }

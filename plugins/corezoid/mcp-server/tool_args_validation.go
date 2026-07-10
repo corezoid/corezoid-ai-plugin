@@ -54,7 +54,7 @@ func buildToolAllowedArgs() {
 // boolean flags passed on the CLI were silently ignored: deploy-stage
 // apply=true ran as a dry-run. Integers are left alone (intArg already parses
 // strings); only booleans need the conversion.
-func coerceCLIArgs(tool string, args map[string]interface{}) {
+func coerceCLIArgs(tool string, args map[string]interface{}) error {
 	toolAllowedArgsOnce.Do(buildToolAllowedArgs)
 	for k, v := range args {
 		s, ok := v.(string)
@@ -62,14 +62,20 @@ func coerceCLIArgs(tool string, args map[string]interface{}) {
 			continue
 		}
 		if toolArgTypes[tool][k] == "boolean" {
-			switch s {
-			case "true":
+			switch strings.ToLower(s) {
+			case "true", "1", "yes":
 				args[k] = true
-			case "false":
+			case "false", "0", "no":
 				args[k] = false
+			default:
+				// A boolean flag the handler cannot read is exactly how
+				// `apply=True` used to degrade to a silent dry-run — refuse
+				// loudly instead of guessing.
+				return fmt.Errorf("argument %s of %s is boolean; got %q (use true/false)", k, tool, s)
 			}
 		}
 	}
+	return nil
 }
 
 // toolRequiresArg reports whether the tool's InputSchema marks the argument

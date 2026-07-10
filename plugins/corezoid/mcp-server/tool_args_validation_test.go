@@ -36,12 +36,27 @@ func TestUnknownArgsError_KnownArgsPass(t *testing.T) {
 }
 
 func TestUnknownArgsError_EveryToolHasSchema(t *testing.T) {
-	// Guard: every registry entry must expose a properties map, otherwise the
-	// validator would reject all arguments of that tool.
+	// Guard: every registry entry must expose a parseable properties map. An
+	// InputSchema that isn't map[string]interface{} (or lacks "properties")
+	// yields an EMPTY allowed set — the validator would then reject every
+	// argument of that tool at runtime. So assert against the schema itself:
+	// if the schema declares properties, the built set must contain them all.
 	toolAllowedArgsOnce.Do(buildToolAllowedArgs)
 	for _, tool := range toolRegistry {
-		if _, ok := toolAllowedArgs[tool.Name]; !ok {
-			t.Errorf("tool %s missing from allowed-args map", tool.Name)
+		allowed := toolAllowedArgs[tool.Name]
+		schema, ok := tool.InputSchema.(map[string]interface{})
+		if !ok {
+			t.Errorf("tool %s: InputSchema is %T, not map[string]interface{} — all its args would be rejected", tool.Name, tool.InputSchema)
+			continue
+		}
+		props, _ := schema["properties"].(map[string]interface{})
+		for k := range props {
+			if !allowed[k] {
+				t.Errorf("tool %s: declared property %q missing from allowed set", tool.Name, k)
+			}
+		}
+		if len(props) != len(allowed) {
+			t.Errorf("tool %s: %d declared properties but %d allowed args", tool.Name, len(props), len(allowed))
 		}
 	}
 }
