@@ -667,3 +667,34 @@ func handleCreateAlias(ctx context.Context, args map[string]interface{}) (string
 
 	return fmt.Sprintf("Alias '%s' created successfully, AliasID: %d", shortName, aliasID), false
 }
+
+// handleCopyProcess duplicates an existing process or state diagram without
+// loading its full JSON into the AI context. The copy is placed in the same
+// folder as the source unless folder_path is provided.
+func handleCopyProcess(ctx context.Context, args map[string]interface{}) (string, bool) {
+	sourceProcessID, err := intArg(args, "source_process_id")
+	if err != nil {
+		return "Error: " + err.Error(), true
+	}
+
+	// new_name is optional — CopyProcess defaults to "<title> (Copy)".
+	newName, _ := args["new_name"].(string)
+
+	// folder_path is optional — CopyProcess defaults to the source's parent folder.
+	folderID := 0
+	if _, hasPath := args["folder_path"]; hasPath {
+		folderPath := resolveDirPath(args, "folder_path")
+		folderID, err = resolveFolderIDFromDir(folderPath)
+		if err != nil {
+			return fmt.Sprintf("Error resolving destination folder: %v", err), true
+		}
+	}
+
+	v := NewValidator(ctx, 0)
+	newID, filePath, err := v.CopyProcess(sourceProcessID, folderID, newName)
+	if err != nil {
+		return fmt.Sprintf("Error copying process %d: %v", sourceProcessID, err), true
+	}
+
+	return fmt.Sprintf("Process %d copied (new ID: %d) → %s", sourceProcessID, newID, filePath), false
+}

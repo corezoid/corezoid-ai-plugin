@@ -38,6 +38,7 @@ var toolHandlers = map[string]toolHandler{
 	"delete-folder":        handleDeleteFolder,
 	"delete-process":       handleDeleteProcess,
 	"create-alias":         handleCreateAlias,
+	"copy-process":         handleCopyProcess,
 
 	// discovery
 	"list-workspaces": handleListWorkspaces,

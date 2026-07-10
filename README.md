@@ -224,6 +224,7 @@ validation errors, and summarize what each process does.
 | `modify-folder`     | Rename a folder or update its description          |
 | `delete-folder`     | Move a folder to the recycle bin                   |
 | `delete-process`    | Move a process or state diagram to the recycle bin |
+| `copy-process`      | Duplicate a process or state diagram without loading JSON into context (equivalent to Corezoid UI "Duplicate") |
 | `create-alias`      | Create a short alias for a process                 |
 | `create-variable`   | Create a Corezoid environment variable             |
 | `create-dashboard`  | Create a new dashboard for visualizing node metrics |
@@ -283,7 +284,7 @@ Claude Code / Codex
         ├── Workspace     list-workspaces, list-stages, list-projects,
         │                 create-project, modify-project, delete-project, show-project
         ├── Processes     pull-process, pull-folder, push-process, lint-process
-        │                 create-process, create-folder, create-alias, create-variable
+        │                 create-process, copy-process, create-folder, create-alias, create-variable
         │                 show-folder, list-folders, modify-folder, delete-folder, delete-process
         ├── Tasks         run-task, list-node-tasks, list-task-history
         │                 modify-task, delete-task
