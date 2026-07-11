@@ -174,4 +174,8 @@ Credentials are split across two files:
 
 The token file lives outside the project tree so it can never be accidentally committed to git. The project `.env` contains no secrets and can be shared within a team.
 
-To fully log out and remove the stored token, run the `logout` MCP tool. It removes `ACCESS_TOKEN` and `ACCESS_TOKEN_EXPIRES_AT` from `~/.corezoid/credentials`.
+To fully log out and remove the stored token, run the `logout` MCP tool. It removes `ACCESS_TOKEN` and `ACCESS_TOKEN_EXPIRES_AT` from `~/.corezoid/credentials` AND from the project `.env`, and writes a backup to `~/.corezoid/credentials.bak` first — restore with `cp ~/.corezoid/credentials.bak ~/.corezoid/credentials` if you logged out by mistake. ⚠ On installations where re-authentication is unavailable, that backup may be your only credential.
+
+**"The browser opens the admin dashboard instead of the consent page"** — your `ACCOUNT_URL` points at the admin UI host (e.g. `https://admin.corezoid.com`). The admin UI has no OAuth endpoints. Set `ACCOUNT_URL` to the account service (cloud: `https://account.corezoid.com`) and keep the admin host in `COREZOID_API_URL`. `login` detects and reports this misconfiguration.
+
+**"`/access_tokens` redirects to the dashboard"** — you opened it on the admin host. The Access Tokens page lives on the ACCOUNT host (cloud: `https://account.corezoid.com/access_tokens`). The redirect is expected SPA behavior, not a missing page.

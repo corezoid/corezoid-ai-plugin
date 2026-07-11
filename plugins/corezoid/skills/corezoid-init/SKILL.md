@@ -98,14 +98,36 @@ Then call `login` — it will skip already-set values and only prompt for what's
 
 ---
 
-## Exception: OAuth fails on private on-prem instances
+## Manual token setup (on-prem, or when the browser flow fails)
 
-On private Corezoid installations, the OAuth2 browser flow may time out because `localhost` is not registered as an allowed `redirect_uri` (see issue #7). Symptom: browser opens the workspace UI instead of redirecting back.
+On private Corezoid installations the OAuth2 browser flow may not complete —
+`localhost` may not be registered as an allowed `redirect_uri` (issue #7), and
+the browser lands on the workspace dashboard instead of redirecting back. The
+`login` tool now returns the consent URL and these same instructions when the
+wait fails; you can also set the token up manually at any time.
 
-**Workaround — populate credentials manually before calling `login`:**
+**Where the token lives — this is the #1 confusion:**
 
-1. Get `ACCESS_TOKEN` from the account UI at `https://<host>/access_tokens` (create a token manually)
-2. Write the token to `~/.corezoid/credentials`:
+The Access Tokens page is on the **ACCOUNT host**, not the admin/workspace UI:
+
+- Cloud: `https://account.corezoid.com/access_tokens`
+- On-prem: `https://<account-host>/access_tokens`
+
+⚠ Opening `/access_tokens` on the **admin** host just redirects to the
+dashboard — that is expected SPA behavior, NOT a missing page. You are on the
+wrong host; switch to the account host.
+
+The created token is **JWT-format** (starts with `eyJ...`) — that exact string
+is your `ACCESS_TOKEN`.
+
+⚠ **Users & Groups → API keys are NOT a token source for this MCP.** Those are
+`api_login`/`api_secret` pairs for classic SHA-1 request signing, which this
+MCP does not support today. Only Access Tokens (JWT) work.
+
+**Manual setup steps:**
+
+1. Create a token on the ACCOUNT host's `/access_tokens` page and copy it.
+2. Write it to `~/.corezoid/credentials`:
 
 ```
 ACCESS_TOKEN=<token>
@@ -114,8 +136,8 @@ ACCESS_TOKEN=<token>
 3. Write project config to `.env` in `COREZOID_WORK_DIR` (the directory where Claude Code was opened):
 
 ```
-ACCOUNT_URL=https://<host>
-COREZOID_API_URL=https://<host>
+ACCOUNT_URL=https://<account-host>
+COREZOID_API_URL=https://<admin-host>
 WORKSPACE_ID=<company_id>
 COREZOID_STAGE_ID=<stage_id>
 ```
@@ -125,7 +147,43 @@ COREZOID_STAGE_ID=<stage_id>
 ps aux | grep "go run\|convctl" | grep -v grep | awk '{print $2}' | xargs kill
 ```
 
-5. Call `login` — it will detect `ACCESS_TOKEN` in `~/.corezoid/credentials`, skip OAuth, and complete setup.
+5. Call `login` — it validates the token with a probe, skips OAuth, and completes setup.
+
+---
+
+## ACCOUNT_URL vs COREZOID_API_URL — do not mix them up
+
+| Variable | What it is | Cloud | Single-host on-prem |
+|---|---|---|---|
+| `ACCOUNT_URL` | Auth/account service (OAuth consent, `/access_tokens` page) | `https://account.corezoid.com` | `https://<host>` |
+| `COREZOID_API_URL` | Corezoid API host (BASE URL — **no** `/api/2/json` suffix) | `https://admin.corezoid.com` | `https://<host>` |
+
+`admin.corezoid.com` is **never** a valid `ACCOUNT_URL` — the admin UI has no
+OAuth endpoints, so the browser would open the dashboard instead of the consent
+page. `login` detects and reports this misconfiguration, but do not write it in
+the first place. A `/api/2/json` suffix in `COREZOID_API_URL` is stripped
+automatically with a warning — the server appends API paths itself.
+
+---
+
+## ⚠ logout destroys credentials — read before running it
+
+`logout` removes `ACCESS_TOKEN` from `~/.corezoid/credentials` AND from the
+project `.env`. **On installations where re-authentication is unavailable
+(broken browser OAuth, no account-host access), that token may be your ONLY
+credential — do not logout without a spare.**
+
+`logout` writes a backup to `~/.corezoid/credentials.bak` before deleting.
+
+**Recovery procedure after an accidental logout:**
+
+1. `cp ~/.corezoid/credentials.bak ~/.corezoid/credentials`
+2. Check `.env`: `COREZOID_API_URL` must be the BASE URL (no `/api/2/json`),
+   `ACCOUNT_URL` must be the account host (see the table above).
+3. Restart the MCP server (kill the `convctl` process) and re-run `login`.
+
+If there is no backup, create a fresh token on the account host's
+`/access_tokens` page (see Manual token setup above).
 
 ---
 
