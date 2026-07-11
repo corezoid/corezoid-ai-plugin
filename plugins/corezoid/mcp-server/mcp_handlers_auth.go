@@ -164,6 +164,9 @@ func handleLogin(ctx context.Context, args map[string]interface{}) (string, bool
 	}
 	var tokenExpiry time.Time
 	if snapToken == "" {
+		if aerr := assertAccountService(snapAccountURL); aerr != nil {
+			return fmt.Sprintf("Authentication not started: %v", aerr), true
+		}
 		res, err := oauthPKCEFlow(snapAccountURL, oauthClientID)
 		if err != nil {
 			return fmt.Sprintf("Authentication failed: %v", err), true
@@ -572,6 +575,17 @@ func probeExistingToken(ctx context.Context, accountURL, token string) (rejected
 	if !haveAPIURL {
 		corezoidURL, derr := fetchCorezoidAPIURL(accountURL, token)
 		if derr != nil {
+			// An HTML answer means the host is a UI, not the account service —
+			// the classic misconfiguration is ACCOUNT_URL pointing at
+			// admin.<domain>. Left undiagnosed, the subsequent OAuth flow opens
+			// the admin UI instead of the consent page and login dead-ends.
+			if strings.Contains(derr.Error(), "invalid character '<'") {
+				suggestion := "https://account.corezoid.com"
+				if u := strings.Replace(accountURL, "admin.", "account.", 1); u != accountURL {
+					suggestion = u
+				}
+				return false, fmt.Errorf("ACCOUNT_URL %q does not behave like the account service (it returned HTML, not JSON) — it is probably the admin UI host. Fix ACCOUNT_URL in your .env (likely %s) and retry login", accountURL, suggestion)
+			}
 			return false, fmt.Errorf("could not derive COREZOID_API_URL: %w", derr)
 		}
 		withAuthLock(func() { apiURL = corezoidURL })
@@ -653,4 +667,22 @@ func envHasKey(path, key string) bool {
 		}
 	}
 	return false
+}
+
+
+// assertAccountService refuses to start an OAuth flow against a host that is
+// not the account service. The classic misconfiguration — ACCOUNT_URL set to
+// admin.<domain> — makes the browser open the admin UI instead of the consent
+// page, a dead end the user cannot diagnose from the browser alone. The
+// unauthenticated clients endpoint answers JSON on a real account host and
+// HTML on the admin UI, which is exactly the tell we need.
+func assertAccountService(accountURL string) error {
+	if _, err := fetchCorezoidAPIURL(accountURL, ""); err != nil && strings.Contains(err.Error(), "invalid character '<'") {
+		suggestion := "https://account.corezoid.com"
+		if u := strings.Replace(accountURL, "admin.", "account.", 1); u != accountURL {
+			suggestion = u
+		}
+		return fmt.Errorf("ACCOUNT_URL %q is not the account service (it returned HTML — probably the admin UI host), so the OAuth consent page cannot open there. Fix ACCOUNT_URL in your .env (likely %s) and retry login", accountURL, suggestion)
+	}
+	return nil
 }

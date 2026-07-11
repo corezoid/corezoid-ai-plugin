@@ -256,3 +256,41 @@ func TestLogout_MemoryClearedEvenIfCredentialsDeleteFails(t *testing.T) {
 		t.Errorf("result must say the session itself IS logged out: %s", res)
 	}
 }
+
+// ACCOUNT_URL pointing at the admin UI (the classic misconfiguration) must be
+// named explicitly — the probe used to classify the HTML answer as generic
+// transport trouble and the OAuth flow then opened the admin UI dead-end.
+func TestProbeExistingToken_AdminHostDiagnosed(t *testing.T) {
+	resetGlobals(t)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		w.Write([]byte("<!doctype html><html>admin ui</html>"))
+	}))
+	t.Cleanup(srv.Close)
+	// apiURL empty -> the probe derives it via the (fake admin) account host.
+	rejected, err := probeExistingToken(context.Background(), srv.URL, "tok")
+	if rejected {
+		t.Fatal("misconfigured host must not read as token rejection")
+	}
+	if err == nil || !strings.Contains(err.Error(), "admin UI host") {
+		t.Fatalf("expected an explicit admin-host diagnosis, got: %v", err)
+	}
+}
+
+func TestAssertAccountService(t *testing.T) {
+	htmlSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte("<html>ui</html>"))
+	}))
+	t.Cleanup(htmlSrv.Close)
+	if err := assertAccountService(htmlSrv.URL); err == nil || !strings.Contains(err.Error(), "consent page cannot open") {
+		t.Fatalf("HTML host must be refused with the consent-page explanation, got: %v", err)
+	}
+	jsonSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`[{"name":"corezoid","url":"https://admin.example"}]`))
+	}))
+	t.Cleanup(jsonSrv.Close)
+	if err := assertAccountService(jsonSrv.URL); err != nil {
+		t.Fatalf("JSON account host must pass: %v", err)
+	}
+}
