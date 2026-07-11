@@ -338,9 +338,10 @@ func (validator *Executor) ProcessJSON(filePath, jsonContent string) (newProcess
 		return nil, err
 	}
 
+	// CompileAPICode already prefixes its errors with "failed to compile API
+	// code:" — wrapping again produced a doubled prefix in the tool output.
 	err = validator.CompileAPICode(nodes)
 	if err != nil {
-		err = fmt.Errorf("failed to compile API code: %v", err)
 		return nil, err
 	}
 
@@ -351,7 +352,10 @@ func (validator *Executor) ProcessJSON(filePath, jsonContent string) (newProcess
 		return nil, fmt.Errorf("failed to build git_call node(s): %v", err)
 	}
 
-	commitResponse := validator.Commit()
+	commitResponse, err := validator.Commit()
+	if err != nil {
+		return nil, fmt.Errorf("failed to commit changes: %v", err)
+	}
 	if commitResponse == nil {
 		return nil, fmt.Errorf("failed to commit changes: no response from server")
 	}
@@ -508,8 +512,15 @@ func (v *Executor) SetParams(params []interface{}) error {
 	return nil
 }
 
-// Commit confirms and finalizes changes to a process.
-func (v *Executor) Commit() map[string]interface{} {
+// Commit confirms and finalizes changes to a process. The server rejects a
+// commit with a precise, actionable reason (schema-shape violations, timer
+// minimums, invalid set_param pairs, …) delivered through the op error that
+// v.req converts into a Go error — so that error is returned to the caller
+// verbatim instead of being demoted to a log line. Earlier versions logged it
+// and returned nil, which the caller could only report as the opaque
+// "no response from server", turning every server-side rejection into a
+// dead-end mystery.
+func (v *Executor) Commit() (map[string]interface{}, error) {
 	ops := []map[string]any{
 		{
 			"type":    "confirm",
@@ -524,17 +535,21 @@ func (v *Executor) Commit() map[string]interface{} {
 	response, err := v.req("commit_process", ops)
 	if err != nil {
 		logger.Error("Failed to commit changes: %v", err)
-		return nil
+		return nil, err
 	}
 	if response == nil {
+		// A (nil, nil) from req would otherwise fall through to the success
+		// debug line below — a false "Changes committed" in the log.
 		logger.Error("Failed to commit changes: no response from server")
-	} else if v.Debug {
+		return nil, fmt.Errorf("no response from server")
+	}
+	if v.Debug {
 		if requestProc, ok := response["request_proc"].(string); ok {
 			logger.Debug("Commit response received, request_proc=%s", requestProc)
 		}
 	}
 	logger.Debug("Changes committed, processID=%d", v.ProcessID)
-	return response
+	return response, nil
 }
 
 func (v *Executor) DeleteVersion(ver int) {

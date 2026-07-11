@@ -132,8 +132,8 @@ func deployAndRunGitCall(t *testing.T, v *Executor, conv int, ws, start, final s
 	}
 	t.Logf("[%s] build finished in %s", c.lang, time.Since(buildStart).Round(time.Second))
 
-	if resp := v.Commit(); resp == nil || gitCallFirstOp(resp)["proc"] == "error" {
-		t.Fatalf("[%s] commit rejected after build: %v", c.lang, resp)
+	if resp, err := v.Commit(); err != nil || resp == nil || gitCallFirstOp(resp)["proc"] == "error" {
+		t.Fatalf("[%s] commit rejected after build: %v (err: %v)", c.lang, resp, err)
 	}
 
 	ref := c.lang + "-it-" + strconv.FormatInt(time.Now().UnixNano(), 10)
