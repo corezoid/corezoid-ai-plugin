@@ -49,6 +49,7 @@ var debug bool
 var apigwURL string
 var stageID int
 var insecureTLS bool
+
 // cachedProjectID is written once (protected by authStateMu) and then read-only.
 // Reset to 0 on every loadConfig so a workspace switch gets a fresh value.
 var cachedProjectID int
@@ -163,7 +164,7 @@ func loadConfig() {
 	}
 	stageID, _ = strconv.Atoi(os.Getenv("COREZOID_STAGE_ID"))
 	insecureTLS = os.Getenv("COREZOID_INSECURE_TLS") != ""
-	cachedProjectID = 0              // reset on workspace switch so it is re-resolved
+	cachedProjectID = 0                // reset on workspace switch so it is re-resolved
 	os.Unsetenv("COREZOID_PROJECT_ID") // prevent stale process env from short-circuiting resolution
 }
 
@@ -295,7 +296,7 @@ func main() {
 	// stdio EOF (the client closed our stdin) is the common clean shutdown —
 	// leave the same trace the signal path leaves, so forensics can tell why
 	// sessions lost their tools.
-	logger.Info("corezoid-mcp pid=%d exiting: stdin closed by the client — sessions connected to this process must be RESTARTED (a plain reconnect may not be enough)", os.Getpid())
+	logger.Info("corezoid-mcp pid=%d exiting: stdin closed (or the read failed) — sessions connected to this process must be RESTARTED (a plain reconnect may not be enough)", os.Getpid())
 }
 
 var (
@@ -694,7 +695,6 @@ func extractObjIDFromJSON(jsonContent string) int {
 	}
 }
 
-
 // sanitizeAPIURL strips a mistakenly-included API path suffix from
 // COREZOID_API_URL. The server appends /api/2/json itself; a suffix in the
 // env doubles the path and every call fails (field-observed in a user .env).
@@ -711,7 +711,6 @@ func sanitizeAPIURL(raw string) (clean string, stripped bool) {
 	}
 	return clean, stripped
 }
-
 
 // serverStartedAt feeds the status tool's uptime line.
 var serverStartedAt time.Time

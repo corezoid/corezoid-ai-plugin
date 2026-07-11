@@ -140,10 +140,19 @@ func handleLogin(ctx context.Context, args map[string]interface{}) (string, bool
 		force = strings.EqualFold(fs, "true") || fs == "1"
 	}
 	staleNote := ""
-	if snapToken != "" && force {
-		staleNote = "\nRe-authentication forced (force=true) — previous token discarded."
-		snapToken = ""
-		withAuthLock(func() { apiToken = "" })
+	if force {
+		if snapToken != "" {
+			staleNote = "\nRe-authentication forced (force=true) — previous token discarded."
+			snapToken = ""
+			withAuthLock(func() { apiToken = "" })
+		}
+		// force is the escape hatch from a poisoned session — the stored
+		// refresh token belongs to that session and must not survive either.
+		if os.Getenv("REFRESH_TOKEN") != "" {
+			if derr := deleteRefreshToken(); derr != nil {
+				logger.Warn("login: could not drop the stored refresh token on force: %v", derr)
+			}
+		}
 	}
 	if snapToken != "" {
 		rejected, perr := probeExistingToken(ctx, snapAccountURL, snapToken)
@@ -152,7 +161,7 @@ func handleLogin(ctx context.Context, args map[string]interface{}) (string, bool
 			// Token verified — proceed without OAuth.
 		case rejected:
 			logger.Warn("login: existing token rejected by the server: %v — starting OAuth", perr)
-			staleNote = "\nThe existing token was rejected by the server (stale or revoked) — a fresh OAuth login was performed."
+			staleNote = "\nThe existing token was rejected by the server (stale or revoked) — re-authentication was performed."
 			snapToken = ""
 			withAuthLock(func() { apiToken = "" })
 		default:
@@ -164,17 +173,65 @@ func handleLogin(ctx context.Context, args map[string]interface{}) (string, bool
 	}
 	var tokenExpiry time.Time
 	if snapToken == "" {
+		// Vet the host BEFORE any secret (refresh token, OAuth flow) is sent
+		// to it — the classic misconfig points ACCOUNT_URL at the admin UI.
 		if aerr := assertAccountService(snapAccountURL); aerr != nil {
 			return fmt.Sprintf("Authentication not started: %v", aerr), true
 		}
-		res, authURL, err := runOAuthFlow(ctx, snapAccountURL, oauthClientID)
-		if err != nil {
-			return oauthFailureMsg(snapAccountURL, authURL, err), true
+		// OAuth 2.1 silent renewal: if a refresh token is stored, try it before
+		// opening a browser — an expired session should not cost the user a
+		// consent round-trip. Any failure falls through to the normal flow.
+		// force=true skips it: its contract is an UNCONDITIONAL re-auth.
+		var res *PKCEResult
+		if rt := os.Getenv("REFRESH_TOKEN"); rt != "" && !force {
+			// Bound the whole silent attempt so a hanging account service
+			// cannot eat the client's tool-call budget before the browser
+			// fallback even starts.
+			refreshCtx, cancelRefresh := context.WithTimeout(ctx, 20*time.Second)
+			if r, rerr := refreshAccessTokenFn(refreshCtx, snapAccountURL, oauthClientID, rt); rerr != nil {
+				logger.Warn("login: silent token refresh failed: %v — falling back to browser OAuth", rerr)
+			} else if rejected, perr := probeExistingToken(refreshCtx, snapAccountURL, r.AccessToken); rejected || perr != nil {
+				// Verified live: the account service's refresh grant currently
+				// mints an account-SESSION token the corezoid API rejects — a
+				// refreshed token is only trusted after a real authenticated
+				// call succeeds. When the service starts returning API-grade
+				// tokens, this branch stops firing and renewal goes silent.
+				logger.Warn("login: refresh grant returned a token the API does not accept (rejected=%v err=%v) — falling back to browser OAuth", rejected, perr)
+				if r.RefreshToken != "" {
+					// The AS rotated the refresh token on use — keep the newest
+					// one even though this access token was rejected, or a
+					// rotating AS would burn the stored token on every login.
+					if serr := saveRefreshToken(r.RefreshToken); serr != nil {
+						logger.Warn("login: could not persist the rotated refresh token: %v", serr)
+					}
+				} else {
+					// No rotation and the minted token is unusable — drop the
+					// stored one so future logins skip these round-trips (a
+					// browser login stores a fresh refresh token anyway).
+					if derr := deleteRefreshToken(); derr != nil {
+						logger.Warn("login: could not drop the rejected refresh token: %v", derr)
+					}
+				}
+			} else {
+				res = r
+				staleNote += "\nAccess token renewed silently via the stored refresh token — no browser login was needed."
+				logger.Info("login: access token renewed via refresh_token grant")
+			}
+			cancelRefresh()
+		}
+		if res == nil {
+			var authURL string
+			var err error
+			res, authURL, err = runOAuthFlow(ctx, snapAccountURL, oauthClientID)
+			if err != nil {
+				return oauthFailureMsg(snapAccountURL, authURL, err), true
+			}
 		}
 		creds := &Credentials{
-			AccessToken: res.AccessToken,
-			ExpiresAt:   res.ExpiresAt,
-			TokenType:   "Simulator",
+			AccessToken:  res.AccessToken,
+			RefreshToken: res.RefreshToken,
+			ExpiresAt:    res.ExpiresAt,
+			TokenType:    "Simulator",
 		}
 		if saveErr := saveCredentials(creds); saveErr != nil {
 			logger.Warn("login: failed to save credentials: %v", saveErr)
@@ -193,6 +250,7 @@ func handleLogin(ctx context.Context, args map[string]interface{}) (string, bool
 				logger.Warn("login: could not remove stale ACCESS_TOKEN from %s: %v", tokenEnvPath, err)
 			} else {
 				_ = removeEnvKey(tokenEnvPath, "ACCESS_TOKEN_EXPIRES_AT")
+				_ = removeEnvKey(tokenEnvPath, "REFRESH_TOKEN")
 				staleNote += fmt.Sprintf("\nStale ACCESS_TOKEN removed from %s — ~/.corezoid/credentials is now the single token source.", tokenEnvPath)
 			}
 		}
@@ -558,12 +616,16 @@ func handleLogout(_ context.Context, _ map[string]interface{}) (string, bool) {
 	// server restart — silently resurrects the session the user just ended.
 	envPath := dotEnvPathInUse()
 	envNote := ""
-	if envHasKey(envPath, "ACCESS_TOKEN") {
+	if envHasKey(envPath, "ACCESS_TOKEN") || envHasKey(envPath, "REFRESH_TOKEN") {
 		if err := removeEnvKey(envPath, "ACCESS_TOKEN"); err != nil {
 			return fmt.Sprintf("Logged out of this session, but failed to remove ACCESS_TOKEN from %s: %v — remove it manually or the next login will silently reuse it.", envPath, err), true
 		}
 		_ = removeEnvKey(envPath, "ACCESS_TOKEN_EXPIRES_AT")
-		envNote = fmt.Sprintf(" ACCESS_TOKEN also removed from %s (it would have silently re-authenticated the next login).", envPath)
+		// A REFRESH_TOKEN left here would be re-exported by the next
+		// findAndLoadDotEnv and silently mint a new session — the exact
+		// resurrection class logout exists to kill.
+		_ = removeEnvKey(envPath, "REFRESH_TOKEN")
+		envNote = fmt.Sprintf(" Token keys also removed from %s (they would have silently re-authenticated the next login).", envPath)
 	}
 	return fmt.Sprintf("Logged out. ACCESS_TOKEN removed from %s.%s%s", credPath, envNote, bakNote), false
 }
@@ -684,7 +746,6 @@ func envHasKey(path, key string) bool {
 	return false
 }
 
-
 // assertAccountService refuses to start an OAuth flow against a host that is
 // not the account service. The classic misconfiguration — ACCOUNT_URL set to
 // admin.<domain> — makes the browser open the admin UI instead of the consent
@@ -701,7 +762,6 @@ func assertAccountService(accountURL string) error {
 	}
 	return nil
 }
-
 
 // runOAuthFlow is a seam so tests can exercise login's failure paths without
 // a real browser (mirrors the deployMonitor seam pattern).
@@ -730,7 +790,6 @@ func oauthFailureMsg(accountURL, authURL string, err error) string {
 	return sb.String()
 }
 
-
 // apiURLManualHint explains how to set COREZOID_API_URL by hand when it could
 // not be derived from the account clients endpoint. No silent fallback: on
 // cloud the account host (account.corezoid.com) is NOT the API host
@@ -743,7 +802,6 @@ func apiURLManualHint(accountURL string, err error) string {
 		"- Corezoid cloud: https://admin.corezoid.com\n"+
 		"Use the BASE URL only — no /api/2/json suffix. The server appends API paths itself.", err, accountURL)
 }
-
 
 // authErrorHint appends a recovery hint when err is an explicit token
 // refusal — "could not resolve project" with the real cause buried in the

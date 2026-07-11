@@ -439,7 +439,10 @@ func TestOAuthPKCEFlow_HonorsCtxCancel(t *testing.T) {
 }
 
 func TestSanitizeAPIURL(t *testing.T) {
-	cases := []struct{ in, want string; stripped bool }{
+	cases := []struct {
+		in, want string
+		stripped bool
+	}{
 		{"https://h.example/api/2/json", "https://h.example", true},
 		{"https://h.example/api/2/json/", "https://h.example", true},
 		{"https://h.example/api/2/download", "https://h.example", true},

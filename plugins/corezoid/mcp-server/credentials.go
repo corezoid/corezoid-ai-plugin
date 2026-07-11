@@ -11,9 +11,10 @@ import (
 // Credentials holds the saved OAuth token for the Corezoid MCP server.
 // AccessToken maps to ACCESS_TOKEN (the simulator_token returned by account.corezoid.com).
 type Credentials struct {
-	AccessToken string    `json:"access_token"`
-	ExpiresAt   time.Time `json:"expires_at"`
-	TokenType   string    `json:"token_type"`
+	AccessToken  string    `json:"access_token"`
+	RefreshToken string    `json:"refresh_token"`
+	ExpiresAt    time.Time `json:"expires_at"`
+	TokenType    string    `json:"token_type"`
 }
 
 // envFilePath returns the path to the project-level .env file (cwd).
@@ -109,8 +110,9 @@ func loadCredentials() (*Credentials, error) {
 		return nil, nil
 	}
 	creds := &Credentials{
-		AccessToken: token,
-		TokenType:   "Simulator",
+		AccessToken:  token,
+		RefreshToken: os.Getenv("REFRESH_TOKEN"),
+		TokenType:    "Simulator",
 	}
 	if expiryStr := os.Getenv("ACCESS_TOKEN_EXPIRES_AT"); expiryStr != "" {
 		if t, err := time.Parse(time.RFC3339, expiryStr); err == nil {
@@ -139,6 +141,15 @@ func saveCredentials(creds *Credentials) error {
 		}
 		os.Setenv("ACCESS_TOKEN_EXPIRES_AT", expStr)
 	}
+	// A refresh token enables silent renewal (no browser) when the access
+	// token expires. Only overwrite the stored one when the server actually
+	// issued one — some grants return an access token alone.
+	if creds.RefreshToken != "" {
+		if err := updateEnvFile(path, "REFRESH_TOKEN", creds.RefreshToken); err != nil {
+			return fmt.Errorf("failed to save refresh token to %s: %w", path, err)
+		}
+		os.Setenv("REFRESH_TOKEN", creds.RefreshToken)
+	}
 	return nil
 }
 
@@ -155,8 +166,12 @@ func deleteCredentials() error {
 	if err := removeEnvKey(path, "ACCESS_TOKEN_EXPIRES_AT"); err != nil {
 		return err
 	}
+	if err := removeEnvKey(path, "REFRESH_TOKEN"); err != nil {
+		return err
+	}
 	os.Unsetenv("ACCESS_TOKEN")
 	os.Unsetenv("ACCESS_TOKEN_EXPIRES_AT")
+	os.Unsetenv("REFRESH_TOKEN")
 	// removeEnvKey leaves a 0-byte file when the last key is removed — a
 	// confusing artifact (observed in the field as a mysteriously empty
 	// credentials file). Remove the husk entirely.
@@ -165,6 +180,36 @@ func deleteCredentials() error {
 			logger.Warn("logout: could not remove empty credentials file %s: %v", path, rmErr)
 		}
 	}
+	return nil
+}
+
+// saveRefreshToken persists only the refresh token — used when the account
+// service rotates it on a refresh attempt whose access token was rejected, so
+// a rotating AS cannot burn the stored token.
+func saveRefreshToken(rt string) error {
+	path, err := credentialsFilePath()
+	if err != nil {
+		return err
+	}
+	if err := updateEnvFile(path, "REFRESH_TOKEN", rt); err != nil {
+		return err
+	}
+	os.Setenv("REFRESH_TOKEN", rt)
+	return nil
+}
+
+// deleteRefreshToken removes only the refresh token — used by force=true and
+// when the refresh grant mints tokens the API rejects (re-trying it on every
+// login would just add round-trips; a browser login stores a fresh one).
+func deleteRefreshToken() error {
+	path, err := credentialsFilePath()
+	if err != nil {
+		return err
+	}
+	if err := removeEnvKey(path, "REFRESH_TOKEN"); err != nil {
+		return err
+	}
+	os.Unsetenv("REFRESH_TOKEN")
 	return nil
 }
 
@@ -188,7 +233,7 @@ func backupTokenSources(credPath, envPath string) (string, error) {
 	if data, err := os.ReadFile(credPath); err == nil {
 		for _, line := range strings.Split(string(data), "\n") {
 			t := strings.TrimSpace(line)
-			if strings.HasPrefix(t, "ACCESS_TOKEN=") || strings.HasPrefix(t, "ACCESS_TOKEN_EXPIRES_AT=") {
+			if strings.HasPrefix(t, "ACCESS_TOKEN=") || strings.HasPrefix(t, "ACCESS_TOKEN_EXPIRES_AT=") || strings.HasPrefix(t, "REFRESH_TOKEN=") {
 				lines = append(lines, t)
 			}
 		}
@@ -197,7 +242,7 @@ func backupTokenSources(credPath, envPath string) (string, error) {
 		if data, err := os.ReadFile(envPath); err == nil {
 			for _, line := range strings.Split(string(data), "\n") {
 				t := strings.TrimSpace(line)
-				if strings.HasPrefix(t, "ACCESS_TOKEN=") || strings.HasPrefix(t, "ACCESS_TOKEN_EXPIRES_AT=") {
+				if strings.HasPrefix(t, "ACCESS_TOKEN=") || strings.HasPrefix(t, "ACCESS_TOKEN_EXPIRES_AT=") || strings.HasPrefix(t, "REFRESH_TOKEN=") {
 					if len(lines) == 0 {
 						// No credentials-file token — promote the .env line so the
 						// backup is directly restorable.

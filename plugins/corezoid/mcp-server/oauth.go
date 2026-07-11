@@ -15,6 +15,7 @@ import (
 	"os"
 	"os/exec"
 	"runtime"
+	"sort"
 	"strings"
 	"time"
 )
@@ -25,8 +26,9 @@ const (
 
 // PKCEResult holds the token returned after a successful OAuth2 PKCE flow.
 type PKCEResult struct {
-	AccessToken string
-	ExpiresAt   time.Time
+	AccessToken  string
+	RefreshToken string
+	ExpiresAt    time.Time
 }
 
 func generateVerifier() (string, error) {
@@ -81,22 +83,30 @@ var openBrowserFn = openBrowser
 // messages can hand the user the exact consent link.
 func oauthPKCEFlow(ctx context.Context, accountURL, clientID string) (res *PKCEResult, authURL string, err error) {
 	accountURL = strings.TrimRight(accountURL, "/")
+	if err := validateAccountURLScheme(accountURL); err != nil {
+		return nil, "", err
+	}
 	verifier, err := generateVerifier()
 	if err != nil {
 		return nil, "", fmt.Errorf("failed to generate PKCE verifier: %w", err)
 	}
 	challenge := generateChallenge(verifier)
 
-	stateBytes := make([]byte, 16)
+	stateBytes := make([]byte, 32)
 	if _, err := rand.Read(stateBytes); err != nil {
 		return nil, "", fmt.Errorf("failed to generate OAuth state: %w", err)
 	}
 	state := base64.RawURLEncoding.EncodeToString(stateBytes)
 
-	port, err := findFreePort()
+	// Keep the listener we probed — closing it and re-listening later (the old
+	// findFreePort pattern) left a window where another local process could
+	// grab the port and receive the callback (RFC 8252 §8.3 concern), and made
+	// login flaky under port churn.
+	listener, err := net.Listen("tcp", "localhost:0")
 	if err != nil {
-		return nil, "", fmt.Errorf("failed to find free port for callback: %w", err)
+		return nil, "", fmt.Errorf("failed to start callback listener: %w", err)
 	}
+	port := listener.Addr().(*net.TCPAddr).Port
 	redirectURI := fmt.Sprintf("http://localhost:%d/callback", port)
 
 	params := url.Values{
@@ -108,8 +118,7 @@ func oauthPKCEFlow(ctx context.Context, accountURL, clientID string) (res *PKCER
 		"code_challenge_method": {"S256"},
 		"state":                 {state},
 	}
-	authorizeURL := accountURL + "/oauth2/authorize"
-	tokenURL := accountURL + "/oauth2/token"
+	authorizeURL, tokenURL := discoverOAuthEndpoints(ctx, accountURL)
 	authURL = authorizeURL + "?" + params.Encode()
 
 	codeCh := make(chan string, 1)
@@ -117,7 +126,6 @@ func oauthPKCEFlow(ctx context.Context, accountURL, clientID string) (res *PKCER
 
 	mux := http.NewServeMux()
 	srv := &http.Server{
-		Addr:              fmt.Sprintf("localhost:%d", port),
 		Handler:           mux,
 		ReadHeaderTimeout: 5 * time.Second,
 	}
@@ -162,7 +170,7 @@ func oauthPKCEFlow(ctx context.Context, accountURL, clientID string) (res *PKCER
 	})
 
 	go func() {
-		if srvErr := srv.ListenAndServe(); srvErr != nil && srvErr != http.ErrServerClosed {
+		if srvErr := srv.Serve(listener); srvErr != nil && srvErr != http.ErrServerClosed {
 			errCh <- fmt.Errorf("callback server error: %w", srvErr)
 		}
 	}()
@@ -194,7 +202,6 @@ func oauthPKCEFlow(ctx context.Context, accountURL, clientID string) (res *PKCER
 
 	go func() { _ = srv.Shutdown(context.Background()) }()
 
-
 	// Exchange authorization code for access token
 	tokenParams := url.Values{
 		"grant_type":    {"authorization_code"},
@@ -203,44 +210,185 @@ func oauthPKCEFlow(ctx context.Context, accountURL, clientID string) (res *PKCER
 		"code_verifier": {verifier},
 		"redirect_uri":  {redirectURI},
 	}
-	httpClient := &http.Client{Timeout: 60 * time.Second}
-	resp, err := httpClient.PostForm(tokenURL, tokenParams)
+	res, err = postTokenRequest(ctx, tokenURL, tokenParams)
 	if err != nil {
-		return nil, authURL, fmt.Errorf("token exchange request failed: %w", err)
+		return nil, authURL, err
+	}
+	return res, authURL, nil
+}
+
+// postTokenRequest POSTs to the token endpoint and parses the response into a
+// PKCEResult. Shared by the authorization-code exchange and the refresh grant.
+func postTokenRequest(ctx context.Context, tokenURL string, form url.Values) (*PKCEResult, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, tokenURL, strings.NewReader(form.Encode()))
+	if err != nil {
+		return nil, fmt.Errorf("failed to build token request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	httpClient := &http.Client{Timeout: 60 * time.Second}
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("token exchange request failed: %w", err)
 	}
 	defer resp.Body.Close()
 
-	body, err := io.ReadAll(resp.Body)
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if err != nil {
-		return nil, authURL, fmt.Errorf("failed to read token response: %w", err)
+		return nil, fmt.Errorf("failed to read token response: %w", err)
 	}
 
 	var tokenResp map[string]interface{}
 	if err := json.Unmarshal(body, &tokenResp); err != nil {
-		return nil, authURL, fmt.Errorf("failed to parse token response: %w", err)
+		return nil, fmt.Errorf("failed to parse token response: %w", err)
 	}
 
 	if errMsg, ok := tokenResp["error"].(string); ok {
 		desc, _ := tokenResp["error_description"].(string)
-		return nil, authURL, fmt.Errorf("token error: %s — %s", errMsg, desc)
+		return nil, fmt.Errorf("token error: %s — %s", errMsg, desc)
+	}
+	// The account service reports failures in its own envelope
+	// ({"result":"error","message":"..."}) rather than the RFC 6749 error
+	// shape — surface the message instead of dumping raw JSON.
+	if res, ok := tokenResp["result"].(string); ok && res == "error" {
+		msg, _ := tokenResp["message"].(string)
+		return nil, fmt.Errorf("token error: %s", msg)
 	}
 
-	// Corezoid and Simulator share account.corezoid.com — token field is simulator_token.
-	// Fall back to standard access_token if absent.
+	// Corezoid and Simulator share account.corezoid.com — token field is
+	// simulator_token. Fall back to standard access_token (RFC 6749), then to
+	// new_access_token (the shape the refresh grant answers with, verified live).
 	var accessToken string
 	if t, ok := tokenResp["simulator_token"].(string); ok && t != "" {
 		accessToken = t
 	} else if t, ok := tokenResp["access_token"].(string); ok && t != "" {
 		accessToken = t
+	} else if t, ok := tokenResp["new_access_token"].(string); ok && t != "" {
+		accessToken = t
 	}
 	if accessToken == "" {
-		return nil, authURL, fmt.Errorf("no token in OAuth response: %s", string(body))
+		// Do NOT include the body: a response we merely failed to recognize
+		// may still carry a live token, and error strings end up in logs.
+		return nil, fmt.Errorf("no token in OAuth response (fields: %s)", strings.Join(jsonKeys(tokenResp), ", "))
+	}
+	refreshToken, _ := tokenResp["refresh_token"].(string)
+
+	expiry := parseJWTExpiry(accessToken)
+	if expiry.IsZero() {
+		// Opaque (non-JWT) tokens carry their expiry as a unix-seconds field.
+		if e, ok := tokenResp["new_access_token_expire"].(float64); ok && e > 0 {
+			expiry = time.Unix(int64(e), 0)
+		}
 	}
 
 	return &PKCEResult{
-		AccessToken: accessToken,
-		ExpiresAt:   parseJWTExpiry(accessToken),
-	}, authURL, nil
+		AccessToken:  accessToken,
+		RefreshToken: refreshToken,
+		ExpiresAt:    expiry,
+	}, nil
+}
+
+// jsonKeys returns the sorted key list of a decoded JSON object — safe to put
+// in error messages where the values must not leak.
+func jsonKeys(m map[string]interface{}) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
+}
+
+// refreshAccessToken exchanges a refresh token for a fresh access token
+// (grant_type=refresh_token) — the OAuth 2.1 silent-renewal path, so an
+// expired session does not force a browser round-trip. The account service
+// advertises refresh_token in grants_types_supported; if it rotates the
+// refresh token, the new one is returned in the result.
+func refreshAccessToken(ctx context.Context, accountURL, clientID, refreshToken string) (*PKCEResult, error) {
+	accountURL = strings.TrimRight(accountURL, "/")
+	if err := validateAccountURLScheme(accountURL); err != nil {
+		return nil, err
+	}
+	_, tokenURL := discoverOAuthEndpoints(ctx, accountURL)
+	return postTokenRequest(ctx, tokenURL, url.Values{
+		"grant_type":    {"refresh_token"},
+		"client_id":     {clientID},
+		"refresh_token": {refreshToken},
+	})
+}
+
+// refreshAccessTokenFn is a seam so login tests can exercise the silent-refresh
+// path without a live token endpoint.
+var refreshAccessTokenFn = refreshAccessToken
+
+// validateAccountURLScheme enforces the OAuth 2.1 rule that authorization
+// server endpoints are HTTPS; plain http is allowed only for loopback hosts
+// (local/on-prem development). Catching this before the browser opens turns a
+// confusing consent-page failure into an actionable message.
+func validateAccountURLScheme(accountURL string) error {
+	u, err := url.Parse(accountURL)
+	if err != nil {
+		return fmt.Errorf("ACCOUNT_URL %q is not a valid URL: %w", accountURL, err)
+	}
+	switch u.Scheme {
+	case "https":
+		return nil
+	case "http":
+		h := u.Hostname()
+		if h == "localhost" || h == "127.0.0.1" || h == "::1" {
+			return nil
+		}
+		return fmt.Errorf("ACCOUNT_URL %q uses plain http to a non-local host — the OAuth flow would send secrets unencrypted; use https", accountURL)
+	default:
+		return fmt.Errorf("ACCOUNT_URL %q must start with https:// (or http:// for localhost only)", accountURL)
+	}
+}
+
+// discoverOAuthEndpoints resolves the authorization and token endpoints via
+// RFC 8414 metadata ({accountURL}/.well-known/oauth-authorization-server) and
+// falls back to the conventional /oauth2/authorize + /oauth2/token paths when
+// the metadata is unavailable (older on-prem account services). Discovery
+// keeps us honest against whatever the AS actually serves instead of
+// hardcoding its layout.
+func discoverOAuthEndpoints(ctx context.Context, accountURL string) (authorizeURL, tokenURL string) {
+	authorizeURL = accountURL + "/oauth2/authorize"
+	tokenURL = accountURL + "/oauth2/token"
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	mdCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(mdCtx, http.MethodGet, accountURL+"/.well-known/oauth-authorization-server", nil)
+	if err != nil {
+		return authorizeURL, tokenURL
+	}
+	resp, err := (&http.Client{Timeout: 5 * time.Second}).Do(req)
+	if err != nil {
+		logger.Debug("oauth discovery: metadata fetch failed (%v) — using conventional endpoints", err)
+		return authorizeURL, tokenURL
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return authorizeURL, tokenURL
+	}
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if err != nil {
+		return authorizeURL, tokenURL
+	}
+	var meta struct {
+		AuthorizationEndpoint string `json:"authorization_endpoint"`
+		TokenEndpoint         string `json:"token_endpoint"`
+	}
+	if err := json.Unmarshal(body, &meta); err != nil || meta.AuthorizationEndpoint == "" || meta.TokenEndpoint == "" {
+		return authorizeURL, tokenURL
+	}
+	if validateAccountURLScheme(meta.AuthorizationEndpoint) != nil || validateAccountURLScheme(meta.TokenEndpoint) != nil {
+		logger.Warn("oauth discovery: metadata endpoints have an unacceptable scheme — using conventional endpoints")
+		return authorizeURL, tokenURL
+	}
+	return meta.AuthorizationEndpoint, meta.TokenEndpoint
 }
 
 type accountClient struct {
