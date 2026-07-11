@@ -49,9 +49,37 @@ Variables are **stage-scoped**: shared across all processes within a stage.
 | Tool | Purpose |
 |------|---------|
 | `create-variable` | Create a `raw` + `visible` variable in one step |
+| `list-variables` | List a stage's variables with obj_id, types, values (secrets masked) |
+| `modify-variable` | Change value/title/data_type or rename — dry-run + confirm-gated |
+| `delete-variable` | PERMANENTLY delete (no recycle bin) — dry-run + confirm-gated |
 
-> **Note:** `list`, `modify`, `delete`, and creating `secret` or `json` variables are
-> not yet exposed as MCP tools. Use the direct API calls documented below.
+> **Note:** creating `secret` or `json` variables is not yet exposed as an MCP tool —
+> use the direct API calls documented below for creation; manage them afterwards with
+> the tools above.
+
+## Double-confirmation etiquette (modify / delete)
+
+`modify-variable` and `delete-variable` are consequential: a deleted variable is gone
+FOREVER (env vars have NO recycle bin), a renamed one breaks every
+`{{env_var[@old-name]}}` reference, and a changed value takes effect immediately in
+running processes. The tools enforce a two-step gate, and you must drive it honestly:
+
+1. Call the tool WITHOUT `apply` — you get a dry-run: a current → new diff (modify) or
+   a red `🔴 PERMANENT DELETION` block (delete), including a local reference scan.
+2. Show that dry-run output to the user **verbatim** — do not summarize away the
+   warnings, especially the red block and the list of files that still reference the
+   variable.
+3. Ask the user explicitly whether to proceed, and wait for their clear agreement in
+   the conversation.
+4. Only then re-run with `apply=true` and the exact `confirm="<short_name>#<obj_id>"`
+   from the dry-run output. Never fabricate the confirm string without steps 1–3, and
+   never treat an earlier, unrelated "yes" as agreement for this action.
+
+Server facts the tools rely on (verified live): modify is PARTIAL — omitted fields
+keep their value, so modifying a secret's title does not require (or touch) its value;
+`env_var_type` (visible/secret) can NOT be changed after creation — the server
+silently ignores such attempts; delete requires project_id + stage_id and is
+irreversible.
 
 ---
 

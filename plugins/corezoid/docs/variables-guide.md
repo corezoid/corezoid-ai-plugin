@@ -26,6 +26,13 @@ Check both local cache files before creating anything. If the variable exists, r
 
 Call MCP tool **`create-variable`** with `name`, `description`, and `value`.
 
+Manage existing variables with **`list-variables`** (read-only, secrets masked),
+**`modify-variable`** and **`delete-variable`**. The write tools are dry-run by
+default and require `apply=true` + `confirm="<short_name>#<obj_id>"` after the user
+has explicitly approved the shown diff / deletion warning. Deletion is PERMANENT —
+environment variables have no recycle bin. `env_var_type` (visible/secret) cannot be
+changed after creation.
+
 Example: `name: "payment-api-url"`, `description: "Payment Service API URL"`, `value: "https://api.payments.example.com"`
 
 ### 3. Reference in process logic
