@@ -469,9 +469,9 @@ type EnvVar struct {
 
 // ListEnvVars returns full details for every env var in the stage.
 func (v *Executor) ListEnvVars(stage int) ([]EnvVar, error) {
-	projectID := v.GetProjectIDByStageID(stage)
-	if projectID == 0 {
-		return nil, fmt.Errorf("could not resolve project for stage %d — is the stage ID correct and accessible?", stage)
+	projectID, perr := v.envVarProjectID(stage)
+	if perr != nil {
+		return nil, perr
 	}
 	ops := []map[string]any{
 		{
@@ -549,9 +549,9 @@ type EnvVarChanges struct {
 // changes in modify (verified live in both directions), so this executor
 // never sends it.
 func (v *Executor) ModifyEnvVar(stage, objID int, currentShortName string, ch EnvVarChanges) error {
-	projectID := v.GetProjectIDByStageID(stage)
-	if projectID == 0 {
-		return fmt.Errorf("could not resolve project for stage %d — is the stage ID correct and accessible?", stage)
+	projectID, perr := v.envVarProjectID(stage)
+	if perr != nil {
+		return perr
 	}
 	op := map[string]any{
 		"type":       "modify",
@@ -588,9 +588,9 @@ func (v *Executor) ModifyEnvVar(stage, objID int, currentShortName string, ch En
 // for env vars (verified live) — callers must confirm with the user first.
 // The server requires project_id and stage_id (verified live).
 func (v *Executor) DeleteEnvVar(stage, objID int) error {
-	projectID := v.GetProjectIDByStageID(stage)
-	if projectID == 0 {
-		return fmt.Errorf("could not resolve project for stage %d — is the stage ID correct and accessible?", stage)
+	projectID, perr := v.envVarProjectID(stage)
+	if perr != nil {
+		return perr
 	}
 	ops := []map[string]any{
 		{
@@ -671,4 +671,33 @@ func (v *Executor) GetProjectIDByStageID(folderID int) int {
 	}
 	logger.Error("GetProjectIDByStageID: cannot find folder %d", folderID)
 	return 0
+}
+
+
+// envVarProjectID resolves the project for a stage PRESERVING the underlying
+// failure — the bare "could not resolve project for stage N" hid the real
+// cause (typically an invalid session) and sent users hunting stage IDs when
+// the fix was a re-login (field incident).
+func (v *Executor) envVarProjectID(stage int) (int, error) {
+	const maxDepth = 20
+	currentID := stage
+	for i := 0; i < maxDepth; i++ {
+		info, err := v.ShowFolder(currentID)
+		if err != nil {
+			hint := ""
+			msg := strings.ToLower(err.Error())
+			for _, marker := range []string{"cookie or headers are not valid", "unauthorized", "access denied", "token is not valid", "invalid token"} {
+				if strings.Contains(msg, marker) {
+					hint = " — the session token was rejected (stale or revoked); re-run login (force=true if needed)"
+					break
+				}
+			}
+			return 0, fmt.Errorf("could not resolve project for stage %d: showing folder %d: %w%s", stage, currentID, err, hint)
+		}
+		if info.ObjID == stage {
+			return info.ParentObjID, nil
+		}
+		currentID = info.ParentObjID
+	}
+	return 0, fmt.Errorf("could not resolve project for stage %d: folder walk exceeded %d levels", stage, maxDepth)
 }

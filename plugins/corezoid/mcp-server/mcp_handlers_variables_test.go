@@ -559,3 +559,24 @@ func TestModifyVariable_VerifyFailureIsSurfaced(t *testing.T) {
 		t.Errorf("must not claim verification that never ran: %s", res)
 	}
 }
+
+// A dead session must read as an auth problem with a recovery hint — not as a
+// mysterious "could not resolve project for stage" (field incident).
+func TestListVariables_DeadSessionSurfacesAuthHint(t *testing.T) {
+	m := &envVarMock{}
+	resetGlobals(t)
+	srv, _ := mockAPIServer(t, func(ops []map[string]interface{}) interface{} {
+		return map[string]interface{}{"request_proc": "ok", "ops": []interface{}{
+			map[string]interface{}{"proc": "error", "description": "cookie or headers are not valid"}}}
+	})
+	_ = m
+	setProjectAuth(t, srv.URL)
+	setVarTestAuth(t)
+	res, isErr := handleToolCall(context.Background(), "list-variables", map[string]interface{}{})
+	if !isErr {
+		t.Fatalf("expected error, got: %s", res)
+	}
+	if !strings.Contains(res, "cookie or headers are not valid") || !strings.Contains(res, "re-run login") {
+		t.Errorf("dead session must surface the auth cause + hint, got: %s", res)
+	}
+}
