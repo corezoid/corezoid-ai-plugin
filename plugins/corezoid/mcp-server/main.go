@@ -152,7 +152,7 @@ func loadConfig() {
 		}
 	}
 	findAndLoadDotEnv()
-	apiURL = os.Getenv("COREZOID_API_URL")
+	apiURL, _ = sanitizeAPIURL(os.Getenv("COREZOID_API_URL"))
 	accountURL = os.Getenv("ACCOUNT_URL")
 	workspaceID = os.Getenv("WORKSPACE_ID")
 	apiToken = os.Getenv("ACCESS_TOKEN")
@@ -672,4 +672,22 @@ func extractObjIDFromJSON(jsonContent string) int {
 	default:
 		return 0
 	}
+}
+
+
+// sanitizeAPIURL strips a mistakenly-included API path suffix from
+// COREZOID_API_URL. The server appends /api/2/json itself; a suffix in the
+// env doubles the path and every call fails (field-observed in a user .env).
+func sanitizeAPIURL(raw string) (clean string, stripped bool) {
+	clean = strings.TrimRight(strings.TrimSpace(raw), "/")
+	for _, suffix := range []string{"/api/2/json", "/api/2/download"} {
+		if strings.HasSuffix(clean, suffix) {
+			clean = strings.TrimRight(strings.TrimSuffix(clean, suffix), "/")
+			stripped = true
+		}
+	}
+	if stripped {
+		logger.Warn("COREZOID_API_URL contained an API path suffix — using base URL %q (set the base URL only)", clean)
+	}
+	return clean, stripped
 }

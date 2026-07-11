@@ -68,26 +68,34 @@ func openBrowser(u string) {
 	_ = exec.Command(cmd, args...).Start()
 }
 
+// openBrowserFn is a seam so tests can run the flow without exec'ing a real
+// browser command (mirrors the deployMonitor seam pattern).
+var openBrowserFn = openBrowser
+
 // oauthPKCEFlow runs the OAuth2 PKCE authorization flow against the given account URL.
 // It opens the user's browser, starts a local callback server, and exchanges the
-// authorization code for an access token.
-func oauthPKCEFlow(accountURL, clientID string) (*PKCEResult, error) {
+// authorization code for an access token. The wait honours the caller's ctx —
+// an MCP client that caps tool-call duration cancels it, and the flow returns
+// immediately instead of holding the (already abandoned) call for 5 minutes.
+// authURL is returned in every path that reaches URL construction, so failure
+// messages can hand the user the exact consent link.
+func oauthPKCEFlow(ctx context.Context, accountURL, clientID string) (res *PKCEResult, authURL string, err error) {
 	accountURL = strings.TrimRight(accountURL, "/")
 	verifier, err := generateVerifier()
 	if err != nil {
-		return nil, fmt.Errorf("failed to generate PKCE verifier: %w", err)
+		return nil, "", fmt.Errorf("failed to generate PKCE verifier: %w", err)
 	}
 	challenge := generateChallenge(verifier)
 
 	stateBytes := make([]byte, 16)
 	if _, err := rand.Read(stateBytes); err != nil {
-		return nil, fmt.Errorf("failed to generate OAuth state: %w", err)
+		return nil, "", fmt.Errorf("failed to generate OAuth state: %w", err)
 	}
 	state := base64.RawURLEncoding.EncodeToString(stateBytes)
 
 	port, err := findFreePort()
 	if err != nil {
-		return nil, fmt.Errorf("failed to find free port for callback: %w", err)
+		return nil, "", fmt.Errorf("failed to find free port for callback: %w", err)
 	}
 	redirectURI := fmt.Sprintf("http://localhost:%d/callback", port)
 
@@ -102,7 +110,7 @@ func oauthPKCEFlow(accountURL, clientID string) (*PKCEResult, error) {
 	}
 	authorizeURL := accountURL + "/oauth2/authorize"
 	tokenURL := accountURL + "/oauth2/token"
-	authURL := authorizeURL + "?" + params.Encode()
+	authURL = authorizeURL + "?" + params.Encode()
 
 	codeCh := make(chan string, 1)
 	errCh := make(chan error, 1)
@@ -160,9 +168,12 @@ func oauthPKCEFlow(accountURL, clientID string) (*PKCEResult, error) {
 	}()
 
 	fmt.Fprintf(os.Stderr, "Opening browser for Corezoid authentication...\nIf it did not open automatically, visit:\n%s\n", authURL)
-	openBrowser(authURL)
+	openBrowserFn(authURL)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	waitCtx, cancel := context.WithTimeout(ctx, 5*time.Minute)
 	defer cancel()
 
 	var code string
@@ -170,13 +181,19 @@ func oauthPKCEFlow(accountURL, clientID string) (*PKCEResult, error) {
 	case code = <-codeCh:
 	case oauthErr := <-errCh:
 		_ = srv.Shutdown(context.Background())
-		return nil, oauthErr
-	case <-ctx.Done():
+		return nil, authURL, oauthErr
+	case <-waitCtx.Done():
 		_ = srv.Shutdown(context.Background())
-		return nil, fmt.Errorf("authentication timed out after 5 minutes")
+		if ctx.Err() != nil {
+			// The CALLER's context ended — typically the MCP client cancelling
+			// a long tool call. The server is fine; the wait just stopped.
+			return nil, authURL, fmt.Errorf("authentication wait cancelled by the client: %w", ctx.Err())
+		}
+		return nil, authURL, fmt.Errorf("authentication timed out after 5 minutes")
 	}
 
 	go func() { _ = srv.Shutdown(context.Background()) }()
+
 
 	// Exchange authorization code for access token
 	tokenParams := url.Values{
@@ -189,23 +206,23 @@ func oauthPKCEFlow(accountURL, clientID string) (*PKCEResult, error) {
 	httpClient := &http.Client{Timeout: 60 * time.Second}
 	resp, err := httpClient.PostForm(tokenURL, tokenParams)
 	if err != nil {
-		return nil, fmt.Errorf("token exchange request failed: %w", err)
+		return nil, authURL, fmt.Errorf("token exchange request failed: %w", err)
 	}
 	defer resp.Body.Close()
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return nil, fmt.Errorf("failed to read token response: %w", err)
+		return nil, authURL, fmt.Errorf("failed to read token response: %w", err)
 	}
 
 	var tokenResp map[string]interface{}
 	if err := json.Unmarshal(body, &tokenResp); err != nil {
-		return nil, fmt.Errorf("failed to parse token response: %w", err)
+		return nil, authURL, fmt.Errorf("failed to parse token response: %w", err)
 	}
 
 	if errMsg, ok := tokenResp["error"].(string); ok {
 		desc, _ := tokenResp["error_description"].(string)
-		return nil, fmt.Errorf("token error: %s — %s", errMsg, desc)
+		return nil, authURL, fmt.Errorf("token error: %s — %s", errMsg, desc)
 	}
 
 	// Corezoid and Simulator share account.corezoid.com — token field is simulator_token.
@@ -217,13 +234,13 @@ func oauthPKCEFlow(accountURL, clientID string) (*PKCEResult, error) {
 		accessToken = t
 	}
 	if accessToken == "" {
-		return nil, fmt.Errorf("no token in OAuth response: %s", string(body))
+		return nil, authURL, fmt.Errorf("no token in OAuth response: %s", string(body))
 	}
 
 	return &PKCEResult{
 		AccessToken: accessToken,
 		ExpiresAt:   parseJWTExpiry(accessToken),
-	}, nil
+	}, authURL, nil
 }
 
 type accountClient struct {

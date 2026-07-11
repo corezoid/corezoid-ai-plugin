@@ -36,7 +36,7 @@ func handleLogin(ctx context.Context, args map[string]interface{}) (string, bool
 		accountURL = os.Getenv("ACCOUNT_URL")
 		workspaceID = os.Getenv("WORKSPACE_ID")
 		stageID, _ = strconv.Atoi(os.Getenv("COREZOID_STAGE_ID"))
-		apiURL = os.Getenv("COREZOID_API_URL")
+		apiURL, _ = sanitizeAPIURL(os.Getenv("COREZOID_API_URL"))
 
 		// Record initial stageID to detect if it gets set during this call.
 		stageIDAtStart = stageID
@@ -167,9 +167,9 @@ func handleLogin(ctx context.Context, args map[string]interface{}) (string, bool
 		if aerr := assertAccountService(snapAccountURL); aerr != nil {
 			return fmt.Sprintf("Authentication not started: %v", aerr), true
 		}
-		res, err := oauthPKCEFlow(snapAccountURL, oauthClientID)
+		res, authURL, err := runOAuthFlow(ctx, snapAccountURL, oauthClientID)
 		if err != nil {
-			return fmt.Sprintf("Authentication failed: %v", err), true
+			return oauthFailureMsg(snapAccountURL, authURL, err), true
 		}
 		creds := &Credentials{
 			AccessToken: res.AccessToken,
@@ -207,15 +207,18 @@ func handleLogin(ctx context.Context, args map[string]interface{}) (string, bool
 		if apiURLEmpty {
 			corezoidURL, fetchErr := fetchCorezoidAPIURL(snapAccountURL, res.AccessToken)
 			if fetchErr != nil {
-				logger.Warn("login: fetchCorezoidAPIURL failed: %v", fetchErr)
-			} else {
-				withAuthLock(func() { apiURL = corezoidURL })
-				os.Setenv("COREZOID_API_URL", corezoidURL)
-				if err := updateEnvFile(envPath, "COREZOID_API_URL", corezoidURL); err != nil {
-					logger.Warn("login: could not save COREZOID_API_URL: %v", err)
-				}
-				logger.Info("login: derived COREZOID_API_URL=%q from clients API", corezoidURL)
+				// Falling through with an empty apiURL makes EVERY later call
+				// fail with the opaque `unsupported protocol scheme ""`
+				// (field-observed) — abort loudly instead. The token is
+				// already saved, so the user only has to fix the URL.
+				return apiURLManualHint(snapAccountURL, fetchErr), true
 			}
+			withAuthLock(func() { apiURL = corezoidURL })
+			os.Setenv("COREZOID_API_URL", corezoidURL)
+			if err := updateEnvFile(envPath, "COREZOID_API_URL", corezoidURL); err != nil {
+				logger.Warn("login: could not save COREZOID_API_URL: %v", err)
+			}
+			logger.Info("login: derived COREZOID_API_URL=%q from clients API", corezoidURL)
 		}
 	} else {
 		// If we already have a token but no derived API URL (e.g. token came from
@@ -226,15 +229,14 @@ func handleLogin(ctx context.Context, args map[string]interface{}) (string, bool
 		if apiURLEmpty {
 			corezoidURL, fetchErr := fetchCorezoidAPIURL(snapAccountURL, snapToken)
 			if fetchErr != nil {
-				logger.Warn("login: fetchCorezoidAPIURL failed: %v", fetchErr)
-			} else {
-				withAuthLock(func() { apiURL = corezoidURL })
-				os.Setenv("COREZOID_API_URL", corezoidURL)
-				if err := updateEnvFile(envPath, "COREZOID_API_URL", corezoidURL); err != nil {
-					logger.Warn("login: could not save COREZOID_API_URL: %v", err)
-				}
-				logger.Info("login: derived COREZOID_API_URL=%q from clients API (pre-existing token)", corezoidURL)
+				return apiURLManualHint(snapAccountURL, fetchErr), true
 			}
+			withAuthLock(func() { apiURL = corezoidURL })
+			os.Setenv("COREZOID_API_URL", corezoidURL)
+			if err := updateEnvFile(envPath, "COREZOID_API_URL", corezoidURL); err != nil {
+				logger.Warn("login: could not save COREZOID_API_URL: %v", err)
+			}
+			logger.Info("login: derived COREZOID_API_URL=%q from clients API (pre-existing token)", corezoidURL)
 		}
 	}
 
@@ -534,8 +536,21 @@ func handleLogout(_ context.Context, _ map[string]interface{}) (string, bool) {
 		stageID = 0
 		apiURL = ""
 	})
+	// Back up what is about to be destroyed. On installations where the OAuth
+	// re-authentication flow is unavailable, the token logout deletes may be
+	// the user's ONLY credential (field incident: a logout bricked the session
+	// with nothing to restore from). A failed backup must not block the
+	// logout — but it must be said.
+	bakPath, bakErr := backupTokenSources(credPath, dotEnvPathInUse())
+	bakNote := ""
+	switch {
+	case bakErr != nil:
+		bakNote = fmt.Sprintf("\n⚠ Could not write a token backup (%v) — if you may need this token again, recover it before overwriting anything.", bakErr)
+	case bakPath != "":
+		bakNote = fmt.Sprintf("\nA backup of the removed token was written to %s — restore with: cp %s %s (then re-run login).\n⚠ On installations where re-authentication is unavailable (no working OAuth), that backup may be your ONLY credential — do not delete it until a new login works.", bakPath, bakPath, credPath)
+	}
 	if err := deleteCredentials(); err != nil {
-		return fmt.Sprintf("Logged out of this session, but failed to remove the credentials file: %v — remove %s manually or the next start will silently reuse it.", err, credPath), true
+		return fmt.Sprintf("Logged out of this session, but failed to remove the credentials file: %v — remove %s manually or the next start will silently reuse it.%s", err, credPath, bakNote), true
 	}
 	// The .env that actually feeds tokens into this process is the one
 	// findAndLoadDotEnv resolves (it walks UP from cwd) — not blindly
@@ -550,7 +565,7 @@ func handleLogout(_ context.Context, _ map[string]interface{}) (string, bool) {
 		_ = removeEnvKey(envPath, "ACCESS_TOKEN_EXPIRES_AT")
 		envNote = fmt.Sprintf(" ACCESS_TOKEN also removed from %s (it would have silently re-authenticated the next login).", envPath)
 	}
-	return fmt.Sprintf("Logged out. ACCESS_TOKEN removed from %s.%s", credPath, envNote), false
+	return fmt.Sprintf("Logged out. ACCESS_TOKEN removed from %s.%s%s", credPath, envNote, bakNote), false
 }
 
 // probeExistingToken answers "does this token still work?" with one cheap
@@ -685,4 +700,57 @@ func assertAccountService(accountURL string) error {
 		return fmt.Errorf("ACCOUNT_URL %q is not the account service (it returned HTML — probably the admin UI host), so the OAuth consent page cannot open there. Fix ACCOUNT_URL in your .env (likely %s) and retry login", accountURL, suggestion)
 	}
 	return nil
+}
+
+
+// runOAuthFlow is a seam so tests can exercise login's failure paths without
+// a real browser (mirrors the deployMonitor seam pattern).
+var runOAuthFlow = oauthPKCEFlow
+
+// oauthFailureMsg turns an OAuth failure into an ACTIONABLE result. This text
+// is the only channel an MCP user has — stderr is invisible to MCP clients,
+// and the field incident showed a bare "Authentication failed: timeout" left
+// the user staring at a dashboard with no idea what to do next.
+func oauthFailureMsg(accountURL, authURL string, err error) string {
+	var sb strings.Builder
+	if strings.Contains(err.Error(), "cancelled by the client") {
+		sb.WriteString("The MCP client cancelled the tool call before authentication finished (client-side timeout). The server is fine — this is a wait, not a crash.\n\n")
+	}
+	sb.WriteString(fmt.Sprintf("Authentication was not completed: %v\n", err))
+	if authURL != "" {
+		sb.WriteString(fmt.Sprintf("\nThe browser consent page is:\n  %s\nOpen it and approve access, then re-run login.\n", authURL))
+	}
+	sb.WriteString(fmt.Sprintf("\nIf the browser flow cannot complete on this installation, finish setup manually:\n"+
+		"1. Open %s/access_tokens — the ACCOUNT host, not the admin/workspace UI\n"+
+		"   (cloud: https://account.corezoid.com/access_tokens; on the admin host this URL\n"+
+		"   just redirects to the dashboard — that is expected, it does not mean the page is missing).\n"+
+		"2. Create an access token (JWT format) and copy it.\n"+
+		"3. Save it to ~/.corezoid/credentials as a single line: ACCESS_TOKEN=<token>\n"+
+		"4. Re-run login — it detects the token and skips OAuth.", strings.TrimRight(accountURL, "/")))
+	return sb.String()
+}
+
+
+// apiURLManualHint explains how to set COREZOID_API_URL by hand when it could
+// not be derived from the account clients endpoint. No silent fallback: on
+// cloud the account host (account.corezoid.com) is NOT the API host
+// (admin.corezoid.com), so guessing "same host" would break confusingly at
+// the first API call. The user picks per their topology.
+func apiURLManualHint(accountURL string, err error) string {
+	return fmt.Sprintf("Authenticated — your token is saved — but the Corezoid API URL could not be derived from the account service: %v\n\n"+
+		"Set COREZOID_API_URL in your project .env manually, then re-run login:\n"+
+		"- single-host on-prem installs: usually the same host as ACCOUNT_URL (%s)\n"+
+		"- Corezoid cloud: https://admin.corezoid.com\n"+
+		"Use the BASE URL only — no /api/2/json suffix. The server appends API paths itself.", err, accountURL)
+}
+
+
+// authErrorHint appends a recovery hint when err is an explicit token
+// refusal — "could not resolve project" with the real cause buried in the
+// log sent users hunting stage IDs when the fix was re-running login.
+func authErrorHint(err error) string {
+	if err != nil && isAuthRejection(err) {
+		return " — the session token was rejected (stale or revoked); re-run login (force=true if needed)"
+	}
+	return ""
 }

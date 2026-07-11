@@ -3,12 +3,14 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 // fakeHome points HOME (and the process cwd, for envFilePath) at temp dirs so
@@ -292,5 +294,216 @@ func TestAssertAccountService(t *testing.T) {
 	t.Cleanup(jsonSrv.Close)
 	if err := assertAccountService(jsonSrv.URL); err != nil {
 		t.Fatalf("JSON account host must pass: %v", err)
+	}
+}
+
+// ---- auth-DX hardening round ---------------------------------------------------
+
+func TestLogout_WritesCredentialsBackup(t *testing.T) {
+	home, workDir := fakeHome(t)
+	resetGlobals(t)
+	credDir := filepath.Join(home, ".corezoid")
+	if err := os.MkdirAll(credDir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	credPath := filepath.Join(credDir, "credentials")
+	if err := os.WriteFile(credPath, []byte("ACCESS_TOKEN=tok-cred\nACCESS_TOKEN_EXPIRES_AT=2030-01-01T00:00:00Z\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(workDir, ".env"), []byte("ACCESS_TOKEN=tok-env\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	res, isErr := handleLogout(context.Background(), nil)
+	if isErr {
+		t.Fatalf("logout failed: %s", res)
+	}
+	bak := credPath + ".bak"
+	info, err := os.Stat(bak)
+	if err != nil {
+		t.Fatalf("backup not written: %v", err)
+	}
+	if info.Mode().Perm() != 0600 {
+		t.Errorf("backup mode = %v, want 0600", info.Mode().Perm())
+	}
+	data, _ := os.ReadFile(bak)
+	if !strings.Contains(string(data), "ACCESS_TOKEN=tok-cred") {
+		t.Errorf("backup missing the credentials token:\n%s", data)
+	}
+	if !strings.Contains(string(data), "# ACCESS_TOKEN=tok-env") {
+		t.Errorf("backup missing the annotated .env token:\n%s", data)
+	}
+	if !strings.Contains(res, bak) || !strings.Contains(res, "ONLY credential") {
+		t.Errorf("logout result must name the backup and the warning: %s", res)
+	}
+}
+
+func TestLogout_NoBackupWhenNothingToBackUp(t *testing.T) {
+	home, _ := fakeHome(t)
+	resetGlobals(t)
+	credDir := filepath.Join(home, ".corezoid")
+	if err := os.MkdirAll(credDir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	sentinel := filepath.Join(credDir, "credentials.bak")
+	if err := os.WriteFile(sentinel, []byte("PRECIOUS=1\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	res, isErr := handleLogout(context.Background(), nil)
+	if isErr {
+		t.Fatalf("logout failed: %s", res)
+	}
+	data, _ := os.ReadFile(sentinel)
+	if string(data) != "PRECIOUS=1\n" {
+		t.Fatalf("a no-token logout must not touch an existing backup, got: %q", data)
+	}
+	if strings.Contains(res, "backup of the removed token") {
+		t.Errorf("no-token logout must not claim a backup was written: %s", res)
+	}
+}
+
+func stubOAuthFlow(t *testing.T, res *PKCEResult, authURL string, err error) {
+	t.Helper()
+	orig := runOAuthFlow
+	runOAuthFlow = func(ctx context.Context, accountURL, clientID string) (*PKCEResult, string, error) {
+		return res, authURL, err
+	}
+	t.Cleanup(func() { runOAuthFlow = orig })
+}
+
+// jsonAccountServer answers the clients endpoint with valid JSON so
+// assertAccountService and probe derivation pass.
+func jsonAccountServer(t *testing.T) *httptest.Server {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`[{"name":"corezoid","url":"https://api.example"}]`))
+	}))
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+func TestLogin_OAuthFailureMessageHasAuthURLAndFallback(t *testing.T) {
+	fakeHome(t)
+	resetGlobals(t)
+	acc := jsonAccountServer(t)
+	t.Setenv("ACCOUNT_URL", acc.URL)
+	stubOAuthFlow(t, nil, acc.URL+"/oauth2/authorize?x=1", fmt.Errorf("authentication timed out after 5 minutes"))
+	res, isErr := handleLogin(context.Background(), map[string]interface{}{})
+	if !isErr {
+		t.Fatalf("expected error result, got: %s", res)
+	}
+	for _, want := range []string{"/oauth2/authorize?x=1", "/access_tokens", "ACCOUNT host", "re-run login"} {
+		if !strings.Contains(res, want) {
+			t.Errorf("failure message missing %q:\n%s", want, res)
+		}
+	}
+}
+
+func TestLogin_OAuthCtxCancelledMessage(t *testing.T) {
+	fakeHome(t)
+	resetGlobals(t)
+	acc := jsonAccountServer(t)
+	t.Setenv("ACCOUNT_URL", acc.URL)
+	stubOAuthFlow(t, nil, acc.URL+"/oauth2/authorize?x=1",
+		fmt.Errorf("authentication wait cancelled by the client: %w", context.Canceled))
+	res, isErr := handleLogin(context.Background(), map[string]interface{}{})
+	if !isErr || !strings.Contains(res, "client cancelled the tool call") || !strings.Contains(res, "not a crash") {
+		t.Fatalf("expected client-cancel preamble, got isErr=%v: %s", isErr, res)
+	}
+}
+
+func TestOAuthPKCEFlow_HonorsCtxCancel(t *testing.T) {
+	origOpen := openBrowserFn
+	openBrowserFn = func(string) {}
+	t.Cleanup(func() { openBrowserFn = origOpen })
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	done := make(chan struct{})
+	var authURL string
+	var err error
+	go func() {
+		_, authURL, err = oauthPKCEFlow(ctx, "https://acc.example", "client1")
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(10 * time.Second):
+		t.Fatal("flow did not return promptly on a cancelled ctx")
+	}
+	if err == nil || !strings.Contains(err.Error(), "cancelled by the client") {
+		t.Fatalf("expected client-cancel error, got: %v", err)
+	}
+	if authURL == "" {
+		t.Fatal("authURL must be returned even on cancellation")
+	}
+}
+
+func TestSanitizeAPIURL(t *testing.T) {
+	cases := []struct{ in, want string; stripped bool }{
+		{"https://h.example/api/2/json", "https://h.example", true},
+		{"https://h.example/api/2/json/", "https://h.example", true},
+		{"https://h.example/api/2/download", "https://h.example", true},
+		{"https://h.example", "https://h.example", false},
+		{"https://h.example/", "https://h.example", false},
+		{"", "", false},
+	}
+	for _, c := range cases {
+		got, stripped := sanitizeAPIURL(c.in)
+		if got != c.want || stripped != c.stripped {
+			t.Errorf("sanitizeAPIURL(%q) = (%q, %v), want (%q, %v)", c.in, got, stripped, c.want, c.stripped)
+		}
+	}
+}
+
+func TestResolveProjectIDByStage_PropagatesAuthError(t *testing.T) {
+	resetGlobals(t)
+	srv, _ := mockAPIServer(t, func(ops []map[string]interface{}) interface{} {
+		return map[string]interface{}{"request_proc": "ok", "ops": []interface{}{
+			map[string]interface{}{"proc": "error", "description": "cookie or headers are not valid"}}}
+	})
+	setProjectAuth(t, srv.URL)
+	v := NewValidator(context.Background(), 0)
+	id, err := v.resolveProjectIDByStage(400)
+	if id != 0 || err == nil {
+		t.Fatalf("expected (0, err), got (%d, %v)", id, err)
+	}
+	if !strings.Contains(err.Error(), "re-run login (force=true") {
+		t.Errorf("auth hint missing: %v", err)
+	}
+	if got := v.GetProjectIDByStageID(400); got != 0 {
+		t.Errorf("legacy shim must still return 0, got %d", got)
+	}
+}
+
+func TestLogin_APIURLDeriveFailureIsExplicit(t *testing.T) {
+	fakeHome(t)
+	resetGlobals(t)
+	// Clients endpoint: JSON when unauthenticated (assertAccountService passes),
+	// plain 500 when the new token arrives (derivation fails — NOT HTML, so it
+	// is not misdiagnosed as the admin-host case).
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "" {
+			http.Error(w, "boom", http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`[{"name":"corezoid","url":"https://api.example"}]`))
+	}))
+	t.Cleanup(srv.Close)
+	t.Setenv("ACCOUNT_URL", srv.URL)
+	stubOAuthFlow(t, &PKCEResult{AccessToken: "fresh-token"}, srv.URL+"/oauth2/authorize?x=1", nil)
+	res, isErr := handleLogin(context.Background(), map[string]interface{}{})
+	if !isErr {
+		t.Fatalf("expected explicit error, got: %s", res)
+	}
+	for _, want := range []string{"token is saved", "COREZOID_API_URL", "admin.corezoid.com", "no /api/2/json suffix"} {
+		if !strings.Contains(res, want) {
+			t.Errorf("derive-failure message missing %q:\n%s", want, res)
+		}
+	}
+	// The token really must be saved despite the abort.
+	data, _ := os.ReadFile(os.Getenv("HOME") + "/.corezoid/credentials")
+	if !strings.Contains(string(data), "fresh-token") {
+		t.Errorf("token must be persisted before the derive abort: %q", data)
 	}
 }

@@ -176,3 +176,50 @@ func isCredentialsExpired(creds *Credentials) bool {
 	}
 	return time.Now().After(creds.ExpiresAt)
 }
+
+// backupTokenSources writes every token line logout is about to destroy to
+// <credPath>.bak (0600, overwritten). The project .env token is included as
+// COMMENTED annotation lines so a plain `cp` restore can never produce two
+// competing ACCESS_TOKEN lines. Returns the backup path, or "" when there was
+// nothing to back up — an existing .bak is then left untouched, so a second
+// logout cannot clobber the only surviving copy.
+func backupTokenSources(credPath, envPath string) (string, error) {
+	var lines []string
+	if data, err := os.ReadFile(credPath); err == nil {
+		for _, line := range strings.Split(string(data), "\n") {
+			t := strings.TrimSpace(line)
+			if strings.HasPrefix(t, "ACCESS_TOKEN=") || strings.HasPrefix(t, "ACCESS_TOKEN_EXPIRES_AT=") {
+				lines = append(lines, t)
+			}
+		}
+	}
+	if envPath != "" {
+		if data, err := os.ReadFile(envPath); err == nil {
+			for _, line := range strings.Split(string(data), "\n") {
+				t := strings.TrimSpace(line)
+				if strings.HasPrefix(t, "ACCESS_TOKEN=") || strings.HasPrefix(t, "ACCESS_TOKEN_EXPIRES_AT=") {
+					if len(lines) == 0 {
+						// No credentials-file token — promote the .env line so the
+						// backup is directly restorable.
+						lines = append(lines, t)
+					} else {
+						lines = append(lines,
+							"# from "+envPath+" (project .env token, also removed by this logout):",
+							"# "+t)
+					}
+				}
+			}
+		}
+	}
+	if len(lines) == 0 {
+		return "", nil
+	}
+	bakPath := credPath + ".bak"
+	content := "# Corezoid token backup written by logout at " + time.Now().UTC().Format(time.RFC3339) + "\n" +
+		"# restore: cp " + bakPath + " " + credPath + "\n" +
+		strings.Join(lines, "\n") + "\n"
+	if err := os.WriteFile(bakPath, []byte(content), 0600); err != nil {
+		return "", err
+	}
+	return bakPath, nil
+}

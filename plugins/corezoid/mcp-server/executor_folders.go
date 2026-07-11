@@ -272,6 +272,10 @@ func (v *Executor) resolveFolderPathFromAPI(folderID int) (string, error) {
 // CreateVariable creates a new environment variable using the provided parameters.
 func (v *Executor) CreateVariable(rootFolderIDBin, name, description, value string) error {
 	rootFolderID, _ := strconv.Atoi(rootFolderIDBin)
+	projectID, perr := v.resolveProjectIDByStage(rootFolderID)
+	if perr != nil {
+		return perr
+	}
 	ops := []map[string]any{
 		{
 			"obj":          "env_var",
@@ -280,7 +284,7 @@ func (v *Executor) CreateVariable(rootFolderIDBin, name, description, value stri
 			"short_name":   name,
 			"company_id":   v.WorkspaceID,
 			"stage_id":     rootFolderID,
-			"project_id":   v.GetProjectIDByStageID(rootFolderID),
+			"project_id":   projectID,
 			"env_var_type": "visible",
 			"type":         "create",
 			"obj_type":     0,
@@ -360,7 +364,10 @@ func (v *Executor) updateVariablesFile(name, description, value string) error {
 
 // CreateAlias creates a new alias for a process and returns the alias ID.
 func (v *Executor) CreateAlias(shortName string, procID, stageID int) (int, error) {
-	projectID := v.GetProjectIDByStageID(stageID)
+	projectID, perr := v.resolveProjectIDByStage(stageID)
+	if perr != nil {
+		return 0, perr
+	}
 	ops := []map[string]any{
 		{
 			"type":        "create",
@@ -400,7 +407,10 @@ func (v *Executor) CreateAlias(shortName string, procID, stageID int) (int, erro
 
 // listAliasesByStage returns a map of short_name -> obj_id for all aliases in the given stage.
 func (v *Executor) listAliasesByStage(stage int) (map[string]int, error) {
-	projectID := v.GetProjectIDByStageID(stage)
+	projectID, perr := v.resolveProjectIDByStage(stage)
+	if perr != nil {
+		return nil, perr
+	}
 	ops := []map[string]any{
 		{
 			"type":       "list",
@@ -653,24 +663,37 @@ func (v *Executor) GetEnvVarByShortName(shortName string) (int, error) {
 	return 0, fmt.Errorf("env variable '@%s' does not exist", shortName)
 }
 
-// GetProjectIDByStageID resolves the project ID for a given stage/folder ID
-// by walking up the folder hierarchy.
-func (v *Executor) GetProjectIDByStageID(folderID int) int {
+// resolveProjectIDByStage resolves the project ID for a stage/folder ID by
+// walking up the folder hierarchy, PRESERVING the underlying failure. The old
+// int-only helper collapsed everything to 0, and callers then reported
+// "could not resolve project for stage N" even when the real cause was an
+// invalid session — sending users hunting stage IDs when the fix was a
+// re-login (field incident).
+func (v *Executor) resolveProjectIDByStage(folderID int) (int, error) {
 	const maxDepth = 20
 	currentID := folderID
 	for i := 0; i < maxDepth; i++ {
 		info, err := v.ShowFolder(currentID)
 		if err != nil {
-			logger.Error("GetProjectIDByStageID: error showing folder %d: %v", currentID, err)
-			return 0
+			return 0, fmt.Errorf("could not resolve project for stage %d: showing folder %d: %w%s", folderID, currentID, err, authErrorHint(err))
 		}
 		if info.ObjID == folderID {
-			return info.ParentObjID
+			return info.ParentObjID, nil
 		}
 		currentID = info.ParentObjID
 	}
-	logger.Error("GetProjectIDByStageID: cannot find folder %d", folderID)
-	return 0
+	return 0, fmt.Errorf("could not resolve project for stage %d: folder walk exceeded %d levels", folderID, maxDepth)
+}
+
+// GetProjectIDByStageID is the legacy int-only wrapper; prefer
+// resolveProjectIDByStage in new code so the caller can surface the cause.
+func (v *Executor) GetProjectIDByStageID(folderID int) int {
+	id, err := v.resolveProjectIDByStage(folderID)
+	if err != nil {
+		logger.Error("GetProjectIDByStageID: %v", err)
+		return 0
+	}
+	return id
 }
 
 
