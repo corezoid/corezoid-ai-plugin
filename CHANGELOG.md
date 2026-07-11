@@ -1,5 +1,20 @@
 # Changelog
 
+## [Unreleased]
+
+- **Breaking / behaviour**: tool calls now REJECT undeclared arguments with an
+  error naming the unknown keys and the accepted list (previously unknown keys
+  were silently dropped — a call could quietly act on the wrong object).
+  Integrations passing stray keys must remove them.
+- **Breaking / behaviour**: `create-process` / `create-state-diagram` /
+  `create-folder` refuse a working directory that contains MORE than one
+  `<id>_<name>.folder/stage.json` marker instead of silently picking the first
+  one (which could target a production stage). Pass the new explicit
+  `folder_id` argument or run from the specific folder's directory.
+- Feature: create tools accept an explicit `folder_id` and report the resolved
+  target ("created in Corezoid folder #N (explicit folder_id / resolved from
+  marker X)") in the result.
+
 ## [2.9.0]
 
 - Feat: `push-process` now runs `lint-process` before deploying and blocks on issues that would break the deploy or its callers (broken node links, old-format nodes, RPC paths without reply, nodes missing a default `go`, sub-30s timers, literal reply values); advisory findings are shown but do not block, and `force=true` overrides. Advisory findings from `lint-process` are also surfaced back on a successful push instead of silently swallowed.

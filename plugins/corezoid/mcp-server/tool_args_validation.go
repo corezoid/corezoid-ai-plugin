@@ -36,10 +36,8 @@ func buildToolAllowedArgs() {
 					}
 				}
 			}
-			if req, ok := schema["required"].([]string); ok {
-				for _, k := range req {
-					required[k] = true
-				}
+			for _, k := range schemaRequiredList(schema["required"]) {
+				required[k] = true
 			}
 		}
 		toolAllowedArgs[t.Name] = allowed
@@ -74,6 +72,27 @@ func coerceCLIArgs(tool string, args map[string]interface{}) error {
 				return fmt.Errorf("argument %s of %s is boolean; got %q (use true/false)", k, tool, s)
 			}
 		}
+	}
+	return nil
+}
+
+// schemaRequiredList extracts a schema's "required" list whether it is a
+// Go-literal []string (the registry today) or a decoded-JSON []interface{}
+// (a future registry entry loaded from a file) — a bare []string assertion
+// would silently treat the latter as "nothing required" and disable the CLI
+// env-default for that tool.
+func schemaRequiredList(v interface{}) []string {
+	switch req := v.(type) {
+	case []string:
+		return req
+	case []interface{}:
+		out := make([]string, 0, len(req))
+		for _, item := range req {
+			if s, ok := item.(string); ok {
+				out = append(out, s)
+			}
+		}
+		return out
 	}
 	return nil
 }

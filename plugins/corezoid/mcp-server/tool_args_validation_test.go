@@ -60,3 +60,15 @@ func TestUnknownArgsError_EveryToolHasSchema(t *testing.T) {
 		}
 	}
 }
+
+func TestSchemaRequiredList_BothShapes(t *testing.T) {
+	if got := schemaRequiredList([]string{"a", "b"}); len(got) != 2 {
+		t.Errorf("[]string shape: got %v", got)
+	}
+	if got := schemaRequiredList([]interface{}{"a", "b"}); len(got) != 2 {
+		t.Errorf("[]interface{} shape (decoded JSON): got %v", got)
+	}
+	if got := schemaRequiredList(nil); got != nil {
+		t.Errorf("nil: got %v", got)
+	}
+}
