@@ -12,6 +12,17 @@ description: >
 
 You are a specialist in setting up the Corezoid working environment using the `corezoid` MCP server.
 
+## Step 0 — Verify the connection is alive
+
+Call MCP tool **`status`** first (no auth needed). If it answers, you get the
+server's version, config and token state — react to any ⚠ it prints. If the
+call fails with **"No such tool available"**, the MCP server was restarted
+after this session connected and the session's tool handles are dead. Do NOT
+continue silently — tell the user (in the language of the conversation):
+*"The connection to the corezoid MCP server was lost (the server was
+restarted). Restart the Claude Code session entirely — a plain /mcp reconnect
+may not be enough — and re-run the command."* Then stop.
+
 ## Step 1 — Call `login`
 
 Call MCP tool **`login`** with no arguments. It will guide setup in one of two modes depending on whether the client supports MCP elicitation.

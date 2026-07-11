@@ -507,3 +507,132 @@ func TestLogin_APIURLDeriveFailureIsExplicit(t *testing.T) {
 		t.Errorf("token must be persisted before the derive abort: %q", data)
 	}
 }
+
+// ---- status tool ----------------------------------------------------------------
+
+func TestStatus_NoAuthNeeded(t *testing.T) {
+	fakeHome(t)
+	resetGlobals(t)
+	res, isErr := handleToolCall(context.Background(), "status", map[string]interface{}{})
+	if isErr {
+		t.Fatalf("status must work with zero auth: %s", res)
+	}
+	for _, want := range []string{"corezoid-mcp", "token:", "absent — run login", "must be RESTARTED"} {
+		if !strings.Contains(res, want) {
+			t.Errorf("status output missing %q:\n%s", want, res)
+		}
+	}
+}
+
+func TestStatus_FlagsAdminAccountURL(t *testing.T) {
+	fakeHome(t)
+	resetGlobals(t)
+	accountURL = "https://admin.corezoid.com"
+	t.Cleanup(func() { accountURL = "" })
+	res, _ := handleToolCall(context.Background(), "status", map[string]interface{}{})
+	if !strings.Contains(res, "admin UI host") {
+		t.Errorf("status must flag an admin ACCOUNT_URL:\n%s", res)
+	}
+}
+
+func TestStatus_ReportsExpiredToken(t *testing.T) {
+	home, _ := fakeHome(t)
+	resetGlobals(t)
+	credDir := filepath.Join(home, ".corezoid")
+	if err := os.MkdirAll(credDir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(credDir, "credentials"),
+		[]byte("ACCESS_TOKEN=tok-old\nACCESS_TOKEN_EXPIRES_AT=2020-01-01T00:00:00Z\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("ACCESS_TOKEN", "tok-old")
+	t.Setenv("ACCESS_TOKEN_EXPIRES_AT", "2020-01-01T00:00:00Z")
+	apiToken = "tok-old"
+	res, _ := handleToolCall(context.Background(), "status", map[string]interface{}{})
+	if !strings.Contains(res, "EXPIRED") || !strings.Contains(res, "force=true") {
+		t.Errorf("status must flag the expired token with a re-login hint:\n%s", res)
+	}
+}
+
+func TestStatus_AdminDetectionAnchorsOnHost(t *testing.T) {
+	fakeHome(t)
+	resetGlobals(t)
+	// "admin." must only match as a host prefix, not anywhere in the name —
+	// on-prem hosts like myadmin.example.com are legitimate OAuth hosts.
+	accountURL = "https://myadmin.example.com"
+	t.Cleanup(func() { accountURL = "" })
+	res, _ := handleToolCall(context.Background(), "status", map[string]interface{}{})
+	if strings.Contains(res, "admin UI host") {
+		t.Errorf("status must not flag myadmin.example.com as an admin host:\n%s", res)
+	}
+}
+
+func TestStatus_ProbeOKAndFailedKeepFooter(t *testing.T) {
+	fakeHome(t)
+	resetGlobals(t)
+	srv, _ := mockAPIServer(t, func(ops []map[string]interface{}) interface{} {
+		return map[string]interface{}{"request_proc": "ok", "ops": []interface{}{
+			map[string]interface{}{"proc": "ok", "list": []interface{}{}},
+		}}
+	})
+	apiURL = srv.URL + "/api/2/json"
+	apiToken = "tok-probe"
+	res, isErr := handleToolCall(context.Background(), "status", map[string]interface{}{"probe": true})
+	if isErr || !strings.Contains(res, "probe: OK") {
+		t.Errorf("want probe OK, got (isErr=%v):\n%s", isErr, res)
+	}
+
+	srvBad, _ := mockAPIServer(t, func(ops []map[string]interface{}) interface{} {
+		return map[string]interface{}{"request_proc": "error", "ops": []interface{}{
+			map[string]interface{}{"proc": "error", "description": "Unauthorized"},
+		}}
+	})
+	apiURL = srvBad.URL + "/api/2/json"
+	res, isErr = handleToolCall(context.Background(), "status", map[string]interface{}{"probe": true})
+	if !isErr || !strings.Contains(res, "probe: FAILED") {
+		t.Errorf("want probe FAILED, got (isErr=%v):\n%s", isErr, res)
+	}
+	if !strings.Contains(res, "must be RESTARTED") {
+		t.Errorf("probe failure must not drop the restart footer:\n%s", res)
+	}
+}
+
+func TestStatus_ProbeSkippedWithoutToken(t *testing.T) {
+	fakeHome(t)
+	resetGlobals(t)
+	res, isErr := handleToolCall(context.Background(), "status", map[string]interface{}{"probe": "true"})
+	if isErr || !strings.Contains(res, "probe: SKIPPED") {
+		t.Errorf("probe without token must be SKIPPED, got (isErr=%v):\n%s", isErr, res)
+	}
+}
+
+func TestInitOAuthClientID_Precedence(t *testing.T) {
+	t.Setenv("COREZOID_OAUTH_CLIENT_ID", "")
+	os.Unsetenv("COREZOID_OAUTH_CLIENT_ID")
+	oauthClientID = ""
+	t.Cleanup(func() { oauthClientID = "" })
+	initOAuthClientID()
+	if oauthClientID != oauthDefaultClientID {
+		t.Fatalf("want built-in default, got %q", oauthClientID)
+	}
+	t.Setenv("COREZOID_OAUTH_CLIENT_ID", "custom-id")
+	initOAuthClientID()
+	if oauthClientID != "custom-id" {
+		t.Fatalf("env override must win, got %q", oauthClientID)
+	}
+}
+
+func TestLoggerLinesCarryTimestamps(t *testing.T) {
+	var buf strings.Builder
+	l := &Logger{writer: &buf}
+	l.Info("hello %d", 42)
+	line := buf.String()
+	if !strings.Contains(line, "INFO:hello 42") {
+		t.Fatalf("unexpected line: %q", line)
+	}
+	// RFC3339 timestamp prefix, e.g. 2026-07-12T10:00:00Z
+	if _, err := time.Parse(time.RFC3339, strings.Fields(line)[0]); err != nil {
+		t.Errorf("line must start with an RFC3339 timestamp, got: %q", line)
+	}
+}

@@ -8,8 +8,39 @@ if [ -n "$COREZOID_MCP_DEV" ]; then
   cd "$SCRIPT_DIR" && exec go run . "$@"
 fi
 
+# sha256 <file> — prints hex digest
+sha256() {
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum "$1" | awk '{print $1}'
+  elif command -v shasum >/dev/null 2>&1; then
+    shasum -a 256 "$1" | awk '{print $1}'
+  fi
+}
+
+# notice_binary_change <path> — warn when the binary differs from the last run:
+# sessions attached to the previous process keep dead tool handles and must be
+# restarted (a plain reconnect may not be enough).
+notice_binary_change() {
+  MARKER_DIR="$HOME/.cache/corezoid-mcp"
+  mkdir -p "$MARKER_DIR" 2>/dev/null || return 0
+  # One marker per binary path: alternating between a dev checkout and the
+  # release cache must not cry "changed" on every start.
+  PATH_KEY=$(printf '%s' "$1" | cksum | awk '{print $1}')
+  MARKER="$MARKER_DIR/.last-binary.$PATH_KEY"
+  NEW_HASH=$(sha256 "$1" 2>/dev/null)
+  # sha256() ends in a pipe, so its exit code is awk's — check the output
+  # instead: no hash tool (or an unreadable file) yields an empty string.
+  [ -n "$NEW_HASH" ] || return 0
+  OLD_HASH=$(cat "$MARKER" 2>/dev/null)
+  if [ -n "$OLD_HASH" ] && [ "$OLD_HASH" != "$NEW_HASH" ]; then
+    echo "[corezoid-mcp] binary changed since the last run (${OLD_HASH%${OLD_HASH#??????????}}… -> ${NEW_HASH%${NEW_HASH#??????????}}…) — live Claude Code sessions started before this must be RESTARTED (a plain reconnect may not be enough)." >&2
+  fi
+  printf '%s' "$NEW_HASH" > "$MARKER" 2>/dev/null || true
+}
+
 # Prefer a locally built binary (gitignored) — lets developers test source changes instantly.
 if [ -x "$SCRIPT_DIR/convctl" ]; then
+  notice_binary_change "$SCRIPT_DIR/convctl"
   exec "$SCRIPT_DIR/convctl" "$@"
 fi
 
@@ -34,14 +65,6 @@ download() {
   fi
 }
 
-# sha256 <file> — prints hex digest
-sha256() {
-  if command -v sha256sum >/dev/null 2>&1; then
-    sha256sum "$1" | awk '{print $1}'
-  elif command -v shasum >/dev/null 2>&1; then
-    shasum -a 256 "$1" | awk '{print $1}'
-  fi
-}
 
 if [ -n "$VERSION" ] && { [ "$OS" = "darwin" ] || [ "$OS" = "linux" ]; } && \
    { [ "$ARCH" = "amd64" ] || [ "$ARCH" = "arm64" ]; }; then
@@ -73,6 +96,7 @@ if [ -n "$VERSION" ] && { [ "$OS" = "darwin" ] || [ "$OS" = "linux" ]; } && \
   fi
 
   if [ -x "$CACHE_BIN" ]; then
+    notice_binary_change "$CACHE_BIN"
     exec "$CACHE_BIN" "$@"
   fi
 fi

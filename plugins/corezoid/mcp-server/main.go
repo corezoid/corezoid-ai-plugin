@@ -15,6 +15,7 @@ import (
 	"strings"
 	"sync"
 	"syscall"
+	"time"
 
 	"github.com/santhosh-tekuri/jsonschema/v6"
 )
@@ -201,7 +202,10 @@ func installShutdownFlush() {
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
 	go func() {
-		<-sigCh
+		sig := <-sigCh
+		// Sessions attached to this process lose their MCP tools the moment we
+		// exit and do NOT reconnect on their own — say so where forensics look.
+		logger.Info("corezoid-mcp v%s shutting down on %v — sessions connected to this process must be RESTARTED (a plain reconnect may not be enough)", Version, sig)
 		stopAnalytics()
 		os.Exit(0)
 	}()
@@ -222,6 +226,12 @@ func main() {
 		// In CLI mode log to stderr directly so stdout stays clean for the result.
 		logger.writer = os.Stderr
 		logger.IsDebug = os.Getenv("COREZOID_DEBUG") != ""
+		// The OAuth client id was only ever initialized in the MCP-server
+		// modes — CLI logins sent client_id= (empty) and the account service
+		// ran its default flow, answering with a foreign state ("OAuth state
+		// mismatch: possible CSRF"). CLI OAuth was broken since day one; it
+		// went unnoticed because a present token skips OAuth entirely.
+		initOAuthClientID()
 		loadConfig()
 		runCLI(os.Args[1], os.Args[2:])
 		return
@@ -253,6 +263,10 @@ func main() {
 	logger.Debug("Starting corezoid-mcp server, cwd=%s", cwd)
 
 	loadConfig()
+	serverStartedAt = time.Now()
+	apiURLv, tok, ws, acc, stg := authSnapshot()
+	logger.Info("corezoid-mcp v%s started: pid=%d cwd=%s account=%s api=%s workspace=%s stage=%d token=%s",
+		Version, os.Getpid(), cwd, acc, apiURLv, ws, stg, presentOrAbsent(tok))
 	logger.Debug("Loaded configuration: apiURL=%s workspaceID=%s apigwURL=%s hasToken=%v", apiURL, workspaceID, apigwURL, apiToken != "")
 
 	if apiToken == "" {
@@ -278,6 +292,10 @@ func main() {
 	analyticsTransport = "stdio"
 	initAnalytics()
 	runMCPServer()
+	// stdio EOF (the client closed our stdin) is the common clean shutdown —
+	// leave the same trace the signal path leaves, so forensics can tell why
+	// sessions lost their tools.
+	logger.Info("corezoid-mcp pid=%d exiting: stdin closed by the client — sessions connected to this process must be RESTARTED (a plain reconnect may not be enough)", os.Getpid())
 }
 
 var (
@@ -413,7 +431,9 @@ func (l *Logger) Log(level, msg string, args ...interface{}) {
 	if len(args) > 0 {
 		formattedMsg = fmt.Sprintf(msg, args...)
 	}
-	fmt.Fprintf(l.w(), "%s:%s\n", strings.ToUpper(level), formattedMsg)
+	// Timestamps make the log usable for forensics — without them a restart,
+	// a stale token and yesterday's noise are indistinguishable (field pain).
+	fmt.Fprintf(l.w(), "%s %s:%s\n", time.Now().UTC().Format(time.RFC3339), strings.ToUpper(level), formattedMsg)
 }
 
 func (l *Logger) Debug(msg string, args ...interface{}) {
@@ -690,4 +710,26 @@ func sanitizeAPIURL(raw string) (clean string, stripped bool) {
 		logger.Warn("COREZOID_API_URL contained an API path suffix — using base URL %q (set the base URL only)", clean)
 	}
 	return clean, stripped
+}
+
+
+// serverStartedAt feeds the status tool's uptime line.
+var serverStartedAt time.Time
+
+// initOAuthClientID sets the process-wide OAuth client id: the built-in
+// default, overridable via COREZOID_OAUTH_CLIENT_ID. Every entry mode (CLI,
+// stdio MCP, HTTP MCP) must call it before a login can run — CLI mode
+// historically didn't and sent an empty client_id.
+func initOAuthClientID() {
+	oauthClientID = oauthDefaultClientID
+	if v := os.Getenv("COREZOID_OAUTH_CLIENT_ID"); v != "" {
+		oauthClientID = v
+	}
+}
+
+func presentOrAbsent(tok string) string {
+	if tok == "" {
+		return "absent"
+	}
+	return "present"
 }

@@ -15,12 +15,20 @@ description: >
 You are an expert on the Corezoid platform.
 You have access to the Corezoid API via the `corezoid` MCP server.
 
+> **Connection check:** if any corezoid MCP tool returns "No such tool
+> available", the MCP server restarted after this session connected — tell the
+> user to restart the Claude Code session (a plain /mcp reconnect may not be
+> enough) and stop. When in doubt, call the no-auth `status` tool first: it
+> reports version, uptime, config and token expiry, and flags a misconfigured
+> ACCOUNT_URL.
+
 ## MCP Tools Reference
 
 | Tool | Purpose |
 |------|---------|
 | `login` | Authenticate via OAuth2 (opens browser) |
 | `logout` | Remove saved credentials |
+| `status` | Self-diagnosis: version, uptime, config and token state, no auth needed; `probe=true` checks the token live |
 | `pull-folder` | Export entire stage/folder to local directory |
 | `pull-process` | Export a single process to a file |
 | `push-process` | Validate and deploy a `.conv.json` file |

@@ -572,6 +572,20 @@ var toolRegistry = []mcpTool{
 		},
 	},
 	{
+		Name:        "status",
+		Description: "Report the corezoid MCP server's identity and health: version, pid, start time/uptime, working directory, ACCOUNT_URL/API URL (with a warning when ACCOUNT_URL points at the admin UI host), workspace/stage, token presence and expiry, log file path. Works WITHOUT authentication — use it FIRST to diagnose connection/auth problems. Pass probe=true to additionally verify the token against the API with one call. If this tool itself is unavailable (\"No such tool available\"), the MCP server was restarted after this session connected — the session must be restarted.",
+		InputSchema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"probe": map[string]interface{}{
+					"type":        "boolean",
+					"description": "true = also verify the token with one live API call (workspace list). Default false: no network calls.",
+				},
+			},
+			"required": []string{},
+		},
+	},
+	{
 		Name:        "login",
 		Description: "Authenticate with Corezoid via OAuth2 browser flow. An existing token is validated with a probe call first — a stale/revoked token triggers a fresh OAuth login instead of a false \"Setup complete\". Opens a browser window and saves the token so it persists across sessions. Optionally accepts account_url, workspace_id, and stage_id to skip interactive prompts; force=true discards the current token and re-authenticates unconditionally.",
 		InputSchema: map[string]interface{}{

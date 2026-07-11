@@ -20,6 +20,7 @@ type toolHandler func(ctx context.Context, args map[string]interface{}) (result 
 var toolHandlers = map[string]toolHandler{
 	// auth
 	"login":  handleLogin,
+	"status": handleStatus,
 	"logout": handleLogout,
 
 	// process / folder / alias
@@ -106,6 +107,7 @@ var noAuthTools = map[string]struct{}{
 	"login":          {},
 	"logout":         {},
 	"send-feedback":  {},
+	"status":         {},
 }
 
 // tokenOnlyTools need an OAuth token but not a fully configured workspace or

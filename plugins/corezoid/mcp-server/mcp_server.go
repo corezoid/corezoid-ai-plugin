@@ -229,10 +229,7 @@ func elicitValues(message string, schema map[string]interface{}) (content map[st
 
 // runMCPServer starts an MCP server over stdin/stdout using newline-delimited JSON-RPC 2.0.
 func runMCPServer() {
-	oauthClientID = oauthDefaultClientID
-	if v := os.Getenv("COREZOID_OAUTH_CLIENT_ID"); v != "" {
-		oauthClientID = v
-	}
+	initOAuthClientID()
 	serverWriter = bufio.NewWriter(os.Stdout)
 
 	// Auto-load saved credentials if no token is configured via env.

@@ -197,6 +197,7 @@ validation errors, and summarize what each process does.
 
 | Tool                | Description                                        |
 |---------------------|----------------------------------------------------|
+| `status`            | Server identity & health: version, uptime, config, token expiry — works without auth |
 | `login`             | Authenticate via OAuth2 (opens browser)            |
 | `logout`            | Remove saved credentials                           |
 | `list-workspaces`   | List available workspaces and stages               |

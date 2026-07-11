@@ -127,12 +127,7 @@ func runHTTPServer(addr string) error {
 			logger.Info("http: loaded saved credentials")
 		}
 	}
-	if oauthClientID == "" {
-		oauthClientID = oauthDefaultClientID
-	}
-	if v := os.Getenv("COREZOID_OAUTH_CLIENT_ID"); v != "" {
-		oauthClientID = v
-	}
+	initOAuthClientID()
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/mcp", corsWrap(httpMCPEndpoint))
