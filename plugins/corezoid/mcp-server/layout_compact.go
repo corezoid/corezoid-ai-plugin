@@ -213,14 +213,10 @@ func countOverlaps(coords map[string]lpoint, g *layoutGraph) int {
 		if !ok {
 			continue
 		}
-		n := g.byID[id]
-		if isCircle(n) {
-			boxes = append(boxes, rect{p.X - 28, p.Y - 28, p.X + 28, p.Y + 28})
-		} else if isCollapsedNode(n) {
-			boxes = append(boxes, rect{p.X, p.Y, p.X + 48, p.Y + 48})
-		} else {
-			boxes = append(boxes, rect{p.X, p.Y, p.X + 200, p.Y + 150})
-		}
+		// The real box model (incl. 270px timer blocks) — the same one the I2
+		// invariant asserts, so the user-facing metric cannot under-report.
+		x0, y0, x1, y1 := nodeBox(g.byID[id], p.X, p.Y)
+		boxes = append(boxes, rect{x0, y0, x1, y1})
 	}
 	total := 0
 	for i := 0; i < len(boxes); i++ {
