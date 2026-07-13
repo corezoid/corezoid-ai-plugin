@@ -25,6 +25,7 @@ You have access to the Corezoid API via the `corezoid` MCP server.
 | `pull-process` | Export a single process to a file |
 | `push-process` | Validate and deploy a `.conv.json` file |
 | `lint-process` | Validate process structure locally (no API needed) |
+| `layout-process` | Auto-arrange node coordinates into a clean layout (local; only x/y and collapse flags change) |
 | `run-task` | Run a task on an already-deployed process |
 | `create-process` | Create a new empty process (`conv_type: "process"`) in a folder |
 | `create-state-diagram` | Create a new empty state diagram (`conv_type: "state"`) in a folder |

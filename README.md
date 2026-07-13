@@ -17,6 +17,7 @@ The plugin bundles a Go MCP server that exposes Corezoid operations as MCP tools
 | `corezoid-review`              | "review", "audit", "check" a process     | Analysis, dead code, best-practice violations     |
 | `corezoid-project-review`      | "review project", "audit folder"         | Cross-process audit of an entire folder           |
 | `corezoid-stage-scan`          | "scan stage", "check stage before merge", "why does the merge fail" | Offline pre-merge validation of exported stage `.zip`s: non-active/empty processes, broken node links, broken/inactive `conv_id` refs |
+| `corezoid-node-layout`         | "arrange nodes", "lay out", "tidy up the diagram", "fix positions", "remove overlaps" | Auto-arrange node x/y into a clean top-to-bottom flow with error handling railed right and no overlaps (positions only) |
 | `corezoid-dashboard-manager`   | "create dashboard", "add chart", "visualize metrics" | Dashboards, charts, node metrics, real-time monitoring |
 | `corezoid-process-tech-writer` | "document", "write docs", "describe process" | Markdown docs + enriched JSON with node descriptions |
 | `corezoid-retro`               | "retro", "what did we learn", "capture learnings" | End-of-session retrospective: routes learnings to workspace CLAUDE.md, team feedback, settings, or personal memory — with user confirmation |
@@ -210,6 +211,7 @@ validation errors, and summarize what each process does.
 | `pull-folder`       | Export an entire folder/stage to local files       |
 | `pull-process`      | Export a single process to a `.conv.json` file     |
 | `push-process`      | Validate and deploy a `.conv.json` to Corezoid     |
+| `layout-process`    | Auto-arrange node coordinates (waterfall / layered / table-star regions); local, changes only x/y and collapse flags |
 | `lint-process`      | Validate process structure locally (no API call)   |
 | `run-task`          | Send a task to a deployed process                  |
 | `list-node-tasks`   | List tasks currently sitting in a node             |
@@ -283,7 +285,7 @@ Claude Code / Codex
         ├── Auth          login, logout
         ├── Workspace     list-workspaces, list-stages, list-projects,
         │                 create-project, modify-project, delete-project, show-project
-        ├── Processes     pull-process, pull-folder, push-process, lint-process
+        ├── Processes     pull-process, pull-folder, push-process, lint-process, layout-process
         │                 create-process, create-folder, create-alias, create-variable
         │                 show-folder, list-folders, modify-folder, delete-folder, delete-process
         ├── Tasks         run-task, list-node-tasks, list-task-history

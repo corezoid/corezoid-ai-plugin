@@ -137,7 +137,19 @@ Fill in `description` based on the requirements gathered in Step 1 (see Descript
 
 ---
 
-## Step 5: Validate with Lint
+## Step 5: Lay Out the Nodes
+
+You built this process, so its positions are yours to arrange: leave the
+node coordinates at `x: 0, y: 0` while generating the JSON (never hand-place
+them by eye) and call MCP tool **`layout-process`** with
+`process_path: "<PROCESS_PATH>"` once the nodes and edges are final. It
+arranges everything deterministically (no overlaps, business flow top-down,
+errors railed to the right) and reports the strategy and canvas size. See the
+`corezoid-node-layout` skill for details and density options.
+
+---
+
+## Step 6: Validate with Lint
 
 Call MCP tool **`lint-process`** with `process_path: "<PROCESS_PATH>"`.
 
@@ -145,7 +157,7 @@ Fix all reported errors and re-run until the output is clean. Do not proceed wit
 
 ---
 
-## Step 6: Deploy and Test
+## Step 7: Deploy and Test
 
 Call MCP tool **`push-process`** with `process_path: "<PROCESS_PATH>"`.
 

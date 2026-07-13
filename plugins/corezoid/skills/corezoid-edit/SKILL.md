@@ -47,8 +47,7 @@ Apply changes to `PROCESS_PATH`.
 - Every node that can fail must have `err_node_id` — point it **directly at a Final Error node** (`obj_type: 2`) unless the error path needs logic (reply to caller, retry routing). Never create an Escalation node (`obj_type: 3`) that only contains a bare `go` — that is a passthrough anti-pattern flagged by `lint-process`
 - Node IDs must be unique 24-character hex strings: `^[0-9a-f]{24}$`. **Always `pull-process` before editing** and reference only canonical, server-assigned IDs — IDs you invented in a previous push were reassigned by the server and no longer exist. New nodes added now get placeholder IDs that the server will likewise reassign on push. Existing nodes' IDs are preserved. See [Node ID Lifecycle](${CLAUDE_PLUGIN_ROOT}/docs/process/process-development-guide.md#node-id-lifecycle-server-assignment--stability-on-push).
 - Use descriptive node `title` values (e.g., "Call Payment Process", not "RPC")
-- Place new nodes below existing ones, incrementing `y` by 200–250px
-- Position error nodes to the right of their parent (`x + 300`)
+- Leave new nodes at placeholder coordinates `x: 0, y: 0` — `push-process` auto-places them near their graph neighbours (preserve mode: existing nodes keep their positions; error nodes land to the right of their parent). Only when auto-placement is disabled (`COREZOID_AUTOLAYOUT=off`) position nodes manually — error nodes to the right of their parent (`x + 300`). Do NOT re-layout the whole process unless the user asks — see the `corezoid-node-layout` skill's authorship policy
 
 ### Variables for constants
 
