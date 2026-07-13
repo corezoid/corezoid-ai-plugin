@@ -94,6 +94,8 @@ is expected.
   "type": "api",
   "url": "{{env_var[@payment-api-url]}}/charge",
   "method": "POST",
+  "extra_headers": {},
+  "max_threads": 5,
   "err_node_id": "<error_node_id>"
 }
 ```
@@ -104,6 +106,8 @@ is expected.
   "type": "api",
   "url": "{{env_var[@payment-api-url]}}/charge",
   "method": "POST",
+  "extra_headers": {},
+  "max_threads": 5,
   "extra": { "Authorization": "Bearer {{env_var[@payment-api-token]}}" },
   "extra_type": { "Authorization": "string" },
   "err_node_id": "<error_node_id>"

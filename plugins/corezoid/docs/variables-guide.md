@@ -67,6 +67,8 @@ Use the syntax `{{env_var[@variable-name]}}` anywhere a value is expected.
   "type": "api",
   "url": "{{env_var[@payment-api-url]}}/charge",
   "method": "POST",
+  "extra_headers": {},
+  "max_threads": 5,
   "err_node_id": "<error_node_id>"
 }
 ```

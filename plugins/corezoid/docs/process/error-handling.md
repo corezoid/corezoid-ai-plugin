@@ -220,6 +220,8 @@ Example:
 {
   "type": "api",
   "method": "GET",
+  "extra_headers": {},
+  "max_threads": 5,
   "url": "https://api.example.com",
   "extra": {},
   "extra_type": {},
