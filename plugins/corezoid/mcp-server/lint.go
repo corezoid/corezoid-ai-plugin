@@ -20,6 +20,7 @@ type LintResult struct {
 	OldFormatNodes         []OldFormatNode
 	UnrepliedTerminals     []UnrepliedTerminal
 	MissingDefaultGo       []MissingDefaultGo
+	ShortTimers            []ShortTimer
 	TotalNodes             int
 	ReachableCount         int
 	SchemaValid            bool
@@ -113,6 +114,14 @@ type MissingDefaultGo struct {
 	Issue string
 }
 
+// ShortTimer is a time semaphor below the platform minimum: the server rejects
+// the deploy with "Timer value N sec is less than minimum limit 30 sec".
+type ShortTimer struct {
+	ID    string
+	Title string
+	Issue string
+}
+
 // processNode is the typed representation of a Corezoid node used throughout lint checks.
 type processNode struct {
 	id      string
@@ -176,6 +185,7 @@ func lintProcess(filePath string) (*LintResult, error) {
 	result.OldFormatNodes = findOldFormatNodes(typed)
 	result.UnrepliedTerminals = findUnrepliedTerminals(typed)
 	result.MissingDefaultGo = findMissingDefaultGo(typed)
+	result.ShortTimers = findShortTimers(typed)
 
 	schemaErr := ValidateJSONSchema(filePath, debug)
 	if schemaErr != nil {
@@ -537,6 +547,38 @@ func findMissingDefaultGo(nodes []processNode) []MissingDefaultGo {
 				ID:    n.id,
 				Title: title,
 				Issue: fmt.Sprintf("logics end with '%s' instead of a bare go — the server rejects the deploy; add a final go with the default destination", t),
+			})
+		}
+	}
+	return result
+}
+
+// findShortTimers flags numeric time semaphors under 30 seconds — the server
+// minimum. Template values ("{{delay}}") are left alone: they resolve at run
+// time and cannot be checked statically.
+func findShortTimers(nodes []processNode) []ShortTimer {
+	var result []ShortTimer
+	for _, n := range nodes {
+		for _, sem := range n.sems {
+			if t, _ := sem["type"].(string); t != "time" {
+				continue
+			}
+			dim, _ := sem["dimension"].(string)
+			if dim != "" && dim != "sec" {
+				continue
+			}
+			v, isNum := sem["value"].(float64)
+			if !isNum || v >= 30 {
+				continue
+			}
+			title := n.title
+			if title == "" {
+				title = "(untitled)"
+			}
+			result = append(result, ShortTimer{
+				ID:    n.id,
+				Title: title,
+				Issue: fmt.Sprintf("time semaphor %v sec is below the server minimum of 30 sec — the deploy is rejected", v),
 			})
 		}
 	}
@@ -942,6 +984,15 @@ func FormatLintResult(result *LintResult) string {
 		}
 	}
 
+	if len(result.ShortTimers) > 0 {
+		hasIssues = true
+		sb.WriteString(fmt.Sprintf("\n=== TIMERS BELOW SERVER MINIMUM (%d) ===\n", len(result.ShortTimers)))
+		for _, st := range result.ShortTimers {
+			sb.WriteString(fmt.Sprintf("  [%s] %s\n", st.ID, st.Title))
+			sb.WriteString(fmt.Sprintf("  Issue: %s\n", st.Issue))
+		}
+	}
+
 	if !hasIssues {
 		sb.WriteString("\nNo issues found.")
 	} else {
@@ -949,7 +1000,7 @@ func FormatLintResult(result *LintResult) string {
 		if !result.SchemaValid {
 			schemaIssues = 1
 		}
-		total := len(result.NoopConditions) + len(result.UnusedSetParams) + len(result.OrphanedNodes) + len(result.PassthroughEscalations) + len(result.LiteralReplyValues) + len(result.SharedErrorClusters) + len(result.OldFormatNodes) + len(result.UnrepliedTerminals) + len(result.MissingDefaultGo) + schemaIssues
+		total := len(result.NoopConditions) + len(result.UnusedSetParams) + len(result.OrphanedNodes) + len(result.PassthroughEscalations) + len(result.LiteralReplyValues) + len(result.SharedErrorClusters) + len(result.OldFormatNodes) + len(result.UnrepliedTerminals) + len(result.MissingDefaultGo) + len(result.ShortTimers) + schemaIssues
 		sb.WriteString(fmt.Sprintf("\nTotal issues: %d\n", total))
 	}
 

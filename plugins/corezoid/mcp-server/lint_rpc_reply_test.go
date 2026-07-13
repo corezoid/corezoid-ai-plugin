@@ -94,3 +94,25 @@ func TestMissingDefaultGo(t *testing.T) {
 		t.Fatalf("trailing go must be clean, got %+v", got)
 	}
 }
+
+// Numeric time semaphors under the 30-second server minimum are rejected at
+// deploy; template values are left for runtime.
+func TestShortTimers(t *testing.T) {
+	mk := func(v interface{}) []processNode {
+		return []processNode{
+			lintNode(nStart, "Start", 1, []map[string]interface{}{lgGo(nA)}),
+			lintNode(nA, "pause", 0, []map[string]interface{}{lgGo(nFin)},
+				map[string]interface{}{"type": "time", "value": v, "dimension": "sec", "to_node_id": nFin}),
+			lintNode(nFin, "done", 2, nil),
+		}
+	}
+	if got := findShortTimers(mk(float64(5))); len(got) != 1 || got[0].ID != nA {
+		t.Fatalf("expected 5s timer flagged, got %+v", got)
+	}
+	if got := findShortTimers(mk(float64(30))); len(got) != 0 {
+		t.Fatalf("30s timer is legal, got %+v", got)
+	}
+	if got := findShortTimers(mk("{{delay}}")); len(got) != 0 {
+		t.Fatalf("template timer must be left alone, got %+v", got)
+	}
+}
