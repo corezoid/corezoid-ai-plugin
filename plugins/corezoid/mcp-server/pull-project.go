@@ -155,12 +155,13 @@ func downloadStageRecursively(e *Executor, folderID int, filePath string) error 
 		return err
 	}
 	// If folderID matches the configured stage root, we know it's a stage —
-	// no need to probe. Otherwise try in order: stage → folder → project.
+	// no need to probe. Otherwise try folder first (common case for sub-folders),
+	// then stage and project as fallbacks.
 	var objTypes []string
 	if e.StageID != 0 && folderID == e.StageID {
 		objTypes = []string{"stage"}
 	} else {
-		objTypes = []string{"stage", "folder", "project"}
+		objTypes = []string{"folder", "stage", "project"}
 	}
 	var data []byte
 	var err error

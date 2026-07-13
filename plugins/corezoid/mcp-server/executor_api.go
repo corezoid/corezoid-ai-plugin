@@ -175,7 +175,13 @@ func doWithRetry(ctx context.Context, client *http.Client, method, baseURL, path
 			req.Header.Set("Authorization", fmt.Sprintf("Simulator %s", token))
 		}
 		if debug && attempt == 1 {
-			logger.Debug("Request URL: %s", reqURL)
+			// In API key mode the URL embeds /{login}/{ts}/{sig} — mask the suffix
+			// so the login ID is not exposed in logs (symmetry with Simulator masking).
+			logURL := reqURL
+			if token == "" {
+				logURL = fmt.Sprintf("%s/api/2/%s/***/***", baseURL, path)
+			}
+			logger.Debug("Request URL: %s", logURL)
 			if token != "" {
 				safeHeaders := req.Header.Clone()
 				safeHeaders.Set("Authorization", "Simulator ***")
