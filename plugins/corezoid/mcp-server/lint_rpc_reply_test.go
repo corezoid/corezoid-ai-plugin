@@ -75,3 +75,22 @@ func TestUnrepliedTerminals_RetryLoopHandled(t *testing.T) {
 		t.Fatalf("expected only the bare success final flagged, got %+v", got)
 	}
 }
+
+// Non-final nodes must end their logics with a bare go — the server rejects
+// the deploy otherwise ("must always have a logic with type go at the end").
+func TestMissingDefaultGo(t *testing.T) {
+	nodes := []processNode{
+		lintNode(nStart, "Start", 1, []map[string]interface{}{lgGo(nA)}),
+		lintNode(nA, "queue: park", 0, []map[string]interface{}{
+			{"type": "api_queue", "capacity": float64(100)}}),
+		lintNode(nFin, "done", 2, nil),
+	}
+	got := findMissingDefaultGo(nodes)
+	if len(got) != 1 || got[0].ID != nA {
+		t.Fatalf("expected queue node flagged, got %+v", got)
+	}
+	nodes[1].logics = append(nodes[1].logics, lgGo(nFin))
+	if got := findMissingDefaultGo(nodes); len(got) != 0 {
+		t.Fatalf("trailing go must be clean, got %+v", got)
+	}
+}

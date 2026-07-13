@@ -19,6 +19,7 @@ type LintResult struct {
 	SharedErrorClusters    []SharedErrorCluster
 	OldFormatNodes         []OldFormatNode
 	UnrepliedTerminals     []UnrepliedTerminal
+	MissingDefaultGo       []MissingDefaultGo
 	TotalNodes             int
 	ReachableCount         int
 	SchemaValid            bool
@@ -103,6 +104,15 @@ type UnrepliedTerminal struct {
 	Issue string
 }
 
+// MissingDefaultGo is a non-final node whose logics do not end with a bare
+// `go`. The server rejects the deploy: "Each node in the condition.logics
+// array must always have a logic with type go at the end".
+type MissingDefaultGo struct {
+	ID    string
+	Title string
+	Issue string
+}
+
 // processNode is the typed representation of a Corezoid node used throughout lint checks.
 type processNode struct {
 	id      string
@@ -165,6 +175,7 @@ func lintProcess(filePath string) (*LintResult, error) {
 	result.SharedErrorClusters = findSharedErrorClusters(typed)
 	result.OldFormatNodes = findOldFormatNodes(typed)
 	result.UnrepliedTerminals = findUnrepliedTerminals(typed)
+	result.MissingDefaultGo = findMissingDefaultGo(typed)
 
 	schemaErr := ValidateJSONSchema(filePath, debug)
 	if schemaErr != nil {
@@ -499,6 +510,33 @@ func findOldFormatNodes(nodes []processNode) []OldFormatNode {
 				ID:    n.id,
 				Title: title,
 				Issue: "node mixes an action logic with go_if_const conditions — old format; the UI converter will split it into an action node plus a separate condition node. Split it yourself: action + go into a new condition node",
+			})
+		}
+	}
+	return result
+}
+
+// findMissingDefaultGo flags non-final nodes whose logics list does not end
+// with a bare `go`. The platform requires a default route on every routing
+// node and rejects the whole deploy otherwise — lint turns that push error
+// into a local finding. Final nodes (obj_type:2) carry no logics and are
+// exempt, as are nodes with no logics at all.
+func findMissingDefaultGo(nodes []processNode) []MissingDefaultGo {
+	var result []MissingDefaultGo
+	for _, n := range nodes {
+		if n.objType == 2 || len(n.logics) == 0 {
+			continue
+		}
+		last := n.logics[len(n.logics)-1]
+		if t, _ := last["type"].(string); t != "go" {
+			title := n.title
+			if title == "" {
+				title = "(untitled)"
+			}
+			result = append(result, MissingDefaultGo{
+				ID:    n.id,
+				Title: title,
+				Issue: fmt.Sprintf("logics end with '%s' instead of a bare go — the server rejects the deploy; add a final go with the default destination", t),
 			})
 		}
 	}
@@ -895,6 +933,15 @@ func FormatLintResult(result *LintResult) string {
 		}
 	}
 
+	if len(result.MissingDefaultGo) > 0 {
+		hasIssues = true
+		sb.WriteString(fmt.Sprintf("\n=== NODES WITHOUT DEFAULT GO (%d) — server rejects the deploy ===\n", len(result.MissingDefaultGo)))
+		for _, mg := range result.MissingDefaultGo {
+			sb.WriteString(fmt.Sprintf("  [%s] %s\n", mg.ID, mg.Title))
+			sb.WriteString(fmt.Sprintf("  Issue: %s\n", mg.Issue))
+		}
+	}
+
 	if !hasIssues {
 		sb.WriteString("\nNo issues found.")
 	} else {
@@ -902,7 +949,7 @@ func FormatLintResult(result *LintResult) string {
 		if !result.SchemaValid {
 			schemaIssues = 1
 		}
-		total := len(result.NoopConditions) + len(result.UnusedSetParams) + len(result.OrphanedNodes) + len(result.PassthroughEscalations) + len(result.LiteralReplyValues) + len(result.SharedErrorClusters) + len(result.OldFormatNodes) + len(result.UnrepliedTerminals) + schemaIssues
+		total := len(result.NoopConditions) + len(result.UnusedSetParams) + len(result.OrphanedNodes) + len(result.PassthroughEscalations) + len(result.LiteralReplyValues) + len(result.SharedErrorClusters) + len(result.OldFormatNodes) + len(result.UnrepliedTerminals) + len(result.MissingDefaultGo) + schemaIssues
 		sb.WriteString(fmt.Sprintf("\nTotal issues: %d\n", total))
 	}
 
