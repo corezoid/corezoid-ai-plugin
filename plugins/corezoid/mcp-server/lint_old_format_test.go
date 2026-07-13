@@ -108,3 +108,32 @@ func TestOldFormat_BusinessConditionObjType0Clean(t *testing.T) {
 		t.Fatalf("business condition with obj_type:0 is fine, got %+v", got)
 	}
 }
+
+// A count-semaphor escalation cluster must count as reachable (not orphaned),
+// and its esc_node_id target obeys the same obj_type:3 rule as err_node_id.
+func TestEscNodeId_ReachableAndTypeChecked(t *testing.T) {
+	semCount := map[string]interface{}{"type": "count", "value": float64(500), "esc_node_id": nReply}
+	nodes := []processNode{
+		lintNode(nStart, "Start", 1, []map[string]interface{}{lgGo(nA)}),
+		lintNode(nA, "api call", 0, []map[string]interface{}{
+			{"type": "api", "err_node_id": nErr1}, lgGo(nFin)}, semCount),
+		lintNode(nReply, "Reply: throttled", 3, []map[string]interface{}{
+			{"type": "api_rpc_reply", "res_data": map[string]interface{}{"result": "error"}}, lgGo(nErr2)}),
+		lintNode(nErr2, "Throttle Error", 2, nil),
+		lintNode(nErr1, "Call Error", 2, nil),
+		lintNode(nFin, "done", 2, nil),
+	}
+	orphans, _ := findOrphanedNodes(nodes)
+	if len(orphans) != 0 {
+		t.Fatalf("esc cluster must be reachable, got orphans %+v", orphans)
+	}
+	if got := findOldFormatNodes(nodes); len(got) != 0 {
+		t.Fatalf("obj_type:3 esc target is correct, got %+v", got)
+	}
+	// downgrade the esc target to obj_type:0 — must be flagged
+	nodes[2] = lintNode(nReply, "Reply: throttled", 0, nodes[2].logics)
+	got := findOldFormatNodes(nodes)
+	if len(got) != 1 || got[0].ID != nReply {
+		t.Fatalf("expected esc target flagged, got %+v", got)
+	}
+}

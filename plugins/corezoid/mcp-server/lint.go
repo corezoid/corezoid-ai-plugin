@@ -473,6 +473,23 @@ func findOldFormatNodes(nodes []processNode) []OldFormatNode {
 				}
 			}
 		}
+		// count-semaphor escalations (esc_node_id) are escalation targets too
+		for _, sem := range n.sems {
+			if escID, _ := sem["esc_node_id"].(string); escID != "" && !flaggedErrTargets[escID] {
+				if target, ok := nodeMap[escID]; ok && target.objType == 0 {
+					flaggedErrTargets[escID] = true
+					title := target.title
+					if title == "" {
+						title = "(untitled)"
+					}
+					result = append(result, OldFormatNode{
+						ID:    target.id,
+						Title: title,
+						Issue: fmt.Sprintf("esc_node_id target has obj_type:0 — escalation targets must be obj_type:3 (referenced from '%s' %s); the UI will force-convert the process", n.title, n.id),
+					})
+				}
+			}
+		}
 		if hasAction && hasCondition {
 			title := n.title
 			if title == "" {
@@ -552,6 +569,9 @@ func findUnrepliedTerminals(nodes []processNode) []UnrepliedTerminal {
 		for _, sem := range n.sems {
 			if to, _ := sem["to_node_id"].(string); to != "" {
 				stack = append(stack, state{to, replied})
+			}
+			if esc, _ := sem["esc_node_id"].(string); esc != "" {
+				stack = append(stack, state{esc, replied})
 			}
 		}
 	}
@@ -729,6 +749,10 @@ func findOrphanedNodes(nodes []processNode) ([]OrphanedNode, int) {
 		for _, sem := range e.sems {
 			if tid, ok := sem["to_node_id"].(string); ok && tid != "" {
 				adj[e.id] = append(adj[e.id], tid)
+			}
+			// count semaphors escalate via esc_node_id instead of to_node_id
+			if eid, ok := sem["esc_node_id"].(string); ok && eid != "" {
+				adj[e.id] = append(adj[e.id], eid)
 			}
 		}
 	}
