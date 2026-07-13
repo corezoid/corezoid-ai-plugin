@@ -17,6 +17,7 @@ type LintResult struct {
 	PassthroughEscalations []PassthroughEscalation
 	LiteralReplyValues     []LiteralReplyValue
 	SharedErrorClusters    []SharedErrorCluster
+	OldFormatNodes         []OldFormatNode
 	TotalNodes             int
 	ReachableCount         int
 	SchemaValid            bool
@@ -79,6 +80,18 @@ type LiteralReplyValue struct {
 	Issue  string
 }
 
+// OldFormatNode is a node the platform's "Convert process to new format" dialog
+// would rewrite on open. Two shapes trigger it:
+//  1. a node mixing an action logic (set_param, api_code, …) with go_if_const
+//     conditions — the converter splits it into two nodes;
+//  2. an err_node_id target with obj_type:0 — escalation targets must be
+//     obj_type:3 (business-flow conditions reached via go stay obj_type:0).
+type OldFormatNode struct {
+	ID    string
+	Title string
+	Issue string
+}
+
 // processNode is the typed representation of a Corezoid node used throughout lint checks.
 type processNode struct {
 	id      string
@@ -139,6 +152,7 @@ func lintProcess(filePath string) (*LintResult, error) {
 	result.PassthroughEscalations = findPassthroughEscalations(typed)
 	result.LiteralReplyValues = findLiteralReplyValues(typed)
 	result.SharedErrorClusters = findSharedErrorClusters(typed)
+	result.OldFormatNodes = findOldFormatNodes(typed)
 
 	schemaErr := ValidateJSONSchema(filePath, debug)
 	if schemaErr != nil {
@@ -392,6 +406,76 @@ func findSharedErrorClusters(nodes []processNode) []SharedErrorCluster {
 	return out
 }
 
+// lintActionTypes are logic types that DO something to the task (as opposed to
+// routing it): mixing any of them with go_if_const in one node is old format.
+var lintActionTypes = map[string]bool{
+	"api_rpc_reply": true,
+	"api_rpc":       true,
+	"api_copy":      true,
+	"api":           true,
+	"api_code":      true,
+	"set_param":     true,
+	"api_sum":       true,
+	"db_call":       true,
+	"api_git":       true,
+	"api_queue":     true,
+	"api_get_task":  true,
+}
+
+// findOldFormatNodes detects the two node shapes that make the Corezoid UI show
+// "Convert process to new format" on open (and silently rewrite the scheme):
+//  1. action logic + go_if_const in one node — the converter splits it in two;
+//  2. err_node_id pointing at an obj_type:0 node — escalation targets must be
+//     obj_type:3. Nodes reached only via go/go_if_const may stay obj_type:0.
+func findOldFormatNodes(nodes []processNode) []OldFormatNode {
+	nodeMap := make(map[string]processNode, len(nodes))
+	for _, n := range nodes {
+		nodeMap[n.id] = n
+	}
+
+	var result []OldFormatNode
+	flaggedErrTargets := make(map[string]bool)
+	for _, n := range nodes {
+		hasAction := false
+		hasCondition := false
+		for _, lg := range n.logics {
+			lgType, _ := lg["type"].(string)
+			if lintActionTypes[lgType] {
+				hasAction = true
+			}
+			if lgType == "go_if_const" {
+				hasCondition = true
+			}
+			if errID, _ := lg["err_node_id"].(string); errID != "" && !flaggedErrTargets[errID] {
+				if target, ok := nodeMap[errID]; ok && target.objType == 0 {
+					flaggedErrTargets[errID] = true
+					title := target.title
+					if title == "" {
+						title = "(untitled)"
+					}
+					result = append(result, OldFormatNode{
+						ID:    target.id,
+						Title: title,
+						Issue: fmt.Sprintf("err_node_id target has obj_type:0 — escalation targets must be obj_type:3 (referenced from '%s' %s); the UI will force-convert the process", n.title, n.id),
+					})
+				}
+			}
+		}
+		if hasAction && hasCondition {
+			title := n.title
+			if title == "" {
+				title = "(untitled)"
+			}
+			result = append(result, OldFormatNode{
+				ID:    n.id,
+				Title: title,
+				Issue: "node mixes an action logic with go_if_const conditions — old format; the UI converter will split it into an action node plus a separate condition node. Split it yourself: action + go into a new condition node",
+			})
+		}
+	}
+	return result
+}
+
 // findPassthroughEscalations detects escalation nodes (obj_type:3) that contain only
 // a bare `go` logic and no action logic (api_rpc_reply, set_param, etc.).
 // Such nodes are pure pass-throughs: the err_node_id should point directly to the
@@ -402,19 +486,7 @@ func findPassthroughEscalations(nodes []processNode) []PassthroughEscalation {
 		nodeMap[n.id] = n
 	}
 
-	actionTypes := map[string]bool{
-		"api_rpc_reply": true,
-		"api_rpc":       true,
-		"api_copy":      true,
-		"api":           true,
-		"api_code":      true,
-		"set_param":     true,
-		"api_sum":       true,
-		"db_call":       true,
-		"api_git":       true,
-		"api_queue":     true,
-		"api_get_task":  true,
-	}
+	actionTypes := lintActionTypes
 
 	var result []PassthroughEscalation
 	for _, n := range nodes {
@@ -422,6 +494,7 @@ func findPassthroughEscalations(nodes []processNode) []PassthroughEscalation {
 			continue
 		}
 		hasAction := false
+		hasCondition := false
 		goTarget := ""
 		for _, lg := range n.logics {
 			lgType, _ := lg["type"].(string)
@@ -429,9 +502,18 @@ func findPassthroughEscalations(nodes []processNode) []PassthroughEscalation {
 				hasAction = true
 				break
 			}
+			if lgType == "go_if_const" {
+				hasCondition = true
+			}
 			if lgType == "go" {
 				goTarget, _ = lg["to_node_id"].(string)
 			}
+		}
+		// Condition escalations (retry IF: go_if_const branches + default go) and
+		// timer escalations (Delay semaphors) route, they don't pass through —
+		// the platform's new-format converter itself produces them as obj_type:3.
+		if hasCondition || len(n.sems) > 0 {
+			continue
 		}
 		if hasAction || goTarget == "" {
 			continue
@@ -673,6 +755,15 @@ func FormatLintResult(result *LintResult) string {
 		}
 	}
 
+	if len(result.OldFormatNodes) > 0 {
+		hasIssues = true
+		sb.WriteString(fmt.Sprintf("\n=== OLD FORMAT NODES (%d) — UI will show \"Convert process to new format\" ===\n", len(result.OldFormatNodes)))
+		for _, of := range result.OldFormatNodes {
+			sb.WriteString(fmt.Sprintf("  [%s] %s\n", of.ID, of.Title))
+			sb.WriteString(fmt.Sprintf("  Issue: %s\n", of.Issue))
+		}
+	}
+
 	if !hasIssues {
 		sb.WriteString("\nNo issues found.")
 	} else {
@@ -680,7 +771,7 @@ func FormatLintResult(result *LintResult) string {
 		if !result.SchemaValid {
 			schemaIssues = 1
 		}
-		total := len(result.NoopConditions) + len(result.UnusedSetParams) + len(result.OrphanedNodes) + len(result.PassthroughEscalations) + len(result.LiteralReplyValues) + len(result.SharedErrorClusters) + schemaIssues
+		total := len(result.NoopConditions) + len(result.UnusedSetParams) + len(result.OrphanedNodes) + len(result.PassthroughEscalations) + len(result.LiteralReplyValues) + len(result.SharedErrorClusters) + len(result.OldFormatNodes) + schemaIssues
 		sb.WriteString(fmt.Sprintf("\nTotal issues: %d\n", total))
 	}
 

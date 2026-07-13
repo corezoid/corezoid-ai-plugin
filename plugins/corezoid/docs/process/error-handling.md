@@ -363,6 +363,17 @@ the Reply node AND the named Error final all carry `modeForm: "collapse"` —
 hand-tuned production layouts collapse the full cluster. This applies to the
 error-path Condition only, not to business-logic Conditions.
 
+Two "new format" rules the platform enforces on every cluster (violating either
+still deploys, but the UI shows *"Convert process to new format"* on open and
+rewrites the scheme; `lint-process` flags both as OLD FORMAT NODES):
+
+1. **Every `err_node_id` target is `obj_type: 3`.** The Reply node AND the
+   retry/fatal Condition the error escalates into are escalation nodes, not
+   `obj_type: 0`. Business-flow Conditions reached via `go` stay `obj_type: 0`.
+2. **Never mix an action logic with `go_if_const` in one node.** A step that
+   sets parameters and then branches is TWO nodes: the `set_param` node with a
+   `go` into a separate Condition node. The converter splits such nodes itself.
+
 Placement of the standard retry shape (distilled from hand-tuned layouts, and
 what `layout-process` produces): the Delay sits level with its owner's row to
 the right; its Condition hangs directly below the Delay; the Reply → Error
@@ -405,7 +416,7 @@ Its dedicated **Reply** node (collapsed, pinned to the right of the failing node
 ```json
 {
   "id": "code_reply_error_node_id",
-  "obj_type": 0,
+  "obj_type": 3,
   "condition": {
     "logics": [
       {

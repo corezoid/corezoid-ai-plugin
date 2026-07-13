@@ -58,7 +58,7 @@ Every process follows this base structure:
 | 2 | Code Node _(optional)_ | 0 | Prepare / transform input data |
 | 3 | **API Call** _or_ **Call a Process** | 0 | Core action (one or more) |
 | 4 | Reply to Process (Success) | 0 | Return result to caller |
-| 5 | Reply to Process (Error) | 0 | Return error to caller — **one dedicated node per failure point** |
+| 5 | Reply to Process (Error) | 3 | Return error to caller — **one dedicated node per failure point**; `err_node_id` targets are escalations (`obj_type: 3`) |
 | 6 | Error | 2 | Terminal error node — **one dedicated, descriptively-named node per failure point** |
 | 7 | Final | 2 | Terminal success node |
 
@@ -73,7 +73,9 @@ Every process follows this base structure:
 | Code Node | 0 | `api_code` |
 | Call a Process | 0 | `api_rpc` |
 | API Call | 0 | `api` |
-| Reply to Process | 0 | `api_rpc_reply` |
+| Condition (business flow) | 0 | `go_if_const` |
+| Reply to Process (success, via `go`) | 0 | `api_rpc_reply` |
+| Any `err_node_id` target (error Reply, retry Condition/Delay) | 3 | _(escalation)_ |
 | End / Error | 2 | _(no logics)_ |
 
 For complete JSON schemas see `${CLAUDE_PLUGIN_ROOT}/docs/node-structures.md`.
@@ -113,13 +115,15 @@ Fill in `description` based on the requirements gathered in Step 1 (see Descript
 - Node IDs must be unique 24-character hex strings: `^[0-9a-f]{24}$`. These are **temporary placeholders** for new nodes — on `push-process` Corezoid reassigns its own canonical IDs (and rewires references within the push). Run `pull-process` after pushing to get the canonical IDs before any further edits. See [Node ID Lifecycle](${CLAUDE_PLUGIN_ROOT}/docs/process/process-development-guide.md#node-id-lifecycle-server-assignment--stability-on-push).
 - Connect nodes only through the `go` field
 - **Dedicated error cluster per error-prone node.** Every node that can fail (`set_param`, `api`, `api_rpc`, `api_code`, `api_copy`, `db_call`, `git_call`, `api_sum`) gets its **own** error path — never funnel several failing nodes into one shared Reply/Error node. Each cluster is:
-  1. A **Reply to Process** node (`api_rpc_reply`) that returns the error to the caller — set to **collapsed**: `"extra": "{\"modeForm\":\"collapse\",\"icon\":\"\"}"`.
+  1. A **Reply to Process** node (`api_rpc_reply`, `obj_type: 3` — it is an escalation, being an `err_node_id` target) that returns the error to the caller — set to **collapsed**: `"extra": "{\"modeForm\":\"collapse\",\"icon\":\"\"}"`.
   2. → an **Error** end node (`obj_type: 2`, **collapsed** like the rest of the cluster: `"extra": "{\"modeForm\":\"collapse\",\"icon\":\"error\"}"`) **named after the specific failure** so the error is obvious on hover/selection (e.g. `Charge Payment Error`, not generic `Error`).
   - Wire `err_node_id` of the failing node → its Reply node; the Reply node's `go` → its Error node.
   - Separate Error nodes per failure point (instead of one shared terminal) make the process far more readable.
   - For fire-and-forget processes that do not reply to a caller, skip the Reply node and wire `err_node_id` directly to the dedicated named Error node.
   - A single node's error MAY fan through its own Condition (several `go_if_const` branches) into one Error terminal — that cluster still belongs to that one node. A NEIGHBOUR's error must never join it (direct `err_node_id` or a converging tail) — `lint-process` flags this as a shared error cluster.
   - When the error path routes a retry (Condition → Delay → back to the failing node), set the error-path **Condition** and the **Delay** to collapsed (`"extra": "{\"modeForm\":\"collapse\",\"icon\":\"\"}"`), same as the Reply node. Business-logic Conditions stay expanded.
+  - **Every `err_node_id` target is `obj_type: 3`** — the error Reply AND the retry/fatal Condition alike. An `obj_type: 0` err target is the legacy old format: the UI shows "Convert process to new format" and rewrites it. Business-flow Conditions reached via `go` stay `obj_type: 0`.
+  - **Never mix an action logic with `go_if_const` in one node** (e.g. `set_param` + a conditional branch). That is old format too — the UI converter splits it. Author it as two nodes: the action node's `go` → a separate Condition node. `lint-process` flags both old-format shapes.
   - Never create an Escalation node (`obj_type: 3`) that only contains a bare `go` — that is a passthrough anti-pattern flagged by `lint-process`.
 - All constants (URLs, tokens, IDs) must be Corezoid variables — never hardcoded:
   1. Check for existing variables: read `_ENV_VARS_.json` (from `pull-folder`) or `.processes/variables.json` (from this session)

@@ -85,8 +85,8 @@ Workspace
 | API Call | 0 | `api` | External HTTP request |
 | Call a Process | 0 | `api_rpc` | Invoke another process |
 | Set Parameters | 0 | `set_param` | Variable assignment |
-| Condition | 0 | `go_if_const` | Branching logic |
-| Reply to Process | 0 | `api_rpc_reply` | Return result to caller |
+| Condition | 0 | `go_if_const` | Branching logic (business flow; `3` when it is an `err_node_id` target) |
+| Reply to Process | 0 | `api_rpc_reply` | Return result to caller (`3` when it is an `err_node_id` target) |
 | End / Error | 2 | _(none)_ | Terminal node |
 
 ## Key Validation Rules
