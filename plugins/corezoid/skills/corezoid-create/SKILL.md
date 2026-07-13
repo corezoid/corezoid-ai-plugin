@@ -125,6 +125,7 @@ Fill in `description` based on the requirements gathered in Step 1 (see Descript
   - **Every `err_node_id` target is `obj_type: 3`** — the error Reply AND the retry/fatal Condition alike. An `obj_type: 0` err target is the legacy old format: the UI shows "Convert process to new format" and rewrites it. Business-flow Conditions reached via `go` stay `obj_type: 0`.
   - **Never mix an action logic with `go_if_const` in one node** (e.g. `set_param` + a conditional branch). That is old format too — the UI converter splits it. Author it as two nodes: the action node's `go` → a separate Condition node. `lint-process` flags both old-format shapes.
   - Never create an Escalation node (`obj_type: 3`) that only contains a bare `go` — that is a passthrough anti-pattern flagged by `lint-process`.
+- **A process invoked via Call a Process (`api_rpc`) must execute `api_rpc_reply` on EVERY path — success included.** The caller's task waits in the Call node until the callee replies; a path that reaches a final without a Reply hangs the caller until its timeout semaphor. Put a collapsed success Reply right before the success final. `lint-process` flags finals reachable without a Reply in any process that replies elsewhere.
 - All constants (URLs, tokens, IDs) must be Corezoid variables — never hardcoded:
   1. Check for existing variables: read `_ENV_VARS_.json` (from `pull-folder`) or `.processes/variables.json` (from this session)
   2. Create a new variable if needed: call MCP tool **`create-variable`** with `name`, `description`, `value`

@@ -6,6 +6,13 @@
 - Functions like a remote procedure call (RPC).
 - Enables modular process design with reusable components.
 
+> **The called process MUST reply on every path.** The caller's task waits inside the
+> Call node until the callee executes `api_rpc_reply`; if the callee reaches a final
+> node without replying — including its success path — the caller hangs until its
+> timeout semaphor. Design every RPC-called process so each terminal path (success and
+> error) passes through a Reply to Process node; `lint-process` flags finals reachable
+> without a Reply.
+
 ## Parameters
 
 ### Required

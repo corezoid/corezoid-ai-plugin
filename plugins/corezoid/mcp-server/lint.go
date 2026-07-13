@@ -18,6 +18,7 @@ type LintResult struct {
 	LiteralReplyValues     []LiteralReplyValue
 	SharedErrorClusters    []SharedErrorCluster
 	OldFormatNodes         []OldFormatNode
+	UnrepliedTerminals     []UnrepliedTerminal
 	TotalNodes             int
 	ReachableCount         int
 	SchemaValid            bool
@@ -92,6 +93,16 @@ type OldFormatNode struct {
 	Issue string
 }
 
+// UnrepliedTerminal is a final node (obj_type:2) reachable from Start without
+// passing any api_rpc_reply — in a process that DOES reply elsewhere. When such
+// a process is invoked via Call a Process (api_rpc), the caller's task hangs in
+// the call node until its timeout semaphor on every path leading here.
+type UnrepliedTerminal struct {
+	ID    string
+	Title string
+	Issue string
+}
+
 // processNode is the typed representation of a Corezoid node used throughout lint checks.
 type processNode struct {
 	id      string
@@ -153,6 +164,7 @@ func lintProcess(filePath string) (*LintResult, error) {
 	result.LiteralReplyValues = findLiteralReplyValues(typed)
 	result.SharedErrorClusters = findSharedErrorClusters(typed)
 	result.OldFormatNodes = findOldFormatNodes(typed)
+	result.UnrepliedTerminals = findUnrepliedTerminals(typed)
 
 	schemaErr := ValidateJSONSchema(filePath, debug)
 	if schemaErr != nil {
@@ -476,6 +488,92 @@ func findOldFormatNodes(nodes []processNode) []OldFormatNode {
 	return result
 }
 
+// findUnrepliedTerminals detects final nodes reachable from Start without
+// crossing any api_rpc_reply, in processes that reply somewhere else. A process
+// that replies on its error paths but ends its success path in a bare final is
+// inconsistent by construction: an RPC caller learns about every failure but
+// hangs until timeout on success. Fire-and-forget processes (no api_rpc_reply
+// anywhere) are exempt — they are not RPC-style.
+func findUnrepliedTerminals(nodes []processNode) []UnrepliedTerminal {
+	nodeMap := make(map[string]processNode, len(nodes))
+	hasReply := false
+	replies := make(map[string]bool)
+	for _, n := range nodes {
+		nodeMap[n.id] = n
+		for _, lg := range n.logics {
+			if t, _ := lg["type"].(string); t == "api_rpc_reply" {
+				hasReply = true
+				replies[n.id] = true
+			}
+		}
+	}
+	if !hasReply {
+		return nil
+	}
+
+	type state struct {
+		id      string
+		replied bool
+	}
+	var stack []state
+	for _, n := range nodes {
+		if n.objType == 1 {
+			stack = append(stack, state{n.id, false})
+		}
+	}
+	seen := make(map[state]bool)
+	unreplied := make(map[string]bool)
+	for len(stack) > 0 {
+		s := stack[len(stack)-1]
+		stack = stack[:len(stack)-1]
+		if seen[s] {
+			continue
+		}
+		seen[s] = true
+		n, ok := nodeMap[s.id]
+		if !ok {
+			continue
+		}
+		replied := s.replied || replies[s.id]
+		if n.objType == 2 {
+			if !replied {
+				unreplied[s.id] = true
+			}
+			continue
+		}
+		for _, lg := range n.logics {
+			if to, _ := lg["to_node_id"].(string); to != "" {
+				stack = append(stack, state{to, replied})
+			}
+			if errID, _ := lg["err_node_id"].(string); errID != "" {
+				stack = append(stack, state{errID, replied})
+			}
+		}
+		for _, sem := range n.sems {
+			if to, _ := sem["to_node_id"].(string); to != "" {
+				stack = append(stack, state{to, replied})
+			}
+		}
+	}
+
+	var result []UnrepliedTerminal
+	for _, n := range nodes { // document order for determinism
+		if !unreplied[n.id] {
+			continue
+		}
+		title := n.title
+		if title == "" {
+			title = "(untitled)"
+		}
+		result = append(result, UnrepliedTerminal{
+			ID:    n.id,
+			Title: title,
+			Issue: fmt.Sprintf("final '%s' is reachable from Start without any api_rpc_reply, while the process replies on other paths — an RPC caller (api_rpc) hangs until timeout on this path. Add a Reply node before the final", title),
+		})
+	}
+	return result
+}
+
 // findPassthroughEscalations detects escalation nodes (obj_type:3) that contain only
 // a bare `go` logic and no action logic (api_rpc_reply, set_param, etc.).
 // Such nodes are pure pass-throughs: the err_node_id should point directly to the
@@ -764,6 +862,15 @@ func FormatLintResult(result *LintResult) string {
 		}
 	}
 
+	if len(result.UnrepliedTerminals) > 0 {
+		hasIssues = true
+		sb.WriteString(fmt.Sprintf("\n=== RPC PATHS WITHOUT REPLY (%d) ===\n", len(result.UnrepliedTerminals)))
+		for _, ut := range result.UnrepliedTerminals {
+			sb.WriteString(fmt.Sprintf("  [%s] %s\n", ut.ID, ut.Title))
+			sb.WriteString(fmt.Sprintf("  Issue: %s\n", ut.Issue))
+		}
+	}
+
 	if !hasIssues {
 		sb.WriteString("\nNo issues found.")
 	} else {
@@ -771,7 +878,7 @@ func FormatLintResult(result *LintResult) string {
 		if !result.SchemaValid {
 			schemaIssues = 1
 		}
-		total := len(result.NoopConditions) + len(result.UnusedSetParams) + len(result.OrphanedNodes) + len(result.PassthroughEscalations) + len(result.LiteralReplyValues) + len(result.SharedErrorClusters) + len(result.OldFormatNodes) + schemaIssues
+		total := len(result.NoopConditions) + len(result.UnusedSetParams) + len(result.OrphanedNodes) + len(result.PassthroughEscalations) + len(result.LiteralReplyValues) + len(result.SharedErrorClusters) + len(result.OldFormatNodes) + len(result.UnrepliedTerminals) + schemaIssues
 		sb.WriteString(fmt.Sprintf("\nTotal issues: %d\n", total))
 	}
 
