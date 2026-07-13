@@ -6,15 +6,70 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 )
 
+// fetchDownload downloads the content at downloadURL and returns the raw bytes.
+//
+// Auth strategy:
+//   - Simulator token → Authorization: Simulator <token> header, URL unchanged.
+//   - API key (no token) → URL extended with /{API_LOGIN}/{TIMESTAMP}/{SIGNATURE}.
+//     Signature uses empty body: hex(sha1(ts + secret + "" + secret)).
+//     This is the documented Corezoid pattern for authenticating file downloads
+//     with an API key.
+//
+// HTTP status is checked: any 4xx/5xx is returned as an error with the first
+// 256 bytes of the response body for diagnosis.
+func (v *Executor) fetchDownload(downloadURL string) ([]byte, error) {
+	var reqURL string
+	if v.Token != "" {
+		reqURL = downloadURL
+	} else {
+		ts := strconv.FormatInt(time.Now().Unix(), 10)
+		sig := apiKeySign(v.APISecret, ts, "")
+		reqURL = fmt.Sprintf("%s/%s/%s/%s", downloadURL, v.APILogin, ts, sig)
+	}
+
+	req, err := http.NewRequestWithContext(v.Ctx, "GET", reqURL, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to build download request: %w", err)
+	}
+	if v.Token != "" {
+		req.Header.Set("Authorization", fmt.Sprintf("Simulator %s", v.Token))
+	}
+
+	resp, err := newHTTPClient().Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to download: %w", err)
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read download response: %w", err)
+	}
+	if resp.StatusCode >= 400 {
+		snippet := body
+		if len(snippet) > 256 {
+			snippet = snippet[:256]
+		}
+		return nil, fmt.Errorf("download failed with HTTP %d: %s", resp.StatusCode, snippet)
+	}
+	return body, nil
+}
+
 // PullZip exports a process or folder as a ZIP archive and returns the raw bytes.
 func (v *Executor) PullZip(id int, objType string) ([]byte, error) {
+	// /api/2/download (Simulator) accepts type="download".
+	// /api/2/json (API key) only accepts type="create" — "download" returns "undefined request".
+	opType := "create"
+	if v.Token != "" {
+		opType = "download"
+	}
 	ops := []map[string]any{
 		{
-			"type":       "create",
+			"type":       opType,
 			"obj":        "obj_scheme",
 			"obj_id":     id,
 			"company_id": v.WorkspaceID,
@@ -39,95 +94,25 @@ func (v *Executor) PullZip(id int, objType string) ([]byte, error) {
 	if !ok {
 		return nil, fmt.Errorf("failed to export process: unexpected ops format")
 	}
-	downloadURL1, ok := firstOp["download_url"].(string)
-	if !ok || downloadURL1 == "" {
+	downloadURL, ok := firstOp["download_url"].(string)
+	if !ok || downloadURL == "" {
 		return nil, fmt.Errorf("failed to export process: no download_url in response")
 	}
-
-	req, err := http.NewRequest("GET", downloadURL1, nil)
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("Content-Type", "application/json")
-	if v.Token != "" {
-		req.Header.Set("Authorization", fmt.Sprintf("Simulator %s", v.Token))
-	}
-	resp, err := newHTTPClient().Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("failed to download process: %v", err)
-	}
-	defer resp.Body.Close()
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read process: %v", err)
-	}
-	return body, nil
-}
-
-// PullFolder exports all processes in a folder as a JSON array.
-func (v *Executor) PullFolder(id int, objType string) ([]any, error) {
-	ops := []map[string]any{
-		{
-			"type":       "create",
-			"obj":        "obj_scheme",
-			"obj_id":     id,
-			"company_id": v.WorkspaceID,
-			"obj_type":   objType,
-			"with_alias": true,
-			"async":      false,
-			"format":     "json",
-		},
-	}
-	response, err := v.req("export_process", ops)
-	if err != nil {
-		return nil, fmt.Errorf("failed to export process: %w", err)
-	}
-	if response["request_proc"] != "ok" {
-		return nil, fmt.Errorf("failed to export process: %v", response)
-	}
-	ops1, ok := response["ops"].([]any)
-	if !ok || len(ops1) == 0 {
-		return nil, fmt.Errorf("failed to export process: no ops in response")
-	}
-	firstOp, ok := ops1[0].(map[string]any)
-	if !ok {
-		return nil, fmt.Errorf("failed to export process: unexpected ops format")
-	}
-	downloadURL1, ok := firstOp["download_url"].(string)
-	if !ok || downloadURL1 == "" {
-		return nil, fmt.Errorf("failed to export process: no download_url in response")
-	}
-
-	req, err := http.NewRequest("GET", downloadURL1, nil)
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("Content-Type", "application/json")
-	if v.Token != "" {
-		req.Header.Set("Authorization", fmt.Sprintf("Simulator %s", v.Token))
-	}
-	resp, err := newHTTPClient().Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("failed to download process: %v", err)
-	}
-	defer resp.Body.Close()
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read process: %v", err)
-	}
-	var processes []any
-	err = json.Unmarshal(body, &processes)
-	if err != nil {
-		return nil, fmt.Errorf("failed to unmarshal process: %v", err)
-	}
-	return processes, nil
+	return v.fetchDownload(downloadURL)
 }
 
 // ExportProcess downloads the current process definition as parsed JSON.
+// Both Simulator and API key modes use /api/2/download and follow the download_url.
+// fetchDownload handles auth: Simulator uses an Authorization header; API key
+// appends /{login}/{ts}/{sig} to the URL.
 func (v *Executor) ExportProcess() (any, error) {
+	opType := "create"
+	if v.Token != "" {
+		opType = "download"
+	}
 	ops := []map[string]any{
 		{
-			"type":       "create",
+			"type":       opType,
 			"obj":        "obj_scheme",
 			"obj_id":     v.ProcessID,
 			"company_id": v.WorkspaceID,
@@ -144,6 +129,8 @@ func (v *Executor) ExportProcess() (any, error) {
 	if response["request_proc"] != "ok" {
 		return nil, fmt.Errorf("failed to export process: %v", response)
 	}
+
+	// Follow download_url.
 	ops1, ok := response["ops"].([]any)
 	if !ok || len(ops1) == 0 {
 		return nil, fmt.Errorf("failed to export process: no ops in response")
@@ -152,32 +139,17 @@ func (v *Executor) ExportProcess() (any, error) {
 	if !ok {
 		return nil, fmt.Errorf("failed to export process: unexpected ops format")
 	}
-	downloadURL1, ok := firstOp["download_url"].(string)
-	if !ok || downloadURL1 == "" {
+	downloadURL, ok := firstOp["download_url"].(string)
+	if !ok || downloadURL == "" {
 		return nil, fmt.Errorf("failed to export process: no download_url in response")
 	}
-
-	req, err := http.NewRequest("GET", downloadURL1, nil)
+	body, err := v.fetchDownload(downloadURL)
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("Content-Type", "application/json")
-	if v.Token != "" {
-		req.Header.Set("Authorization", fmt.Sprintf("Simulator %s", v.Token))
-	}
-	resp, err := newHTTPClient().Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("failed to download process: %v", err)
-	}
-	defer resp.Body.Close()
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read process: %v", err)
-	}
 	var process []any
-	err = json.Unmarshal(body, &process)
-	if err != nil {
-		return nil, fmt.Errorf("failed to unmarshal process: %v", err)
+	if err = json.Unmarshal(body, &process); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal process: %w", err)
 	}
 	return process, nil
 }

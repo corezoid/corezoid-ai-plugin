@@ -53,10 +53,11 @@ func NewValidator(ctx context.Context, inProcessID int) *Executor {
 		ctx = context.Background()
 	}
 	apiURLv, tokenv, workspaceIDv, _, stageIDv := authSnapshot()
+	snapAPILogin, snapAPISecret := apiKeySnapshot()
 	v := &Executor{
 		Ctx:         ctx,
-		APILogin:    "",
-		APISecret:   "",
+		APILogin:    snapAPILogin,
+		APISecret:   snapAPISecret,
 		APIUrl:      apiURLv,
 		Token:       tokenv,
 		WorkspaceID: workspaceIDv,
