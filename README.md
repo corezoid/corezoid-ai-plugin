@@ -93,7 +93,7 @@ cd corezoid-ai-plugin
 sh plugins/corezoid/scripts/install-kiro.sh .
 ```
 
-Open the workspace in Kiro — the `corezoid` MCP server, skills, and steering are picked up automatically.
+Open the workspace in Kiro — the `corezoid` MCP server, skills, and steering are picked up automatically. This also registers the plugin as a Kiro Power (`~/.kiro/powers/installed/power-corezoid/`), so it stays available in every Kiro workspace, not just this one — restart Kiro (or reload the window) to pick it up.
 
 ### Updating
 

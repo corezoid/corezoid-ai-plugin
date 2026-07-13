@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.8.3]
+
+- Feat: `install-kiro.sh --install-power` — build the Power bundle and install it directly into this machine's local Kiro (`~/.kiro/powers/installed/power-corezoid/`, registered in `~/.kiro/powers/installed.json` via a safe `python3` JSON merge), bypassing the Powers panel's "Import from folder" UI.
+- Feat: plain `install-kiro.sh [workspace-dir]` now always also runs `--install-power`, so the plugin stays registered as a Kiro Power globally, not just installed into one workspace; `--install-power` alone (no workspace-dir) still does just the global install.
+- Fix: `--power` bundle mode now resolves `$CLAUDE_PLUGIN_ROOT` doc references to this repo clone's absolute `docs/` path instead of a relative path plus a shipped `docs/` copy — confirmed on a real install that Kiro's own power-install step drops everything except `POWER.md`, `mcp.json`, and `steering/`, so the shipped `docs/` copy was always going to be a dead link.
+- Docs: note the new global-Kiro-Power registration side effect in `README.md`'s AWS Kiro install instructions.
+
 ## [2.8.2]
 
 - Feat: `install-kiro.sh --power [output-dir]` — build a portable, importable Kiro Power bundle (`POWER.md`, `mcp.json`, `steering/*.md`, `docs/`) alongside the existing workspace-install mode, merged into one script that shares path resolution and skill iteration between both modes.

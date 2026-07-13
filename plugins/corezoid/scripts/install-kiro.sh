@@ -10,7 +10,10 @@
 #       steering/<name>.md       ← symlinked from this plugin's steering/
 #       skills/<name>/SKILL.md   ← HARD-COPIED with $CLAUDE_PLUGIN_ROOT resolved
 #                                  to the absolute plugin path
-#     workspace-dir defaults to $KIRO_WORKSPACE_DIR or $PWD.
+#     workspace-dir defaults to $KIRO_WORKSPACE_DIR or $PWD. Also always
+#     runs --install-power below in the same invocation, so the plugin
+#     stays registered as a Kiro Power globally, not just in this one
+#     workspace.
 #
 #   plugins/corezoid/scripts/install-kiro.sh --power [output-dir]
 #     Build a portable, importable Kiro Power bundle instead of installing
@@ -23,15 +26,36 @@
 #                             instead, since this bundle can land at any
 #                             path on any machine)
 #       steering/<name>.md   (one per skill, frontmatter stripped,
-#                             $CLAUDE_PLUGIN_ROOT resolved to a relative
-#                             path since docs/ ships alongside), plus
-#                             steering/corezoid-guardrails.md (the plugin's
-#                             own always-on rules file, renamed on copy to
-#                             avoid colliding with the "corezoid" skill's
-#                             own steering/corezoid.md)
-#       docs/                (copied for reference resolution)
+#                             $CLAUDE_PLUGIN_ROOT resolved to this repo
+#                             clone's absolute docs/ path — see note below),
+#                             plus steering/corezoid-guardrails.md (the
+#                             plugin's own always-on rules file, renamed on
+#                             copy to avoid colliding with the "corezoid"
+#                             skill's own steering/corezoid.md)
 #     Also syncs VERSION across the other plugin manifests + repo-root
 #     POWER.md. output-dir defaults to <repo-root>/power-corezoid/.
+#
+#     Why absolute paths back to this clone instead of a relative path plus
+#     a docs/ copy shipped inside the bundle? Confirmed on a real Kiro
+#     install: Kiro's own power-install step (Powers panel "Import from
+#     folder", and this script's own --install-power below) only keeps
+#     POWER.md, mcp.json, and steering/ from whatever folder it's given —
+#     docs/ never survives. A relative `docs/nodes/foo.md` reference would
+#     be a dead link the moment Kiro copies the bundle anywhere. Pointing
+#     straight at this clone's docs/ instead means every reference resolves
+#     as long as the clone stays on disk — the same tradeoff
+#     workspace-install mode already makes. The one real cost: the bundle
+#     is no longer meaningfully "portable" to a different machine's clone,
+#     but that portability was already an illusion once docs/ got dropped.
+#
+#   plugins/corezoid/scripts/install-kiro.sh --install-power
+#     Build the bundle (as --power does, into <repo-root>/power-corezoid/)
+#     and install it directly into this machine's local Kiro, bypassing the
+#     Powers panel's "Import from folder" UI:
+#       ~/.kiro/powers/installed/power-corezoid/   ← the bundle, copied
+#       ~/.kiro/powers/installed.json              ← registers the power
+#     Restart Kiro (or reload window) afterwards — there's no CLI to
+#     hot-reload a newly installed power.
 #
 # Why hard-copy and resolve the token, instead of symlinking the source files
 # the way Claude Code / Codex consume them?
@@ -158,18 +182,18 @@ run_power_build() {
     steering_file="$OUTPUT_DIR/steering/${name}.md"
 
     # Extract body (everything after closing ---) and write as steering
-    # file. Replace $CLAUDE_PLUGIN_ROOT with relative docs path — handles
-    # both ${CLAUDE_PLUGIN_ROOT} (braced) and $CLAUDE_PLUGIN_ROOT (unbraced)
-    # forms; corezoid skills use the braced form throughout.
+    # file. Replace $CLAUDE_PLUGIN_ROOT with this clone's absolute path —
+    # see the --power header note on why docs/ isn't shipped inside the
+    # bundle instead. Handles both ${CLAUDE_PLUGIN_ROOT} (braced) and
+    # $CLAUDE_PLUGIN_ROOT (unbraced) forms; corezoid skills use the braced
+    # form throughout.
     awk '
       BEGIN { count=0 }
       /^---$/ { count++; next }
       count >= 2 { print }
     ' "$d/SKILL.md" | sed \
-      -e "s#\\\${CLAUDE_PLUGIN_ROOT}/docs#docs#g" \
-      -e "s#\\\$CLAUDE_PLUGIN_ROOT/docs#docs#g" \
-      -e "s#\\\${CLAUDE_PLUGIN_ROOT}#.#g" \
-      -e "s#\\\$CLAUDE_PLUGIN_ROOT#.#g" > "$steering_file"
+      -e "s#\\\${CLAUDE_PLUGIN_ROOT}#$PLUGIN_ROOT#g" \
+      -e "s#\\\$CLAUDE_PLUGIN_ROOT#$PLUGIN_ROOT#g" > "$steering_file"
 
     # Append reference files inline if they exist
     if [ -d "$d/references" ]; then
@@ -178,10 +202,8 @@ run_power_build() {
         ref_name=$(basename "$ref")
         printf '\n---\n\n## Reference: %s\n\n' "$ref_name" >> "$steering_file"
         sed \
-          -e "s#\\\${CLAUDE_PLUGIN_ROOT}/docs#docs#g" \
-          -e "s#\\\$CLAUDE_PLUGIN_ROOT/docs#docs#g" \
-          -e "s#\\\${CLAUDE_PLUGIN_ROOT}#.#g" \
-          -e "s#\\\$CLAUDE_PLUGIN_ROOT#.#g" "$ref" >> "$steering_file"
+          -e "s#\\\${CLAUDE_PLUGIN_ROOT}#$PLUGIN_ROOT#g" \
+          -e "s#\\\$CLAUDE_PLUGIN_ROOT#$PLUGIN_ROOT#g" "$ref" >> "$steering_file"
       done
     fi
 
@@ -195,11 +217,6 @@ run_power_build() {
       printf '\n```\n' >> "$steering_file"
     done
   done
-
-  # Copy docs/ for reference resolution
-  if [ -d "$PLUGIN_ROOT/docs" ]; then
-    cp -R "$PLUGIN_ROOT/docs" "$OUTPUT_DIR/docs"
-  fi
 
   # Generate POWER.md
   cat > "$OUTPUT_DIR/POWER.md" << FRONTMATTER
@@ -311,11 +328,58 @@ FOOTER
   echo "    $(basename "$OUTPUT_DIR")/"
   echo "    ├── POWER.md"
   echo "    ├── mcp.json"
-  echo "    ├── docs/          (reference documents)"
-  echo "    └── steering/      ($skill_count files)"
+  echo "    └── steering/      ($skill_count files, doc refs point at $PLUGIN_ROOT/docs)"
   ls "$OUTPUT_DIR/steering/" | sed 's/^/        /'
   echo ""
   echo "  Install in Kiro: Powers panel → Add Custom Power → Import from folder"
+}
+
+# ─── Mode: build + install directly into this machine's local Kiro ─────────
+
+run_install_power() {
+  POWER_NAME="power-corezoid"
+  BUILD_DIR="$REPO_ROOT/power-corezoid"
+  KIRO_POWERS_DIR="$HOME/.kiro/powers/installed"
+  INSTALLED_JSON="$HOME/.kiro/powers/installed.json"
+  DEST="$KIRO_POWERS_DIR/$POWER_NAME"
+
+  run_power_build "$BUILD_DIR"
+
+  mkdir -p "$KIRO_POWERS_DIR"
+  rm -rf "$DEST"
+  cp -R "$BUILD_DIR" "$DEST"
+
+  # jq isn't guaranteed installed; python3 already is (PUBLISHING.md's own
+  # manifest checks depend on it), so use it for a JSON-safe merge instead
+  # of pattern-matching installed.json with sed.
+  python3 - "$INSTALLED_JSON" "$POWER_NAME" << 'PYEOF'
+import json
+import os
+import sys
+
+path, name = sys.argv[1], sys.argv[2]
+
+if os.path.exists(path):
+    with open(path) as f:
+        data = json.load(f)
+else:
+    data = {"version": "1.0.0", "installedPowers": [], "dismissedAutoInstalls": []}
+
+powers = data.setdefault("installedPowers", [])
+if not any(p.get("name") == name for p in powers):
+    powers.append({"name": name, "registryId": "user-added"})
+
+with open(path, "w") as f:
+    json.dump(data, f, indent=2)
+    f.write("\n")
+PYEOF
+
+  echo ""
+  echo "✓ Installed corezoid Power directly into Kiro"
+  echo "  Bundle:     $DEST"
+  echo "  Registered: $INSTALLED_JSON"
+  echo ""
+  echo "  Restart Kiro (or reload window) to pick it up."
 }
 
 # ─── Dispatch ────────────────────────────────────────────────────────────────
@@ -324,5 +388,24 @@ if [ "${1:-}" = "--power" ]; then
   shift
   run_power_build "$@"
 else
-  run_workspace_install "$@"
+  # Workspace-install mode always also runs --install-power, so the plugin
+  # stays registered as a Kiro Power globally, not just in one workspace.
+  # --install-power still works standalone (no workspace-dir) to do just
+  # the global install, e.g. `install-kiro.sh --install-power`.
+  bare_install_power=0
+  workspace_arg=""
+  for arg in "$@"; do
+    if [ "$arg" = "--install-power" ]; then
+      bare_install_power=1
+    else
+      workspace_arg="$arg"
+    fi
+  done
+
+  if [ "$bare_install_power" = "1" ] && [ -z "$workspace_arg" ]; then
+    run_install_power
+  else
+    run_workspace_install "$workspace_arg"
+    run_install_power
+  fi
 fi
