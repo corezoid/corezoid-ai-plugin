@@ -19,5 +19,6 @@ __pycache__/
 *.pyc
 /dist/
 
-# Kiro
+# Kiro Power build output
 .kiro
+/power-corezoid/

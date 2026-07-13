@@ -1,5 +1,14 @@
 # Changelog
 
+## [2.8.2]
+
+- Feat: `install-kiro.sh --power [output-dir]` — build a portable, importable Kiro Power bundle (`POWER.md`, `mcp.json`, `steering/*.md`, `docs/`) alongside the existing workspace-install mode, merged into one script that shares path resolution and skill iteration between both modes.
+- Fix: `.mcp.kiro.json`'s `PLUGIN_ROOT` resolution now probes for `mcp-server/run.sh` and appends `/plugins/corezoid` only if the direct path doesn't exist, instead of assuming one fixed layout; fails with a clear error if neither layout matches instead of a cryptic `exec` failure.
+- Fix: `install-kiro.sh` now sed-substitutes `settings/mcp.json` from `.mcp.kiro.json` instead of duplicating the MCP command/args inline, keeping the two in lock-step.
+- Fix: sync version drift that had accumulated across `.agents/plugins/marketplace.json`, `.codex-plugin/plugin.json`, `.kiro-plugin/plugin.json`, and the repo-root `POWER.md` (stale at `2.8.0`/`2.7.0` and an outdated 18-skill count vs. the actual 21).
+- Docs: reword `steering/corezoid.md`'s tool-routing note to be accurate for both the workspace-install skill layout and the Kiro Power steering layout; the always-on guardrails file now also ships in the Power bundle as `steering/corezoid-guardrails.md`.
+- Chore: gitignore the `power-corezoid/` build output.
+
 ## [2.8.1]
 
 - Fix: AWS Kiro MCP server failed to start after `install-kiro.sh` — the `.mcp.kiro.json` fallback path pointed two directory levels above the actual `mcp-server/run.sh` location. The installer now resolves `PLUGIN_ROOT` to an absolute path and bakes it into the generated `.kiro/settings/mcp.json` at install time, matching how skills are already handled.

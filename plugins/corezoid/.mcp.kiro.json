@@ -2,7 +2,7 @@
   "mcpServers": {
     "corezoid": {
       "command": "sh",
-      "args": ["-c", "export PLUGIN_ROOT=\"${KIRO_PLUGIN_ROOT:-$PWD/plugins/corezoid}\"; export COREZOID_WORK_DIR=\"$PWD\"; exec sh \"$PLUGIN_ROOT/mcp-server/run.sh\""]
+      "args": ["-c", "PLUGIN_ROOT=\"${KIRO_PLUGIN_ROOT:-$PWD}\"; [ -f \"$PLUGIN_ROOT/mcp-server/run.sh\" ] || PLUGIN_ROOT=\"$PLUGIN_ROOT/plugins/corezoid\"; [ -f \"$PLUGIN_ROOT/mcp-server/run.sh\" ] || { echo \"ERROR: cannot find mcp-server/run.sh under $PLUGIN_ROOT\" >&2; exit 1; }; export PLUGIN_ROOT; export COREZOID_WORK_DIR=\"$PWD\"; exec sh \"$PLUGIN_ROOT/mcp-server/run.sh\""]
     }
   }
 }
