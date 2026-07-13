@@ -598,7 +598,12 @@ func (e *layoutEngine) layoutHybrid(nodes []map[string]interface{}) map[string]l
 		sc := 19600.0 / float64(maxY-minY)
 		mid := float64(maxY+minY) / 2.0
 		for k, p := range coords {
-			coords[k] = lpoint{p.X, int(mid + (float64(p.Y)-mid)*sc)}
+			// The explicit float64 conversion forces IEEE rounding of the
+			// product BEFORE the addition: without it the compiler may emit a
+			// fused multiply-add on arm64 but not amd64, and the one-ulp
+			// difference cascades into different integer pixels per platform
+			// (caught by the golden files in CI).
+			coords[k] = lpoint{p.X, int(mid + float64((float64(p.Y)-mid)*sc))}
 		}
 	}
 	resolveOverlaps(coords, g, layRowStep)
