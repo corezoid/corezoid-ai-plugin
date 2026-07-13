@@ -100,7 +100,9 @@ func coordInt(v interface{}) int {
 func (d *layoutDoc) save(path string) error {
 	var buf bytes.Buffer
 	enc := json.NewEncoder(&buf)
-	enc.SetEscapeHTML(false)
+	// Default HTML escaping ON: the repo canon (pull-process, fixStruct) writes
+	// & < > as \u0026 \u003c \u003e — disabling it would rewrite every such
+	// line on re-layout and break the diff-only-x/y/extra property.
 	enc.SetIndent("", d.indent)
 	if err := enc.Encode(d.root); err != nil {
 		return err
