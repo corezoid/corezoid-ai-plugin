@@ -693,6 +693,10 @@ func (e *layoutEngine) layoutPartitioned(nodes []map[string]interface{}) map[str
 		}
 		return mi < mj
 	})
+	// railNextY keeps the rail monotone: several owners often share one row
+	// (parallel rays), and without a cursor their clusters would pile up at
+	// the same y — more than the overlap resolver's pass budget can untangle.
+	railNextY := math.MinInt
 	for _, eid := range rootsSorted {
 		if !errc[eid] || placed[eid] {
 			continue
@@ -712,7 +716,10 @@ func (e *layoutEngine) layoutPartitioned(nodes []map[string]interface{}) map[str
 				sy = coords[s].Y
 			}
 		}
-		colI, rowOff := 0, 0
+		if sy < railNextY {
+			sy = railNextY
+		}
+		colI, rowOff, maxRowOff := 0, 0, 0
 		for _, u := range clusterOf(eid) {
 			if placed[u] {
 				continue
@@ -738,7 +745,11 @@ func (e *layoutEngine) layoutPartitioned(nodes []map[string]interface{}) map[str
 				colI = 0
 				rowOff += layRowStep / 2
 			}
+			if rowOff > maxRowOff {
+				maxRowOff = rowOff
+			}
 		}
+		railNextY = sy + maxRowOff + layRowStep/2
 	}
 
 	// 3) orphans — a compact grid at the bottom, in the right zone
