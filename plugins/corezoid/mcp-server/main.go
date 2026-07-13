@@ -55,7 +55,7 @@ var cachedProjectID int
 // apiLogin and apiSecret are the Corezoid API key credentials (API_LOGIN /
 // API_SECRET). They provide an alternative to OAuth2 PKCE for environments
 // where browser-based authentication is not available. When both are set,
-// requests are signed with HMAC-SHA1 instead of using a Simulator bearer token.
+// requests are signed using the Corezoid double-salted SHA1 pattern instead of using a Simulator bearer token.
 // These are distinct from gitLoginID / gitSecret which are used for git-sync.
 var apiLogin string
 var apiSecret string
