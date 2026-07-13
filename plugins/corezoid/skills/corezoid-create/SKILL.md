@@ -114,10 +114,12 @@ Fill in `description` based on the requirements gathered in Step 1 (see Descript
 - Connect nodes only through the `go` field
 - **Dedicated error cluster per error-prone node.** Every node that can fail (`set_param`, `api`, `api_rpc`, `api_code`, `api_copy`, `db_call`, `git_call`, `api_sum`) gets its **own** error path — never funnel several failing nodes into one shared Reply/Error node. Each cluster is:
   1. A **Reply to Process** node (`api_rpc_reply`) that returns the error to the caller — set to **collapsed**: `"extra": "{\"modeForm\":\"collapse\",\"icon\":\"\"}"`.
-  2. → an **Error** end node (`obj_type: 2`, **expanded** so its name is visible: `"extra": "{\"modeForm\":\"expand\",\"icon\":\"error\"}"`) **named after the specific failure** so the error is obvious at a glance (e.g. `Charge Payment Error`, not generic `Error`).
+  2. → an **Error** end node (`obj_type: 2`, **collapsed** like the rest of the cluster: `"extra": "{\"modeForm\":\"collapse\",\"icon\":\"error\"}"`) **named after the specific failure** so the error is obvious on hover/selection (e.g. `Charge Payment Error`, not generic `Error`).
   - Wire `err_node_id` of the failing node → its Reply node; the Reply node's `go` → its Error node.
   - Separate Error nodes per failure point (instead of one shared terminal) make the process far more readable.
   - For fire-and-forget processes that do not reply to a caller, skip the Reply node and wire `err_node_id` directly to the dedicated named Error node.
+  - A single node's error MAY fan through its own Condition (several `go_if_const` branches) into one Error terminal — that cluster still belongs to that one node. A NEIGHBOUR's error must never join it (direct `err_node_id` or a converging tail) — `lint-process` flags this as a shared error cluster.
+  - When the error path routes a retry (Condition → Delay → back to the failing node), set the error-path **Condition** and the **Delay** to collapsed (`"extra": "{\"modeForm\":\"collapse\",\"icon\":\"\"}"`), same as the Reply node. Business-logic Conditions stay expanded.
   - Never create an Escalation node (`obj_type: 3`) that only contains a bare `go` — that is a passthrough anti-pattern flagged by `lint-process`.
 - All constants (URLs, tokens, IDs) must be Corezoid variables — never hardcoded:
   1. Check for existing variables: read `_ENV_VARS_.json` (from `pull-folder`) or `.processes/variables.json` (from this session)

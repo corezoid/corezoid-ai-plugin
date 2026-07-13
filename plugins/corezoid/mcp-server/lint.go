@@ -10,16 +10,17 @@ import (
 
 // LintResult holds the combined lint output
 type LintResult struct {
-	ProcessTitle             string
-	NoopConditions           []NoopCondition
-	UnusedSetParams          []UnusedSetParam
-	OrphanedNodes            []OrphanedNode
-	PassthroughEscalations   []PassthroughEscalation
-	LiteralReplyValues       []LiteralReplyValue
-	TotalNodes               int
-	ReachableCount           int
-	SchemaValid              bool
-	SchemaError              string
+	ProcessTitle           string
+	NoopConditions         []NoopCondition
+	UnusedSetParams        []UnusedSetParam
+	OrphanedNodes          []OrphanedNode
+	PassthroughEscalations []PassthroughEscalation
+	LiteralReplyValues     []LiteralReplyValue
+	SharedErrorClusters    []SharedErrorCluster
+	TotalNodes             int
+	ReachableCount         int
+	SchemaValid            bool
+	SchemaError            string
 }
 
 type NoopCondition struct {
@@ -47,6 +48,16 @@ type OrphanedNode struct {
 // PassthroughEscalation represents an escalation node (obj_type:3) whose only logic
 // is a bare `go` — it adds no value and should be replaced by a direct err_node_id
 // pointing straight to the final error node.
+// SharedErrorCluster is an error-cluster node reached from the error paths of
+// MORE THAN ONE main-flow node. The house rule is one dedicated error cluster
+// per failing node: a single node's error may fan through its own Condition
+// into one Error terminal, but a neighbouring node's error must never join it.
+type SharedErrorCluster struct {
+	ID      string
+	Title   string
+	Sources []string // "id (title)" of each distinct failing node feeding it
+}
+
 type PassthroughEscalation struct {
 	ID          string
 	Title       string
@@ -127,6 +138,7 @@ func lintProcess(filePath string) (*LintResult, error) {
 	result.OrphanedNodes, result.ReachableCount = findOrphanedNodes(typed)
 	result.PassthroughEscalations = findPassthroughEscalations(typed)
 	result.LiteralReplyValues = findLiteralReplyValues(typed)
+	result.SharedErrorClusters = findSharedErrorClusters(typed)
 
 	schemaErr := ValidateJSONSchema(filePath, debug)
 	if schemaErr != nil {
@@ -250,6 +262,134 @@ func findNoopNodes(nodes []processNode) ([]NoopCondition, []UnusedSetParam) {
 	}
 
 	return noopConditions, unusedSetParams
+}
+
+// findSharedErrorClusters flags error-cluster nodes shared between the error
+// paths of different main-flow nodes. Allowed: ONE node's error fanning
+// through its own Condition (any number of go_if_const branches) into one
+// Error terminal — that whole cluster belongs to that node. Forbidden: a
+// second node's err_node_id (or its cluster tail) converging onto any node of
+// another node's cluster; every failing node gets its own Reply/Error cluster
+// (see docs/process/error-handling.md, "Dedicated Error Cluster Pattern").
+func findSharedErrorClusters(nodes []processNode) []SharedErrorCluster {
+	byID := make(map[string]processNode, len(nodes))
+	for _, n := range nodes {
+		byID[n.id] = n
+	}
+	forward := func(n processNode) []string {
+		var out []string
+		for _, lg := range n.logics {
+			t, _ := lg["type"].(string)
+			if t == "go" || t == "go_if_const" {
+				if to, _ := lg["to_node_id"].(string); to != "" {
+					if _, ok := byID[to]; ok {
+						out = append(out, to)
+					}
+				}
+			}
+		}
+		for _, sm := range n.sems {
+			if to, _ := sm["to_node_id"].(string); to != "" {
+				if _, ok := byID[to]; ok {
+					out = append(out, to)
+				}
+			}
+		}
+		return out
+	}
+
+	// main flow = forward closure from the Start nodes. Escalations
+	// (obj_type 3) and terminals (obj_type 2) are then EXCLUDED: an error
+	// cluster does not become "business flow" just because one business
+	// branch also routes into it (e.g. a condition's fatal branch entering
+	// the reply node) — the err fan-in into it is still the violation.
+	mainFlow := map[string]bool{}
+	var stack []string
+	for _, n := range nodes {
+		if n.objType == 1 {
+			mainFlow[n.id] = true
+			stack = append(stack, n.id)
+		}
+	}
+	for len(stack) > 0 {
+		u := stack[len(stack)-1]
+		stack = stack[:len(stack)-1]
+		for _, v := range forward(byID[u]) {
+			if !mainFlow[v] {
+				mainFlow[v] = true
+				stack = append(stack, v)
+			}
+		}
+	}
+	for _, n := range nodes {
+		if n.objType == 2 || n.objType == 3 {
+			delete(mainFlow, n.id)
+		}
+	}
+
+	// walk every node's error tail (outside the main flow) and attribute the
+	// visited cluster nodes to that source
+	sources := map[string][]string{} // cluster node id -> distinct source labels
+	seenSrc := map[string]map[string]bool{}
+	var order []string
+	for _, src := range nodes {
+		targets := map[string]bool{}
+		for _, lg := range src.logics {
+			if e, _ := lg["err_node_id"].(string); e != "" {
+				if _, ok := byID[e]; ok && !mainFlow[e] {
+					targets[e] = true
+				}
+			}
+		}
+		if len(targets) == 0 {
+			continue
+		}
+		label := src.id
+		if src.title != "" {
+			label = fmt.Sprintf("%s (%s)", src.id, src.title)
+		}
+		visited := map[string]bool{}
+		var st []string
+		for _, n := range nodes { // deterministic: doc order
+			if targets[n.id] {
+				st = append(st, n.id)
+			}
+		}
+		for len(st) > 0 {
+			u := st[len(st)-1]
+			st = st[:len(st)-1]
+			if visited[u] || mainFlow[u] {
+				continue
+			}
+			visited[u] = true
+			if seenSrc[u] == nil {
+				seenSrc[u] = map[string]bool{}
+				order = append(order, u)
+			}
+			if !seenSrc[u][label] {
+				seenSrc[u][label] = true
+				sources[u] = append(sources[u], label)
+			}
+			for _, v := range forward(byID[u]) {
+				if !mainFlow[v] {
+					st = append(st, v)
+				}
+			}
+		}
+	}
+
+	var out []SharedErrorCluster
+	for _, id := range order {
+		if len(sources[id]) < 2 {
+			continue
+		}
+		out = append(out, SharedErrorCluster{
+			ID:      id,
+			Title:   byID[id].title,
+			Sources: sources[id],
+		})
+	}
+	return out
 }
 
 // findPassthroughEscalations detects escalation nodes (obj_type:3) that contain only
@@ -523,6 +663,16 @@ func FormatLintResult(result *LintResult) string {
 		}
 	}
 
+	if len(result.SharedErrorClusters) > 0 {
+		hasIssues = true
+		sb.WriteString(fmt.Sprintf("\n=== SHARED ERROR CLUSTERS (%d) ===\n", len(result.SharedErrorClusters)))
+		for _, sc := range result.SharedErrorClusters {
+			sb.WriteString(fmt.Sprintf("  [%s] %s\n", sc.ID, sc.Title))
+			sb.WriteString(fmt.Sprintf("  Fed by %d different nodes: %s\n", len(sc.Sources), strings.Join(sc.Sources, ", ")))
+			sb.WriteString("  Issue: every failing node needs its OWN Reply/Error cluster — a neighbour's error must not join it (one node's error may fan through its own Condition into one Error terminal, but never across nodes)\n")
+		}
+	}
+
 	if !hasIssues {
 		sb.WriteString("\nNo issues found.")
 	} else {
@@ -530,7 +680,7 @@ func FormatLintResult(result *LintResult) string {
 		if !result.SchemaValid {
 			schemaIssues = 1
 		}
-		total := len(result.NoopConditions) + len(result.UnusedSetParams) + len(result.OrphanedNodes) + len(result.PassthroughEscalations) + len(result.LiteralReplyValues) + schemaIssues
+		total := len(result.NoopConditions) + len(result.UnusedSetParams) + len(result.OrphanedNodes) + len(result.PassthroughEscalations) + len(result.LiteralReplyValues) + len(result.SharedErrorClusters) + schemaIssues
 		sb.WriteString(fmt.Sprintf("\nTotal issues: %d\n", total))
 	}
 

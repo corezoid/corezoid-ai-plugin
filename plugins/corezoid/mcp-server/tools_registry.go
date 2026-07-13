@@ -187,7 +187,7 @@ var toolRegistry = []mcpTool{
 	},
 	{
 		Name:        "lint-process",
-		Description: "Validate process structure. Reports orphaned nodes, noop conditions, unused set_params, passthrough escalations, and literal non-string values in api_rpc_reply res_data (a scheme shape that hangs the server commit on push).",
+		Description: "Validate process structure. Reports orphaned nodes, noop conditions, unused set_params, passthrough escalations, shared error clusters (an error node fed by several different failing nodes — each needs its own Reply/Error cluster), and literal non-string values in api_rpc_reply res_data (a scheme shape that hangs the server commit on push).",
 		InputSchema: map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
