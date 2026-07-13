@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
@@ -340,19 +341,6 @@ func TestSetParams_Error(t *testing.T) {
 	}
 }
 
-func TestCommit_ReturnsMap(t *testing.T) {
-	_, e := mockAPIServer(t, func(ops []map[string]interface{}) interface{} {
-		return map[string]interface{}{
-			"request_proc": "ok",
-			"ops":          []interface{}{map[string]interface{}{"proc": "ok"}},
-		}
-	})
-
-	// Commit returns map[string]interface{} (nil on failure).
-	result := e.Commit()
-	_ = result // may be nil if response has no version data; just ensure no panic
-}
-
 func TestDeleteVersion_NoError(t *testing.T) {
 	_, e := mockAPIServer(t, func(ops []map[string]interface{}) interface{} {
 		return map[string]interface{}{
@@ -429,5 +417,53 @@ func TestGetProjectIDByStageID_OK(t *testing.T) {
 	id := e.GetProjectIDByStageID(1)
 	if id != 999 {
 		t.Errorf("expected 999, got %d", id)
+	}
+}
+
+// ---- Commit ------------------------------------------------------------------
+
+// TestCommit_SurfacesServerError verifies that a server-side commit rejection
+// (e.g. a timer below the platform minimum, or an invalid api_rpc_reply shape)
+// reaches the caller as an error carrying the server's exact message — not a
+// silent nil that the push handler can only report as "no response from server".
+func TestCommit_SurfacesServerError(t *testing.T) {
+	_, e := mockAPIServer(t, func(ops []map[string]interface{}) interface{} {
+		return map[string]interface{}{
+			"request_proc": "ok",
+			"ops": []interface{}{map[string]interface{}{
+				"proc": "error",
+				"errors": map[string]interface{}{
+					"6a4fa136b677ac77708b234c": []interface{}{
+						"Key 'value'. 'Timer value 15 sec is less than minimum limit 30 sec'",
+					},
+				},
+			}},
+		}
+	})
+
+	resp, err := e.Commit()
+	if err == nil {
+		t.Fatalf("expected error from rejected commit, got nil (resp=%v)", resp)
+	}
+	if !strings.Contains(err.Error(), "Timer value 15 sec is less than minimum limit 30 sec") {
+		t.Errorf("server message lost, got: %v", err)
+	}
+}
+
+// TestCommit_OK verifies the happy path returns the response and no error.
+func TestCommit_OK(t *testing.T) {
+	_, e := mockAPIServer(t, func(ops []map[string]interface{}) interface{} {
+		return map[string]interface{}{
+			"request_proc": "ok",
+			"ops":          []interface{}{map[string]interface{}{"proc": "ok"}},
+		}
+	})
+
+	resp, err := e.Commit()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if resp == nil {
+		t.Fatal("expected non-nil response")
 	}
 }
