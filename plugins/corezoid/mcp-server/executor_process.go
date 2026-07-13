@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 )
@@ -626,4 +627,96 @@ func (v *Executor) Share(userID, convID int) map[string]interface{} {
 		}
 	}
 	return response
+}
+
+// CopyProcess duplicates sourceProcessID into folderID under newTitle and
+// saves the copy as a .conv.json file in the resolved local directory.
+//
+// If newTitle is empty it defaults to the source title with " (Copy)" appended.
+// If folderID is 0 the copy is placed in the same folder as the source.
+//
+// Returns the new process ID and the path of the saved file.
+func (v *Executor) CopyProcess(sourceProcessID, folderID int, newTitle string) (int, string, error) {
+	// 1. Export the source process.
+	srcV := NewValidator(v.Ctx, sourceProcessID)
+	srcRaw, err := srcV.ExportProcess()
+	if err != nil {
+		return 0, "", fmt.Errorf("export source process %d: %w", sourceProcessID, err)
+	}
+	var srcMap map[string]interface{}
+	if arr, ok := srcRaw.([]interface{}); ok && len(arr) > 0 {
+		srcMap, _ = arr[0].(map[string]interface{})
+	} else {
+		srcMap, _ = srcRaw.(map[string]interface{})
+	}
+	if srcMap == nil {
+		return 0, "", fmt.Errorf("source process %d: empty or unexpected export format", sourceProcessID)
+	}
+
+	// 2. Resolve title — default to "<original title> (Copy)".
+	if newTitle == "" {
+		if t, _ := srcMap["title"].(string); t != "" {
+			newTitle = t + " (Copy)"
+		} else {
+			newTitle = fmt.Sprintf("%d (Copy)", sourceProcessID)
+		}
+	}
+
+	// 3. Resolve target folder — default to source's parent_id.
+	if folderID == 0 {
+		if pid, _ := srcMap["parent_id"].(float64); pid > 0 {
+			folderID = int(pid)
+		}
+	}
+
+	// 4. Determine conv type (process or state diagram).
+	convType := "process"
+	if ct, _ := srcMap["conv_type"].(string); ct != "" {
+		convType = ct
+	}
+
+	// 5. Create empty target process in the destination folder.
+	newID := v.CreateEmptyConv(folderID, newTitle, "", convType)
+	if newID == 0 {
+		return 0, "", fmt.Errorf("failed to create target %s '%s' in folder %d", convType, newTitle, folderID)
+	}
+	v.ProcessID = newID
+
+	// 6. Update the title in the source JSON before deploying.
+	srcMap["title"] = newTitle
+	srcJSON, err := json.MarshalIndent(srcMap, "", "  ")
+	if err != nil {
+		return 0, "", fmt.Errorf("marshal source process: %w", err)
+	}
+
+	// 7. Resolve local destination directory from the API folder hierarchy.
+	safeName := strings.ReplaceAll(newTitle, " ", "_")
+	fileName := fmt.Sprintf("%d_%s.conv.json", newID, safeName)
+	var dir string
+	if v.StageID != 0 && folderID != 0 {
+		if resolved, resolveErr := v.resolveFolderPathFromAPI(folderID); resolveErr == nil {
+			dir = resolved
+		} else {
+			logger.Warn("copy-process: could not resolve folder path for folder_id %d: %v", folderID, resolveErr)
+		}
+	}
+	if dir != "" {
+		if mkErr := os.MkdirAll(dir, 0755); mkErr != nil {
+			logger.Warn("copy-process: could not create directory %s: %v — saving to cwd", dir, mkErr)
+			dir = ""
+		}
+	}
+	finalPath := filepath.Join(dir, fileName)
+
+	// 8. Write source JSON to the destination file and deploy.
+	if err := os.WriteFile(finalPath, srcJSON, 0644); err != nil {
+		return 0, "", fmt.Errorf("write %s: %w", finalPath, err)
+	}
+
+	if _, err := v.ProcessJSON(finalPath, string(srcJSON)); err != nil {
+		os.Remove(finalPath) //nolint:errcheck
+		return 0, "", fmt.Errorf("deploy copy: %w", err)
+	}
+
+	return newID, finalPath, nil
 }

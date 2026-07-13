@@ -259,6 +259,28 @@ var toolRegistry = []mcpTool{
 		},
 	},
 	{
+		Name:        "copy-process",
+		Description: "Duplicate a Corezoid process or state diagram without loading its JSON into the AI context. Equivalent to the 'Duplicate' action in the Corezoid UI. Creates an independent copy with a new process ID and saves it as a .conv.json file.",
+		InputSchema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"source_process_id": map[string]interface{}{
+					"type":        "integer",
+					"description": "ID of the process or state diagram to copy",
+				},
+				"new_name": map[string]interface{}{
+					"type":        "string",
+					"description": "Title for the copy. Omit to default to the original title with ' (Copy)' appended.",
+				},
+				"folder_path": map[string]interface{}{
+					"type":        "string",
+					"description": "Relative path to the destination folder directory. Omit to place the copy in the same folder as the source.",
+				},
+			},
+			"required": []string{"source_process_id"},
+		},
+	},
+	{
 		Name:        "list-workspaces",
 		Description: "Return the list of Corezoid workspaces (companies) available to the authenticated user.",
 		InputSchema: map[string]interface{}{
