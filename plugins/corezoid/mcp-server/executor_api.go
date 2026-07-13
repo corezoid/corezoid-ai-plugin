@@ -50,7 +50,7 @@ func (v *Executor) req(method string, ops []map[string]any) (map[string]interfac
 
 	if v.Debug {
 		var prettyJSON bytes.Buffer
-		json.Indent(&prettyJSON, payloadJSON, "", "  ")
+		json.Indent(&prettyJSON, redactForLog(payloadJSON), "", "  ")
 		logger.Debug("API Request, method=%s, payload=%s", method, prettyJSON.String())
 	}
 
@@ -78,10 +78,10 @@ func (v *Executor) req(method string, ops []map[string]any) (map[string]interfac
 
 	if v.Debug {
 		var prettyJSON bytes.Buffer
-		if json.Indent(&prettyJSON, body, "", "  ") == nil {
+		if json.Indent(&prettyJSON, redactForLog(body), "", "  ") == nil {
 			logger.Debug("API Response, method=%s, status=%s, body=%s", method, resp.Status, prettyJSON.String())
 		} else {
-			logger.Debug("API Response, method=%s, status=%s, body=%s", method, resp.Status, string(body))
+			logger.Debug("API Response, method=%s, status=%s, body=(non-JSON, omitted)", method, resp.Status)
 		}
 	}
 
