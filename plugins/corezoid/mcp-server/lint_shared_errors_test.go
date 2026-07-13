@@ -136,11 +136,43 @@ func TestSharedErrorClusters_BusinessBranchDoesNotWhitelist(t *testing.T) {
 		lintNode(nFin, "Final", 2, nil),
 	}
 	got := findSharedErrorClusters(nodes)
+	if len(got) != 2 {
+		t.Fatalf("exactly the reply and its terminal must be flagged, got %v", got)
+	}
 	ids := map[string]int{}
 	for _, sc := range got {
 		ids[sc.ID] = len(sc.Sources)
 	}
 	if ids[nReply] != 2 || ids[nErr1] != 2 {
 		t.Fatalf("reply and its terminal must be flagged with 2 err sources despite the business branch, got %v", got)
+	}
+}
+
+// A count semaphor escalates via esc_node_id, not err_node_id — two nodes'
+// count escalations converging on one Reply/Error cluster is the same shared
+// -cluster violation (symmetry with the err_node_id walks).
+func TestSharedErrorClusters_EscNodeIdFanInFlagged(t *testing.T) {
+	semEsc := func(esc string) map[string]interface{} {
+		return map[string]interface{}{"type": "count", "value": float64(500), "esc_node_id": esc}
+	}
+	nodes := []processNode{
+		lintNode(nStart, "Start", 1, []map[string]interface{}{lgGo(nA)}),
+		lintNode(nA, "api call A", 0, []map[string]interface{}{{"type": "api"}, lgGo(nB)}, semEsc(nReply)),
+		lintNode(nB, "api call B", 0, []map[string]interface{}{{"type": "api"}, lgGo(nFin)}, semEsc(nReply)),
+		lintNode(nReply, "Reply: throttled", 3, []map[string]interface{}{
+			{"type": "api_rpc_reply", "res_data": map[string]interface{}{"result": "error"}}, lgGo(nErr1)}),
+		lintNode(nErr1, "shared throttle error", 2, nil),
+		lintNode(nFin, "Final", 2, nil),
+	}
+	got := findSharedErrorClusters(nodes)
+	if len(got) != 2 {
+		t.Fatalf("esc_node_id fan-in must flag the shared reply and terminal, got %v", got)
+	}
+	ids := map[string]int{}
+	for _, sc := range got {
+		ids[sc.ID] = len(sc.Sources)
+	}
+	if ids[nReply] != 2 || ids[nErr1] != 2 {
+		t.Fatalf("both count-semaphor sources must be attributed, got %v", got)
 	}
 }

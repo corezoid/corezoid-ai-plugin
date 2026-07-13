@@ -520,10 +520,14 @@ simply needs to terminate with no additional logic:
 [API Call Node]   --semaphor-----> [Timeout Escalation obj_type:3] --go--> [Timeout Final obj_type:2]
 ```
 
-**`err_node_id` must never point at an `obj_type: 0` node.** Every escalation
-target — Reply, retry Condition, retry Delay — carries `obj_type: 3`. An
-`obj_type: 0` target is the legacy "old format": the process still deploys, but
-the UI shows *"Convert process to new format"* on open and rewrites the node to
+**An `err_node_id` (or a count semaphor's `esc_node_id`) must never point at an
+`obj_type: 0` node.** The *direct* escalation target — the error Reply, or the
+retry/fatal Condition an error escalates into — carries `obj_type: 3`. Nodes the
+cluster then reaches through ordinary routing (the retry **Delay** reached from
+that Condition via `go_if_const`) are not escalation targets and stay
+`obj_type: 0`, like any business-flow node reached via `go`. An `obj_type: 0`
+escalation target is the legacy "old format": the process still deploys, but the
+UI shows *"Convert process to new format"* on open and rewrites the node to
 `obj_type: 3` itself. `lint-process` flags this as an OLD FORMAT NODE.
 
 **Anti-pattern — passthrough escalation (flagged by `lint-process`):**

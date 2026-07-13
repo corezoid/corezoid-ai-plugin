@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"sort"
+	"strconv"
 	"strings"
 )
 
@@ -341,6 +342,12 @@ func findSharedErrorClusters(nodes []processNode) []SharedErrorCluster {
 					out = append(out, to)
 				}
 			}
+			// count semaphors continue the escalation tail via esc_node_id
+			if esc, _ := sm["esc_node_id"].(string); esc != "" {
+				if _, ok := byID[esc]; ok {
+					out = append(out, esc)
+				}
+			}
 		}
 		return out
 	}
@@ -383,6 +390,15 @@ func findSharedErrorClusters(nodes []processNode) []SharedErrorCluster {
 		targets := map[string]bool{}
 		for _, lg := range src.logics {
 			if e, _ := lg["err_node_id"].(string); e != "" {
+				if _, ok := byID[e]; ok && !mainFlow[e] {
+					targets[e] = true
+				}
+			}
+		}
+		// a count semaphor escalates this node's failure via esc_node_id — the
+		// same kind of error tail as an err_node_id (symmetry with forward()).
+		for _, sm := range src.sems {
+			if e, _ := sm["esc_node_id"].(string); e != "" {
 				if _, ok := byID[e]; ok && !mainFlow[e] {
 					targets[e] = true
 				}
@@ -441,12 +457,15 @@ func findSharedErrorClusters(nodes []processNode) []SharedErrorCluster {
 
 // lintActionTypes are logic types that DO something to the task (as opposed to
 // routing it): mixing any of them with go_if_const in one node is old format.
+// api_callback is deliberately absent — a Waiting-for-Callback node legitimately
+// pairs its wait with condition branches, and the platform does not split it.
 var lintActionTypes = map[string]bool{
 	"api_rpc_reply": true,
 	"api_rpc":       true,
 	"api_copy":      true,
 	"api":           true,
 	"api_code":      true,
+	"api_form":      true,
 	"set_param":     true,
 	"api_sum":       true,
 	"db_call":       true,
@@ -557,18 +576,33 @@ func findMissingDefaultGo(nodes []processNode) []MissingDefaultGo {
 // minimum. Template values ("{{delay}}") are left alone: they resolve at run
 // time and cannot be checked statically.
 func findShortTimers(nodes []processNode) []ShortTimer {
+	dimSeconds := map[string]float64{"": 1, "sec": 1, "min": 60, "hour": 3600, "day": 86400}
 	var result []ShortTimer
 	for _, n := range nodes {
 		for _, sem := range n.sems {
 			if t, _ := sem["type"].(string); t != "time" {
 				continue
 			}
-			dim, _ := sem["dimension"].(string)
-			if dim != "" && dim != "sec" {
+			mult, known := dimSeconds[func() string { d, _ := sem["dimension"].(string); return d }()]
+			if !known {
+				continue // unknown dimension — leave for the server
+			}
+			// value may be a number or a numeric string; a template ("{{...}}")
+			// resolves at run time and cannot be checked statically.
+			var v float64
+			switch raw := sem["value"].(type) {
+			case float64:
+				v = raw
+			case string:
+				parsed, err := strconv.ParseFloat(strings.TrimSpace(raw), 64)
+				if err != nil {
+					continue
+				}
+				v = parsed
+			default:
 				continue
 			}
-			v, isNum := sem["value"].(float64)
-			if !isNum || v >= 30 {
+			if v*mult >= 30 {
 				continue
 			}
 			title := n.title
@@ -578,7 +612,7 @@ func findShortTimers(nodes []processNode) []ShortTimer {
 			result = append(result, ShortTimer{
 				ID:    n.id,
 				Title: title,
-				Issue: fmt.Sprintf("time semaphor %v sec is below the server minimum of 30 sec — the deploy is rejected", v),
+				Issue: fmt.Sprintf("time semaphor resolves to %g sec — below the server minimum of 30 sec; the deploy is rejected", v*mult),
 			})
 		}
 	}

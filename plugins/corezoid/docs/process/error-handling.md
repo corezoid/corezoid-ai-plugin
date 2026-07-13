@@ -337,13 +337,18 @@ named Error node so the diagram reads clearly.
 
 A cluster is two nodes pinned tight to the node they protect:
 
-1. **Reply to Process** node (`api_rpc_reply`) that returns the error to the caller, kept
-   **collapsed** (`"extra": "{\"modeForm\":\"collapse\",\"icon\":\"\"}"`). Placed at the **same `y`**
-   as the failing node, just to its right (`x + ~250`) so the small collapsed node sits right next to it.
+1. **Reply to Process** node (`api_rpc_reply`, `obj_type: 3` — it is an `err_node_id`
+   target) that returns the error to the caller, kept
+   **collapsed** (`"extra": "{\"modeForm\":\"collapse\",\"icon\":\"\"}"`). Placed just to the
+   right of the failing node and slightly below its row so the link leaves the row lane free.
 2. **Error** END node (`obj_type: 2`, **collapsed** like the rest of the cluster:
    `"extra": "{\"modeForm\":\"collapse\",\"icon\":\"error\"}"`) **named after the specific failure**
-   (e.g. `Charge Payment Error`, not a generic `Error`/`Final`). Placed immediately to the right of
-   the Reply node (`x + ~500`), same `y`.
+   (e.g. `Charge Payment Error`, not a generic `Error`/`Final`). Placed one more step down-right
+   from the Reply node, forming the compact staircase described below.
+
+Exact coordinates do not matter when authoring — `layout-process` rewrites `x`/`y` into the
+staircase (see "Placement of the standard retry shape" below); what matters is the wiring and
+the collapse flags.
 
 Wiring: failing node `err_node_id` → its Reply node; the Reply node's `go` → its Error node.
 
@@ -411,7 +416,7 @@ Example Code Node with its dedicated Reply + Error cluster (Reply collapsed and 
 }
 ```
 
-Its dedicated **Reply** node (collapsed, pinned to the right of the failing node, same `y`):
+Its dedicated **Reply** node (collapsed, pinned to the right of the failing node and slightly below its row; `layout-process` produces the exact staircase):
 
 ```json
 {

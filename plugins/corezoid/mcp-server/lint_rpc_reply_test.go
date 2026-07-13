@@ -95,24 +95,46 @@ func TestMissingDefaultGo(t *testing.T) {
 	}
 }
 
-// Numeric time semaphors under the 30-second server minimum are rejected at
-// deploy; template values are left for runtime.
+// Time semaphors under the 30-second server minimum are rejected at deploy.
+// The check converts the dimension, parses numeric strings, and leaves
+// templates for runtime.
 func TestShortTimers(t *testing.T) {
-	mk := func(v interface{}) []processNode {
+	mk := func(v interface{}, dim string) []processNode {
 		return []processNode{
 			lintNode(nStart, "Start", 1, []map[string]interface{}{lgGo(nA)}),
 			lintNode(nA, "pause", 0, []map[string]interface{}{lgGo(nFin)},
-				map[string]interface{}{"type": "time", "value": v, "dimension": "sec", "to_node_id": nFin}),
+				map[string]interface{}{"type": "time", "value": v, "dimension": dim, "to_node_id": nFin}),
 			lintNode(nFin, "done", 2, nil),
 		}
 	}
-	if got := findShortTimers(mk(float64(5))); len(got) != 1 || got[0].ID != nA {
+	if got := findShortTimers(mk(float64(5), "sec")); len(got) != 1 || got[0].ID != nA {
 		t.Fatalf("expected 5s timer flagged, got %+v", got)
 	}
-	if got := findShortTimers(mk(float64(30))); len(got) != 0 {
+	if got := findShortTimers(mk(float64(30), "sec")); len(got) != 0 {
 		t.Fatalf("30s timer is legal, got %+v", got)
 	}
-	if got := findShortTimers(mk("{{delay}}")); len(got) != 0 {
+	if got := findShortTimers(mk("{{delay}}", "sec")); len(got) != 0 {
 		t.Fatalf("template timer must be left alone, got %+v", got)
+	}
+	// numeric string below the minimum is flagged
+	if got := findShortTimers(mk("5", "sec")); len(got) != 1 {
+		t.Fatalf("numeric-string 5s must be flagged, got %+v", got)
+	}
+	// 1 min = 60s is legal; 0 min = 0s is flagged (dimension conversion)
+	if got := findShortTimers(mk(float64(1), "min")); len(got) != 0 {
+		t.Fatalf("1 min is above the minimum, got %+v", got)
+	}
+	if got := findShortTimers(mk(float64(0), "min")); len(got) != 1 {
+		t.Fatalf("0 min = 0s must be flagged, got %+v", got)
+	}
+	// a count semaphor (no dimension key at all) must not trip the time check
+	countSem := []processNode{
+		lintNode(nStart, "Start", 1, []map[string]interface{}{lgGo(nA)}),
+		lintNode(nA, "gate", 0, []map[string]interface{}{lgGo(nFin)},
+			map[string]interface{}{"type": "count", "value": float64(5), "esc_node_id": nFin}),
+		lintNode(nFin, "done", 2, nil),
+	}
+	if got := findShortTimers(countSem); len(got) != 0 {
+		t.Fatalf("count semaphor must not be treated as a timer, got %+v", got)
 	}
 }
