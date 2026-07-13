@@ -49,6 +49,14 @@ var insecureTLS bool
 var gitLoginID string
 var gitSecret string
 
+// apiLogin and apiSecret are the Corezoid API key credentials (API_LOGIN /
+// API_SECRET). They provide an alternative to OAuth2 PKCE for environments
+// where browser-based authentication is not available. When both are set,
+// requests are signed with HMAC-SHA1 instead of using a Simulator bearer token.
+// These are distinct from gitLoginID / gitSecret which are used for git-sync.
+var apiLogin string
+var apiSecret string
+
 // authSnapshot returns a coherent snapshot of the auth-state globals taken
 // under the read lock. Callers that subsequently need to mutate state must
 // acquire authStateMu.Lock() (not upgrade — Go's RWMutex doesn't support that).
@@ -56,6 +64,14 @@ func authSnapshot() (apiURLv, tokenv, workspaceIDv, accountURLv string, stageIDv
 	authStateMu.RLock()
 	defer authStateMu.RUnlock()
 	return apiURL, apiToken, workspaceID, accountURL, stageID
+}
+
+// apiKeySnapshot returns a coherent snapshot of the API key credentials taken
+// under the read lock. Same pattern as authSnapshot.
+func apiKeySnapshot() (login, secret string) {
+	authStateMu.RLock()
+	defer authStateMu.RUnlock()
+	return apiLogin, apiSecret
 }
 
 // withAuthLock runs fn while holding the auth-state write lock. Use for
@@ -161,6 +177,8 @@ func loadConfig() {
 	insecureTLS = os.Getenv("COREZOID_INSECURE_TLS") != ""
 	gitLoginID = os.Getenv("COREZOID_LOGIN")
 	gitSecret = os.Getenv("COREZOID_SECRET")
+	apiLogin = os.Getenv("API_LOGIN")
+	apiSecret = os.Getenv("API_SECRET")
 }
 
 // runCLI executes a single MCP tool from the command line and exits.
@@ -230,11 +248,14 @@ func main() {
 	loadConfig()
 	logger.Debug("Loaded configuration: apiURL=%s workspaceID=%s apigwURL=%s hasToken=%v", apiURL, workspaceID, apigwURL, apiToken != "")
 
-	if apiToken == "" {
+	if apiToken == "" && (apiLogin == "" || apiSecret == "") {
 		fmt.Fprintln(os.Stderr, "[corezoid-mcp] NOTICE: No credentials found.")
-		fmt.Fprintln(os.Stderr, "[corezoid-mcp] Run the 'login' MCP tool to authenticate via OAuth2.")
+		fmt.Fprintln(os.Stderr, "[corezoid-mcp] Authenticate via one of:")
+		fmt.Fprintln(os.Stderr, "[corezoid-mcp]   1. OAuth2 browser flow — run the 'login' MCP tool.")
+		fmt.Fprintln(os.Stderr, "[corezoid-mcp]   2. API key — set API_LOGIN and API_SECRET in your project .env,")
+		fmt.Fprintln(os.Stderr, "[corezoid-mcp]      then call the 'login' MCP tool to select workspace/stage.")
 		if credPath, err := credentialsFilePath(); err == nil {
-			fmt.Fprintf(os.Stderr, "[corezoid-mcp] Token will be saved to: %s\n", credPath)
+			fmt.Fprintf(os.Stderr, "[corezoid-mcp] OAuth2 token will be saved to: %s\n", credPath)
 		}
 	}
 

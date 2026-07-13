@@ -119,6 +119,34 @@ Then call `login` — it will skip already-set values and only prompt for what's
 
 ---
 
+## Exception: API key auth (login + secret)
+
+When the user provides an **API key login and secret** instead of OAuth credentials, use API key auth. This is common on private/on-prem Corezoid instances where browser OAuth is not available.
+
+**How to recognise:** user says something like "use login 12345 secret abc..." or "connect with API key".
+
+**Exact steps — call `login` with `api_login` and `api_secret` as arguments:**
+
+```
+login(
+  account_url=<host>,
+  workspace_id=<company_id>,
+  stage_id=<stage_id>,
+  api_login=<login_id>,
+  api_secret=<secret>
+)
+```
+
+⚠️ **Critical:** pass `api_login` and `api_secret` **as arguments to the `login` tool** — do NOT write them to `.env` manually. The tool saves them to `.env` automatically with the correct variable names (`API_LOGIN`, `API_SECRET`). Writing them manually with wrong names (e.g. `COREZOID_LOGIN`) will break authentication.
+
+The login tool will:
+1. Skip the OAuth2 browser flow
+2. Save `API_LOGIN` and `API_SECRET` to the project `.env`
+3. Set `COREZOID_API_URL` from `ACCOUNT_URL` if not already set
+4. Complete workspace/stage selection normally
+
+---
+
 ## Exception: OAuth fails on private on-prem instances
 
 On private Corezoid installations, the OAuth2 browser flow may time out because `localhost` is not registered as an allowed `redirect_uri` (see issue #7). Symptom: browser opens the workspace UI instead of redirecting back.

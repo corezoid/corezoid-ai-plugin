@@ -79,13 +79,20 @@ func unzipFile(src, destDir string) error {
 	return nil
 }
 
-// findStageDir looks for a directory named *.stage up to maxDepth levels deep inside root.
+// findStageDir looks for the root content directory inside an extracted Corezoid
+// ZIP up to maxDepth levels deep. Matches *.stage, *.folder, and *.project —
+// Corezoid uses different suffixes depending on the exported obj_type.
 func findStageDir(root string, maxDepth int) (string, error) {
 	var found string
 	err := walkDepth(root, 0, maxDepth, func(path string, d os.DirEntry) bool {
-		if d.IsDir() && strings.HasSuffix(d.Name(), ".stage") {
-			found = path
-			return true // stop
+		if d.IsDir() {
+			name := d.Name()
+			if strings.HasSuffix(name, ".stage") ||
+				strings.HasSuffix(name, ".folder") ||
+				strings.HasSuffix(name, ".project") {
+				found = path
+				return true // stop
+			}
 		}
 		return false
 	})
@@ -134,10 +141,21 @@ func downloadStageRecursively(e *Executor, folderID int, filePath string) error 
 	if err := e.checkCancel(); err != nil {
 		return err
 	}
-	// Try "folder" first (works for sub-folder IDs), fall back to "stage" for stage roots.
-	data, err := e.PullZip(folderID, "folder")
-	if err != nil {
-		data, err = e.PullZip(folderID, "stage")
+	// If folderID matches the configured stage root, we know it's a stage —
+	// no need to probe. Otherwise try in order: stage → folder → project.
+	var objTypes []string
+	if e.StageID != 0 && folderID == e.StageID {
+		objTypes = []string{"stage"}
+	} else {
+		objTypes = []string{"stage", "folder", "project"}
+	}
+	var data []byte
+	var err error
+	for _, objType := range objTypes {
+		data, err = e.PullZip(folderID, objType)
+		if err == nil {
+			break
+		}
 	}
 	if err != nil {
 		return fmt.Errorf("failed to PullZip: %w", err)
@@ -182,7 +200,7 @@ func downloadStageRecursively(e *Executor, folderID int, filePath string) error 
 		return fmt.Errorf("failed to find stage dir: %v", err)
 	}
 	if stageDir == "" {
-		return fmt.Errorf("stage directory not found (*.stage)")
+		return fmt.Errorf("stage directory not found (*.stage / *.folder / *.project)")
 	}
 	// stagesDir is the parent of stageDir (needed for cleanup)
 	stagesDir := filepath.Dir(stageDir)
@@ -214,38 +232,6 @@ func downloadStageRecursively(e *Executor, folderID int, filePath string) error 
 	}
 
 	return nil
-	//
-	//fmt.Println("procInfo", procInfo)
-	//if err != nil {
-	//	logger.Error("Failed to PullFolder: %v", err)
-	//	return
-	//}
-	//for _, p := range procInfo {
-	//	convType, _ := p.(map[string]interface{})["conv_type"].(string)
-	//	if convType != "process" {
-	//		continue
-	//	}
-	//	// save to filePath
-	//	data, err := json.MarshalIndent(p, "", "  ")
-	//	if err != nil {
-	//		logger.Error("Failed to json marshal process: %v", err)
-	//		return
-	//	}
-	//	//data := []byte(UpdateTestJson)
-	//	title, _ := p.(map[string]interface{})["title"].(string)
-	//	objID := strconv.Itoa(int(p.(map[string]interface{})["obj_id"].(float64)))
-	//	if title == "" {
-	//		title = objID
-	//	} else {
-	//		title = title + "." + objID
-	//	}
-	//	err = os.WriteFile(filePath+"/"+title+".json", data, 0644)
-	//	if err != nil {
-	//		logger.Error("Failed to write file: %v", err)
-	//		return
-	//	}
-	//	fmt.Println("Process saved to", filePath+"/"+title+".json")
-	//}
 }
 
 func renameFiles2Folders(filePath string) error {
@@ -258,7 +244,9 @@ func renameFiles2Folders(filePath string) error {
 	for _, f := range files {
 		if f.IsDir() {
 			dirName := f.Name()
-			newName := strings.ReplaceAll(dirName, ".folder", "")
+			newName := strings.TrimSuffix(dirName, ".stage")
+			newName = strings.TrimSuffix(newName, ".folder")
+			newName = strings.TrimSuffix(newName, ".project")
 			newPath := filepath.Join(filePath, newName)
 			if newName != dirName {
 				oldPath := filepath.Join(filePath, dirName)
@@ -280,18 +268,6 @@ func renameFiles2Folders(filePath string) error {
 			if err != nil {
 				return fmt.Errorf("Failed to rename files in directory: %v", err)
 			}
-		} else {
-			if filepath.Ext(f.Name()) != ".json" {
-				continue
-			}
-			//if strings.Contains(f.Name(), ".folder.json") {
-			//	//	 remove
-			//	err := os.Remove(filepath.Join(filePath, f.Name()))
-			//	if err != nil {
-			//		return fmt.Errorf("failed to remove file: %v", err)
-			//	}
-			//}
-			// Rename file if it follows pattern with numeric prefix
 		}
 
 	}
