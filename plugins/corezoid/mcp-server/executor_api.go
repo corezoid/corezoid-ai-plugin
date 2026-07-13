@@ -117,7 +117,8 @@ func newHTTPClient() *http.Client {
 	}
 }
 
-// apiKeySign computes the Corezoid API key request signature:
+// apiKeySign computes the Corezoid API key request signature using the
+// documented double-salted SHA1 pattern (not standard HMAC-SHA1 / RFC 2104):
 // hex(sha1(timestamp + apiSecret + body + apiSecret))
 func apiKeySign(secret, timestamp, body string) string {
 	h := sha1.New() //nolint:gosec
@@ -132,7 +133,7 @@ func apiKeySign(secret, timestamp, body string) string {
 //
 // Authentication mode:
 //   - If token != "": Simulator bearer token. URL = baseURL/api/2/path, header Authorization: Simulator <token>.
-//   - If token == "" and apiLogin+apiSecret != "": API key HMAC-SHA1. URL = baseURL/api/2/path/apiLogin/ts/sig, no auth header.
+//   - If token == "" and apiLogin+apiSecret != "": API key (double-salted SHA1). URL = baseURL/api/2/path/apiLogin/ts/sig, no auth header.
 //
 // The response body is rebuilt from `payloadJSON` on each attempt, so the body
 // must be idempotent — which it is, since Corezoid's JSON-RPC ops are.

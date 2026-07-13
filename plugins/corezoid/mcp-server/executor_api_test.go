@@ -280,8 +280,9 @@ func TestDoWithRetry_CancelDuringBackoff(t *testing.T) {
 // ---- apiKeySign -------------------------------------------------------------
 
 func TestAPIKeySign_KnownValue(t *testing.T) {
-	// Verify the HMAC-SHA1 formula: hex(sha1(ts + secret + body + secret))
-	// Expected value cross-checked independently:
+	// Verify the Corezoid API key signature: hex(sha1(ts + secret + body + secret))
+	// This is a double-salted SHA1 pattern (secret wraps the message), not
+	// standard HMAC-SHA1 (RFC 2104). Expected value cross-checked independently:
 	//   python3 -c "import hashlib; print(hashlib.sha1(b'1700000000mysecret{}mysecret').hexdigest())"
 	const want = "8c5cd99f9cfa598f65e6b3fae56cc859cecd5ee6"
 	got := apiKeySign("mysecret", "1700000000", "{}")
