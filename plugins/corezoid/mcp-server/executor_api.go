@@ -3,7 +3,9 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/sha1" //nolint:gosec
 	"crypto/tls"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -57,20 +59,23 @@ func (v *Executor) req(method string, ops []map[string]any) (map[string]interfac
 	path := "json"
 	switch method {
 	case "export_process":
+		// Always use /api/2/download for exports — it returns a download_url.
+		// fetchDownload handles both auth modes:
+		//   Simulator: Authorization: Simulator <token> header
+		//   API key:   GET {url}/{login}/{ts}/{sig} (URL-embedded signature)
 		path = "download"
 	case "compare", "merge":
 		// The stage compare/merge (deploy) admin ops have their own endpoints —
 		// /api/2/compare and /api/2/merge — not the shared /api/2/json.
 		path = method
 	}
-	authURL := fmt.Sprintf("%s/api/2/%s", v.APIUrl, path)
 
 	if v.Debug {
-		logger.Debug("Request URL, url=%s", authURL)
+		logger.Debug("Request baseURL=%s path=%s", v.APIUrl, path)
 	}
 
 	client := newHTTPClient()
-	resp, body, err := doWithRetry(v.Ctx, client, "POST", authURL, payloadJSON, v.Token, v.Debug)
+	resp, body, err := doWithRetry(v.Ctx, client, "POST", v.APIUrl, path, payloadJSON, v.Token, v.APILogin, v.APISecret, v.Debug)
 	if err != nil {
 		return nil, err
 	}
@@ -112,17 +117,30 @@ func newHTTPClient() *http.Client {
 	}
 }
 
+// apiKeySign computes the Corezoid API key request signature:
+// hex(sha1(timestamp + apiSecret + body + apiSecret))
+func apiKeySign(secret, timestamp, body string) string {
+	h := sha1.New() //nolint:gosec
+	h.Write([]byte(timestamp + secret + body + secret))
+	return hex.EncodeToString(h.Sum(nil))
+}
+
 // doWithRetry sends an authenticated request and retries transient 429/503
 // responses with exponential backoff and jitter. Non-retriable statuses (and
 // non-network errors) are returned to the caller after the first attempt;
 // retrying e.g. a 4xx auth failure would just delay the user-visible error.
 //
+// Authentication mode:
+//   - If token != "": Simulator bearer token. URL = baseURL/api/2/path, header Authorization: Simulator <token>.
+//   - If token == "" and apiLogin+apiSecret != "": API key HMAC-SHA1. URL = baseURL/api/2/path/apiLogin/ts/sig, no auth header.
+//
 // The response body is rebuilt from `payloadJSON` on each attempt, so the body
 // must be idempotent — which it is, since Corezoid's JSON-RPC ops are.
+// For API key mode the timestamp+signature are recomputed fresh on each retry.
 //
 // Returns the final response and the already-read body. Caller owns resp.Body
 // and must close it.
-func doWithRetry(ctx context.Context, client *http.Client, method, url string, payloadJSON []byte, token string, debug bool) (*http.Response, []byte, error) {
+func doWithRetry(ctx context.Context, client *http.Client, method, baseURL, path string, payloadJSON []byte, token, apiLoginArg, apiSecretArg string, debug bool) (*http.Response, []byte, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -134,18 +152,35 @@ func doWithRetry(ctx context.Context, client *http.Client, method, url string, p
 		if err := ctx.Err(); err != nil {
 			return nil, nil, err
 		}
-		req, err := http.NewRequestWithContext(ctx, method, url, bytes.NewReader(payloadJSON))
+
+		// Build per-attempt URL. For API key auth, recompute timestamp+signature
+		// on every retry so the signature is never stale.
+		var reqURL string
+		if token != "" {
+			reqURL = fmt.Sprintf("%s/api/2/%s", baseURL, path)
+		} else {
+			ts := strconv.FormatInt(time.Now().Unix(), 10)
+			sig := apiKeySign(apiSecretArg, ts, string(payloadJSON))
+			reqURL = fmt.Sprintf("%s/api/2/%s/%s/%s/%s", baseURL, path, apiLoginArg, ts, sig)
+		}
+
+		req, err := http.NewRequestWithContext(ctx, method, reqURL, bytes.NewReader(payloadJSON))
 		if err != nil {
 			// NewRequest fails only on programmer error (bad method/URL),
 			// not on transient I/O — no point retrying.
 			return nil, nil, err
 		}
 		req.Header.Set("Content-Type", "application/json")
-		req.Header.Set("Authorization", fmt.Sprintf("Simulator %s", token))
+		if token != "" {
+			req.Header.Set("Authorization", fmt.Sprintf("Simulator %s", token))
+		}
 		if debug && attempt == 1 {
-			safeHeaders := req.Header.Clone()
-			safeHeaders.Set("Authorization", "Simulator ***")
-			logger.Debug("Header: %v", safeHeaders)
+			logger.Debug("Request URL: %s", reqURL)
+			if token != "" {
+				safeHeaders := req.Header.Clone()
+				safeHeaders.Set("Authorization", "Simulator ***")
+				logger.Debug("Header: %v", safeHeaders)
+			}
 		}
 
 		resp, err := client.Do(req)
