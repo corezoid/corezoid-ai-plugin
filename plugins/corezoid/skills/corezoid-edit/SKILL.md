@@ -67,7 +67,7 @@ See `${CLAUDE_PLUGIN_ROOT}/docs/variables-guide.md` for details.
 | Code Node | 0 | `api_code` |
 | Call a Process | 0 | `api_rpc` |
 | API Call | 0 | `api` |
-| Reply to Process | 0 | `api_rpc_reply` |
+| Reply to Process | 0 (3 as `err_node_id` target) | `api_rpc_reply` |
 | End / Error | 2 | _(no logics)_ |
 
 For complete JSON structures see `${CLAUDE_PLUGIN_ROOT}/docs/node-structures.md`.

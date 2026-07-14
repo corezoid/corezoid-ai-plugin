@@ -6,6 +6,9 @@
   interaction.
 - Enables request-response patterns between processes.
 - Returns computed or processed data back to the calling process.
+- **Mandatory on every path of an RPC-called process** — success path included. A path
+  that reaches a final without a Reply leaves the caller's task hanging in the Call
+  node until its timeout semaphor.
 
 ## Parameters
 

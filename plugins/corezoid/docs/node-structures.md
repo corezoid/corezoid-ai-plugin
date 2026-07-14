@@ -304,6 +304,15 @@ Complete JSON structures for all node types used when modifying Corezoid process
 - `fun` values: `eq`, `ne`, `not_eq`, `gt`, `lt`, `ge`, `le`, `regex`
 - `cast` values: `"string"`, `"number"`, `"boolean"`
 - `param`, `const`, `fun`, `cast` are on `conditions` items, NOT on the `go_if_const` object
+- `obj_type: 0` is for **business-flow** conditions reached via `go`/`go_if_const`.
+  A condition that is an `err_node_id` target (e.g. the retry/fatal switch of an
+  error cluster) is an **escalation** and must be `obj_type: 3` — see the
+  Escalation Node section.
+- A condition node contains **only** `go_if_const` logics plus the fallback `go`.
+  Never mix an action logic (`set_param`, `api_code`, `api`, …) with `go_if_const`
+  in one node — that is the legacy "old format": the UI shows
+  *"Convert process to new format"* on open and force-splits the node in two.
+  Author it split from the start: action node + `go` → separate condition node.
 
 ---
 
@@ -358,7 +367,12 @@ Complete JSON structures for all node types used when modifying Corezoid process
 
 ---
 
-## Reply to Process Node (`obj_type: 0`, `type: "api_rpc_reply"`)
+## Reply to Process Node (`obj_type: 0` in business flow / `obj_type: 3` as err target, `type: "api_rpc_reply"`)
+
+A success reply reached via `go` is a normal `obj_type: 0` node. An error reply
+that is an `err_node_id` target is an escalation and must be `obj_type: 3`
+(see the Escalation Node section — an `obj_type: 0` err target triggers the
+UI's "Convert process to new format").
 
 ### Success reply
 
@@ -402,7 +416,7 @@ Complete JSON structures for all node types used when modifying Corezoid process
 ```json
 {
   "id": "507f1f77bcf86cd799439015",
-  "obj_type": 0,
+  "obj_type": 3,
   "condition": {
     "logics": [
       {
@@ -505,6 +519,16 @@ simply needs to terminate with no additional logic:
                                           └──go──> [Final Error obj_type:2]
 [API Call Node]   --semaphor-----> [Timeout Escalation obj_type:3] --go--> [Timeout Final obj_type:2]
 ```
+
+**An `err_node_id` (or a count semaphor's `esc_node_id`) must never point at an
+`obj_type: 0` node.** The *direct* escalation target — the error Reply, or the
+retry/fatal Condition an error escalates into — carries `obj_type: 3`. Nodes the
+cluster then reaches through ordinary routing (the retry **Delay** reached from
+that Condition via `go_if_const`) are not escalation targets and stay
+`obj_type: 0`, like any business-flow node reached via `go`. An `obj_type: 0`
+escalation target is the legacy "old format": the process still deploys, but the
+UI shows *"Convert process to new format"* on open and rewrites the node to
+`obj_type: 3` itself. `lint-process` flags this as an OLD FORMAT NODE.
 
 **Anti-pattern — passthrough escalation (flagged by `lint-process`):**
 

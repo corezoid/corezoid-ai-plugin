@@ -5,21 +5,27 @@ import (
 	"fmt"
 	"os"
 	"sort"
+	"strconv"
 	"strings"
 )
 
 // LintResult holds the combined lint output
 type LintResult struct {
-	ProcessTitle             string
-	NoopConditions           []NoopCondition
-	UnusedSetParams          []UnusedSetParam
-	OrphanedNodes            []OrphanedNode
-	PassthroughEscalations   []PassthroughEscalation
-	LiteralReplyValues       []LiteralReplyValue
-	TotalNodes               int
-	ReachableCount           int
-	SchemaValid              bool
-	SchemaError              string
+	ProcessTitle           string
+	NoopConditions         []NoopCondition
+	UnusedSetParams        []UnusedSetParam
+	OrphanedNodes          []OrphanedNode
+	PassthroughEscalations []PassthroughEscalation
+	LiteralReplyValues     []LiteralReplyValue
+	SharedErrorClusters    []SharedErrorCluster
+	OldFormatNodes         []OldFormatNode
+	UnrepliedTerminals     []UnrepliedTerminal
+	MissingDefaultGo       []MissingDefaultGo
+	ShortTimers            []ShortTimer
+	TotalNodes             int
+	ReachableCount         int
+	SchemaValid            bool
+	SchemaError            string
 }
 
 type NoopCondition struct {
@@ -47,6 +53,16 @@ type OrphanedNode struct {
 // PassthroughEscalation represents an escalation node (obj_type:3) whose only logic
 // is a bare `go` — it adds no value and should be replaced by a direct err_node_id
 // pointing straight to the final error node.
+// SharedErrorCluster is an error-cluster node reached from the error paths of
+// MORE THAN ONE main-flow node. The house rule is one dedicated error cluster
+// per failing node: a single node's error may fan through its own Condition
+// into one Error terminal, but a neighbouring node's error must never join it.
+type SharedErrorCluster struct {
+	ID      string
+	Title   string
+	Sources []string // "id (title)" of each distinct failing node feeding it
+}
+
 type PassthroughEscalation struct {
 	ID          string
 	Title       string
@@ -66,6 +82,45 @@ type LiteralReplyValue struct {
 	Title  string
 	Fields []string
 	Issue  string
+}
+
+// OldFormatNode is a node the platform's "Convert process to new format" dialog
+// would rewrite on open. Two shapes trigger it:
+//  1. a node mixing an action logic (set_param, api_code, …) with go_if_const
+//     conditions — the converter splits it into two nodes;
+//  2. an err_node_id target with obj_type:0 — escalation targets must be
+//     obj_type:3 (business-flow conditions reached via go stay obj_type:0).
+type OldFormatNode struct {
+	ID    string
+	Title string
+	Issue string
+}
+
+// UnrepliedTerminal is a final node (obj_type:2) reachable from Start without
+// passing any api_rpc_reply — in a process that DOES reply elsewhere. When such
+// a process is invoked via Call a Process (api_rpc), the caller's task hangs in
+// the call node until its timeout semaphor on every path leading here.
+type UnrepliedTerminal struct {
+	ID    string
+	Title string
+	Issue string
+}
+
+// MissingDefaultGo is a non-final node whose logics do not end with a bare
+// `go`. The server rejects the deploy: "Each node in the condition.logics
+// array must always have a logic with type go at the end".
+type MissingDefaultGo struct {
+	ID    string
+	Title string
+	Issue string
+}
+
+// ShortTimer is a time semaphor below the platform minimum: the server rejects
+// the deploy with "Timer value N sec is less than minimum limit 30 sec".
+type ShortTimer struct {
+	ID    string
+	Title string
+	Issue string
 }
 
 // processNode is the typed representation of a Corezoid node used throughout lint checks.
@@ -127,6 +182,11 @@ func lintProcess(filePath string) (*LintResult, error) {
 	result.OrphanedNodes, result.ReachableCount = findOrphanedNodes(typed)
 	result.PassthroughEscalations = findPassthroughEscalations(typed)
 	result.LiteralReplyValues = findLiteralReplyValues(typed)
+	result.SharedErrorClusters = findSharedErrorClusters(typed)
+	result.OldFormatNodes = findOldFormatNodes(typed)
+	result.UnrepliedTerminals = findUnrepliedTerminals(typed)
+	result.MissingDefaultGo = findMissingDefaultGo(typed)
+	result.ShortTimers = findShortTimers(typed)
 
 	schemaErr := ValidateJSONSchema(filePath, debug)
 	if schemaErr != nil {
@@ -252,6 +312,402 @@ func findNoopNodes(nodes []processNode) ([]NoopCondition, []UnusedSetParam) {
 	return noopConditions, unusedSetParams
 }
 
+// findSharedErrorClusters flags error-cluster nodes shared between the error
+// paths of different main-flow nodes. Allowed: ONE node's error fanning
+// through its own Condition (any number of go_if_const branches) into one
+// Error terminal — that whole cluster belongs to that node. Forbidden: a
+// second node's err_node_id (or its cluster tail) converging onto any node of
+// another node's cluster; every failing node gets its own Reply/Error cluster
+// (see docs/process/error-handling.md, "Dedicated Error Cluster Pattern").
+func findSharedErrorClusters(nodes []processNode) []SharedErrorCluster {
+	byID := make(map[string]processNode, len(nodes))
+	for _, n := range nodes {
+		byID[n.id] = n
+	}
+	forward := func(n processNode) []string {
+		var out []string
+		for _, lg := range n.logics {
+			t, _ := lg["type"].(string)
+			if t == "go" || t == "go_if_const" {
+				if to, _ := lg["to_node_id"].(string); to != "" {
+					if _, ok := byID[to]; ok {
+						out = append(out, to)
+					}
+				}
+			}
+		}
+		for _, sm := range n.sems {
+			if to, _ := sm["to_node_id"].(string); to != "" {
+				if _, ok := byID[to]; ok {
+					out = append(out, to)
+				}
+			}
+			// count semaphors continue the escalation tail via esc_node_id
+			if esc, _ := sm["esc_node_id"].(string); esc != "" {
+				if _, ok := byID[esc]; ok {
+					out = append(out, esc)
+				}
+			}
+		}
+		return out
+	}
+
+	// main flow = forward closure from the Start nodes. Escalations
+	// (obj_type 3) and terminals (obj_type 2) are then EXCLUDED: an error
+	// cluster does not become "business flow" just because one business
+	// branch also routes into it (e.g. a condition's fatal branch entering
+	// the reply node) — the err fan-in into it is still the violation.
+	mainFlow := map[string]bool{}
+	var stack []string
+	for _, n := range nodes {
+		if n.objType == 1 {
+			mainFlow[n.id] = true
+			stack = append(stack, n.id)
+		}
+	}
+	for len(stack) > 0 {
+		u := stack[len(stack)-1]
+		stack = stack[:len(stack)-1]
+		for _, v := range forward(byID[u]) {
+			if !mainFlow[v] {
+				mainFlow[v] = true
+				stack = append(stack, v)
+			}
+		}
+	}
+	for _, n := range nodes {
+		if n.objType == 2 || n.objType == 3 {
+			delete(mainFlow, n.id)
+		}
+	}
+
+	// walk every node's error tail (outside the main flow) and attribute the
+	// visited cluster nodes to that source
+	sources := map[string][]string{} // cluster node id -> distinct source labels
+	seenSrc := map[string]map[string]bool{}
+	var order []string
+	for _, src := range nodes {
+		targets := map[string]bool{}
+		for _, lg := range src.logics {
+			if e, _ := lg["err_node_id"].(string); e != "" {
+				if _, ok := byID[e]; ok && !mainFlow[e] {
+					targets[e] = true
+				}
+			}
+		}
+		// a count semaphor escalates this node's failure via esc_node_id — the
+		// same kind of error tail as an err_node_id (symmetry with forward()).
+		for _, sm := range src.sems {
+			if e, _ := sm["esc_node_id"].(string); e != "" {
+				if _, ok := byID[e]; ok && !mainFlow[e] {
+					targets[e] = true
+				}
+			}
+		}
+		if len(targets) == 0 {
+			continue
+		}
+		label := src.id
+		if src.title != "" {
+			label = fmt.Sprintf("%s (%s)", src.id, src.title)
+		}
+		visited := map[string]bool{}
+		var st []string
+		for _, n := range nodes { // deterministic: doc order
+			if targets[n.id] {
+				st = append(st, n.id)
+			}
+		}
+		for len(st) > 0 {
+			u := st[len(st)-1]
+			st = st[:len(st)-1]
+			if visited[u] || mainFlow[u] {
+				continue
+			}
+			visited[u] = true
+			if seenSrc[u] == nil {
+				seenSrc[u] = map[string]bool{}
+				order = append(order, u)
+			}
+			if !seenSrc[u][label] {
+				seenSrc[u][label] = true
+				sources[u] = append(sources[u], label)
+			}
+			for _, v := range forward(byID[u]) {
+				if !mainFlow[v] {
+					st = append(st, v)
+				}
+			}
+		}
+	}
+
+	var out []SharedErrorCluster
+	for _, id := range order {
+		if len(sources[id]) < 2 {
+			continue
+		}
+		out = append(out, SharedErrorCluster{
+			ID:      id,
+			Title:   byID[id].title,
+			Sources: sources[id],
+		})
+	}
+	return out
+}
+
+// lintActionTypes are logic types that DO something to the task (as opposed to
+// routing it): mixing any of them with go_if_const in one node is old format.
+// api_callback is deliberately absent — a Waiting-for-Callback node legitimately
+// pairs its wait with condition branches, and the platform does not split it.
+var lintActionTypes = map[string]bool{
+	"api_rpc_reply": true,
+	"api_rpc":       true,
+	"api_copy":      true,
+	"api":           true,
+	"api_code":      true,
+	"api_form":      true,
+	"set_param":     true,
+	"api_sum":       true,
+	"db_call":       true,
+	"api_git":       true,
+	"api_queue":     true,
+	"api_get_task":  true,
+}
+
+// findOldFormatNodes detects the two node shapes that make the Corezoid UI show
+// "Convert process to new format" on open (and silently rewrite the scheme):
+//  1. action logic + go_if_const in one node — the converter splits it in two;
+//  2. err_node_id pointing at an obj_type:0 node — escalation targets must be
+//     obj_type:3. Nodes reached only via go/go_if_const may stay obj_type:0.
+func findOldFormatNodes(nodes []processNode) []OldFormatNode {
+	nodeMap := make(map[string]processNode, len(nodes))
+	for _, n := range nodes {
+		nodeMap[n.id] = n
+	}
+
+	var result []OldFormatNode
+	flaggedErrTargets := make(map[string]bool)
+	for _, n := range nodes {
+		hasAction := false
+		hasCondition := false
+		for _, lg := range n.logics {
+			lgType, _ := lg["type"].(string)
+			if lintActionTypes[lgType] {
+				hasAction = true
+			}
+			if lgType == "go_if_const" {
+				hasCondition = true
+			}
+			if errID, _ := lg["err_node_id"].(string); errID != "" && !flaggedErrTargets[errID] {
+				if target, ok := nodeMap[errID]; ok && target.objType == 0 {
+					flaggedErrTargets[errID] = true
+					title := target.title
+					if title == "" {
+						title = "(untitled)"
+					}
+					result = append(result, OldFormatNode{
+						ID:    target.id,
+						Title: title,
+						Issue: fmt.Sprintf("err_node_id target has obj_type:0 — escalation targets must be obj_type:3 (referenced from '%s' %s); the UI will force-convert the process", n.title, n.id),
+					})
+				}
+			}
+		}
+		// count-semaphor escalations (esc_node_id) are escalation targets too
+		for _, sem := range n.sems {
+			if escID, _ := sem["esc_node_id"].(string); escID != "" && !flaggedErrTargets[escID] {
+				if target, ok := nodeMap[escID]; ok && target.objType == 0 {
+					flaggedErrTargets[escID] = true
+					title := target.title
+					if title == "" {
+						title = "(untitled)"
+					}
+					result = append(result, OldFormatNode{
+						ID:    target.id,
+						Title: title,
+						Issue: fmt.Sprintf("esc_node_id target has obj_type:0 — escalation targets must be obj_type:3 (referenced from '%s' %s); the UI will force-convert the process", n.title, n.id),
+					})
+				}
+			}
+		}
+		if hasAction && hasCondition {
+			title := n.title
+			if title == "" {
+				title = "(untitled)"
+			}
+			result = append(result, OldFormatNode{
+				ID:    n.id,
+				Title: title,
+				Issue: "node mixes an action logic with go_if_const conditions — old format; the UI converter will split it into an action node plus a separate condition node. Split it yourself: action + go into a new condition node",
+			})
+		}
+	}
+	return result
+}
+
+// findMissingDefaultGo flags non-final nodes whose logics list does not end
+// with a bare `go`. The platform requires a default route on every routing
+// node and rejects the whole deploy otherwise — lint turns that push error
+// into a local finding. Final nodes (obj_type:2) carry no logics and are
+// exempt, as are nodes with no logics at all.
+func findMissingDefaultGo(nodes []processNode) []MissingDefaultGo {
+	var result []MissingDefaultGo
+	for _, n := range nodes {
+		if n.objType == 2 || len(n.logics) == 0 {
+			continue
+		}
+		last := n.logics[len(n.logics)-1]
+		if t, _ := last["type"].(string); t != "go" {
+			title := n.title
+			if title == "" {
+				title = "(untitled)"
+			}
+			result = append(result, MissingDefaultGo{
+				ID:    n.id,
+				Title: title,
+				Issue: fmt.Sprintf("logics end with '%s' instead of a bare go — the server rejects the deploy; add a final go with the default destination", t),
+			})
+		}
+	}
+	return result
+}
+
+// findShortTimers flags numeric time semaphors under 30 seconds — the server
+// minimum. Template values ("{{delay}}") are left alone: they resolve at run
+// time and cannot be checked statically.
+func findShortTimers(nodes []processNode) []ShortTimer {
+	dimSeconds := map[string]float64{"": 1, "sec": 1, "min": 60, "hour": 3600, "day": 86400}
+	var result []ShortTimer
+	for _, n := range nodes {
+		for _, sem := range n.sems {
+			if t, _ := sem["type"].(string); t != "time" {
+				continue
+			}
+			mult, known := dimSeconds[func() string { d, _ := sem["dimension"].(string); return d }()]
+			if !known {
+				continue // unknown dimension — leave for the server
+			}
+			// value may be a number or a numeric string; a template ("{{...}}")
+			// resolves at run time and cannot be checked statically.
+			var v float64
+			switch raw := sem["value"].(type) {
+			case float64:
+				v = raw
+			case string:
+				parsed, err := strconv.ParseFloat(strings.TrimSpace(raw), 64)
+				if err != nil {
+					continue
+				}
+				v = parsed
+			default:
+				continue
+			}
+			if v*mult >= 30 {
+				continue
+			}
+			title := n.title
+			if title == "" {
+				title = "(untitled)"
+			}
+			result = append(result, ShortTimer{
+				ID:    n.id,
+				Title: title,
+				Issue: fmt.Sprintf("time semaphor resolves to %g sec — below the server minimum of 30 sec; the deploy is rejected", v*mult),
+			})
+		}
+	}
+	return result
+}
+
+// findUnrepliedTerminals detects final nodes reachable from Start without
+// crossing any api_rpc_reply, in processes that reply somewhere else. A process
+// that replies on its error paths but ends its success path in a bare final is
+// inconsistent by construction: an RPC caller learns about every failure but
+// hangs until timeout on success. Fire-and-forget processes (no api_rpc_reply
+// anywhere) are exempt — they are not RPC-style.
+func findUnrepliedTerminals(nodes []processNode) []UnrepliedTerminal {
+	nodeMap := make(map[string]processNode, len(nodes))
+	hasReply := false
+	replies := make(map[string]bool)
+	for _, n := range nodes {
+		nodeMap[n.id] = n
+		for _, lg := range n.logics {
+			if t, _ := lg["type"].(string); t == "api_rpc_reply" {
+				hasReply = true
+				replies[n.id] = true
+			}
+		}
+	}
+	if !hasReply {
+		return nil
+	}
+
+	type state struct {
+		id      string
+		replied bool
+	}
+	var stack []state
+	for _, n := range nodes {
+		if n.objType == 1 {
+			stack = append(stack, state{n.id, false})
+		}
+	}
+	seen := make(map[state]bool)
+	unreplied := make(map[string]bool)
+	for len(stack) > 0 {
+		s := stack[len(stack)-1]
+		stack = stack[:len(stack)-1]
+		if seen[s] {
+			continue
+		}
+		seen[s] = true
+		n, ok := nodeMap[s.id]
+		if !ok {
+			continue
+		}
+		replied := s.replied || replies[s.id]
+		if n.objType == 2 {
+			if !replied {
+				unreplied[s.id] = true
+			}
+			continue
+		}
+		for _, lg := range n.logics {
+			if to, _ := lg["to_node_id"].(string); to != "" {
+				stack = append(stack, state{to, replied})
+			}
+			if errID, _ := lg["err_node_id"].(string); errID != "" {
+				stack = append(stack, state{errID, replied})
+			}
+		}
+		for _, sem := range n.sems {
+			if to, _ := sem["to_node_id"].(string); to != "" {
+				stack = append(stack, state{to, replied})
+			}
+			if esc, _ := sem["esc_node_id"].(string); esc != "" {
+				stack = append(stack, state{esc, replied})
+			}
+		}
+	}
+
+	var result []UnrepliedTerminal
+	for _, n := range nodes { // document order for determinism
+		if !unreplied[n.id] {
+			continue
+		}
+		title := n.title
+		if title == "" {
+			title = "(untitled)"
+		}
+		result = append(result, UnrepliedTerminal{
+			ID:    n.id,
+			Title: title,
+			Issue: fmt.Sprintf("final '%s' is reachable from Start without any api_rpc_reply, while the process replies on other paths — an RPC caller (api_rpc) hangs until timeout on this path. Add a Reply node before the final", title),
+		})
+	}
+	return result
+}
+
 // findPassthroughEscalations detects escalation nodes (obj_type:3) that contain only
 // a bare `go` logic and no action logic (api_rpc_reply, set_param, etc.).
 // Such nodes are pure pass-throughs: the err_node_id should point directly to the
@@ -262,19 +718,7 @@ func findPassthroughEscalations(nodes []processNode) []PassthroughEscalation {
 		nodeMap[n.id] = n
 	}
 
-	actionTypes := map[string]bool{
-		"api_rpc_reply": true,
-		"api_rpc":       true,
-		"api_copy":      true,
-		"api":           true,
-		"api_code":      true,
-		"set_param":     true,
-		"api_sum":       true,
-		"db_call":       true,
-		"api_git":       true,
-		"api_queue":     true,
-		"api_get_task":  true,
-	}
+	actionTypes := lintActionTypes
 
 	var result []PassthroughEscalation
 	for _, n := range nodes {
@@ -282,6 +726,7 @@ func findPassthroughEscalations(nodes []processNode) []PassthroughEscalation {
 			continue
 		}
 		hasAction := false
+		hasCondition := false
 		goTarget := ""
 		for _, lg := range n.logics {
 			lgType, _ := lg["type"].(string)
@@ -289,9 +734,18 @@ func findPassthroughEscalations(nodes []processNode) []PassthroughEscalation {
 				hasAction = true
 				break
 			}
+			if lgType == "go_if_const" {
+				hasCondition = true
+			}
 			if lgType == "go" {
 				goTarget, _ = lg["to_node_id"].(string)
 			}
+		}
+		// Condition escalations (retry IF: go_if_const branches + default go) and
+		// timer escalations (Delay semaphors) route, they don't pass through —
+		// the platform's new-format converter itself produces them as obj_type:3.
+		if hasCondition || len(n.sems) > 0 {
+			continue
 		}
 		if hasAction || goTarget == "" {
 			continue
@@ -410,6 +864,10 @@ func findOrphanedNodes(nodes []processNode) ([]OrphanedNode, int) {
 			if tid, ok := sem["to_node_id"].(string); ok && tid != "" {
 				adj[e.id] = append(adj[e.id], tid)
 			}
+			// count semaphors escalate via esc_node_id instead of to_node_id
+			if eid, ok := sem["esc_node_id"].(string); ok && eid != "" {
+				adj[e.id] = append(adj[e.id], eid)
+			}
 		}
 	}
 
@@ -523,6 +981,52 @@ func FormatLintResult(result *LintResult) string {
 		}
 	}
 
+	if len(result.SharedErrorClusters) > 0 {
+		hasIssues = true
+		sb.WriteString(fmt.Sprintf("\n=== SHARED ERROR CLUSTERS (%d) ===\n", len(result.SharedErrorClusters)))
+		for _, sc := range result.SharedErrorClusters {
+			sb.WriteString(fmt.Sprintf("  [%s] %s\n", sc.ID, sc.Title))
+			sb.WriteString(fmt.Sprintf("  Fed by %d different nodes: %s\n", len(sc.Sources), strings.Join(sc.Sources, ", ")))
+			sb.WriteString("  Issue: every failing node needs its OWN Reply/Error cluster — a neighbour's error must not join it (one node's error may fan through its own Condition into one Error terminal, but never across nodes)\n")
+		}
+	}
+
+	if len(result.OldFormatNodes) > 0 {
+		hasIssues = true
+		sb.WriteString(fmt.Sprintf("\n=== OLD FORMAT NODES (%d) — UI will show \"Convert process to new format\" ===\n", len(result.OldFormatNodes)))
+		for _, of := range result.OldFormatNodes {
+			sb.WriteString(fmt.Sprintf("  [%s] %s\n", of.ID, of.Title))
+			sb.WriteString(fmt.Sprintf("  Issue: %s\n", of.Issue))
+		}
+	}
+
+	if len(result.UnrepliedTerminals) > 0 {
+		hasIssues = true
+		sb.WriteString(fmt.Sprintf("\n=== RPC PATHS WITHOUT REPLY (%d) ===\n", len(result.UnrepliedTerminals)))
+		for _, ut := range result.UnrepliedTerminals {
+			sb.WriteString(fmt.Sprintf("  [%s] %s\n", ut.ID, ut.Title))
+			sb.WriteString(fmt.Sprintf("  Issue: %s\n", ut.Issue))
+		}
+	}
+
+	if len(result.MissingDefaultGo) > 0 {
+		hasIssues = true
+		sb.WriteString(fmt.Sprintf("\n=== NODES WITHOUT DEFAULT GO (%d) — server rejects the deploy ===\n", len(result.MissingDefaultGo)))
+		for _, mg := range result.MissingDefaultGo {
+			sb.WriteString(fmt.Sprintf("  [%s] %s\n", mg.ID, mg.Title))
+			sb.WriteString(fmt.Sprintf("  Issue: %s\n", mg.Issue))
+		}
+	}
+
+	if len(result.ShortTimers) > 0 {
+		hasIssues = true
+		sb.WriteString(fmt.Sprintf("\n=== TIMERS BELOW SERVER MINIMUM (%d) ===\n", len(result.ShortTimers)))
+		for _, st := range result.ShortTimers {
+			sb.WriteString(fmt.Sprintf("  [%s] %s\n", st.ID, st.Title))
+			sb.WriteString(fmt.Sprintf("  Issue: %s\n", st.Issue))
+		}
+	}
+
 	if !hasIssues {
 		sb.WriteString("\nNo issues found.")
 	} else {
@@ -530,7 +1034,7 @@ func FormatLintResult(result *LintResult) string {
 		if !result.SchemaValid {
 			schemaIssues = 1
 		}
-		total := len(result.NoopConditions) + len(result.UnusedSetParams) + len(result.OrphanedNodes) + len(result.PassthroughEscalations) + len(result.LiteralReplyValues) + schemaIssues
+		total := len(result.NoopConditions) + len(result.UnusedSetParams) + len(result.OrphanedNodes) + len(result.PassthroughEscalations) + len(result.LiteralReplyValues) + len(result.SharedErrorClusters) + len(result.OldFormatNodes) + len(result.UnrepliedTerminals) + len(result.MissingDefaultGo) + len(result.ShortTimers) + schemaIssues
 		sb.WriteString(fmt.Sprintf("\nTotal issues: %d\n", total))
 	}
 

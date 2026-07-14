@@ -337,18 +337,53 @@ named Error node so the diagram reads clearly.
 
 A cluster is two nodes pinned tight to the node they protect:
 
-1. **Reply to Process** node (`api_rpc_reply`) that returns the error to the caller, kept
-   **collapsed** (`"extra": "{\"modeForm\":\"collapse\",\"icon\":\"\"}"`). Placed at the **same `y`**
-   as the failing node, just to its right (`x + ~250`) so the small collapsed node sits right next to it.
-2. **Error** END node (`obj_type: 2`, **expanded** so its name stays visible:
-   `"extra": "{\"modeForm\":\"expand\",\"icon\":\"error\"}"`) **named after the specific failure**
-   (e.g. `Charge Payment Error`, not a generic `Error`/`Final`). Placed immediately to the right of
-   the Reply node (`x + ~500`), same `y`.
+1. **Reply to Process** node (`api_rpc_reply`, `obj_type: 3` — it is an `err_node_id`
+   target) that returns the error to the caller, kept
+   **collapsed** (`"extra": "{\"modeForm\":\"collapse\",\"icon\":\"\"}"`). Placed just to the
+   right of the failing node and slightly below its row so the link leaves the row lane free.
+2. **Error** END node (`obj_type: 2`, **collapsed** like the rest of the cluster:
+   `"extra": "{\"modeForm\":\"collapse\",\"icon\":\"error\"}"`) **named after the specific failure**
+   (e.g. `Charge Payment Error`, not a generic `Error`/`Final`). Placed one more step down-right
+   from the Reply node, forming the compact staircase described below.
+
+Exact coordinates do not matter when authoring — `layout-process` rewrites `x`/`y` into the
+staircase (see "Placement of the standard retry shape" below); what matters is the wiring and
+the collapse flags.
 
 Wiring: failing node `err_node_id` → its Reply node; the Reply node's `go` → its Error node.
 
 For fire-and-forget processes that do not reply to a caller, omit the Reply node and wire
 `err_node_id` directly to the dedicated named Error node.
+
+What "own" means precisely: a single node's error may fan out through its **own**
+Condition node (any number of `go_if_const` branches — hardware vs software, retry
+vs fatal) into **one** Error terminal — that whole cluster still belongs to that one
+node. What is forbidden is any **sharing across failing nodes**: a neighbour's
+`err_node_id` pointing at your error node, or two escalation tails converging on one
+Error terminal. `lint-process` flags both shapes as **shared error clusters**.
+
+The WHOLE dedicated cluster is set **collapsed** at authoring time: the
+error-routing Condition (`go_if_const` retry/fatal switch), the retry **Delay**,
+the Reply node AND the named Error final all carry `modeForm: "collapse"` —
+hand-tuned production layouts collapse the full cluster. This applies to the
+error-path Condition only, not to business-logic Conditions.
+
+Two "new format" rules the platform enforces on every cluster (violating either
+still deploys, but the UI shows *"Convert process to new format"* on open and
+rewrites the scheme; `lint-process` flags both as OLD FORMAT NODES):
+
+1. **Every `err_node_id` target is `obj_type: 3`.** The Reply node AND the
+   retry/fatal Condition the error escalates into are escalation nodes, not
+   `obj_type: 0`. Business-flow Conditions reached via `go` stay `obj_type: 0`.
+2. **Never mix an action logic with `go_if_const` in one node.** A step that
+   sets parameters and then branches is TWO nodes: the `set_param` node with a
+   `go` into a separate Condition node. The converter splits such nodes itself.
+
+Placement of the standard retry shape (distilled from hand-tuned layouts, and
+what `layout-process` produces): the Delay sits level with its owner's row to
+the right; its Condition hangs directly below the Delay; the Reply → Error
+chain steps down-right in a compact staircase. A plain (no-retry) cluster
+enters slightly below the owner's row so the link leaves the row lane free.
 
 This one-to-one mapping between each error-prone node and its named Error node — instead of one shared
 terminal — improves error isolation, troubleshooting, and readability.
@@ -381,12 +416,12 @@ Example Code Node with its dedicated Reply + Error cluster (Reply collapsed and 
 }
 ```
 
-Its dedicated **Reply** node (collapsed, pinned to the right of the failing node, same `y`):
+Its dedicated **Reply** node (collapsed, pinned to the right of the failing node and slightly below its row; `layout-process` produces the exact staircase):
 
 ```json
 {
   "id": "code_reply_error_node_id",
-  "obj_type": 0,
+  "obj_type": 3,
   "condition": {
     "logics": [
       {
@@ -416,7 +451,7 @@ Its dedicated **Reply** node (collapsed, pinned to the right of the failing node
 }
 ```
 
-Its dedicated, descriptively-named **Error** node (expanded so the name is visible, immediately to the right, same `y`):
+Its dedicated, descriptively-named **Error** node (collapsed, immediately to the right, slightly below the row):
 
 ```json
 {
@@ -429,7 +464,7 @@ Its dedicated, descriptively-named **Error** node (expanded so the name is visib
   "title": "Calculate Sum Error",
   "x": 700,
   "y": 300,
-  "extra": "{\"modeForm\":\"expand\",\"icon\":\"error\"}"
+  "extra": "{\"modeForm\":\"collapse\",\"icon\":\"error\"}"
 }
 ```
 
