@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"sync"
@@ -203,5 +204,24 @@ func TestLoadConfig_DefaultsApigwURL(t *testing.T) {
 
 	if apigwURL != "https://api-apigw.corezoid.com" {
 		t.Errorf("expected default apigwURL, got %q", apigwURL)
+	}
+}
+
+// TestDebugFlagFollowsEnv pins the COREZOID_DEBUG wiring for the Executor
+// trace end-to-end: the package-level `debug` var used to be declared and
+// never assigned, making every `if v.Debug` block unreachable dead code. The
+// assertion goes through loadConfig + NewValidator — the actual consumer
+// path — so reverting the assignment fails this test.
+func TestDebugFlagFollowsEnv(t *testing.T) {
+	t.Chdir(t.TempDir()) // keep loadConfig away from the repo .env
+	t.Setenv("COREZOID_DEBUG", "")
+	loadConfig()
+	if v := NewValidator(context.Background(), 0); v.Debug {
+		t.Fatal("empty COREZOID_DEBUG must not enable the executor trace")
+	}
+	t.Setenv("COREZOID_DEBUG", "1")
+	loadConfig()
+	if v := NewValidator(context.Background(), 0); !v.Debug {
+		t.Fatal("COREZOID_DEBUG=1 must enable the executor trace")
 	}
 }

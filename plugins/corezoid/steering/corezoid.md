@@ -38,9 +38,9 @@ deploy to fail server-side:
 - Each Corezoid REST/MCP operation is exposed as one MCP tool whose name
   matches the documented operation id.
 - For broader platform context — process design, review, deployment, state
-  diagrams — the matching skill under `.kiro/skills/corezoid-*` carries the
-  deep reference docs. Activate the relevant one when the user signals
-  intent.
+  diagrams — the matching `corezoid-*` skill (or steering file, on Kiro
+  Powers) carries the deep reference docs. Activate the relevant one when
+  the user signals intent.
 
 ## Language policy
 

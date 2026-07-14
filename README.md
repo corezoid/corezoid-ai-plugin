@@ -40,7 +40,7 @@ workflows through natural conversation.
 
 ## Requirements
 
-- [Claude Code](https://claude.ai/code) or [Codex](https://openai.com/codex) installed
+- [Claude Code](https://claude.ai/code), [Codex](https://openai.com/codex), or [AWS Kiro](https://kiro.dev) installed
 - A Corezoid account
 
 ## Installation
@@ -86,11 +86,25 @@ No build step, no extra setup. The MCP server starts automatically on first use.
 > export COREZOID_ANALYTICS_DISABLED=1   # add to ~/.zshrc or ~/.bashrc to persist
 > ```
 
+### AWS Kiro
+
+```bash
+git clone https://github.com/corezoid/corezoid-ai-plugin
+cd corezoid-ai-plugin
+sh plugins/corezoid/scripts/install-kiro.sh .
+```
+
+Open the workspace in Kiro — the `corezoid` MCP server, skills, and steering are picked up automatically. This also registers the plugin as a Kiro Power (`~/.kiro/powers/installed/power-corezoid/`), so it stays available in every Kiro workspace, not just this one — restart Kiro (or reload the window) to pick it up.
+
 ### Updating
 
 ```bash
 claude plugin update corezoid@corezoid   # Claude Code
 codex plugin update corezoid@corezoid    # Codex
+```
+
+```bash
+git pull && sh plugins/corezoid/scripts/install-kiro.sh .   # AWS Kiro
 ```
 
 Restart Claude Code / Codex after updating to apply the new version.
@@ -229,6 +243,9 @@ validation errors, and summarize what each process does.
 | `delete-process`    | Move a process or state diagram to the recycle bin |
 | `create-alias`      | Create a short alias for a process                 |
 | `create-variable`   | Create a Corezoid environment variable             |
+| `list-variables`    | List a stage's environment variables (secrets masked) |
+| `modify-variable`   | Change a variable's value/title/data_type or rename it — dry-run + confirm-gated |
+| `delete-variable`   | PERMANENTLY delete a variable (no recycle bin) — dry-run + confirm-gated |
 | `create-dashboard`  | Create a new dashboard for visualizing node metrics |
 | `get-dashboard`     | Get a dashboard with its charts and series         |
 | `add-chart`         | Add a chart (column, pie, funnel, table) to a dashboard |

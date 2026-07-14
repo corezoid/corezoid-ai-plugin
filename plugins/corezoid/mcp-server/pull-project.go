@@ -224,7 +224,7 @@ func downloadStageRecursively(e *Executor, folderID int, filePath string) error 
 	if err != nil {
 		return fmt.Errorf("failed to rename files: %v", err)
 	}
-	err = formatJSON(filePath)
+	err = formatJSONWithFallback(e, filePath)
 	if err != nil {
 		return fmt.Errorf("failed to format json: %v", err)
 	}
@@ -315,6 +315,14 @@ func renameFiles2Folders(filePath string) error {
 }
 
 func formatJSON(filePath string) error {
+	return formatJSONWithFallback(nil, filePath)
+}
+
+// formatJSONWithFallback formats all JSON files under filePath, pretty-printing
+// them and stripping uuid fields. When e is non-nil, it also applies a fallback
+// for undeployed processes whose scheme.nodes is empty: it fetches nodes via the
+// list API (GetProcessNodes) and patches the file in place before writing.
+func formatJSONWithFallback(e *Executor, filePath string) error {
 	// теперь везде где json файлы форматировать их через MarshalIndent
 	files, err := os.ReadDir(filePath)
 	if err != nil {
@@ -324,7 +332,7 @@ func formatJSON(filePath string) error {
 	for _, f := range files {
 		if f.IsDir() {
 			//fmt.Println("Downloaded folder", filepath.Join(filePath, f.Name()))
-			err := formatJSON(filepath.Join(filePath, f.Name()))
+			err := formatJSONWithFallback(e, filepath.Join(filePath, f.Name()))
 			if err != nil {
 				return fmt.Errorf("Failed to format json in directory: %v", err)
 			}
@@ -343,15 +351,47 @@ func formatJSON(filePath string) error {
 			return fmt.Errorf("failed to unmarshal file: %v", err)
 		}
 		// везде где есть uuid в scheme.nodes объект удалить
-		if nodes, ok := dataRsp.(map[string]interface{}); ok {
-			if nodes, ok := nodes["scheme"].(map[string]interface{}); ok {
-				if nodes1, ok := nodes["nodes"].([]interface{}); ok {
-					for _, node := range nodes1 {
-						if nodeMap, ok := node.(map[string]interface{}); ok {
-							delete(nodeMap, "uuid")
+		if procMap, ok := dataRsp.(map[string]interface{}); ok {
+			if schemeMap, ok := procMap["scheme"].(map[string]interface{}); ok {
+				// nodes1 is nil when the key is absent and empty when the ZIP
+				// contains "nodes": [] — both mean "no nodes", so treat them the
+				// same via len() and trigger the fallback in either case, matching
+				// ExportProcess.
+				nodes1, _ := schemeMap["nodes"].([]interface{})
+				if len(nodes1) == 0 && e != nil {
+					// Fallback for undeployed processes: scheme.nodes is absent or empty
+					// (export_process returns "nodes": [] for imported-but-never-deployed
+					// processes). Look up the process ID from the file and fetch nodes via
+					// the list API.
+					if rawID, ok := procMap["obj_id"].(float64); ok && rawID > 0 {
+						procID := int(rawID)
+						fallback := &Executor{
+							Ctx:         e.Ctx,
+							ProcessID:   procID,
+							Token:       e.Token,
+							APIUrl:      e.APIUrl,
+							WorkspaceID: e.WorkspaceID,
+							StageID:     e.StageID,
+							Debug:       e.Debug,
+							NodeIDMap:   make(map[string]NodeInfo),
+						}
+						fallbackNodes, ferr := fallback.GetProcessNodes()
+						if ferr == nil && len(fallbackNodes) > 0 {
+							nodes1 = fallbackNodes
+							schemeMap["nodes"] = fallbackNodes
+							logger.Info("pull-folder: used fallback nodes for undeployed process %d (%d nodes)", procID, len(fallbackNodes))
 						}
 					}
 				}
+				// Strip uuid from every node, including fallback nodes fetched via
+				// the list API (pull-folder always writes uuid-free files).
+				for _, node := range nodes1 {
+					if nodeMap, ok := node.(map[string]interface{}); ok {
+						delete(nodeMap, "uuid")
+					}
+				}
+				procMap["scheme"] = schemeMap
+				dataRsp = procMap
 			}
 		}
 

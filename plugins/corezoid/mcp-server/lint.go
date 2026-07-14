@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"sort"
 	"strings"
 )
 
@@ -14,6 +15,7 @@ type LintResult struct {
 	UnusedSetParams          []UnusedSetParam
 	OrphanedNodes            []OrphanedNode
 	PassthroughEscalations   []PassthroughEscalation
+	LiteralReplyValues       []LiteralReplyValue
 	TotalNodes               int
 	ReachableCount           int
 	SchemaValid              bool
@@ -51,6 +53,19 @@ type PassthroughEscalation struct {
 	TargetID    string
 	TargetTitle string
 	Issue       string
+}
+
+// LiteralReplyValue represents an api_rpc_reply logic whose res_data (or extra)
+// contains literal non-string values ([], {}, 0, true, null). The commit service
+// hangs on serialising such values when the process is pushed through the API
+// ("no response from server"), even though the JSON schema accepts them — reply
+// parameters must be "{{variable}}" templates or plain strings, with the real
+// type declared in res_data_type.
+type LiteralReplyValue struct {
+	ID     string
+	Title  string
+	Fields []string
+	Issue  string
 }
 
 // processNode is the typed representation of a Corezoid node used throughout lint checks.
@@ -111,6 +126,7 @@ func lintProcess(filePath string) (*LintResult, error) {
 	result.NoopConditions, result.UnusedSetParams = findNoopNodes(typed)
 	result.OrphanedNodes, result.ReachableCount = findOrphanedNodes(typed)
 	result.PassthroughEscalations = findPassthroughEscalations(typed)
+	result.LiteralReplyValues = findLiteralReplyValues(typed)
 
 	schemaErr := ValidateJSONSchema(filePath, debug)
 	if schemaErr != nil {
@@ -305,6 +321,70 @@ func findPassthroughEscalations(nodes []processNode) []PassthroughEscalation {
 	return result
 }
 
+// findLiteralReplyValues detects api_rpc_reply logics whose res_data (or its
+// alternative spelling extra) carries literal non-string values. The Corezoid
+// commit service cannot serialise them when the change comes through the API:
+// the commit request gets no reply and push-process fails with the opaque
+// "no response from server" — while both the JSON schema and the UI editor
+// accept the very same scheme. Catching it in lint turns a dead-end hang into
+// an actionable message.
+//
+// Only non-string values are flagged. Literal strings ("success", "API call
+// error") are fine — the platform serialises them the same way as templates.
+func findLiteralReplyValues(nodes []processNode) []LiteralReplyValue {
+	var result []LiteralReplyValue
+	for _, n := range nodes {
+		for _, lg := range n.logics {
+			if t, _ := lg["type"].(string); t != "api_rpc_reply" {
+				continue
+			}
+			var fields []string
+			for _, dataKey := range []string{"res_data", "extra"} {
+				data, _ := lg[dataKey].(map[string]interface{})
+				keys := make([]string, 0, len(data))
+				for k := range data {
+					keys = append(keys, k)
+				}
+				sort.Strings(keys)
+				for _, k := range keys {
+					if _, isString := data[k].(string); !isString {
+						fields = append(fields, fmt.Sprintf("%s.%s = %s", dataKey, k, describeLiteral(data[k])))
+					}
+				}
+			}
+			if len(fields) == 0 {
+				continue
+			}
+			displayTitle := n.title
+			if displayTitle == "" {
+				displayTitle = "(untitled)"
+			}
+			result = append(result, LiteralReplyValue{
+				ID:     n.id,
+				Title:  displayTitle,
+				Fields: fields,
+				Issue: fmt.Sprintf(
+					"api_rpc_reply has literal non-string values (%s) — pushing this scheme hangs the server commit (\"no response from server\"). Set the value in an upstream api_code/set_param node and reference it as \"{{variable}}\" with the real type in res_data_type",
+					strings.Join(fields, ", ")),
+			})
+		}
+	}
+	return result
+}
+
+// describeLiteral renders a res_data value for the lint message ([], {}, 0, true, null).
+func describeLiteral(v interface{}) string {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return fmt.Sprintf("%v", v)
+	}
+	s := string(b)
+	if len(s) > 40 {
+		s = s[:37] + "..."
+	}
+	return s
+}
+
 // findOrphanedNodes does a BFS from the Start node and returns unreachable nodes
 func findOrphanedNodes(nodes []processNode) ([]OrphanedNode, int) {
 	typeLabels := map[float64]string{0: "standard", 1: "start", 2: "final", 3: "escalation"}
@@ -434,6 +514,15 @@ func FormatLintResult(result *LintResult) string {
 		}
 	}
 
+	if len(result.LiteralReplyValues) > 0 {
+		hasIssues = true
+		sb.WriteString(fmt.Sprintf("\n=== API_RPC_REPLY LITERAL VALUES (%d) ===\n", len(result.LiteralReplyValues)))
+		for _, lr := range result.LiteralReplyValues {
+			sb.WriteString(fmt.Sprintf("  [%s] %s\n", lr.ID, lr.Title))
+			sb.WriteString(fmt.Sprintf("  Issue: %s\n", lr.Issue))
+		}
+	}
+
 	if !hasIssues {
 		sb.WriteString("\nNo issues found.")
 	} else {
@@ -441,7 +530,7 @@ func FormatLintResult(result *LintResult) string {
 		if !result.SchemaValid {
 			schemaIssues = 1
 		}
-		total := len(result.NoopConditions) + len(result.UnusedSetParams) + len(result.OrphanedNodes) + len(result.PassthroughEscalations) + schemaIssues
+		total := len(result.NoopConditions) + len(result.UnusedSetParams) + len(result.OrphanedNodes) + len(result.PassthroughEscalations) + len(result.LiteralReplyValues) + schemaIssues
 		sb.WriteString(fmt.Sprintf("\nTotal issues: %d\n", total))
 	}
 

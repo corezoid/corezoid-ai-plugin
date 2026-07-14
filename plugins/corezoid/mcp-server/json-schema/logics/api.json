@@ -3,7 +3,7 @@
   "title": "API Logic Schema",
   "description": "Schema for the api logic type in Corezoid processes",
   "type": "object",
-  "required": ["type", "method", "url", "err_node_id"],
+  "required": ["type", "method", "url", "extra_headers", "max_threads", "err_node_id"],
   "additionalProperties": false,
   "properties": {
     "type": {

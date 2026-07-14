@@ -43,6 +43,8 @@
               "url": "{{url}}",
               "method": "GET",
               "content_type": "application/json",
+              "extra_headers": {},
+              "max_threads": 5,
               "err_node_id": "aabc000000000000000000003",
               "extra": {},
               "extra_type": {}

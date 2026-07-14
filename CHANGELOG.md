@@ -1,5 +1,30 @@
 # Changelog
 
+## [2.8.4]
+
+- Feat: `.mcp.kiro.json` now ships with `"disabled": true`; `install-kiro.sh --install-power` writes the Power's own MCP entry into Kiro's global `~/.kiro/settings/mcp.json` under `powers.mcpServers.power-power-corezoid-corezoid` (matching the key convention Kiro itself uses) and force-enables it there, since that's the entry Kiro actually runs for an installed Power.
+- Docs: explain in `run_workspace_install` why the workspace-scoped `mcpServers.corezoid` entry intentionally stays disabled — this mode always also runs `--install-power`, so enabling both would start two instances of the same MCP server.
+
+## [2.8.3]
+
+- Feat: `install-kiro.sh --install-power` — build the Power bundle and install it directly into this machine's local Kiro (`~/.kiro/powers/installed/power-corezoid/`, registered in `~/.kiro/powers/installed.json` via a safe `python3` JSON merge), bypassing the Powers panel's "Import from folder" UI.
+- Feat: plain `install-kiro.sh [workspace-dir]` now always also runs `--install-power`, so the plugin stays registered as a Kiro Power globally, not just installed into one workspace; `--install-power` alone (no workspace-dir) still does just the global install.
+- Fix: `--power` bundle mode now resolves `$CLAUDE_PLUGIN_ROOT` doc references to this repo clone's absolute `docs/` path instead of a relative path plus a shipped `docs/` copy — confirmed on a real install that Kiro's own power-install step drops everything except `POWER.md`, `mcp.json`, and `steering/`, so the shipped `docs/` copy was always going to be a dead link.
+- Docs: note the new global-Kiro-Power registration side effect in `README.md`'s AWS Kiro install instructions.
+
+## [2.8.2]
+
+- Feat: `install-kiro.sh --power [output-dir]` — build a portable, importable Kiro Power bundle (`POWER.md`, `mcp.json`, `steering/*.md`, `docs/`) alongside the existing workspace-install mode, merged into one script that shares path resolution and skill iteration between both modes.
+- Fix: `.mcp.kiro.json`'s `PLUGIN_ROOT` resolution now probes for `mcp-server/run.sh` and appends `/plugins/corezoid` only if the direct path doesn't exist, instead of assuming one fixed layout; fails with a clear error if neither layout matches instead of a cryptic `exec` failure.
+- Fix: `install-kiro.sh` now sed-substitutes `settings/mcp.json` from `.mcp.kiro.json` instead of duplicating the MCP command/args inline, keeping the two in lock-step.
+- Fix: sync version drift that had accumulated across `.agents/plugins/marketplace.json`, `.codex-plugin/plugin.json`, `.kiro-plugin/plugin.json`, and the repo-root `POWER.md` (stale at `2.8.0`/`2.7.0` and an outdated 18-skill count vs. the actual 21).
+- Docs: reword `steering/corezoid.md`'s tool-routing note to be accurate for both the workspace-install skill layout and the Kiro Power steering layout; the always-on guardrails file now also ships in the Power bundle as `steering/corezoid-guardrails.md`.
+- Chore: gitignore the `power-corezoid/` build output.
+
+## [2.8.1]
+
+- Fix: AWS Kiro MCP server failed to start after `install-kiro.sh` — the `.mcp.kiro.json` fallback path pointed two directory levels above the actual `mcp-server/run.sh` location. The installer now resolves `PLUGIN_ROOT` to an absolute path and bakes it into the generated `.kiro/settings/mcp.json` at install time, matching how skills are already handled.
+- Docs: add AWS Kiro install/update instructions to `README.md`.
 ## [Unreleased]
 
 - Feat: code-enforced node placement on `push-process` — new nodes added with placeholder coordinates (`x: 0, y: 0`) are auto-placed by the MCP server. Preserve mode is the default: already-placed nodes are never moved, only the new `(0,0)` nodes are slotted near their graph neighbours without overlap; a fully-new process gets a clean layered layout. Disable with the environment variable `COREZOID_AUTOLAYOUT=off`.
@@ -8,6 +33,7 @@
 - Fix: `deploy-stage` no longer refuses a deploy with a false "unexpected/conflicting status" when a process was deleted on the source stage. `/api/2/compare` reports such objects as `"deleted"` (the status the tool expected, `"removed"`, has never been observed in the API); the UI merge propagates the deletion without complaint, and the tool now does the same — the object counts toward the "will be DELETED from the target" warning instead of aborting. Reproduced live: deploy dev→prod, delete the process on dev, dry-run → previously `⛔ 1 object(s) returned an unexpected/conflicting status`.
 - Fix: `deploy-stage` failures are now diagnosable. A failed compare (e.g. "One or more processes has errors") carries a nested `errors` tree naming the exact stage → process → node and the reason (empty scheme, orphan node, a reference into another project, …); the tool previously swallowed it and printed only the bare description. A genuinely unrecognized compare status now also lists each offending object with its id, title and the literal status value instead of an anonymous count.
 - Fix: `deploy-stage` gives a definitive good/bad verdict when the progress WebSocket fails (small merges routinely finish and close it before the monitor subscribes). The outcome is decided by the scheme itself: compare is re-run with retries — an empty diff reports a verified success, a leftover diff reports UNCONFIRMED as an error. Previously every fast merge ended with a scary "completion could not be confirmed over the WebSocket" warning on a successful deploy.
+- Feat: full env-var lifecycle from the IDE — `list-variables`, `modify-variable` and `delete-variable` MCP tools. Both write tools are dry-run-by-default and confirm-gated (`confirm="<short_name>#<obj_id>"`): modify shows a current → new diff (rename additionally scans local `.conv.json` files for `{{env_var[@old-name]}}` references), delete shows a red permanent-deletion warning block that the AI must present to the user verbatim — env vars have NO recycle bin. Secrets are always masked in every output; server semantics verified live: modify is partial (omitted fields — including a secret's value — are preserved), `env_var_type` cannot be changed after creation (the server silently ignores it), delete requires project/stage ids.
 
 ## [2.8.0]
 

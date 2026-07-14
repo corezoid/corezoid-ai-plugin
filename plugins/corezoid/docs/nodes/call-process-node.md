@@ -207,6 +207,8 @@ If the count threshold is reached, the task is routed to an escalation node:
         "type": "api",
         "url": "https://api.example.com/data",
         "method": "POST",
+        "extra_headers": {},
+        "max_threads": 5,
         "content_type": "application/json",
         "err_node_id": "error_node_id"
       },

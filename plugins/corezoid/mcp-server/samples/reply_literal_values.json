@@ -1,0 +1,117 @@
+{
+  "conv_type": "process",
+  "description": "Lint fixture: api_rpc_reply with literal non-string res_data values ([], 0) — such a scheme hangs the server commit when pushed",
+  "obj_id": 1,
+  "obj_type": 1,
+  "params": [],
+  "ref_mask": true,
+  "scheme": {
+    "nodes": [
+      {
+        "id": "bbbb0001513aa075cf400001",
+        "obj_type": 1,
+        "condition": {
+          "logics": [
+            {
+              "type": "go",
+              "to_node_id": "bbbb0002513aa075cf400002"
+            }
+          ],
+          "semaphors": []
+        },
+        "title": "Start",
+        "description": "",
+        "x": 600,
+        "y": 100,
+        "extra": "{\"icon\":\"\",\"modeForm\":\"collapse\"}",
+        "options": "{\"direct_url\":true,\"type_auth\":\"no_auth\"}"
+      },
+      {
+        "id": "bbbb0002513aa075cf400002",
+        "obj_type": 0,
+        "condition": {
+          "logics": [
+            {
+              "type": "api_rpc_reply",
+              "mode": "key_value",
+              "res_data": {
+                "links": [],
+                "chars": 0,
+                "note": "plain strings are fine"
+              },
+              "res_data_type": {
+                "links": "array",
+                "chars": "number",
+                "note": "string"
+              },
+              "throw_exception": false
+            },
+            {
+              "type": "go",
+              "to_node_id": "bbbb0004513aa075cf400004"
+            }
+          ],
+          "semaphors": []
+        },
+        "title": "Reply literals",
+        "description": "",
+        "x": 600,
+        "y": 300,
+        "extra": "{\"modeForm\":\"expand\",\"icon\":\"\"}",
+        "options": null
+      },
+      {
+        "id": "bbbb0004513aa075cf400004",
+        "obj_type": 0,
+        "condition": {
+          "logics": [
+            {
+              "type": "api_rpc_reply",
+              "extra": {
+                "meta": {},
+                "status": "success"
+              },
+              "extra_type": {
+                "meta": "object",
+                "status": "string"
+              },
+              "throw_exception": false
+            },
+            {
+              "type": "go",
+              "to_node_id": "bbbb0003513aa075cf400003"
+            }
+          ],
+          "semaphors": []
+        },
+        "title": "Reply extra literal",
+        "description": "",
+        "x": 600,
+        "y": 400,
+        "extra": "{\"modeForm\":\"expand\",\"icon\":\"\"}",
+        "options": null
+      },
+      {
+        "id": "bbbb0003513aa075cf400003",
+        "obj_type": 2,
+        "condition": {
+          "logics": [],
+          "semaphors": []
+        },
+        "title": "Final",
+        "description": "",
+        "x": 600,
+        "y": 500,
+        "extra": "{\"modeForm\":\"collapse\",\"icon\":\"success\"}",
+        "options": "{\"save_task\":true}"
+      }
+    ],
+    "web_settings": [
+      [],
+      []
+    ]
+  },
+  "status": "active",
+  "title": "reply-literal-values",
+  "uuid": "4395ca9a-6041-43a3-b1fe-8cda363a6d9a"
+}

@@ -276,12 +276,29 @@ process ID (or create a new alias), then push each affected process.
 
 ---
 
-## Workflow: Get callback hash (external task submission URL)
+## Workflow: Get callback hash (external task submission URL / Direct URL webhook)
 
-The callback hash is used to send tasks to a process from external systems via the
-API Gateway. Each alias has its own hash.
+The callback hash is the secret in a process's or alias's **Direct URL** — the public
+webhook endpoint external systems POST tasks to. A process and each of its aliases
+have **independent** hashes; rotating or deleting one does not affect the others.
 
-**API call:**
+**Get the hash — by process (`conv_id`):**
+```
+POST {COREZOID_API_URL}/api/2/json
+Authorization: Simulator {ACCESS_TOKEN}
+Content-Type: application/json
+
+{
+  "ops": [{
+    "type": "get",
+    "obj": "callback_hash",
+    "conv_id": <PROCESS_ID>,
+    "company_id": "<WORKSPACE_ID>"
+  }]
+}
+```
+
+**Get the hash — by alias (`alias_id`):**
 ```
 POST {COREZOID_API_URL}/api/2/json
 Authorization: Simulator {ACCESS_TOKEN}
@@ -298,20 +315,48 @@ Content-Type: application/json
 }
 ```
 
-**Response:**
+**Response (both):**
 ```json
 { "request_proc": "ok", "ops": [{ "proc": "ok", "callback_hash": "19e339a865d676db68b776f440443821c49a0e30" }] }
 ```
 
+Other `type` values on the same `obj: "callback_hash"` (swap `"type": "get"` for one of
+these, keeping the same `conv_id`/`alias_id` field):
+
+| `type` | Effect |
+|---|---|
+| `create` | Enables the Direct URL and issues the first hash |
+| `get` | Returns the current hash without changing anything |
+| `modify` | **Rotates** the hash — the previous URL stops working immediately |
+| `delete` | Disables the Direct URL entirely |
+
 **External submission URL:**
-```
-POST {COREZOID_APIGW_URL}/api/1/json/<WORKSPACE_ID>/<callback_hash>
-Content-Type: application/json
 
-{ "ops": [{ "ref": "unique-task-ref", "type": "create", "obj": "task", "data": { "key": "value" } }] }
-```
+⚠️ The URL format is **installation-specific** — always verify against the Direct URL
+shown in the Corezoid UI for that process/alias before handing it to another system.
+Two formats have been observed:
 
-Where `COREZOID_APIGW_URL` defaults to `https://api-apigw.corezoid.com`.
+- **Cloud (dedicated API Gateway):**
+  ```
+  POST {COREZOID_APIGW_URL}/api/1/json/<WORKSPACE_ID>/<callback_hash>
+  Content-Type: application/json
+
+  { "ops": [{ "ref": "unique-task-ref", "type": "create", "obj": "task", "data": { "key": "value" } }] }
+  ```
+  Where `COREZOID_APIGW_URL` defaults to `https://api-apigw.corezoid.com`.
+
+- **Self-hosted (served off the same account host, no separate gateway):**
+  ```
+  By conv_id:  https://<host>/api/2/json/public/<conv_id>/<callback_hash>
+  By alias:    https://<host>/api/2/json/public/@<alias_short_name>/<project_short_name>/<stage_short_name>/<company_id>/<callback_hash>
+  ```
+  `<host>` is the same host as `COREZOID_API_URL`. Some installations serve this under
+  `/api/1/json/public/...` instead of `/api/2/` — don't assume without confirming once
+  per installation.
+
+Either way, the hash in the URL **is** the authentication — treat it like a secret.
+Prefer alias-based URLs for anything referenced by external systems: an alias can be
+re-pointed at a new process without invalidating URLs already handed out.
 
 ---
 
