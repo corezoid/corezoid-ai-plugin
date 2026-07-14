@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"time"
 )
 
 // handleDeployStage promotes one stage's scheme onto another (e.g. develop →
@@ -88,7 +89,15 @@ func handleDeployStage(ctx context.Context, args map[string]interface{}) (string
 	}}
 	cmpResp, err := v.req("compare", cmpOps)
 	if err != nil {
-		return fmt.Sprintf("Error (compare): %v", err), true
+		// A failed compare (e.g. "One or more processes has errors") still returns
+		// a response whose op carries a nested `errors` tree naming the exact
+		// stage → process → node and the reason. Surface it — the bare description
+		// alone is undiagnosable through this tool.
+		msg := fmt.Sprintf("Error (compare): %v", err)
+		if tree := compareErrorsFromResp(cmpResp); tree != "" {
+			msg += "\n" + tree
+		}
+		return msg, true
 	}
 	list, derr := deployDiffList(cmpResp)
 	if derr != "" {
@@ -101,11 +110,13 @@ func handleDeployStage(ctx context.Context, args map[string]interface{}) (string
 	}
 
 	// Defensive: Corezoid's stage merge is a one-way overwrite (source wins) and
-	// its compare only reports add/change/remove — there is NO conflict status
-	// today. But if a genuine conflict status ever appears, refuse and send the
-	// user to the UI rather than silently overwriting.
-	if conflicts > 0 {
-		return fmt.Sprintf("⛔ Deploy NOT executed — %d object(s) returned an unexpected/conflicting status that this tool won't auto-merge. Resolve them in the Corezoid UI, then retry.\n\n%s", conflicts, summary), true
+	// its compare only reports added/changed/deleted (or "" for in-sync) — there
+	// is NO conflict status today. But if a status outside that set ever appears,
+	// refuse and send the user to the UI rather than silently overwriting — and
+	// name each object and its status so the refusal is diagnosable.
+	if len(conflicts) > 0 {
+		return fmt.Sprintf("⛔ Deploy NOT executed — %d object(s) returned a status this tool doesn't recognize and won't auto-merge:\n  %s\nResolve them in the Corezoid UI (or report this status so the tool can learn it), then retry.\n\n%s",
+			len(conflicts), strings.Join(conflicts, "\n  "), summary), true
 	}
 
 	// This merge OVERWRITES the target with the source's version for every listed
@@ -160,7 +171,26 @@ func handleDeployStage(ctx context.Context, args map[string]interface{}) (string
 		log, werr := deployMonitor(v, hash)
 		progressLog = log
 		if werr != nil {
-			waitNote = fmt.Sprintf("\n\n⚠ Merge started but completion could not be confirmed over the WebSocket: %v\n(It may still finish server-side — re-run with apply=false to check whether the diff is gone.)", werr)
+			// The socket is a progress channel, not the source of truth — small
+			// merges routinely finish and close it before the monitor subscribes.
+			// The scheme itself decides: re-run compare and let the diff answer.
+			// But keep the report honest about WHAT the socket said: a
+			// close-before-done is routine; a server-reported failure or a
+			// timeout is not, and its reason must never be swallowed.
+			verified, vmsg := deployVerifyByCompare(v, cmpOps)
+			if !verified {
+				out := fmt.Sprintf("⚠ Deploy result UNCONFIRMED for stage %d → stage %d.\nWebSocket: %v\nCompare after merge: %s\n(The merge may still be running server-side — re-run with apply=false; an empty diff means it completed.)",
+					sourceStage, targetStage, werr, vmsg)
+				if progressLog != "" {
+					out += "\n\nProgress:\n" + progressLog
+				}
+				return out, true
+			}
+			if strings.Contains(werr.Error(), "closed before done") {
+				waitNote = "\nℹ The progress WebSocket closed before confirming (typical for small, fast merges) — completion verified by compare instead: the target is in sync with the source."
+			} else {
+				waitNote = fmt.Sprintf("\n⚠ The progress WebSocket reported: %v\nHowever, compare verifies the target IS in sync with the source — the deploy landed. If the socket reported a server-side error, review it: the sync may reflect a partial state the compare cannot see.", werr)
+			}
 		}
 	}
 	out := fmt.Sprintf("✅ Deployed stage %d → stage %d.%s\n\n%s", sourceStage, targetStage, waitNote, summary)
@@ -168,6 +198,60 @@ func handleDeployStage(ctx context.Context, args map[string]interface{}) (string
 		out += "\n\nProgress:\n" + progressLog
 	}
 	return out, false
+}
+
+// Verification retry tuning: a merge whose WS died early may still be copying
+// server-side, so the first compare can legitimately show a leftover diff.
+// Package vars so tests can dial the waits down.
+var (
+	deployVerifyAttempts = 3
+	deployVerifyDelayVar = 2 * time.Second
+)
+
+// deployVerifyByCompare answers "did the merge actually land?" when the
+// progress WebSocket could not: it re-runs the same compare and calls the
+// deploy complete once the diff is empty (every listed object in sync). It
+// retries a few times because the async merge may still be finishing.
+// Returns verified=false with a short human explanation otherwise.
+func deployVerifyByCompare(v *Executor, cmpOps []map[string]any) (bool, string) {
+	msg := ""
+	for attempt := 1; attempt <= deployVerifyAttempts; attempt++ {
+		if attempt > 1 {
+			select {
+			case <-v.Ctx.Done():
+				return false, "verification cancelled"
+			case <-time.After(deployVerifyDelayVar):
+			}
+		}
+		resp, err := v.req("compare", cmpOps)
+		if err != nil {
+			msg = fmt.Sprintf("compare failed: %v", err)
+			continue
+		}
+		list, derr := deployDiffList(resp)
+		if derr != "" {
+			msg = "compare failed: " + derr
+			continue
+		}
+		// A verified success needs the op to actually carry a `list` — a
+		// malformed proc:"ok" response without one decodes to an empty slice
+		// and must NOT count as "in sync" (the only silent-false-success hole).
+		if !compareHasList(resp) {
+			msg = "compare response carried no object list"
+			continue
+		}
+		leftover := 0
+		for _, m := range list {
+			if s, _ := m["__status"].(string); s != "" {
+				leftover++
+			}
+		}
+		if leftover == 0 {
+			return true, ""
+		}
+		msg = fmt.Sprintf("%d object(s) still differ", leftover)
+	}
+	return false, msg
 }
 
 // handleSetStageImmutable flips a stage's immutable (read-only) flag. Immutable
@@ -238,7 +322,11 @@ func immutableWord(immutable bool) string {
 }
 
 // deployDiffList extracts the compare op's list of differing objects, returning
-// a human error string if the op did not succeed.
+// a human error string if the op did not succeed. Compare failures (e.g. "One
+// or more processes has errors") carry a nested `errors` tree that pinpoints
+// the exact stage → process → node and the reason (empty scheme, orphan node,
+// a reference into another project, …) — render it instead of swallowing it,
+// otherwise the failure is undiagnosable through this tool.
 func deployDiffList(resp map[string]interface{}) ([]map[string]interface{}, string) {
 	opsArr, _ := resp["ops"].([]interface{})
 	if len(opsArr) == 0 {
@@ -250,6 +338,9 @@ func deployDiffList(resp map[string]interface{}) ([]map[string]interface{}, stri
 		if desc == "" {
 			desc = "compare op did not succeed"
 		}
+		if tree := formatCompareErrors(opMap["errors"], 1); tree != "" {
+			desc += "\n" + tree
+		}
 		return nil, desc
 	}
 	rawList, _ := opMap["list"].([]interface{})
@@ -260,6 +351,79 @@ func deployDiffList(resp map[string]interface{}) ([]map[string]interface{}, stri
 		}
 	}
 	return out, ""
+}
+
+// compareHasList reports whether the first op of a compare response actually
+// carries a `list` key. An empty list is a legitimate "in sync" answer; a
+// MISSING list is a malformed response and must not be read as one.
+func compareHasList(resp map[string]interface{}) bool {
+	opsArr, _ := resp["ops"].([]interface{})
+	if len(opsArr) == 0 {
+		return false
+	}
+	opMap, _ := opsArr[0].(map[string]interface{})
+	_, ok := opMap["list"].([]interface{})
+	return ok
+}
+
+// compareErrorsFromResp pulls the first op's `errors` tree out of a (possibly
+// failed) compare response and renders it. Returns "" when there is no tree.
+func compareErrorsFromResp(resp map[string]interface{}) string {
+	if resp == nil {
+		return ""
+	}
+	opsArr, _ := resp["ops"].([]interface{})
+	if len(opsArr) == 0 {
+		return ""
+	}
+	opMap, _ := opsArr[0].(map[string]interface{})
+	return formatCompareErrors(opMap["errors"], 1)
+}
+
+// formatCompareErrors renders the nested `errors`/`destinations` tree a failed
+// compare op returns. Each level is a slice of objects with obj/obj_id/title
+// plus either child `destinations` or leaf `errors` (a list of message
+// strings). Example rendering:
+//
+//	stage #685226 "dev"
+//	  conv #1882660 "repro-external-ref"
+//	    node #6a5114a6… "Copy to external"
+//	      • Project of object do not matches projectId of request
+//
+// Unknown shapes are skipped rather than failing the whole message.
+func formatCompareErrors(errs interface{}, depth int) string {
+	arr, _ := errs.([]interface{})
+	if len(arr) == 0 || depth > 6 { // depth cap guards against a cyclic/degenerate tree
+		return ""
+	}
+	indent := strings.Repeat("  ", depth)
+	var sb strings.Builder
+	for _, e := range arr {
+		switch node := e.(type) {
+		case string: // leaf error message
+			sb.WriteString(indent + "• " + node + "\n")
+		case map[string]interface{}:
+			obj, _ := node["obj"].(string)
+			title, _ := node["title"].(string)
+			id := ""
+			switch v := node["obj_id"].(type) {
+			case float64:
+				id = fmt.Sprintf("#%d", int(v))
+			case string:
+				id = "#" + v
+			}
+			if obj != "" || title != "" || id != "" {
+				sb.WriteString(fmt.Sprintf("%s%s %s %q\n", indent, obj, id, title))
+			}
+			if child := formatCompareErrors(node["errors"], depth+1); child != "" {
+				sb.WriteString(child + "\n")
+			}
+			if child := formatCompareErrors(node["destinations"], depth+1); child != "" {
+				sb.WriteString(child + "\n")
+			}
+		}
+	}
+	return strings.TrimRight(sb.String(), "\n")
 }
 
 // deployOpProc returns "" if the first op succeeded, else a human error string.
@@ -279,11 +443,22 @@ func deployOpProc(resp map[string]interface{}) string {
 	return ""
 }
 
-// formatDeployDiff renders the diff as a grouped, readable summary and returns
-// the count of conflicting objects (any status that is not a plain
-// add/change/remove/unchanged) and the count of "removed" objects (present only
-// in the target — a deploy DELETES them from it).
-func formatDeployDiff(list []map[string]interface{}, source, target int) (summary string, conflicts, removed int) {
+// formatDeployDiff renders the diff as a grouped, readable summary. It returns
+// the list of objects whose status the tool does not recognize (one
+// human-readable line per object, empty when all statuses are known) and the
+// count of objects deleted in the source — a deploy DELETES those from the
+// target, exactly like the UI merge does.
+//
+// Observed /api/2/compare status vocabulary (diff_status:true):
+//   - "added"   — object exists only in the source
+//   - "changed" — object differs between the stages (incl. renames)
+//   - "deleted" — object was deleted in the source but still exists in the
+//     target; merge propagates the deletion. NOT a conflict.
+//   - ""        — object is in sync (compare may still list it after a merge)
+//
+// "removed" has never been observed in the API; it is kept only for backward
+// compatibility in case some Corezoid version emits it for the deleted case.
+func formatDeployDiff(list []map[string]interface{}, source, target int) (summary string, conflicts []string, removed int) {
 	type item struct{ title, objType, status string }
 	items := make([]item, 0, len(list))
 	counts := map[string]int{}
@@ -298,10 +473,11 @@ func formatDeployDiff(list []map[string]interface{}, source, target int) (summar
 		counts[status]++
 		switch status {
 		case "added", "changed", "unchanged":
-		case "removed":
+		case "removed", "deleted":
 			removed++
 		default:
-			conflicts++
+			objID, _ := m["obj_id"].(float64)
+			conflicts = append(conflicts, fmt.Sprintf("status %q: %s #%d %q", status, objType, int(objID), title))
 		}
 	}
 	sort.Slice(items, func(i, j int) bool {

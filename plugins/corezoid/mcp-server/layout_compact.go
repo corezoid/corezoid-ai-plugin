@@ -229,3 +229,126 @@ func countOverlaps(coords map[string]lpoint, g *layoutGraph) int {
 	}
 	return total
 }
+
+// segIntersectsRect reports whether the segment (x1,y1)-(x2,y2) crosses the
+// rectangle (rx0,ry0,rx1,ry1).
+func segIntersectsRect(x1, y1, x2, y2, rx0, ry0, rx1, ry1 float64) bool {
+	// trivial reject by bounding box
+	if math.Max(x1, x2) < rx0 || math.Min(x1, x2) > rx1 ||
+		math.Max(y1, y2) < ry0 || math.Min(y1, y2) > ry1 {
+		return false
+	}
+	// either endpoint inside
+	inside := func(x, y float64) bool { return x >= rx0 && x <= rx1 && y >= ry0 && y <= ry1 }
+	if inside(x1, y1) || inside(x2, y2) {
+		return true
+	}
+	// segment-segment intersection with each rectangle side
+	cross := func(ax, ay, bx, by, cx, cy float64) float64 {
+		return (bx-ax)*(cy-ay) - (by-ay)*(cx-ax)
+	}
+	segSeg := func(ax, ay, bx, by, cx, cy, dx, dy float64) bool {
+		d1 := cross(cx, cy, dx, dy, ax, ay)
+		d2 := cross(cx, cy, dx, dy, bx, by)
+		d3 := cross(ax, ay, bx, by, cx, cy)
+		d4 := cross(ax, ay, bx, by, dx, dy)
+		return ((d1 > 0 && d2 < 0) || (d1 < 0 && d2 > 0)) &&
+			((d3 > 0 && d4 < 0) || (d3 < 0 && d4 > 0))
+	}
+	return segSeg(x1, y1, x2, y2, rx0, ry0, rx1, ry0) ||
+		segSeg(x1, y1, x2, y2, rx1, ry0, rx1, ry1) ||
+		segSeg(x1, y1, x2, y2, rx1, ry1, rx0, ry1) ||
+		segSeg(x1, y1, x2, y2, rx0, ry1, rx0, ry0)
+}
+
+// resolveNodeEdgeOverlaps nudges nodes OFF link lines — best effort, by
+// design: a node lying on a link between two OTHER nodes reads as if the link
+// passes through it. Only SHORT local links are considered (long links are
+// drawn as curves around content by the UI anyway, and straight-line
+// avoidance for them would shred the layout). A nudge is accepted only when
+// it clears every considered link WITHOUT creating a node-box overlap;
+// otherwise the node stays where it is. Returns how many nodes moved.
+func resolveNodeEdgeOverlaps(coords map[string]lpoint, g *layoutGraph) int {
+	type seg struct{ a, b string }
+	var edges []seg
+	for _, u := range g.ids {
+		for _, v := range g.succs(u) {
+			edges = append(edges, seg{u, v})
+		}
+		for _, e := range g.errors[u] {
+			edges = append(edges, seg{u, e})
+		}
+	}
+	center := func(id string, p lpoint) (float64, float64) {
+		x0, y0, x1, y1 := nodeBox(g.byID[id], p.X, p.Y)
+		return float64(x0+x1) / 2, float64(y0+y1) / 2
+	}
+	const margin = 6
+	const localSpan = 2.2 * layRowStep // only short links; long ones curve around
+
+	hitsAnyEdge := func(id string, p lpoint) bool {
+		bx0, by0, bx1, by1 := nodeBox(g.byID[id], p.X, p.Y)
+		for _, e := range edges {
+			if e.a == id || e.b == id {
+				continue
+			}
+			pa, ok := coords[e.a]
+			if !ok {
+				continue
+			}
+			pb, ok := coords[e.b]
+			if !ok {
+				continue
+			}
+			ax, ay := center(e.a, pa)
+			bx, by := center(e.b, pb)
+			if math.Abs(ay-by) > localSpan && math.Abs(ax-bx) > localSpan {
+				continue
+			}
+			if math.Hypot(bx-ax, by-ay) > 2.5*localSpan {
+				continue
+			}
+			if segIntersectsRect(ax, ay, bx, by,
+				float64(bx0-margin), float64(by0-margin), float64(bx1+margin), float64(by1+margin)) {
+				return true
+			}
+		}
+		return false
+	}
+	overlapsAnyNode := func(id string, p lpoint) bool {
+		x0, y0, x1, y1 := nodeBox(g.byID[id], p.X, p.Y)
+		for _, o := range g.ids {
+			if o == id {
+				continue
+			}
+			po, ok := coords[o]
+			if !ok {
+				continue
+			}
+			ox0, oy0, ox1, oy1 := nodeBox(g.byID[o], po.X, po.Y)
+			if x0 < ox1+24 && ox0 < x1+24 && y0 < oy1+8 && oy0 < y1+8 {
+				return true
+			}
+		}
+		return false
+	}
+
+	candidates := [][2]int{{60, 0}, {-60, 0}, {120, 0}, {-120, 0}, {0, 70}, {0, 110}, {60, 70}, {-60, 70}}
+	moved := 0
+	for _, id := range g.ids {
+		p, ok := coords[id]
+		if !ok || !hitsAnyEdge(id, p) {
+			continue
+		}
+		for _, c := range candidates {
+			np := lpoint{p.X + c[0], p.Y + c[1]}
+			if !hitsAnyEdge(id, np) && !overlapsAnyNode(id, np) {
+				coords[id] = np
+				moved++
+				break
+			}
+		}
+		// no clean spot found → leave it; an unavoidable crossing beats chaos
+	}
+	return moved
+}

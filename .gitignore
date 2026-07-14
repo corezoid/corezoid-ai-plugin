@@ -18,3 +18,7 @@ coverage.out
 __pycache__/
 *.pyc
 /dist/
+
+# Kiro Power build output
+.kiro
+/power-corezoid/

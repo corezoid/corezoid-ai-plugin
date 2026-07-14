@@ -1,8 +1,8 @@
 ---
 name: corezoid
 displayName: Corezoid
-version: 2.7.0
-description: Corezoid BPM platform assistant. Exposes the Corezoid REST API as MCP tools (`convctl`) plus 18 skills covering process creation, editing, review, validation, dashboards, state diagrams, variables, access, and stage-export scanning. Ships JSON schemas and per-node-type documentation for all 24 Corezoid node types.
+version: 2.8.4
+description: Corezoid BPM platform assistant. Exposes the Corezoid REST API as MCP tools (`convctl`) plus 21 skills covering process creation, editing, review, validation, dashboards, state diagrams, variables, access, and stage-export scanning. Ships JSON schemas and per-node-type documentation for all 24 Corezoid node types.
 author:
   name: Corezoid
   url: https://corezoid.com

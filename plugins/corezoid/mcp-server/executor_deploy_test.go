@@ -129,11 +129,14 @@ func TestFormatDeployDiff(t *testing.T) {
 		{"title": "proc-a", "obj_type": "conv", "__status": "changed"},
 		{"title": "proc-b", "obj_type": "conv", "__status": "added"},
 		{"title": "same", "obj_type": "conv", "__status": ""},
-		{"title": "weird", "obj_type": "conv", "__status": "conflict"},
+		{"title": "weird", "obj_type": "conv", "__status": "conflict", "obj_id": float64(42)},
 	}
 	summary, conflicts, removed := formatDeployDiff(list, 684083, 684082)
-	if conflicts != 1 {
-		t.Fatalf("conflicts = %d, want 1 (the 'conflict' status)", conflicts)
+	if len(conflicts) != 1 {
+		t.Fatalf("conflicts = %v, want exactly the 'conflict' status entry", conflicts)
+	}
+	if want := `status "conflict": conv #42 "weird"`; conflicts[0] != want {
+		t.Fatalf("conflict line = %q, want %q", conflicts[0], want)
 	}
 	if removed != 0 {
 		t.Fatalf("removed = %d, want 0", removed)
@@ -142,6 +145,23 @@ func TestFormatDeployDiff(t *testing.T) {
 		if !contains(summary, want) {
 			t.Errorf("summary missing %q:\n%s", want, summary)
 		}
+	}
+}
+
+// TestFormatDeployDiff_DeletedIsRemoval pins the real /api/2/compare
+// vocabulary: an object deleted in the source comes back as "deleted" and
+// must count as a removal (merge deletes it from the target), not a conflict.
+func TestFormatDeployDiff_DeletedIsRemoval(t *testing.T) {
+	list := []map[string]interface{}{
+		{"title": "gone", "obj_type": "conv", "__status": "deleted"},
+		{"title": "legacy", "obj_type": "conv", "__status": "removed"},
+	}
+	_, conflicts, removed := formatDeployDiff(list, 1, 2)
+	if len(conflicts) != 0 {
+		t.Fatalf("deleted/removed must not be conflicts, got %v", conflicts)
+	}
+	if removed != 2 {
+		t.Fatalf("removed = %d, want 2", removed)
 	}
 }
 

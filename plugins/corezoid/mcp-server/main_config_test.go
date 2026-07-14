@@ -141,9 +141,11 @@ func snapshotConfigGlobals(t *testing.T) {
 	t.Helper()
 	prevAPI, prevAcc, prevWS, prevTok, prevGW := apiURL, accountURL, workspaceID, apiToken, apigwURL
 	prevStage, prevInsecure := stageID, insecureTLS
+	prevAPILogin, prevAPISecret := apiLogin, apiSecret
 	t.Cleanup(func() {
 		apiURL, accountURL, workspaceID, apiToken, apigwURL = prevAPI, prevAcc, prevWS, prevTok, prevGW
 		stageID, insecureTLS = prevStage, prevInsecure
+		apiLogin, apiSecret = prevAPILogin, prevAPISecret
 	})
 }
 

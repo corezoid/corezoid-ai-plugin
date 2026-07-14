@@ -102,3 +102,44 @@ func TestExtraParsing(t *testing.T) {
 		}
 	}
 }
+
+// A count semaphor escalates via esc_node_id — the graph must carry it as an
+// error edge so the escalation cluster is placed next to its owner instead of
+// drifting to the orphan grid.
+func TestBuildLayoutGraph_CountSemaphorEscIsErrEdge(t *testing.T) {
+	mk := func(id, title string, objType int, logics []interface{}, sems []interface{}) map[string]interface{} {
+		return map[string]interface{}{
+			"id": id, "title": title, "obj_type": float64(objType),
+			"condition": map[string]interface{}{"logics": logics, "semaphors": sems},
+			"x": float64(0), "y": float64(0),
+		}
+	}
+	goTo := func(to string) interface{} { return map[string]interface{}{"type": "go", "to_node_id": to} }
+	nodes := []map[string]interface{}{
+		mk("aaaaaaaaaaaaaaaaaaaaaa01", "Start", 1, []interface{}{goTo("aaaaaaaaaaaaaaaaaaaaaa02")}, nil),
+		mk("aaaaaaaaaaaaaaaaaaaaaa02", "api call", 0,
+			[]interface{}{
+				map[string]interface{}{"type": "api", "err_node_id": "aaaaaaaaaaaaaaaaaaaaaa04"},
+				goTo("aaaaaaaaaaaaaaaaaaaaaa05"),
+			},
+			[]interface{}{map[string]interface{}{"type": "count", "value": float64(500), "esc_node_id": "aaaaaaaaaaaaaaaaaaaaaa03"}}),
+		mk("aaaaaaaaaaaaaaaaaaaaaa03", "Reply: throttled", 3, []interface{}{goTo("aaaaaaaaaaaaaaaaaaaaaa06")}, nil),
+		mk("aaaaaaaaaaaaaaaaaaaaaa04", "Call Error", 2, nil, nil),
+		mk("aaaaaaaaaaaaaaaaaaaaaa05", "Final", 2, nil, nil),
+		mk("aaaaaaaaaaaaaaaaaaaaaa06", "Throttle Error", 2, nil, nil),
+	}
+	g := buildLayoutGraph(nodes)
+	errs := g.errors["aaaaaaaaaaaaaaaaaaaaaa02"]
+	if len(errs) != 2 {
+		t.Fatalf("expected err_node_id + esc_node_id as error edges, got %v", errs)
+	}
+	found := false
+	for _, e := range errs {
+		if e == "aaaaaaaaaaaaaaaaaaaaaa03" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("esc_node_id target missing from error edges: %v", errs)
+	}
+}

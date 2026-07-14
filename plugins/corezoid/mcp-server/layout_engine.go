@@ -82,6 +82,13 @@ func (e *layoutEngine) computeLayout(nodes []map[string]interface{}) (map[string
 	fn, label, reason := e.analyzeLayout(nodes)
 	coords := fn(nodes)
 
+	// Final polish: nodes should not sit on link lines (best effort — every
+	// nudge is pre-validated to not create a box overlap, so no re-resolve).
+	g0 := buildLayoutGraph(nodes)
+	if resolveNodeEdgeOverlaps(coords, g0) > 0 {
+		clampCoords(coords, layRowStep, layColStep)
+	}
+
 	rep := layoutReport{Strategy: label, Reason: reason, Nodes: len(coords)}
 	minX, maxX := math.MaxInt, math.MinInt
 	minY, maxY := math.MaxInt, math.MinInt

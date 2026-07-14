@@ -229,6 +229,13 @@ func buildLayoutGraph(nodes []map[string]interface{}) *layoutGraph {
 					sems = append(sems, to)
 				}
 			}
+			// count semaphors escalate via esc_node_id — an error edge, not a
+			// flow edge: the escalation cluster belongs next to its owner.
+			if esc := nodeStr(s, "esc_node_id"); esc != "" {
+				if _, ok := g.byID[esc]; ok {
+					errs = append(errs, esc)
+				}
+			}
 		}
 		main := ""
 		if len(gos) > 0 {
