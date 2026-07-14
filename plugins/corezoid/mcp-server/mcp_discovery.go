@@ -139,10 +139,12 @@ func fetchStageList(ctx context.Context, companyID string, projectID int64) ([]s
 	return result, nil
 }
 
-// ensureTokenAuth checks that a valid API token is present. If apiToken is
-// empty it attempts to load saved OAuth credentials; the check-then-load-then-set
-// runs under the auth write lock so concurrent requests can't double-load or
-// race the read against the write.
+// ensureTokenAuth checks that a valid API token or API key credentials are
+// present. If apiToken is empty it attempts to load saved OAuth credentials;
+// if those are also absent, API key credentials (apiLogin + apiSecret) are
+// checked as a fallback. The check-then-load-then-set runs under the auth
+// write lock so concurrent requests can't double-load or race the read against
+// the write.
 func ensureTokenAuth() error {
 	_, snapToken, _, _, _ := authSnapshot()
 	if snapToken == "" {
@@ -158,7 +160,12 @@ func ensureTokenAuth() error {
 		}
 	}
 	if snapToken == "" {
-		return fmt.Errorf("[Error] Not authenticated: missing [ACCESS_TOKEN]. Invoke the 'corezoid-init' skill to set up credentials (use the Skill tool with skill=\"corezoid-init\").")
+		// Fall back to API key authentication if both login and secret are set.
+		snapAPILogin, snapAPISecret := apiKeySnapshot()
+		if snapAPILogin != "" && snapAPISecret != "" {
+			return nil
+		}
+		return fmt.Errorf("[Error] Not authenticated: missing [ACCESS_TOKEN] or [API_LOGIN + API_SECRET]. Invoke the 'corezoid-init' skill to set up credentials (use the Skill tool with skill=\"corezoid-init\").")
 	}
 	return nil
 }

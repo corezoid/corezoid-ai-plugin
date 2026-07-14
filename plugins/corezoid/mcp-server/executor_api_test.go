@@ -160,7 +160,7 @@ func TestDoWithRetry_RetriesOn503ThenSucceeds(t *testing.T) {
 	}))
 	t.Cleanup(srv.Close)
 
-	resp, body, err := doWithRetry(context.Background(), srv.Client(), "POST", srv.URL, []byte(`{}`), "tkn", false)
+	resp, body, err := doWithRetry(context.Background(), srv.Client(), "POST", srv.URL, "json", []byte(`{}`), "tkn", "", "", false)
 	if err != nil {
 		t.Fatalf("expected success after retries, got %v", err)
 	}
@@ -190,7 +190,7 @@ func TestDoWithRetry_RetriesOn429(t *testing.T) {
 	}))
 	t.Cleanup(srv.Close)
 
-	resp, _, err := doWithRetry(context.Background(), srv.Client(), "POST", srv.URL, []byte(`{}`), "tkn", false)
+	resp, _, err := doWithRetry(context.Background(), srv.Client(), "POST", srv.URL, "json", []byte(`{}`), "tkn", "", "", false)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -210,7 +210,7 @@ func TestDoWithRetry_DoesNotRetry4xx(t *testing.T) {
 	}))
 	t.Cleanup(srv.Close)
 
-	resp, _, err := doWithRetry(context.Background(), srv.Client(), "POST", srv.URL, []byte(`{}`), "tkn", false)
+	resp, _, err := doWithRetry(context.Background(), srv.Client(), "POST", srv.URL, "json", []byte(`{}`), "tkn", "", "", false)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -233,7 +233,7 @@ func TestDoWithRetry_GivesUpAfterMaxAttempts(t *testing.T) {
 	}))
 	t.Cleanup(srv.Close)
 
-	resp, _, err := doWithRetry(context.Background(), srv.Client(), "POST", srv.URL, []byte(`{}`), "tkn", false)
+	resp, _, err := doWithRetry(context.Background(), srv.Client(), "POST", srv.URL, "json", []byte(`{}`), "tkn", "", "", false)
 	if err == nil {
 		if resp != nil {
 			resp.Body.Close()
@@ -264,7 +264,7 @@ func TestDoWithRetry_CancelDuringBackoff(t *testing.T) {
 		cancel()
 	}()
 
-	_, _, err := doWithRetry(ctx, srv.Client(), "POST", srv.URL, []byte(`{}`), "tkn", false)
+	_, _, err := doWithRetry(ctx, srv.Client(), "POST", srv.URL, "json", []byte(`{}`), "tkn", "", "", false)
 	if err == nil {
 		t.Fatal("expected context.Canceled error, got nil")
 	}
@@ -274,6 +274,28 @@ func TestDoWithRetry_CancelDuringBackoff(t *testing.T) {
 	// We allow either 1 or 2 attempts before cancel races in.
 	if got := atomic.LoadInt32(&calls); got > 2 {
 		t.Errorf("cancel should stop retries quickly, got %d attempts", got)
+	}
+}
+
+// ---- apiKeySign -------------------------------------------------------------
+
+func TestAPIKeySign_KnownValue(t *testing.T) {
+	// Verify the Corezoid API key signature: hex(sha1(ts + secret + body + secret))
+	// This is a double-salted SHA1 pattern (secret wraps the message), not
+	// standard HMAC-SHA1 (RFC 2104). Expected value cross-checked independently:
+	//   python3 -c "import hashlib; print(hashlib.sha1(b'1700000000mysecret{}mysecret').hexdigest())"
+	const want = "8c5cd99f9cfa598f65e6b3fae56cc859cecd5ee6"
+	got := apiKeySign("mysecret", "1700000000", "{}")
+	if got != want {
+		t.Errorf("apiKeySign formula mismatch:\n  got  %q\n  want %q", got, want)
+	}
+	// Different secret must produce a different signature.
+	if got2 := apiKeySign("othersecret", "1700000000", "{}"); got == got2 {
+		t.Error("different secrets should produce different signatures")
+	}
+	// Different timestamp must produce a different signature.
+	if got3 := apiKeySign("mysecret", "1700000001", "{}"); got == got3 {
+		t.Error("different timestamps should produce different signatures")
 	}
 }
 
