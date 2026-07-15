@@ -179,6 +179,24 @@ func handlePushProcess(ctx context.Context, args map[string]interface{}) (string
 		return fmt.Sprintf("Validation failed: %v", err), true
 	}
 
+	// Structural lint gate: catch deploy-breaking / caller-breaking shapes
+	// offline before mutating the live process. Hard findings block the push;
+	// advisory findings (noop, unused set_param, orphans, passthrough, shared
+	// clusters) are surfaced but do not stop it. force=true overrides the block.
+	force, _ := args["force"].(bool)
+	if lintRes, lintErr := lintProcess(filePath); lintErr == nil {
+		hard := len(lintRes.BrokenLinks) + len(lintRes.OldFormatNodes) +
+			len(lintRes.MissingDefaultGo) + len(lintRes.ShortTimers) +
+			len(lintRes.LiteralReplyValues) + len(lintRes.UnrepliedTerminals)
+		if hard > 0 && !force {
+			return fmt.Sprintf("Push blocked: lint found %d issue(s) that would break the deploy or its callers. Fix them, or re-run with force=true to override.\n\n%s",
+				hard, FormatLintResult(lintRes)), true
+		}
+		if hard > 0 && force {
+			fmt.Fprintf(os.Stderr, "[lint] %d blocking issue(s) overridden with force=true\n", hard)
+		}
+	}
+
 	// Auto-snapshot: if process already exists on server (obj_id != null/0),
 	// capture current server state before overwriting. Never blocks on failure.
 	var snapshotNote string

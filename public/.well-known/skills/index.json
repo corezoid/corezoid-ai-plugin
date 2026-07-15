@@ -92,13 +92,6 @@
       ]
     },
     {
-      "name": "corezoid-stage-scan",
-      "description": "Pre-merge / pre-deploy static validator for exported Corezoid stages. Use when the user has one or more exported stage files (.zip) or extracted stage folders and wants to find, BEFORE merging or deploying, what will break: processes that are not active, empty/battered processes, broken intra-process node links (to_node_id / err_node_id pointing at a missing node), and broken or inactive cross-process conv_id references (api_rpc / api_copy / api_get_task). Activate when the user says \"scan stage\", \"check stage before merge\", \"validate export\", \"why does the merge fail\", \"find broken links\", \"find non-active processes\", \"Can't create more start nodes\", \"Only active process can be used\", \"referenced node ... does not exist\", \"Access user to conveyor is denied\", \"проверь стейдж\", \"почему не мерджится\", \"битые ссылки\", \"найди неактивные процессы\", or attaches two stage ZIPs and asks what is wrong with the merge.",
-      "files": [
-        "https://raw.githubusercontent.com/corezoid/corezoid-ai-plugin/main/plugins/corezoid/skills/corezoid-stage-scan/SKILL.md"
-      ]
-    },
-    {
       "name": "corezoid-state-diagram-create",
       "description": "Corezoid state diagram creation specialist. Use when the user wants to create a new Corezoid state diagram, build a state machine, design a status / lifecycle store, or set up a \"state\" object with conv_type \"state\". Activate when the user says \"create a state diagram\", \"build a state machine\", \"new state diagram\", \"design states\", \"track status\", \"user lifecycle\", \"состояния\", \"стейт диаграмма\", \"создать state diagram\", or mentions storing state-by-ref between processes.",
       "files": [
