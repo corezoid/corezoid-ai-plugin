@@ -35,10 +35,16 @@ const twoNodeLocal = `{"obj_id":1,"scheme":{"nodes":[
  {"obj_type":0,"title":"A"},
  {"obj_type":0,"title":"B"}]}}`
 
+// blockedResult adapts resolveConflict to the (blocked, message) shape the
+// original decision tests assert on.
+func blockedResult(r conflictResult) (bool, string) {
+	return r.action == conflictBlock, r.message
+}
+
 func TestConflict_NoBaselineIsAdvisory(t *testing.T) {
 	_, e := mockAPIServer(t, convResp(map[string]interface{}{"change_time": float64(200)}))
 	_, fp := setupConflict(t, baselineEntry{}, twoNodeLocal) // no baseline written
-	blocked, msg := conflictCheck(e, fp, 1, twoNodeLocal, false)
+	blocked, msg := blockedResult(resolveConflict(e, fp, 1, twoNodeLocal, false, false))
 	if blocked || !strings.Contains(msg, "no pull baseline") {
 		t.Fatalf("no baseline must be advisory, got blocked=%v msg=%q", blocked, msg)
 	}
@@ -48,7 +54,7 @@ func TestConflict_InSyncProceeds(t *testing.T) {
 	conv := map[string]interface{}{"change_time": float64(100), "last_confirmed_version": float64(10)}
 	_, e := mockAPIServer(t, convResp(conv))
 	_, fp := setupConflict(t, baselineEntry{ChangeTime: 100, Version: 10}, twoNodeLocal)
-	blocked, msg := conflictCheck(e, fp, 1, twoNodeLocal, false)
+	blocked, msg := blockedResult(resolveConflict(e, fp, 1, twoNodeLocal, false, false))
 	if blocked || msg != "" {
 		t.Fatalf("in-sync must proceed silently, got blocked=%v msg=%q", blocked, msg)
 	}
@@ -71,7 +77,7 @@ func TestConflict_ChangedBlocksWithImpact(t *testing.T) {
 	}
 	_, e := mockAPIServer(t, convResp(conv))
 	_, fp := setupConflict(t, baselineEntry{ChangeTime: 100, Version: 10}, twoNodeLocal)
-	blocked, msg := conflictCheck(e, fp, 1, twoNodeLocal, false)
+	blocked, msg := blockedResult(resolveConflict(e, fp, 1, twoNodeLocal, false, false))
 	if !blocked {
 		t.Fatalf("changed server must block, got blocked=%v", blocked)
 	}
@@ -86,9 +92,50 @@ func TestConflict_ForceOverrides(t *testing.T) {
 	conv := map[string]interface{}{"change_time": float64(300), "last_confirmed_version": float64(30)}
 	_, e := mockAPIServer(t, convResp(conv))
 	_, fp := setupConflict(t, baselineEntry{ChangeTime: 100, Version: 10}, twoNodeLocal)
-	blocked, msg := conflictCheck(e, fp, 1, twoNodeLocal, true)
+	blocked, msg := blockedResult(resolveConflict(e, fp, 1, twoNodeLocal, true, false))
 	if blocked || msg != "" {
 		t.Fatalf("force must override the conflict, got blocked=%v msg=%q", blocked, msg)
+	}
+}
+
+func TestCommitName_FieldFallbacks(t *testing.T) {
+	if got := commitName(map[string]any{"nick": "Bob"}); got != "Bob" {
+		t.Fatalf("nick: got %q", got)
+	}
+	if got := commitName(map[string]any{"user_name": "Ivan K"}); got != "Ivan K" {
+		t.Fatalf("user_name: got %q", got)
+	}
+	if got := commitName(map[string]any{"login": "ik@x"}); got != "ik@x" {
+		t.Fatalf("login: got %q", got)
+	}
+	if got := commitName(map[string]any{"user_id": float64(66423)}); got != "user 66423" {
+		t.Fatalf("user_id fallback: got %q", got)
+	}
+	if got := commitName(map[string]any{}); got != "" {
+		t.Fatalf("empty: got %q", got)
+	}
+}
+
+func TestLatestSnapshotAuthor_PicksNewest(t *testing.T) {
+	snaps := []Snapshot{
+		{UserName: "Old", CreateTime: 100},
+		{UserName: "Newest", CreateTime: 300},
+		{UserName: "Mid", CreateTime: 200},
+	}
+	name, when := latestSnapshotAuthor(snaps)
+	if name != "Newest" || when != 300 {
+		t.Fatalf("expected Newest@300, got %s@%d", name, when)
+	}
+	if name, _ := latestSnapshotAuthor(nil); name != "" {
+		t.Fatalf("empty snapshots must yield no author, got %q", name)
+	}
+}
+
+func TestFormatConflict_ShowsEditorLine(t *testing.T) {
+	report := formatConflict(7, baselineEntry{ChangeTime: 100}, baselineEntry{ChangeTime: 200},
+		map[string]any{}, twoNodeLocal, mergePlan{}, false, "Ivan Kondratyuk", 1784210222)
+	if !strings.Contains(report, "last changed by: Ivan Kondratyuk (") {
+		t.Fatalf("editor line missing:\n%s", report)
 	}
 }
 
@@ -103,7 +150,7 @@ func TestConflict_DeletedOnServerBlocks(t *testing.T) {
 		}
 	})
 	_, fp := setupConflict(t, baselineEntry{ChangeTime: 100, Version: 10}, twoNodeLocal)
-	blocked, msg := conflictCheck(e, fp, 1, twoNodeLocal, false)
+	blocked, msg := blockedResult(resolveConflict(e, fp, 1, twoNodeLocal, false, false))
 	if !blocked || !strings.Contains(msg, "no longer on the server") {
 		t.Fatalf("deleted process must block with a stale hint, got blocked=%v msg=%q", blocked, msg)
 	}

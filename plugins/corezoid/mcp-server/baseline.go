@@ -17,6 +17,40 @@ import (
 // server VERSION identity (change_time + last confirmed version), never node ids.
 const baselineFileName = ".corezoid-baseline.json"
 
+// ancestorDirName holds a copy of each process's scheme exactly as it was
+// pulled — the common ancestor for a 3-way merge. When push detects the server
+// moved, the merge engine (mergeplan.go) diffs base (this) vs theirs (a fresh
+// export) vs mine (the local file) to tell a colleague's edit apart from mine
+// and graft the non-conflicting ones. Kept as one file per process id so a big
+// scheme never bloats the small version sidecar. Add to .gitignore.
+const ancestorDirName = ".corezoid-baseline"
+
+// ancestorPath is where a process's pulled-at scheme copy lives.
+func ancestorPath(dir string, procID int) string {
+	return filepath.Join(dir, ancestorDirName, strconv.Itoa(procID)+".json")
+}
+
+// writeAncestorScheme stores the pulled conv JSON as the merge ancestor.
+// Best-effort: callers treat a failure as "3-way merge unavailable", never a
+// pull failure.
+func writeAncestorScheme(dir string, procID int, convJSON string) error {
+	sub := filepath.Join(dir, ancestorDirName)
+	if err := os.MkdirAll(sub, 0755); err != nil {
+		return err
+	}
+	return os.WriteFile(ancestorPath(dir, procID), []byte(convJSON), 0644)
+}
+
+// readAncestorScheme returns the stored ancestor conv JSON; ok is false when
+// none was recorded (pre-feature file, or capture failed at pull time).
+func readAncestorScheme(dir string, procID int) (string, bool) {
+	b, err := os.ReadFile(ancestorPath(dir, procID))
+	if err != nil {
+		return "", false
+	}
+	return string(b), true
+}
+
 // baselineEntry is one process's pulled-at version identity.
 type baselineEntry struct {
 	ChangeTime int64 `json:"change_time"`         // server process last-modified (advances on every server commit)
@@ -106,6 +140,10 @@ func captureFolderBaselines(v *Executor, root string) int {
 		if werr := writeBaseline(filepath.Dir(path), objID, baselineFromServer(proc)); werr != nil {
 			logger.Warn("pull-folder: baseline write failed for %d: %v", objID, werr)
 			return nil
+		}
+		// The freshly pulled file content is the merge ancestor.
+		if aerr := writeAncestorScheme(filepath.Dir(path), objID, string(b)); aerr != nil {
+			logger.Warn("pull-folder: ancestor write failed for %d: %v", objID, aerr)
 		}
 		n++
 		return nil

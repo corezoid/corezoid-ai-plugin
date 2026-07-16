@@ -184,7 +184,7 @@ var toolRegistry = []mcpTool{
 	},
 	{
 		Name:        "push-process",
-		Description: "Validate and deploy a process file to Corezoid. Runs lint-process first and blocks the deploy on issues that would break it (broken node links, old-format nodes, RPC paths without reply, nodes missing a default go, sub-30s timers, literal reply values); advisory findings are shown but do not block. Also blocks when the process changed on the server since pull, because deploying would silently overwrite a concurrent edit; the report identifies the change and author. Re-pull to reconcile, or pass force=true only after accepting overwrite risk; a server snapshot is attempted first, and recovery is possible only if that snapshot succeeds. Active Call Process Stub Mode (obj_type:4) is warning-only on a resolved mutable non-production-like stage, while immutable/prod/unknown stages require allow_active_stub_mode=true after explicit confirmation that temporary mock behavior is intentional. force=true does not confirm Stub Mode. Note: the server regenerates node IDs on every push and rewrites the local file with the canonical scheme — reference nodes by title and re-read the file after push.",
+		Description: "Validate and deploy a process file to Corezoid. Runs lint-process first and blocks deploy-breaking findings; advisory findings do not block. Also blocks when the process changed on the server since pull, reporting local edits, server changes, true overlap, and the last known author. Resolve by re-pulling; or merge=true to write a reviewable local 3-way merge without deploying; or force=true to overwrite only after accepting the risk (a server snapshot is attempted first, and recovery is possible only if it succeeds). Active Call Process Stub Mode (obj_type:4) is warning-only on a resolved mutable non-production-like stage, while immutable/prod/unknown stages require allow_active_stub_mode=true after explicit confirmation. force=true does not confirm Stub Mode. The server regenerates node IDs and rewrites the local file with the canonical scheme, so reference nodes by title and re-read the file after push.",
 		Annotations: toolHints(hintMutates, hintDestructive, hintNonIdempotent, hintOpenWorld),
 		InputSchema: map[string]interface{}{
 			"type": "object",
@@ -195,11 +195,15 @@ var toolRegistry = []mcpTool{
 				},
 				"force": map[string]interface{}{
 					"type":        "boolean",
-					"description": "Deploy even if the pre-push lint finds generic blocking issues. Does not confirm active Stub Mode; use allow_active_stub_mode for that. Advisory findings never block. Default false.",
+					"description": "Deploy despite generic blocking lint findings or overwrite a concurrent server change. Does not confirm active Stub Mode; use allow_active_stub_mode for that. Advisory findings never block. Default false.",
 				},
 				"allow_active_stub_mode": map[string]interface{}{
 					"type":        "boolean",
 					"description": "Explicitly allow deploying active Call Process Stub Mode (obj_type:4) when the target stage is immutable, production-like, or cannot be resolved. Use only after confirming that temporary mock replies are intentionally being deployed.",
+				},
+				"merge": map[string]interface{}{
+					"type":        "boolean",
+					"description": "On a concurrent-change conflict, perform a 3-way merge: graft the non-conflicting server changes into your local file for review (does not deploy). Nodes both sides changed are kept as yours and listed to resolve. Default false.",
 				},
 			},
 			"required": []string{"process_path"},
