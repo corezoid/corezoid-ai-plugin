@@ -151,7 +151,7 @@ var toolRegistry = []mcpTool{
 	},
 	{
 		Name:        "push-process",
-		Description: "Validate and deploy a process file to Corezoid. Runs lint-process first and blocks the deploy on issues that would break it (broken node links, old-format nodes, RPC paths without reply, nodes missing a default go, sub-30s timers, literal reply values); advisory findings are shown but do not block. Also blocks when the process changed on the server since you pulled it (a concurrent edit your push would otherwise silently overwrite) — the block shows what changed, who changed it, and the impact; re-pull to reconcile or force=true to overwrite (an auto-snapshot of the server version is taken first). Pass force=true to deploy despite blocking lint or conflict issues. Note: the server regenerates node IDs on every push and the local file is rewritten in place with the server's canonical scheme — reference nodes by title when iterating, and re-read the file after a push instead of reusing old node IDs.",
+		Description: "Validate and deploy a process file to Corezoid. Runs lint-process first and blocks the deploy on issues that would break it (broken node links, old-format nodes, RPC paths without reply, nodes missing a default go, sub-30s timers, literal reply values); advisory findings are shown but do not block. Also blocks when the process changed on the server since you pulled it (a concurrent edit your push would otherwise silently overwrite) — the block shows, per node, what changed and who changed it, which changes are mergeable, and which nodes you and the server both edited (true conflicts). Resolve by re-pulling; or merge=true to graft the mergeable server changes into your file automatically (conflicts kept as yours and listed for you to resolve, then push again); or force=true to overwrite (an auto-snapshot of the server version is taken first). Pass force=true to deploy despite blocking lint or conflict issues. Note: the server regenerates node IDs on every push and the local file is rewritten in place with the server's canonical scheme — reference nodes by title when iterating, and re-read the file after a push instead of reusing old node IDs.",
 		InputSchema: map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
@@ -161,7 +161,11 @@ var toolRegistry = []mcpTool{
 				},
 				"force": map[string]interface{}{
 					"type":        "boolean",
-					"description": "Deploy even if the pre-push lint finds blocking issues. Advisory findings never block. Default false.",
+					"description": "Deploy even if the pre-push lint finds blocking issues, or overwrite a concurrent server change. Advisory findings never block. Default false.",
+				},
+				"merge": map[string]interface{}{
+					"type":        "boolean",
+					"description": "On a concurrent-change conflict, perform a 3-way merge: graft the non-conflicting server changes into your local file for review (does not deploy). Nodes both sides changed are kept as yours and listed to resolve. Default false.",
 				},
 			},
 			"required": []string{"process_path"},

@@ -101,6 +101,10 @@ func handlePullProcess(ctx context.Context, args map[string]interface{}) (string
 	} else {
 		logger.Warn("pull-process: could not fetch baseline for %d: %v", processID, gerr)
 	}
+	// Store the pulled scheme as the 3-way merge ancestor (see baseline.go).
+	if aerr := writeAncestorScheme(dir, processID, string(data)); aerr != nil {
+		logger.Warn("pull-process: could not record ancestor for %d: %v", processID, aerr)
+	}
 	return fmt.Sprintf("Process %d saved to %s", processID, filePath), false
 }
 
@@ -226,11 +230,18 @@ func handlePushProcess(ctx context.Context, args map[string]interface{}) (string
 	// (DeleteNotUsedNodes drops server nodes absent from the local scheme).
 	// Block with an impact report unless force=true. New/never-pulled processes
 	// have no baseline and are unaffected.
+	merge, _ := args["merge"].(bool)
 	if objID := extractObjIDFromJSON(jsonContent); objID != 0 {
-		if blocked, msg := conflictCheck(v, filePath, objID, jsonContent, force); blocked {
-			return msg, true
-		} else if msg != "" {
-			fmt.Fprintln(os.Stderr, msg) // advisory (e.g. no baseline) — do not block
+		res := resolveConflict(v, filePath, objID, jsonContent, force, merge)
+		switch res.action {
+		case conflictBlock:
+			return res.message, true
+		case conflictMerged:
+			return res.message, false // merged file written for review — do not push now
+		case conflictProceed:
+			if res.message != "" {
+				fmt.Fprintln(os.Stderr, res.message) // advisory (e.g. no baseline) — do not block
+			}
 		}
 	}
 
@@ -260,12 +271,20 @@ func handlePushProcess(ctx context.Context, args map[string]interface{}) (string
 		return fmt.Sprintf("Error deploying process: %v", err), true
 	}
 
-	// Refresh the pull baseline to the version we just committed, so the next
-	// push starts from a current baseline instead of re-flagging our own change.
+	// Refresh the pull baseline AND the merge ancestor to the version we just
+	// committed, so the next push starts current instead of re-flagging our own
+	// change, and a later concurrent-edit conflict still has a 3-way ancestor
+	// (without this, a push→edit→push flow degrades to the delete-only report).
 	if v.ProcessID != 0 {
+		dir := filepath.Dir(filePath)
 		if proc, gerr := v.GetProcessByID(v.ProcessID); gerr == nil {
-			if berr := writeBaseline(filepath.Dir(filePath), v.ProcessID, baselineFromServer(proc)); berr != nil {
+			if berr := writeBaseline(dir, v.ProcessID, baselineFromServer(proc)); berr != nil {
 				logger.Warn("push: could not refresh baseline for %d: %v", v.ProcessID, berr)
+			}
+		}
+		if theirsConv, ok := exportConv(v); ok {
+			if aerr := writeAncestorScheme(dir, v.ProcessID, theirsConv); aerr != nil {
+				logger.Warn("push: could not refresh ancestor for %d: %v", v.ProcessID, aerr)
 			}
 		}
 	}
