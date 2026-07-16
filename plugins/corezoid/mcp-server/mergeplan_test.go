@@ -329,6 +329,58 @@ func titlesOf(ns []mergeNode) []string {
 	return out
 }
 
+// untitledScheme: untitled Start -> "Gate" -> two untitled ends. Real Corezoid
+// processes routinely leave Start events and error finals untitled.
+func untitledScheme() []map[string]any {
+	return tScheme(
+		tNode("u0000000000000000000001", "", 1, tLogic(map[string]any{"type": "go", "to_node_id": "u0000000000000000000002"})),
+		tNode("u0000000000000000000002", "Gate", 0,
+			tLogic(map[string]any{"type": "go_if_const", "to_node_id": "u0000000000000000000003"}),
+			tLogic(map[string]any{"type": "go", "to_node_id": "u0000000000000000000004"})),
+		tNode("u0000000000000000000003", "", 2),
+		tNode("u0000000000000000000004", "", 2),
+	)
+}
+
+func TestMerge_UntitledNodesNotFalseConflicts(t *testing.T) {
+	base, mine, theirs := untitledScheme(), untitledScheme(), untitledScheme()
+	// colleague changes only the titled Gate; the three untitled nodes are untouched
+	theirs[1]["description"] = "gate touched by colleague"
+
+	plan := buildMergePlan(base, theirs, mine)
+	if len(plan.Conflicts) != 0 {
+		t.Fatalf("untitled nodes must not become false conflicts, got %d conflict(s)", len(plan.Conflicts))
+	}
+	if len(plan.Nodes) != 4 {
+		t.Fatalf("all 4 nodes (incl. 3 untitled) must be represented distinctly, got %d", len(plan.Nodes))
+	}
+	if c, _ := classOf(plan, "Gate"); c != clsTheirs {
+		t.Fatalf("Gate should be theirs-edit, got %v", c)
+	}
+	// merge must keep every node, untitled ones included
+	merged, err := materializeMerge(tConv(mine), plan, theirs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n := len(localSchemeNodes(merged)); n != 4 {
+		t.Fatalf("merged scheme must keep all 4 nodes, got %d", n)
+	}
+}
+
+func TestMerge_UntitledNodeEditIsMergeable(t *testing.T) {
+	base, mine, theirs := untitledScheme(), untitledScheme(), untitledScheme()
+	// colleague edits ONE untitled end (the first obj_type=2 node); I touch nothing
+	theirs[2]["description"] = "first end, edited by colleague"
+
+	plan := buildMergePlan(base, theirs, mine)
+	if len(plan.Conflicts) != 0 {
+		t.Fatalf("a one-sided untitled edit must be mergeable, not a conflict, got %d", len(plan.Conflicts))
+	}
+	if len(plan.Grafts) != 1 || plan.Grafts[0].ObjType != 2 || plan.Grafts[0].Title != "" {
+		t.Fatalf("expected exactly one grafted untitled end, got %+v", plan.Grafts)
+	}
+}
+
 func TestMerge_DuplicateTitleIsConflict(t *testing.T) {
 	base := baseFourNode()
 	mine := baseFourNode()
