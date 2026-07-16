@@ -215,7 +215,7 @@ var toolRegistry = []mcpTool{
 				},
 				"ref": map[string]interface{}{
 					"type":        "string",
-					"description": "Optional custom task ref (idempotency key). Use this to create a task with a specific, lookup-able ref — e.g. matching an external ID a downstream process keys off of. If omitted, an auto-generated ref (\"<unix_ts>_<rand>\") is used, same as before.",
+					"description": "Optional custom task ref (lookup key, not a guaranteed idempotency key — duplicate-ref behavior depends on the target process/state-diagram). Use this to create a task with a specific, lookup-able ref — e.g. matching an external ID a downstream process keys off of. If omitted, an auto-generated ref (\"<unix_ts>_<rand>\") is used, same as before.",
 				},
 				"wait_sec": map[string]interface{}{
 					"type":        "integer",
