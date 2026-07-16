@@ -213,6 +213,10 @@ var toolRegistry = []mcpTool{
 					"type":        "string",
 					"description": "JSON string with task input parameters",
 				},
+				"ref": map[string]interface{}{
+					"type":        "string",
+					"description": "Optional custom task ref (idempotency key). Use this to create a task with a specific, lookup-able ref — e.g. matching an external ID a downstream process keys off of. If omitted, an auto-generated ref (\"<unix_ts>_<rand>\") is used, same as before.",
+				},
 				"wait_sec": map[string]interface{}{
 					"type":        "integer",
 					"description": "How long to wait (seconds) for the task to reach a final node before reporting it as in progress. Default 30, max 600. Raise it for processes with slow external calls or delay nodes.",

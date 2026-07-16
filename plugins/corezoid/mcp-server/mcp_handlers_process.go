@@ -298,7 +298,10 @@ func handleRunTask(ctx context.Context, args map[string]interface{}) (string, bo
 		return fmt.Sprintf("Error parsing task data: %v", err), true
 	}
 
-	ref := fmt.Sprintf("%d_%d", time.Now().Unix(), rand.Intn(1000000))
+	ref := optStrArg(args, "ref")
+	if ref == "" {
+		ref = fmt.Sprintf("%d_%d", time.Now().Unix(), rand.Intn(1000000))
+	}
 	if err := v.createTask(ref, taskData); err != nil {
 		return fmt.Sprintf("Error creating task: %v", err), true
 	}
