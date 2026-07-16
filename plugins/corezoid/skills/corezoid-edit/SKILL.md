@@ -109,6 +109,8 @@ If deployment fails, fix the reported errors and re-run `push-process` until it 
 
 > **Auto-snapshot:** if the process already existed on the server (`obj_id` ≠ null), `push-process` automatically creates a snapshot of the current server state before deploying your changes. No action needed — this is transparent. The snapshot appears in the Corezoid UI and can be managed with `list-snapshots` / `get-snapshot` / `delete-snapshot`.
 
+> **Concurrent-change detection:** `pull-process`/`pull-folder` record the server version they pulled in a per-folder `.corezoid-baseline.json` sidecar (add it to `.gitignore`). If someone else changed the process on the server between your pull and your push, `push-process` **blocks** — a plain push would silently drop their edits — and shows what changed, who changed it, and the impact. Reconcile by re-pulling and re-applying your edits, or pass `force=true` to overwrite (the auto-snapshot above keeps their version recoverable). Files with no baseline (never pulled) push normally with an advisory that detection was off.
+
 After a successful deploy, notify the user:
 
 > "Changes have been deployed. Please **refresh the page** in Corezoid to see the updated process."
