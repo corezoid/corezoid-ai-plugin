@@ -26,46 +26,47 @@ func materializeMerge(mineConv string, plan mergePlan, theirsNodes []map[string]
 		return "", fmt.Errorf("merge: local file has no scheme object")
 	}
 	mineNodesRaw, _ := scheme["nodes"].([]any)
+	mineNodes := make([]map[string]any, 0, len(mineNodesRaw))
+	for _, raw := range mineNodesRaw {
+		if n, ok := raw.(map[string]any); ok {
+			mineNodes = append(mineNodes, n)
+		}
+	}
+	mineKeys := matchKeys(mineNodes)
+	theirsKeys := matchKeys(theirsNodes)
 
-	theirsIDToTitle := map[string]string{}
-	for _, n := range theirsNodes {
-		id, _ := n["id"].(string)
-		title, _ := n["title"].(string)
-		if id != "" {
-			theirsIDToTitle[id] = title
+	theirsIDToKey := map[string]string{}
+	for i, n := range theirsNodes {
+		if id, _ := n["id"].(string); id != "" {
+			theirsIDToKey[id] = theirsKeys[i]
 		}
 	}
 
-	byTitle := map[string]mergeNode{}
+	byKey := map[string]mergeNode{}
 	for _, mn := range plan.Nodes {
-		byTitle[mn.Title] = mn
+		byKey[mn.Key] = mn
 	}
 
-	// merged title→id: mine's ids, minus server-deletes, plus new for server-adds.
-	titleToID := map[string]string{}
-	for _, raw := range mineNodesRaw {
-		n, _ := raw.(map[string]any)
-		title, _ := n["title"].(string)
-		id, _ := n["id"].(string)
-		if title != "" && id != "" {
-			titleToID[title] = id
+	// merged key→id: mine's ids, minus server-deletes, plus new for server-adds.
+	keyToID := map[string]string{}
+	for i, n := range mineNodes {
+		if id, _ := n["id"].(string); id != "" {
+			keyToID[mineKeys[i]] = id
 		}
 	}
 	for _, mn := range plan.Nodes {
 		switch mn.Class {
 		case clsDeletedTheirs:
-			delete(titleToID, mn.Title)
+			delete(keyToID, mn.Key)
 		case clsAddedTheirs:
-			titleToID[mn.Title] = placeholderID(mn.Title)
+			keyToID[mn.Key] = placeholderID(mn.Key)
 		}
 	}
 
 	var merged []any
 	// Preserve mine's node order for everything that survives.
-	for _, raw := range mineNodesRaw {
-		n, _ := raw.(map[string]any)
-		title, _ := n["title"].(string)
-		mn, known := byTitle[title]
+	for i, n := range mineNodes {
+		mn, known := byKey[mineKeys[i]]
 		if !known {
 			merged = append(merged, n)
 			continue
@@ -74,7 +75,7 @@ func materializeMerge(mineConv string, plan mergePlan, theirsNodes []map[string]
 		case clsDeletedTheirs:
 			// drop — server removed it and I did not touch it
 		case clsTheirs:
-			merged = append(merged, graftEditedNode(mn.theirs.Raw, n, theirsIDToTitle, titleToID))
+			merged = append(merged, graftEditedNode(mn.theirs.Raw, n, theirsIDToKey, keyToID))
 		default:
 			merged = append(merged, n) // keep mine (mine-edit / conflict / unchanged / mine-add)
 		}
@@ -84,7 +85,7 @@ func materializeMerge(mineConv string, plan mergePlan, theirsNodes []map[string]
 		if mn.Class != clsAddedTheirs {
 			continue
 		}
-		merged = append(merged, graftNewNode(mn.theirs.Raw, titleToID[mn.Title], theirsIDToTitle, titleToID))
+		merged = append(merged, graftNewNode(mn.theirs.Raw, keyToID[mn.Key], theirsIDToKey, keyToID))
 	}
 
 	scheme["nodes"] = merged
@@ -98,7 +99,7 @@ func materializeMerge(mineConv string, plan mergePlan, theirsNodes []map[string]
 
 // graftEditedNode takes the server's version of a node that exists in mine but
 // keeps mine's id and canvas position, then rewires the server's links.
-func graftEditedNode(theirs, mine map[string]any, theirsIDToTitle, titleToID map[string]string) map[string]any {
+func graftEditedNode(theirs, mine map[string]any, theirsIDToKey, keyToID map[string]string) map[string]any {
 	g := deepCopyNode(theirs)
 	g["id"] = mine["id"]
 	if x, ok := mine["x"]; ok {
@@ -107,15 +108,15 @@ func graftEditedNode(theirs, mine map[string]any, theirsIDToTitle, titleToID map
 	if y, ok := mine["y"]; ok {
 		g["y"] = y
 	}
-	rewireLinks(g, theirsIDToTitle, titleToID)
+	rewireLinks(g, theirsIDToKey, keyToID)
 	return g
 }
 
 // graftNewNode places a server-added node under a fresh placeholder id.
-func graftNewNode(theirs map[string]any, newID string, theirsIDToTitle, titleToID map[string]string) map[string]any {
+func graftNewNode(theirs map[string]any, newID string, theirsIDToKey, keyToID map[string]string) map[string]any {
 	g := deepCopyNode(theirs)
 	g["id"] = newID
-	rewireLinks(g, theirsIDToTitle, titleToID)
+	rewireLinks(g, theirsIDToKey, keyToID)
 	return g
 }
 
@@ -130,16 +131,16 @@ func deepCopyNode(n map[string]any) map[string]any {
 // the merged id-space (theirs id → target title → merged id). A link whose
 // target no longer exists in the merge is left as-is so lint surfaces it rather
 // than the merge hiding it.
-func rewireLinks(node map[string]any, theirsIDToTitle, titleToID map[string]string) {
+func rewireLinks(node map[string]any, theirsIDToKey, keyToID map[string]string) {
 	cond, ok := node["condition"].(map[string]any)
 	if !ok {
 		return
 	}
-	rewireList(cond["logics"], linkFields, theirsIDToTitle, titleToID)
-	rewireList(cond["semaphors"], semLinkFields, theirsIDToTitle, titleToID)
+	rewireList(cond["logics"], linkFields, theirsIDToKey, keyToID)
+	rewireList(cond["semaphors"], semLinkFields, theirsIDToKey, keyToID)
 }
 
-func rewireList(listRaw any, fields []string, theirsIDToTitle, titleToID map[string]string) {
+func rewireList(listRaw any, fields []string, theirsIDToKey, keyToID map[string]string) {
 	list, ok := listRaw.([]any)
 	if !ok {
 		return
@@ -154,8 +155,8 @@ func rewireList(listRaw any, fields []string, theirsIDToTitle, titleToID map[str
 			if !ok || id == "" {
 				continue
 			}
-			if title, known := theirsIDToTitle[id]; known {
-				if newID, ok := titleToID[title]; ok {
+			if key, known := theirsIDToKey[id]; known {
+				if newID, ok := keyToID[key]; ok {
 					m[f] = newID
 				}
 			}
@@ -181,7 +182,7 @@ func formatMergePlan(plan mergePlan) string {
 		}
 	} else {
 		for _, y := range plan.Yours {
-			fmt.Fprintf(&sb, "  %s %-26s %s\n", changeSign(y.Class), quote(y.Title), y.Detail)
+			fmt.Fprintf(&sb, "  %s %-26s %s\n", changeSign(y.Class), nodeLabel(y), y.Detail)
 		}
 	}
 
@@ -190,14 +191,14 @@ func formatMergePlan(plan mergePlan) string {
 		sb.WriteString("  (no mergeable server node changes — see the overlap below)\n")
 	}
 	for _, g := range plan.Grafts {
-		fmt.Fprintf(&sb, "  %s %-26s %s — no overlap, mergeable\n", changeSign(g.Class), quote(g.Title), g.Detail)
+		fmt.Fprintf(&sb, "  %s %-26s %s — no overlap, mergeable\n", changeSign(g.Class), nodeLabel(g), g.Detail)
 	}
 
 	if len(plan.Conflicts) > 0 {
 		sb.WriteString("\n⚠ Overlap — you and the server BOTH changed these node(s):\n")
 		for _, c := range plan.Conflicts {
 			fmt.Fprintf(&sb, "  ⚠ %-26s you: %s / server: %s\n",
-				quote(c.Title), sideDetail(c.base, c.mine), sideDetail(c.base, c.theirs))
+				nodeLabel(c), sideDetail(c.base, c.mine), sideDetail(c.base, c.theirs))
 		}
 	} else {
 		sb.WriteString("\n✓ No overlap — none of the server's changes touch a node you edited.\n")

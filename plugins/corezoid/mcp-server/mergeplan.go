@@ -19,13 +19,14 @@ import (
 //
 // All three arrive in the same .conv.json shape, so the only volatile fields
 // are node id / x / y (a push regenerates every server node id) and UI extra.
-// Nodes are matched across versions by title; link references inside logics and
-// semaphors are normalised to the *title* of their target so a link survives id
-// regeneration. This makes "a colleague changed node A" distinguishable from
-// "I changed node B" — the former is grafted automatically, a node both sides
-// changed is a genuine conflict left for the human.
+// Nodes are matched across versions by a stable key (see matchKeys): the title
+// for titled nodes, or obj_type + ordinal for untitled ones; link references
+// inside logics and semaphors are normalised to the *key* of their target so a
+// link survives id regeneration. This makes "a colleague changed node A"
+// distinguishable from "I changed node B" — the former is grafted automatically,
+// a node both sides changed is a genuine conflict left for the human.
 
-// nodeClass is how one node (matched by title) reconciles across base/theirs/mine.
+// nodeClass is how one node (matched by key) reconciles across base/theirs/mine.
 type nodeClass int
 
 const (
@@ -43,21 +44,69 @@ const (
 
 // nodeCanon is a node reduced to a comparable form plus its original body.
 type nodeCanon struct {
-	Title     string
+	Key       string // cross-version match key (see matchKeys)
+	Title     string // display title (may be empty)
 	ObjType   int
 	Body      string         // canonical JSON of the semantic content (no id/x/y/extra)
 	Raw       map[string]any // the original node, for materialisation
-	Ambiguous bool           // true when the title is not unique in its scheme
+	Ambiguous bool           // true when the key collides (a genuine duplicate title)
 }
 
-// mergeNode is one title's classification and the material for the report.
+// mergeNode is one node's classification (matched across versions by Key) and
+// the material for the report.
 type mergeNode struct {
-	Title  string
-	Class  nodeClass
-	Detail string // short human hint of what changed ("JS changed", "routing changed", "new node", ...)
-	base   *nodeCanon
-	theirs *nodeCanon
-	mine   *nodeCanon
+	Key     string
+	Title   string // display title (may be empty — use nodeLabel for output)
+	ObjType int
+	Class   nodeClass
+	Detail  string // short human hint of what changed ("JS changed", "routing changed", "new node", ...)
+	base    *nodeCanon
+	theirs  *nodeCanon
+	mine    *nodeCanon
+}
+
+// matchKeys returns, for each node in scheme order, the key used to match it
+// across base/theirs/mine. Titled nodes key by title. Untitled nodes (a common
+// shape for Start events and error finals) key by obj_type + their ordinal
+// among untitled nodes of that type, so two untitled nodes are matched 1:1 by
+// position instead of colliding on one empty-string key (which would flag every
+// one of them as a false conflict). Node ids are unusable — the server
+// regenerates them on every push.
+func matchKeys(nodes []map[string]any) []string {
+	keys := make([]string, len(nodes))
+	ord := map[int]int{}
+	for i, n := range nodes {
+		if title, _ := n["title"].(string); title != "" {
+			keys[i] = "t:" + title
+		} else {
+			ot := toInt(n["obj_type"])
+			keys[i] = fmt.Sprintf("u:%d:%d", ot, ord[ot])
+			ord[ot]++
+		}
+	}
+	return keys
+}
+
+// nodeLabel renders a node for the human report: its quoted title, or a
+// readable placeholder for an untitled node.
+func nodeLabel(mn mergeNode) string {
+	if mn.Title != "" {
+		return quote(mn.Title)
+	}
+	return "(untitled " + objTypeName(mn.ObjType) + ")"
+}
+
+func objTypeName(ot int) string {
+	switch ot {
+	case 1:
+		return "start"
+	case 2:
+		return "end"
+	case 3:
+		return "escalation"
+	default:
+		return "node"
+	}
 }
 
 // mergePlan is the full reconciliation.
@@ -74,28 +123,39 @@ func buildMergePlan(baseNodes, theirsNodes, mineNodes []map[string]any) mergePla
 	theirs := canonicalizeNodes(theirsNodes)
 	mine := canonicalizeNodes(mineNodes)
 
-	titles := map[string]bool{}
-	for t := range base {
-		titles[t] = true
+	keys := map[string]bool{}
+	for k := range base {
+		keys[k] = true
 	}
-	for t := range theirs {
-		titles[t] = true
+	for k := range theirs {
+		keys[k] = true
 	}
-	for t := range mine {
-		titles[t] = true
+	for k := range mine {
+		keys[k] = true
 	}
-	sorted := make([]string, 0, len(titles))
-	for t := range titles {
-		sorted = append(sorted, t)
+	sorted := make([]string, 0, len(keys))
+	for k := range keys {
+		sorted = append(sorted, k)
 	}
 	sort.Strings(sorted)
 
 	var plan mergePlan
-	for _, title := range sorted {
-		b, hasB := base[title]
-		t, hasT := theirs[title]
-		m, hasM := mine[title]
-		mn := mergeNode{Title: title}
+	for _, key := range sorted {
+		b, hasB := base[key]
+		t, hasT := theirs[key]
+		m, hasM := mine[key]
+		mn := mergeNode{Key: key}
+		// Display title / obj_type from whichever version has the node.
+		for _, c := range []struct {
+			ok bool
+			nc nodeCanon
+		}{{hasM, m}, {hasT, t}, {hasB, b}} {
+			if c.ok {
+				mn.Title = c.nc.Title
+				mn.ObjType = c.nc.ObjType
+				break
+			}
+		}
 		if hasB {
 			bb := b
 			mn.base = &bb
@@ -122,9 +182,9 @@ func buildMergePlan(baseNodes, theirsNodes, mineNodes []map[string]any) mergePla
 	return plan
 }
 
-// classify fills Class and Detail for one title following 3-way merge semantics.
-// An ambiguous (duplicate) title on any side that differs is treated as a
-// conflict — a wrong title match must never silently corrupt logic.
+// classify fills Class and Detail for one node following 3-way merge semantics.
+// An ambiguous (duplicate-title) key on any side that differs is treated as a
+// conflict — a wrong match must never silently corrupt logic.
 func classify(mn *mergeNode, hasB, hasT, hasM bool, b, t, m nodeCanon) {
 	ambiguous := (hasB && b.Ambiguous) || (hasT && t.Ambiguous) || (hasM && m.Ambiguous)
 
@@ -198,54 +258,55 @@ func describeChange(a, b *nodeCanon) string {
 	return "node changed"
 }
 
-// canonicalizeNodes builds a title→canon map. A title used by more than one
-// node in the same scheme is flagged Ambiguous so the classifier can refuse to
-// merge it.
+// canonicalizeNodes builds a matchKey→canon map. A key used by more than one
+// node in the same scheme (only a genuine duplicate title can collide now) is
+// flagged Ambiguous so the classifier refuses to merge it.
 func canonicalizeNodes(nodes []map[string]any) map[string]nodeCanon {
-	idToTitle := map[string]string{}
-	for _, n := range nodes {
-		id, _ := n["id"].(string)
-		title, _ := n["title"].(string)
-		if id != "" {
-			idToTitle[id] = title
+	keys := matchKeys(nodes)
+	idToKey := map[string]string{}
+	for i, n := range nodes {
+		if id, _ := n["id"].(string); id != "" {
+			idToKey[id] = keys[i]
 		}
 	}
 	out := map[string]nodeCanon{}
 	counts := map[string]int{}
-	for _, n := range nodes {
-		title, _ := n["title"].(string)
-		counts[title]++
-		if _, exists := out[title]; exists {
+	for i, n := range nodes {
+		key := keys[i]
+		counts[key]++
+		if _, exists := out[key]; exists {
 			continue // keep the first occurrence's body; duplicates flagged below
 		}
-		out[title] = nodeCanon{
+		title, _ := n["title"].(string)
+		out[key] = nodeCanon{
+			Key:     key,
 			Title:   title,
 			ObjType: toInt(n["obj_type"]),
-			Body:    canonNodeBody(n, idToTitle),
+			Body:    canonNodeBody(n, idToKey),
 			Raw:     n,
 		}
 	}
-	for title, cnt := range counts {
+	for key, cnt := range counts {
 		if cnt > 1 {
-			c := out[title]
+			c := out[key]
 			c.Ambiguous = true
-			out[title] = c
+			out[key] = c
 		}
 	}
 	return out
 }
 
 // linkFields are the node-reference fields inside a logic entry; semLinkFields
-// the same inside a semaphor. Values are rewritten to "@<target title>" so a
-// link is comparable across id regeneration.
+// the same inside a semaphor. Values are rewritten to the target node's match
+// key so a link is comparable across id regeneration.
 var linkFields = []string{"to_node_id", "err_node_id", "go_to", "goto"}
 var semLinkFields = []string{"to_node_id", "esc_node_id"}
 
 // canonNodeBody renders a node's semantic content as canonical JSON: id/x/y and
 // UI-only extra are dropped, options is parsed so formatting doesn't matter, and
-// every link id is replaced by its target title. encoding/json sorts map keys,
-// so equal content yields an identical string.
-func canonNodeBody(node map[string]any, idToTitle map[string]string) string {
+// every link id is replaced by its target's match key. encoding/json sorts map
+// keys, so equal content yields an identical string.
+func canonNodeBody(node map[string]any, idToKey map[string]string) string {
 	c := map[string]any{
 		"obj_type":    toInt(node["obj_type"]),
 		"title":       node["title"],
@@ -257,10 +318,10 @@ func canonNodeBody(node map[string]any, idToTitle map[string]string) string {
 	if cond, ok := node["condition"].(map[string]any); ok {
 		nc := map[string]any{}
 		if logics, ok := cond["logics"].([]any); ok {
-			nc["logics"] = canonList(logics, linkFields, idToTitle)
+			nc["logics"] = canonList(logics, linkFields, idToKey)
 		}
 		if sems, ok := cond["semaphors"].([]any); ok {
-			nc["semaphors"] = canonList(sems, semLinkFields, idToTitle)
+			nc["semaphors"] = canonList(sems, semLinkFields, idToKey)
 		}
 		c["condition"] = nc
 	}
@@ -269,8 +330,8 @@ func canonNodeBody(node map[string]any, idToTitle map[string]string) string {
 }
 
 // canonList copies each entry of a logic/semaphor list, rewriting the given link
-// fields from a node id to "@<title>" (or "@<id>?" when the target is unknown).
-func canonList(list []any, fields []string, idToTitle map[string]string) []any {
+// fields from a node id to "@<target key>" (or "@?<id>" when the target is unknown).
+func canonList(list []any, fields []string, idToKey map[string]string) []any {
 	out := make([]any, 0, len(list))
 	for _, e := range list {
 		m, ok := e.(map[string]any)
@@ -284,8 +345,8 @@ func canonList(list []any, fields []string, idToTitle map[string]string) []any {
 		}
 		for _, f := range fields {
 			if id, ok := cp[f].(string); ok && id != "" {
-				if title, known := idToTitle[id]; known && title != "" {
-					cp[f] = "@" + title
+				if key, known := idToKey[id]; known {
+					cp[f] = "@" + key
 				} else {
 					cp[f] = "@?" + id
 				}
