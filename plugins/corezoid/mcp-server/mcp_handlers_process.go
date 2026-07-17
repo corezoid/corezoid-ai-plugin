@@ -158,6 +158,24 @@ func handlePushProcess(ctx context.Context, args map[string]interface{}) (string
 		return fmt.Sprintf("Error loading JSON file: %v", err), true
 	}
 
+	// Coordinate re-hydration (see coords.go): if the process exists on the
+	// server and the local file lost any node coordinate (an edit dropped x/y,
+	// fully or partially), applyLayout below would move those nodes — and, if
+	// ALL are unplaced, re-lay-out the whole process. Refill lost coordinates
+	// from the server first so push preserves the arrangement; only genuinely-
+	// new nodes (absent on the server) stay unplaced and get placed normally.
+	var rehydrateNote string
+	if objID := extractObjIDFromJSON(jsonContent); objID != 0 && anyNodeUnplaced(jsonContent) {
+		if refilled, n := rehydrateCoordsFromServer(v, jsonContent); n > 0 {
+			// In-memory only: the refilled coordinates flow to the server via
+			// ProcessJSON below and are persisted to the file on success. We do
+			// NOT write the file here, so a later validation failure leaves the
+			// user's file untouched rather than silently baked with server coords.
+			jsonContent = refilled
+			rehydrateNote = fmt.Sprintf("Restored %d node coordinate(s) from the server — layout preserved.", n)
+		}
+	}
+
 	jsonContent1, messages := fixStruct(jsonContent, procID)
 	if len(messages) > 0 {
 		for _, msg := range messages {
@@ -234,6 +252,9 @@ func handlePushProcess(ctx context.Context, args map[string]interface{}) (string
 	}
 
 	result := fmt.Sprintf("Process deployed successfully, ProcessID: %d", procID)
+	if rehydrateNote != "" {
+		result += "\n" + rehydrateNote
+	}
 	if snapshotNote != "" {
 		result += "\n" + snapshotNote
 	}

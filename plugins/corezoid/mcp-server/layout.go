@@ -25,6 +25,13 @@ const (
 	gridSnap  = 20  // grid the final coordinates snap to
 	spineX    = 600 // x of column 0 (the spine)
 	startOff  = 100 // extra x to centre a Start/End circle over the spine
+
+	// maxEngineLayoutNodes bounds the from-scratch push layout: at or above this
+	// size push falls back to the lean baseLayout grid instead of the full
+	// engine, so the automatic push path never spends the engine's O(n^2)
+	// overlap resolution on a very large new process. layout-process (invoked
+	// explicitly, where the user can wait) still runs the engine at any size.
+	maxEngineLayoutNodes = 250
 )
 
 // Fixed node footprints (px). Start/End render as a small circle with a CENTER
@@ -501,15 +508,61 @@ func placeNewNodes(nodes []map[string]interface{}) []string {
 		return newIDs[i] < newIDs[j]
 	})
 
+	// descendantsOf collects every node forward-reachable from root (root
+	// included), used to shift a subtree down when inserting a node above it.
+	descendantsOf := func(root string) map[string]bool {
+		seen := map[string]bool{root: true}
+		stack := []string{root}
+		for len(stack) > 0 {
+			cur := stack[len(stack)-1]
+			stack = stack[:len(stack)-1]
+			for _, e := range g.edges {
+				if e.src == cur && !seen[e.dst] {
+					seen[e.dst] = true
+					stack = append(stack, e.dst)
+				}
+			}
+		}
+		return seen
+	}
+	rebuildRects := func() {
+		placedRects = placedRects[:0]
+		for pid, p := range placed {
+			placedRects = append(placedRects, rectAt(nodeByID[pid], p.x, p.y))
+		}
+	}
+	// shiftSubtreeDown opens a one-row gap at minY by pushing root and its
+	// forward-reachable placed descendants at/below minY down by vStep. This is
+	// the "smooth expansion" when a node is inserted into the middle of a chain:
+	// the downstream part slides down in-style instead of the new node being
+	// nudged far away. Uniform translate — relative arrangement is preserved.
+	shiftSubtreeDown := func(root string, minY int) {
+		desc := descendantsOf(root)
+		for d := range desc {
+			p, ok := placed[d]
+			if !ok || p.y < minY {
+				continue
+			}
+			p.y += vStep
+			placed[d] = p
+			if nd := nodeByID[d]; nd != nil {
+				nd["x"] = float64(p.x)
+				nd["y"] = float64(p.y)
+			}
+		}
+		rebuildRects()
+	}
+
 	var notes []string
 	for _, id := range newIDs {
 		var target xy
 		set := false
+		insertBelowParent := false
 		// 1. primary down-child of a placed parent -> below the parent.
 		for _, s := range parents[id] {
 			if dt[s] == id {
 				if pp, ok := placed[s]; ok {
-					target, set = xy{pp.x, pp.y + vStep}, true
+					target, set, insertBelowParent = xy{pp.x, pp.y + vStep}, true, true
 					break
 				}
 			}
@@ -537,6 +590,19 @@ func placeNewNodes(nodes []map[string]interface{}) []string {
 		}
 
 		target = xy{snap(float64(target.x), gridSnap), snap(float64(target.y), gridSnap)}
+
+		// Smooth expansion: when inserting a node directly above its own placed
+		// down-child (a real "add a step in the chain"), push that child and its
+		// downstream subtree down to open a gap, instead of nudging the new node
+		// far below. Only the new node's own descendants at/below the slot move,
+		// so unrelated/parallel nodes stay put (incidental overlaps still nudge).
+		if insertBelowParent {
+			if c := dt[id]; c != "" {
+				if cp, ok := placed[c]; ok && cp.y == target.y {
+					shiftSubtreeDown(c, target.y)
+				}
+			}
+		}
 
 		nd := nodeByID[id]
 		intersectsPlaced := func(x, y int) bool {
@@ -618,7 +684,27 @@ func applyLayout(scheme map[string]interface{}, convType string) []string {
 		}
 	}
 	if allNew {
-		baseLayout(nodes)
+		// From-scratch process: use the full layout engine (the same waterfall /
+		// layered+error-rail / regions strategies the layout-process tool uses)
+		// rather than the lean baseLayout grid, so a new process gets a clean,
+		// readable default instead of a cramped one. computeLayout also sets the
+		// extra.modeForm collapse flags. This is the "place-new-nodes push hook"
+		// seam the engine was written for (see layout_engine.go).
+		// Use the full engine up to a bounded size; a very large new process
+		// falls back to the lean grid so push stays fast (see maxEngineLayoutNodes).
+		if len(nodes) <= maxEngineLayoutNodes {
+			e := &layoutEngine{density: "medium"}
+			if coords, rep := e.computeLayout(nodes); len(coords) > 0 {
+				for _, n := range nodes {
+					if p, ok := coords[nodeStr(n, "id")]; ok {
+						n["x"] = float64(p.X)
+						n["y"] = float64(p.Y)
+					}
+				}
+				return []string{fmt.Sprintf("layout: %s, positioned %d node(s)", rep.Strategy, len(nodes))}
+			}
+		}
+		baseLayout(nodes) // lean grid: engine unavailable/too large
 		return []string{fmt.Sprintf("layout: positioned %d new nodes", len(nodes))}
 	}
 	return placeNewNodes(nodes)

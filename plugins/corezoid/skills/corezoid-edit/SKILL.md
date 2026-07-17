@@ -47,7 +47,7 @@ Apply changes to `PROCESS_PATH`.
 - Every node that can fail must have `err_node_id` — point it **directly at a Final Error node** (`obj_type: 2`) unless the error path needs logic (reply to caller, retry routing). Never create an Escalation node (`obj_type: 3`) that only contains a bare `go` — that is a passthrough anti-pattern flagged by `lint-process`
 - Node IDs must be unique 24-character hex strings: `^[0-9a-f]{24}$`. **Always `pull-process` before editing** and reference only canonical, server-assigned IDs — IDs you invented in a previous push were reassigned by the server and no longer exist. New nodes added now get placeholder IDs that the server will likewise reassign on push. Existing nodes' IDs are preserved. See [Node ID Lifecycle](${CLAUDE_PLUGIN_ROOT}/docs/process/process-development-guide.md#node-id-lifecycle-server-assignment--stability-on-push).
 - Use descriptive node `title` values (e.g., "Call Payment Process", not "RPC")
-- Leave new nodes at placeholder coordinates `x: 0, y: 0` — `push-process` auto-places them near their graph neighbours (preserve mode: existing nodes keep their positions; error nodes land to the right of their parent). Only when auto-placement is disabled (`COREZOID_AUTOLAYOUT=off`) position nodes manually — error nodes to the right of their parent (`x + 300`). Do NOT re-layout the whole process unless the user asks — see the `corezoid-node-layout` skill's authorship policy
+- Leave new nodes at placeholder coordinates `x: 0, y: 0` — `push-process` auto-places them near their graph neighbours (preserve mode: existing nodes keep their positions; inserting a node above an existing one slides that node's downstream subtree down to open a gap; error nodes land to the right of their parent). **Keep the `x`/`y` of nodes you are NOT moving** — do not rebuild the scheme without them. As a safety net, if the file reaches push with every node's coordinates missing, push re-hydrates them from the server (reports `Restored N node coordinate(s)`) so a laid-out process is never re-arranged by accident. Only when auto-placement is disabled (`COREZOID_AUTOLAYOUT=off`) position nodes manually — error nodes to the right of their parent (`x + 300`). Do NOT re-layout the whole process unless the user asks — see the `corezoid-node-layout` skill's authorship policy
 
 ### Variables for constants
 
@@ -74,6 +74,7 @@ For complete JSON structures see `${CLAUDE_PLUGIN_ROOT}/docs/node-structures.md`
 
 ### Common pitfalls
 
+- **Regenerating the whole scheme instead of editing it in place** — make targeted edits to the pulled file (change the one node/logic you need). Do NOT rewrite every node from scratch: that drops the existing `x`/`y` (the `x:0,y:0` authoring habit is for *brand-new* nodes only), and a scheme where every node is at `0,0` forces `push-process` to re-lay-out the entire process, discarding its arrangement. push re-hydrates coordinates from the server as a safety net, but editing surgically is the right habit.
 - Using `"type": "call_process"` instead of `"type": "api_rpc"` — will fail validation
 - Missing `extra`/`extra_type` in Call a Process node — both required even if empty (`{}`)
 - Raw JSON objects as values in `extra` — must be stringified: `"{\"key\":\"val\"}"`
