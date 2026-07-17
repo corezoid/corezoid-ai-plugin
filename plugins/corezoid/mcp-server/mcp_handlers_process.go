@@ -184,16 +184,26 @@ func handlePushProcess(ctx context.Context, args map[string]interface{}) (string
 	// advisory findings (noop, unused set_param, orphans, passthrough, shared
 	// clusters) are surfaced but do not stop it. force=true overrides the block.
 	force, _ := args["force"].(bool)
+	var lintNote string // advisory findings surfaced on a proceeding push (see below)
 	if lintRes, lintErr := lintProcess(filePath); lintErr == nil {
 		hard := len(lintRes.BrokenLinks) + len(lintRes.OldFormatNodes) +
 			len(lintRes.MissingDefaultGo) + len(lintRes.ShortTimers) +
 			len(lintRes.LiteralReplyValues) + len(lintRes.UnrepliedTerminals)
+		advisory := len(lintRes.NoopConditions) + len(lintRes.UnusedSetParams) +
+			len(lintRes.OrphanedNodes) + len(lintRes.PassthroughEscalations) +
+			len(lintRes.SharedErrorClusters)
 		if hard > 0 && !force {
 			return fmt.Sprintf("Push blocked: lint found %d issue(s) that would break the deploy or its callers. Fix them, or re-run with force=true to override.\n\n%s",
 				hard, FormatLintResult(lintRes)), true
 		}
 		if hard > 0 && force {
 			fmt.Fprintf(os.Stderr, "[lint] %d blocking issue(s) overridden with force=true\n", hard)
+		}
+		// The push proceeds. Surface any findings so the promise "advisory
+		// findings are shown but do not block" is actually kept — otherwise
+		// advisory-only issues would deploy silently and never be seen.
+		if hard+advisory > 0 {
+			lintNote = FormatLintResult(lintRes)
 		}
 	}
 
@@ -226,6 +236,9 @@ func handlePushProcess(ctx context.Context, args map[string]interface{}) (string
 	result := fmt.Sprintf("Process deployed successfully, ProcessID: %d", procID)
 	if snapshotNote != "" {
 		result += "\n" + snapshotNote
+	}
+	if lintNote != "" {
+		result += "\n\nLint (non-blocking, deployed anyway):\n" + lintNote
 	}
 	// Surface the git_call container build log so the user sees what the build
 	// service reported (progress + result), not just silence on success.
