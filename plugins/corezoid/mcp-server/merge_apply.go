@@ -196,9 +196,17 @@ func formatMergePlan(plan mergePlan) string {
 
 	if len(plan.Conflicts) > 0 {
 		sb.WriteString("\n⚠ Overlap — you and the server BOTH changed these node(s):\n")
+		untitledConflict := false
 		for _, c := range plan.Conflicts {
 			fmt.Fprintf(&sb, "  ⚠ %-26s you: %s / server: %s\n",
 				nodeLabel(c), sideDetail(c.base, c.mine), sideDetail(c.base, c.theirs))
+			if c.Title == "" {
+				untitledConflict = true
+			}
+		}
+		if untitledConflict {
+			sb.WriteString("    note: untitled nodes are matched by position; inserting/removing an untitled node\n")
+			sb.WriteString("    on one side can shift that match and surface a false overlap — give nodes titles to avoid this.\n")
 		}
 	} else {
 		sb.WriteString("\n✓ No overlap — none of the server's changes touch a node you edited.\n")
