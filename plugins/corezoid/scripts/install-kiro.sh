@@ -229,7 +229,7 @@ run_power_build() {
 name: "corezoid"
 displayName: "Corezoid"
 version: "$VERSION"
-description: "Corezoid BPM platform assistant. Exposes the Corezoid REST API as MCP tools (\`convctl\`) plus $skill_count steering files covering process creation, editing, review, validation, dashboards, state diagrams, variables, access, and stage-export scanning. Ships JSON schemas and per-node-type documentation for all 24 Corezoid node types."
+description: "Corezoid BPM platform assistant. Exposes the Corezoid REST API as MCP tools (\`convctl\`) plus $skill_count steering files covering process creation, editing, review, validation, dashboards, state diagrams, variables, and access. Ships JSON schemas and per-node-type documentation for all 24 Corezoid node types."
 keywords: ["corezoid", "process", "bpm", "workflow", "automation", "mcp"]
 author: "Corezoid"
 ---
@@ -279,7 +279,6 @@ FRONTMATTER
 - Writing custom code in a Git Call node (Python, Go, PHP, ...) → `corezoid-gitcall.md`
 - Updating a process/folder/project description only → `corezoid-describe.md`
 - Reporting a bug or improvement to the Corezoid team → `corezoid-feedback.md`
-- Validating an exported stage `.zip` for merge errors → `corezoid-stage-scan.md`
 - Capturing session learnings into CLAUDE.md / feedback / memory → `corezoid-retro.md`
 - Pre-publish checklist before listing on the marketplace → `marketplace-publish-validation.md`
 

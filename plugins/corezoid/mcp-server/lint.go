@@ -22,6 +22,7 @@ type LintResult struct {
 	UnrepliedTerminals     []UnrepliedTerminal
 	MissingDefaultGo       []MissingDefaultGo
 	ShortTimers            []ShortTimer
+	BrokenLinks            []BrokenLink
 	TotalNodes             int
 	ReachableCount         int
 	SchemaValid            bool
@@ -187,6 +188,7 @@ func lintProcess(filePath string) (*LintResult, error) {
 	result.UnrepliedTerminals = findUnrepliedTerminals(typed)
 	result.MissingDefaultGo = findMissingDefaultGo(typed)
 	result.ShortTimers = findShortTimers(typed)
+	result.BrokenLinks = findBrokenLinks(typed)
 
 	schemaErr := ValidateJSONSchema(filePath, debug)
 	if schemaErr != nil {
@@ -619,6 +621,74 @@ func findShortTimers(nodes []processNode) []ShortTimer {
 	return result
 }
 
+// BrokenLink is a transition (logic to_node_id/err_node_id/go_to/goto, or a
+// semaphor to_node_id/esc_node_id) that points at a static 24-hex node id which
+// does not exist in this process. The server rejects the deploy ("referenced
+// node X does not exist"); lint catches it offline, before the round-trip.
+// Dynamic targets ({{...}} / @alias) resolve at deploy and are left alone.
+type BrokenLink struct {
+	ID     string
+	Title  string
+	Field  string
+	Target string
+	Issue  string
+}
+
+// isStaticNodeID reports whether v is a literal 24-char lowercase-hex node id
+// (the shape Corezoid assigns). Dynamic references are not this shape.
+func isStaticNodeID(v interface{}) (string, bool) {
+	s, ok := v.(string)
+	if !ok || len(s) != 24 {
+		return "", false
+	}
+	for _, c := range s {
+		if (c < '0' || c > '9') && (c < 'a' || c > 'f') {
+			return "", false
+		}
+	}
+	return s, true
+}
+
+// findBrokenLinks detects intra-process transitions pointing at a non-existent
+// node ([2a], salvaged from the former stage-scan tool). Both logic link fields
+// and semaphor targets are checked; only static ids are validated.
+func findBrokenLinks(nodes []processNode) []BrokenLink {
+	exists := make(map[string]bool, len(nodes))
+	for _, n := range nodes {
+		exists[n.id] = true
+	}
+	logicFields := []string{"to_node_id", "err_node_id", "go_to", "goto"}
+	semFields := []string{"to_node_id", "esc_node_id"}
+	var result []BrokenLink
+	add := func(n processNode, field, target string) {
+		title := n.title
+		if title == "" {
+			title = "(untitled)"
+		}
+		result = append(result, BrokenLink{
+			ID: n.id, Title: title, Field: field, Target: target,
+			Issue: fmt.Sprintf("%s points at node %s, which does not exist in this process — the server rejects the deploy (\"referenced node does not exist\")", field, target),
+		})
+	}
+	for _, n := range nodes {
+		for _, lg := range n.logics {
+			for _, f := range logicFields {
+				if tgt, ok := isStaticNodeID(lg[f]); ok && !exists[tgt] {
+					add(n, f, tgt)
+				}
+			}
+		}
+		for _, sm := range n.sems {
+			for _, f := range semFields {
+				if tgt, ok := isStaticNodeID(sm[f]); ok && !exists[tgt] {
+					add(n, f, tgt)
+				}
+			}
+		}
+	}
+	return result
+}
+
 // findUnrepliedTerminals detects final nodes reachable from Start without
 // crossing any api_rpc_reply, in processes that reply somewhere else. A process
 // that replies on its error paths but ends its success path in a bare final is
@@ -1027,6 +1097,15 @@ func FormatLintResult(result *LintResult) string {
 		}
 	}
 
+	if len(result.BrokenLinks) > 0 {
+		hasIssues = true
+		sb.WriteString(fmt.Sprintf("\n=== BROKEN NODE LINKS (%d) ===\n", len(result.BrokenLinks)))
+		for _, bl := range result.BrokenLinks {
+			sb.WriteString(fmt.Sprintf("  [%s] %s\n", bl.ID, bl.Title))
+			sb.WriteString(fmt.Sprintf("  Issue: %s\n", bl.Issue))
+		}
+	}
+
 	if !hasIssues {
 		sb.WriteString("\nNo issues found.")
 	} else {
@@ -1034,7 +1113,7 @@ func FormatLintResult(result *LintResult) string {
 		if !result.SchemaValid {
 			schemaIssues = 1
 		}
-		total := len(result.NoopConditions) + len(result.UnusedSetParams) + len(result.OrphanedNodes) + len(result.PassthroughEscalations) + len(result.LiteralReplyValues) + len(result.SharedErrorClusters) + len(result.OldFormatNodes) + len(result.UnrepliedTerminals) + len(result.MissingDefaultGo) + len(result.ShortTimers) + schemaIssues
+		total := len(result.NoopConditions) + len(result.UnusedSetParams) + len(result.OrphanedNodes) + len(result.PassthroughEscalations) + len(result.LiteralReplyValues) + len(result.SharedErrorClusters) + len(result.OldFormatNodes) + len(result.UnrepliedTerminals) + len(result.MissingDefaultGo) + len(result.ShortTimers) + len(result.BrokenLinks) + schemaIssues
 		sb.WriteString(fmt.Sprintf("\nTotal issues: %d\n", total))
 	}
 

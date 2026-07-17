@@ -2,7 +2,7 @@
 name: corezoid
 displayName: Corezoid
 version: 2.8.4
-description: Corezoid BPM platform assistant. Exposes the Corezoid REST API as MCP tools (`convctl`) plus 21 skills covering process creation, editing, review, validation, dashboards, state diagrams, variables, access, and stage-export scanning. Ships JSON schemas and per-node-type documentation for all 24 Corezoid node types.
+description: Corezoid BPM platform assistant. Exposes the Corezoid REST API as MCP tools (`convctl`) plus 20 skills covering process creation, editing, review, validation, dashboards, state diagrams, variables, and access. Ships JSON schemas and per-node-type documentation for all 24 Corezoid node types.
 author:
   name: Corezoid
   url: https://corezoid.com
@@ -53,10 +53,6 @@ need a post-extract substitution step on every machine.
   (`conv_type: "state"`).
 - **Project review** — audit a process for orphaned nodes, noop conditions,
   unused params, hardcoded constants, missing error edges.
-- **Stage-export scanning** — offline static validator for exported
-  `.zip` stages: detects non-active processes, broken intra-process node
-  links, broken cross-process `conv_id` references. Maps to the
-  platform's merge "Errors list" messages.
 - **Dashboards** — column / pie / funnel / table charts pinned to process
   nodes; configures real-time and drill-down.
 - **Access & variables** — manage user groups, API keys, object/folder
@@ -93,7 +89,6 @@ Each skill is auto-loaded from `.kiro/skills/<name>/SKILL.md`:
 - `corezoid-variable-manager` — env vars and `{{env_var[@name]}}` references.
 - `corezoid-alias-manager` — process aliases.
 - `corezoid-api-connector` — external API wrap templates.
-- `corezoid-stage-scan` — exported-stage merge validator.
 - `corezoid-feedback` — bug reports and quality signals to the Corezoid team.
 - `marketplace-publish-validation` — pre-publish checklist.
 
