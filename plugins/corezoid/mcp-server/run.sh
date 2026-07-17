@@ -66,9 +66,12 @@ if [ -n "$VERSION" ] && { [ "$OS" = "darwin" ] || [ "$OS" = "linux" ]; } && \
         mv "$TMP_SUMS" "${CACHE_DIR}/checksums.txt"
       else
         rm -f "$TMP_BIN" "$TMP_SUMS"
+        echo "corezoid-mcp: warning: checksum mismatch for convctl v${VERSION} (${OS}-${ARCH}) — ignoring download" >&2
       fi
     else
       rm -f "$TMP_BIN" "$TMP_SUMS" 2>/dev/null
+      echo "corezoid-mcp: warning: no prebuilt binary found for v${VERSION} (${OS}-${ARCH})" >&2
+      echo "  Check that a GitHub release exists: https://github.com/corezoid/corezoid-ai-plugin/releases/tag/v${VERSION}" >&2
     fi
   fi
 
@@ -78,4 +81,10 @@ if [ -n "$VERSION" ] && { [ "$OS" = "darwin" ] || [ "$OS" = "linux" ]; } && \
 fi
 
 # Fallback: compile from source (requires Go)
+if ! command -v go >/dev/null 2>&1; then
+  echo "corezoid-mcp: error: no prebuilt binary for v${VERSION} on ${OS}-${ARCH} and 'go' was not found." >&2
+  echo "  → Update the plugin to the latest release: https://github.com/corezoid/corezoid-ai-plugin/releases/latest" >&2
+  echo "  → Or install Go to build from source: https://go.dev/dl/" >&2
+  exit 1
+fi
 cd "$SCRIPT_DIR" && exec go run . "$@"
