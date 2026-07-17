@@ -381,6 +381,20 @@ func TestMerge_UntitledNodeEditIsMergeable(t *testing.T) {
 	}
 }
 
+func TestMerge_UntitledConflictShowsPositionNote(t *testing.T) {
+	base, mine, theirs := untitledScheme(), untitledScheme(), untitledScheme()
+	mine[2]["description"] = "end edited by me"
+	theirs[2]["description"] = "end edited by colleague"
+
+	plan := buildMergePlan(base, theirs, mine)
+	if len(plan.Conflicts) != 1 || plan.Conflicts[0].Title != "" {
+		t.Fatalf("expected one untitled conflict, got %+v", plan.Conflicts)
+	}
+	if !strings.Contains(formatMergePlan(plan), "untitled nodes are matched by position") {
+		t.Fatalf("expected the positional-matching note for an untitled conflict:\n%s", formatMergePlan(plan))
+	}
+}
+
 func TestMerge_DuplicateTitleIsConflict(t *testing.T) {
 	base := baseFourNode()
 	mine := baseFourNode()

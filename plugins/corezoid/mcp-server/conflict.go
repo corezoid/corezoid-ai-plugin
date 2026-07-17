@@ -149,7 +149,7 @@ func applyMerge(v *Executor, dir, filePath string, procID int, localJSON string,
 		}
 		fmt.Fprintf(&sb, "\nMerged into %s — no conflicts. Review it, then push again; it will proceed cleanly.\n", filePath)
 	} else {
-		fmt.Fprintf(&sb, "\nGrafted the non-conflicting changes into %s. The %d conflicting node(s) above were kept as YOUR version.\nReview them, then push with force=true to deploy (the server version is auto-snapshotted, so it stays recoverable).\n",
+		fmt.Fprintf(&sb, "\nGrafted the non-conflicting changes into %s. The %d conflicting node(s) above were kept as YOUR version.\nReview them, then push with force=true to deploy (a snapshot of the server version is attempted first; recoverable only if it succeeds — check the push result).\n",
 			filePath, len(plan.Conflicts))
 	}
 	return conflictResult{conflictMerged, sb.String()}
@@ -190,8 +190,9 @@ func formatConflict(procID int, base, current baselineEntry, proc map[string]any
 		sb.WriteString("        overwrites your local file with the server's; YOUR local edits are DISCARDED and\n")
 		sb.WriteString("        you re-apply them by hand. Use when the overlap is too tangled to merge.\n\n")
 		sb.WriteString("  [3] force=true   YOURS WINS — deploy your file as-is\n")
-		sb.WriteString("        the live process becomes EXACTLY your version; the server's changes above are DROPPED\n")
-		sb.WriteString("        (auto-snapshotted first, so recoverable).\n")
+		sb.WriteString("        the live process becomes EXACTLY your version; the server's changes above are DROPPED.\n")
+		sb.WriteString("        A snapshot of the server version is attempted first — if it succeeds (see the push result)\n")
+		sb.WriteString("        their version stays recoverable; if the snapshot fails, the drop is permanent.\n")
 		return sb.String()
 	}
 
@@ -216,7 +217,7 @@ func formatConflict(procID int, base, current baselineEntry, proc map[string]any
 	}
 	sb.WriteString("\nChoose one — nothing has been pushed yet:\n\n")
 	sb.WriteString("  [1] re-pull      THEIRS WINS — take the server version, re-apply your edits by hand (your local edits are discarded)\n")
-	sb.WriteString("  [2] force=true   YOURS WINS — deploy your file as-is; the server's changes are DROPPED (auto-snapshotted first, so recoverable)\n")
+	sb.WriteString("  [2] force=true   YOURS WINS — deploy your file as-is; the server's changes are DROPPED (a snapshot is attempted first; recoverable only if it succeeds)\n")
 	sb.WriteString("  (the node-level 3-way merge needs a pull ancestor for this file — re-pull once to enable it)\n")
 	return sb.String()
 }
