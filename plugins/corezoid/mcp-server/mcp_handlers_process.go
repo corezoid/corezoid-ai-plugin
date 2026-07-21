@@ -18,6 +18,27 @@ import (
 // handlers that resolve a process ID from a file path.
 var reProcessIDFromFilename = regexp.MustCompile(`^(\d+)_`)
 
+// sanitizeFileSegment converts a raw Corezoid title into a safe filename or
+// directory-name segment. It replaces spaces AND every character that is either
+// a path separator on any supported OS or illegal in Windows filenames with an
+// underscore. This means a title like "/chat_v2" becomes "_chat_v2", which
+// matches the server-side naming that pull-folder already produces.
+//
+// Characters replaced: space  /  \  :  *  ?  "  <  >  |
+func sanitizeFileSegment(title string) string {
+	const illegal = ` /\:*?"<>|`
+	var b strings.Builder
+	b.Grow(len(title))
+	for _, r := range title {
+		if strings.ContainsRune(illegal, r) {
+			b.WriteByte('_')
+		} else {
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
+}
+
 // extractProcessIDFromPath returns the numeric process ID encoded in the
 // filename, or an error message describing the expected format.
 func extractProcessIDFromPath(filePath string) (int, string) {
@@ -58,7 +79,7 @@ func handlePullProcess(ctx context.Context, args map[string]interface{}) (string
 	fileName := fmt.Sprintf("%d.conv.json", processID)
 	if m, ok := procInfo.(map[string]interface{}); ok {
 		if title, _ := m["title"].(string); title != "" {
-			safeName := strings.ReplaceAll(title, " ", "_")
+			safeName := sanitizeFileSegment(title)
 			fileName = fmt.Sprintf("%d_%s.conv.json", processID, safeName)
 		}
 	}
@@ -481,7 +502,7 @@ func createConv(ctx context.Context, args map[string]interface{}, convType strin
 		return fmt.Sprintf("Error marshaling process: %v", err), true
 	}
 
-	safeName := strings.ReplaceAll(processName, " ", "_")
+	safeName := sanitizeFileSegment(processName)
 	fileName := fmt.Sprintf("%d_%s.json", processID, safeName)
 	filePath := filepath.Join(folderPath, fileName)
 	if err := os.WriteFile(filePath, data, 0644); err != nil {
@@ -516,7 +537,7 @@ func handleCreateFolder(ctx context.Context, args map[string]interface{}) (strin
 		return fmt.Sprintf("Error creating folder '%s': %v", folderName, err), true
 	}
 
-	safeName := strings.ReplaceAll(folderName, " ", "_")
+	safeName := sanitizeFileSegment(folderName)
 	dirName := fmt.Sprintf("%d_%s", newFolderID, safeName)
 	dirPath := filepath.Join(parentPath, dirName)
 	if err := os.MkdirAll(dirPath, 0755); err != nil {
