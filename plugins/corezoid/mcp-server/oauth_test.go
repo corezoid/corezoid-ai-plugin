@@ -109,3 +109,52 @@ func TestOAuthPageHTML_Error(t *testing.T) {
 		t.Error("error page should contain error color")
 	}
 }
+
+func TestParseJWTExpiry_AlreadyExpired(t *testing.T) {
+	// Build a JWT whose exp is already in the past — simulates a token minted
+	// from a stale SSO session (the root cause of the reported login deadlock).
+	exp := time.Now().Add(-24 * time.Hour).Unix()
+	claims := map[string]interface{}{"exp": float64(exp)}
+	payload, _ := json.Marshal(claims)
+	encoded := base64.RawURLEncoding.EncodeToString(payload)
+	token := "header." + encoded + ".sig"
+
+	result := parseJWTExpiry(token)
+	if result.IsZero() {
+		t.Fatal("expected non-zero time for an expired JWT")
+	}
+	if !result.Before(time.Now()) {
+		t.Errorf("expected expiry in the past, got %v", result)
+	}
+}
+
+func TestCheckTokenExpiry_Future(t *testing.T) {
+	// A token with exp in the future — must not return an error.
+	expiry := time.Now().Add(time.Hour)
+	if err := checkTokenExpiry(expiry, "https://account.corezoid.com"); err != nil {
+		t.Errorf("unexpected error for future expiry: %v", err)
+	}
+}
+
+func TestCheckTokenExpiry_Past(t *testing.T) {
+	// A token with exp already in the past — must return an error containing
+	// the account URL so the user knows where to log out.
+	expiry := time.Now().Add(-time.Hour)
+	err := checkTokenExpiry(expiry, "https://account.corezoid.com")
+	if err == nil {
+		t.Fatal("expected error for already-expired token, got nil")
+	}
+	if !strings.Contains(err.Error(), "account.corezoid.com") {
+		t.Errorf("error should mention account URL, got: %v", err)
+	}
+	if !strings.Contains(err.Error(), "already expired") {
+		t.Errorf("error should mention 'already expired', got: %v", err)
+	}
+}
+
+func TestCheckTokenExpiry_Zero(t *testing.T) {
+	// Zero expiry means we could not parse it — should be allowed through.
+	if err := checkTokenExpiry(time.Time{}, "https://account.corezoid.com"); err != nil {
+		t.Errorf("zero expiry should not produce an error, got: %v", err)
+	}
+}
