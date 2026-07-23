@@ -476,15 +476,21 @@ func createConv(ctx context.Context, args map[string]interface{}, convType strin
 		return "Error: " + err.Error(), true
 	}
 
-	folderID, err := resolveFolderIDFromDir(folderPath)
+	// An explicit folder_id always wins; otherwise the target is resolved
+	// from the local directory's <id>_<name>.folder.json marker. Either way
+	// the resolved target is reported back so a wrong destination is visible
+	// immediately instead of surfacing as a confusing server error.
+	folderID, resolvedFrom, err := resolveCreateTarget(args, folderPath)
 	if err != nil {
 		return fmt.Sprintf("Error resolving folder ID: %v", err), true
 	}
 
 	v := NewValidator(ctx, 0)
-	processID := v.CreateEmptyConv(folderID, processName, "", convType)
+	processID, cerr := v.CreateEmptyConv(folderID, processName, "", convType)
 	if processID == 0 {
-		return fmt.Sprintf("Error: failed to create %s '%s'", convType, processName), true
+		// Pass the server's reason through: "Stage is immutable" in the tool
+		// result is actionable, "failed to create" alone is not.
+		return fmt.Sprintf("Error: failed to create %s '%s' in folder #%d (%s): %v", convType, processName, folderID, resolvedFrom, cerr), true
 	}
 
 	procInfo1, err := v.ExportProcess()
@@ -513,7 +519,27 @@ func createConv(ctx context.Context, args map[string]interface{}, convType strin
 	if convType == "state" {
 		label = "State diagram"
 	}
-	return fmt.Sprintf("%s '%s' created and saved to %s", label, processName, filePath), false
+	return fmt.Sprintf("%s '%s' created in Corezoid folder #%d (%s) and saved to %s",
+		label, processName, folderID, resolvedFrom, filePath), false
+}
+
+// resolveCreateTarget picks the Corezoid folder a create lands in: an explicit
+// integer folder_id argument if given, else the local directory's marker file.
+// The second return value describes HOW the target was chosen, for the tool's
+// result message.
+func resolveCreateTarget(args map[string]interface{}, dir string) (int, string, error) {
+	if raw, ok := args["folder_id"]; ok {
+		id, err := intArg(args, "folder_id")
+		if err != nil {
+			return 0, "", fmt.Errorf("invalid folder_id %v: %v", raw, err)
+		}
+		return id, "explicit folder_id", nil
+	}
+	id, marker, err := resolveFolderIDFromDir(dir)
+	if err != nil {
+		return 0, "", err
+	}
+	return id, fmt.Sprintf("resolved from local marker %s in '%s'", marker, dir), nil
 }
 
 // handleCreateFolder creates a new folder under the given parent, mirrors it
@@ -526,7 +552,7 @@ func handleCreateFolder(ctx context.Context, args map[string]interface{}) (strin
 		return "Error: " + err.Error(), true
 	}
 
-	parentFolderID, err := resolveFolderIDFromDir(parentPath)
+	parentFolderID, parentResolvedFrom, err := resolveCreateTarget(args, parentPath)
 	if err != nil {
 		return fmt.Sprintf("Error resolving parent folder ID: %v", err), true
 	}
@@ -568,8 +594,10 @@ func handleCreateFolder(ctx context.Context, args map[string]interface{}) (strin
 		return fmt.Sprintf("Error writing folder file: %v", err), true
 	}
 
-	return fmt.Sprintf("Folder '%s' created and saved to %s", folderName, filePath), false
+	return fmt.Sprintf("Folder '%s' created in Corezoid folder #%d (%s) and saved to %s",
+		folderName, parentFolderID, parentResolvedFrom, filePath), false
 }
+
 
 // handleShowFolder returns metadata for a single folder (title, obj_type,
 // parent). Used to introspect folders without writing anything to disk.

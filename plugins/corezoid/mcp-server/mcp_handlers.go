@@ -154,7 +154,17 @@ func handleToolCall(ctx context.Context, name string, args map[string]interface{
 	}
 
 	start := time.Now()
-	result, isError = h(ctx, args)
+	// Reject arguments the tool does not declare. Unknown keys used to be
+	// silently dropped, which let a call like create-process{folder_id: N}
+	// quietly fall back to directory-based target resolution and create the
+	// process somewhere else entirely. The rejection flows through the same
+	// result/analytics path as any other tool error so it is visible in
+	// telemetry.
+	if msg := unknownArgsError(name, args); msg != "" {
+		result, isError = msg, true
+	} else {
+		result, isError = h(ctx, args)
+	}
 
 	if analyticsEnabled.Load() {
 		apiURLv, _, _, _, _ := authSnapshot()
