@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -43,7 +44,7 @@ func TestHandleToolCall_LintProcess_MissingArg(t *testing.T) {
 	// No process_path arg and no .conv.json in current dir.
 	dir := t.TempDir()
 	orig, _ := os.Getwd()
-	os.Chdir(dir) //nolint:errcheck
+	os.Chdir(dir)                        //nolint:errcheck
 	t.Cleanup(func() { os.Chdir(orig) }) //nolint:errcheck
 
 	result, isErr := handleToolCall(context.Background(), "lint-process", map[string]interface{}{})
@@ -98,6 +99,43 @@ func TestHandleToolCall_PushProcess_BadFilename(t *testing.T) {
 		t.Error("expected isError=true for filename without ID prefix")
 	}
 	_ = result
+}
+
+func TestHandlePushProcess_BlocksRpcReplyMismatch(t *testing.T) {
+	resetGlobals(t)
+
+	sample, err := os.ReadFile(filepath.Join("samples", "api_rpc_reply_mismatch.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	dir := t.TempDir()
+	p := filepath.Join(dir, "123_rpc_reply_mismatch.conv.json")
+	if err := os.WriteFile(p, sample, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	orig, _ := os.Getwd()
+	if err := os.Chdir(dir); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chdir(orig) }) //nolint:errcheck
+
+	result, isErr := handlePushProcess(context.Background(), map[string]interface{}{
+		"process_path": filepath.Base(p),
+	})
+	if !isErr {
+		t.Fatalf("expected push-process to block RpcReplyMismatches, got success: %q", result)
+	}
+	for _, want := range []string{
+		"Push blocked: lint found",
+		"API_RPC_REPLY MISMATCHES",
+		`res_data key "status" has no matching res_data_type entry`,
+	} {
+		if !strings.Contains(result, want) {
+			t.Fatalf("expected result to contain %q, got:\n%s", want, result)
+		}
+	}
 }
 
 // ---- pull-process ----------------------------------------------------------

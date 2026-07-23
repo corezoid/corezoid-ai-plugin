@@ -1,0 +1,74 @@
+{
+  "conv_type": "process",
+  "description": "Lint fixture: api_rpc_reply has res_data without matching res_data_type.",
+  "obj_type": 1,
+  "obj_id": 0,
+  "title": "RPC Reply Mismatch Process",
+  "params": [],
+  "ref_mask": true,
+  "scheme": {
+    "nodes": [
+      {
+        "id": "aabbccddeeff001122330001",
+        "obj_type": 1,
+        "condition": {
+          "logics": [
+            {"type": "go", "to_node_id": "aabbccddeeff001122330002"}
+          ],
+          "semaphors": []
+        },
+        "title": "Start",
+        "description": "",
+        "x": 0, "y": 0,
+        "extra": "{\"modeForm\":\"collapse\",\"icon\":\"\"}",
+        "options": null
+      },
+      {
+        "id": "aabbccddeeff001122330002",
+        "obj_type": 0,
+        "condition": {
+          "logics": [
+            {
+              "type": "api_rpc_reply",
+              "mode": "key_value",
+              "res_data": {
+                "result": "{{data.result}}",
+                "status": "success"
+              },
+              "res_data_type": {
+                "result": "string"
+              },
+              "throw_exception": false
+            },
+            {"type": "go", "to_node_id": "aabbccddeeff001122330003"}
+          ],
+          "semaphors": []
+        },
+        "title": "Reply Node",
+        "description": "",
+        "x": 300, "y": 0,
+        "extra": "{\"modeForm\":\"expand\",\"icon\":\"\"}",
+        "options": null
+      },
+      {
+        "id": "aabbccddeeff001122330003",
+        "obj_type": 2,
+        "condition": {
+          "logics": [],
+          "semaphors": []
+        },
+        "title": "Final",
+        "description": "",
+        "x": 600, "y": 0,
+        "extra": "{\"modeForm\":\"collapse\",\"icon\":\"success\"}",
+        "options": null
+      }
+    ],
+    "web_settings": [
+      [],
+      []
+    ]
+  },
+  "status": "active",
+  "uuid": "4395ca9a-6041-43a3-b1fe-8cda363a6d9a"
+}

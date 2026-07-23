@@ -217,6 +217,10 @@ var toolRegistry = []mcpTool{
 					"type":        "string",
 					"description": "JSON string with task input parameters",
 				},
+				"ref": map[string]interface{}{
+					"type":        "string",
+					"description": "Optional custom task ref (lookup key, not a guaranteed idempotency key — duplicate-ref behavior depends on the target process/state-diagram). Use this to create a task with a specific, lookup-able ref — e.g. matching an external ID a downstream process keys off of. If omitted, an auto-generated ref (\"<unix_ts>_<rand>\") is used, same as before.",
+				},
 				"wait_sec": map[string]interface{}{
 					"type":        "integer",
 					"description": "How long to wait (seconds) for the task to reach a final node before reporting it as in progress. Default 30, max 600. Raise it for processes with slow external calls or delay nodes.",
@@ -231,6 +235,10 @@ var toolRegistry = []mcpTool{
 		InputSchema: map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
+				"folder_id": map[string]interface{}{
+					"type":        "integer",
+					"description": "Explicit Corezoid folder/stage ID to create in; overrides folder_path resolution",
+				},
 				"folder_path": map[string]interface{}{
 					"type":        "string",
 					"description": "Relative path to the folder directory. Omit to use the current directory.",
@@ -249,6 +257,10 @@ var toolRegistry = []mcpTool{
 		InputSchema: map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
+				"folder_id": map[string]interface{}{
+					"type":        "integer",
+					"description": "Explicit Corezoid folder/stage ID to create in; overrides folder_path resolution",
+				},
 				"folder_path": map[string]interface{}{
 					"type":        "string",
 					"description": "Relative path to the folder directory. Omit to use the current directory.",
@@ -267,6 +279,10 @@ var toolRegistry = []mcpTool{
 		InputSchema: map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
+				"folder_id": map[string]interface{}{
+					"type":        "integer",
+					"description": "Explicit Corezoid folder/stage ID to create the folder in; overrides parent_path resolution",
+				},
 				"parent_path": map[string]interface{}{
 					"type":        "string",
 					"description": "Relative path to the parent folder directory. Omit to use the current directory.",

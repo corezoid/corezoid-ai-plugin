@@ -208,7 +208,7 @@ func TestCreateEmptyProcess_Error(t *testing.T) {
 		return map[string]interface{}{"request_proc": "fail"}
 	})
 
-	id := e.CreateEmptyProcess(1, "test", "")
+	id, _ := e.CreateEmptyProcess(1, "test", "")
 	if id != 0 {
 		t.Errorf("expected 0 on error, got %d", id)
 	}

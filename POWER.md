@@ -97,7 +97,7 @@ Each skill is auto-loaded from `.kiro/skills/<name>/SKILL.md`:
 This repository ships the same plugin payload to:
 
 - **Claude Code** — via `claude plugin install corezoid@corezoid`.
-- **Codex** — via `codex plugin install corezoid@corezoid`.
+- **Codex** — via `codex plugin add corezoid@corezoid`.
 - **AWS Kiro** — via this Power.
 
 One Git tag → one GitHub Release → artifacts for all three hosts.

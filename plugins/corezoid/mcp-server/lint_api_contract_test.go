@@ -104,3 +104,110 @@ func TestLintProcess_APIWithServerMandatoryFieldsPasses(t *testing.T) {
 		t.Errorf("expected no schema error, got:\n%s", result.SchemaError)
 	}
 }
+
+// TestLintProcess_APIUnderspecified_Caught verifies that an api logic carrying only
+// the schema-required fields (type, method, url, extra_headers, max_threads,
+// err_node_id) but missing the canonical extras is caught by
+// findUnderspecifiedAPINodes. This is the exact "light" node shape that passes
+// schema validation yet causes push-process to hang 15–20 s and fail with the
+// opaque "no response from server".
+func TestLintProcess_APIUnderspecified_Caught(t *testing.T) {
+	path := apiContractProcess(t, map[string]interface{}{
+		"extra_headers": map[string]interface{}{},
+		"max_threads":   5,
+		// deliberately omits: extra, extra_type, format, send_sys, debug_info,
+		// customize_response, rfc_format, cert_pem, version
+	})
+	result, err := lintProcess(path)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(result.UnderspecifiedAPINodes) == 0 {
+		t.Fatal("expected UnderspecifiedAPINodes finding, got none")
+	}
+	for _, field := range apiCanonicalFields {
+		found := false
+		for _, n := range result.UnderspecifiedAPINodes {
+			for _, mf := range n.MissingFields {
+				if mf == field {
+					found = true
+					break
+				}
+			}
+			if found {
+				break
+			}
+		}
+		if !found {
+			t.Errorf("expected canonical field %q to be reported as missing", field)
+		}
+	}
+}
+
+// TestLintProcess_APIFullCanonical_NoUnderspecified verifies that a node carrying
+// the full canonical field set is NOT flagged by findUnderspecifiedAPINodes.
+func TestLintProcess_APIFullCanonical_NoUnderspecified(t *testing.T) {
+	path := apiContractProcess(t, map[string]interface{}{
+		"extra_headers":      map[string]interface{}{},
+		"max_threads":        5,
+		"extra":              map[string]interface{}{},
+		"extra_type":         map[string]interface{}{},
+		"format":             "",
+		"send_sys":           true,
+		"debug_info":         false,
+		"customize_response": false,
+		"rfc_format":         true,
+		"cert_pem":           "",
+		"version":            2,
+	})
+	result, err := lintProcess(path)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(result.UnderspecifiedAPINodes) != 0 {
+		t.Errorf("expected no UnderspecifiedAPINodes, got %d: %+v",
+			len(result.UnderspecifiedAPINodes), result.UnderspecifiedAPINodes)
+	}
+}
+
+// TestLintProcess_APIPartialCanonical_ReportsOnlyMissing verifies that a node
+// carrying only some canonical fields is flagged for the ones it is actually
+// missing, not the ones it already has.
+func TestLintProcess_APIPartialCanonical_ReportsOnlyMissing(t *testing.T) {
+	path := apiContractProcess(t, map[string]interface{}{
+		"extra_headers": map[string]interface{}{},
+		"max_threads":   5,
+		"extra":         map[string]interface{}{},
+		"extra_type":    map[string]interface{}{},
+		// format, send_sys, debug_info, customize_response, rfc_format, cert_pem, version absent
+	})
+	result, err := lintProcess(path)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(result.UnderspecifiedAPINodes) == 0 {
+		t.Fatal("expected UnderspecifiedAPINodes finding, got none")
+	}
+	node := result.UnderspecifiedAPINodes[0]
+	// extra and extra_type are present — must NOT appear in MissingFields
+	for _, present := range []string{"extra", "extra_type"} {
+		for _, mf := range node.MissingFields {
+			if mf == present {
+				t.Errorf("field %q is present in the logic but appears in MissingFields", present)
+			}
+		}
+	}
+	// format, send_sys etc. are absent — must appear in MissingFields
+	for _, absent := range []string{"format", "send_sys", "debug_info", "customize_response", "rfc_format", "cert_pem", "version"} {
+		found := false
+		for _, mf := range node.MissingFields {
+			if mf == absent {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("expected absent field %q in MissingFields, not found; got: %v", absent, node.MissingFields)
+		}
+	}
+}

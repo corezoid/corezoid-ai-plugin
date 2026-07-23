@@ -18,6 +18,27 @@ import (
 // handlers that resolve a process ID from a file path.
 var reProcessIDFromFilename = regexp.MustCompile(`^(\d+)_`)
 
+// sanitizeFileSegment converts a raw Corezoid title into a safe filename or
+// directory-name segment. It replaces spaces AND every character that is either
+// a path separator on any supported OS or illegal in Windows filenames with an
+// underscore. This means a title like "/chat_v2" becomes "_chat_v2", which
+// matches the server-side naming that pull-folder already produces.
+//
+// Characters replaced: space  /  \  :  *  ?  "  <  >  |
+func sanitizeFileSegment(title string) string {
+	const illegal = ` /\:*?"<>|`
+	var b strings.Builder
+	b.Grow(len(title))
+	for _, r := range title {
+		if strings.ContainsRune(illegal, r) {
+			b.WriteByte('_')
+		} else {
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
+}
+
 // extractProcessIDFromPath returns the numeric process ID encoded in the
 // filename, or an error message describing the expected format.
 func extractProcessIDFromPath(filePath string) (int, string) {
@@ -58,7 +79,7 @@ func handlePullProcess(ctx context.Context, args map[string]interface{}) (string
 	fileName := fmt.Sprintf("%d.conv.json", processID)
 	if m, ok := procInfo.(map[string]interface{}); ok {
 		if title, _ := m["title"].(string); title != "" {
-			safeName := strings.ReplaceAll(title, " ", "_")
+			safeName := sanitizeFileSegment(title)
 			fileName = fmt.Sprintf("%d_%s.conv.json", processID, safeName)
 		}
 	}
@@ -206,7 +227,8 @@ func handlePushProcess(ctx context.Context, args map[string]interface{}) (string
 	if lintRes, lintErr := lintProcess(filePath); lintErr == nil {
 		hard := len(lintRes.BrokenLinks) + len(lintRes.OldFormatNodes) +
 			len(lintRes.MissingDefaultGo) + len(lintRes.ShortTimers) +
-			len(lintRes.LiteralReplyValues) + len(lintRes.UnrepliedTerminals)
+			len(lintRes.RpcReplyMismatches) + len(lintRes.LiteralReplyValues) +
+			len(lintRes.UnrepliedTerminals)
 		advisory := len(lintRes.NoopConditions) + len(lintRes.UnusedSetParams) +
 			len(lintRes.OrphanedNodes) + len(lintRes.PassthroughEscalations) +
 			len(lintRes.SharedErrorClusters)
@@ -350,7 +372,10 @@ func handleRunTask(ctx context.Context, args map[string]interface{}) (string, bo
 		return fmt.Sprintf("Error parsing task data: %v", err), true
 	}
 
-	ref := fmt.Sprintf("%d_%d", time.Now().Unix(), rand.Intn(1000000))
+	ref := optStrArg(args, "ref")
+	if ref == "" {
+		ref = fmt.Sprintf("%d_%d", time.Now().Unix(), rand.Intn(1000000))
+	}
 	if err := v.createTask(ref, taskData); err != nil {
 		return fmt.Sprintf("Error creating task: %v", err), true
 	}
@@ -476,15 +501,21 @@ func createConv(ctx context.Context, args map[string]interface{}, convType strin
 		return "Error: " + err.Error(), true
 	}
 
-	folderID, err := resolveFolderIDFromDir(folderPath)
+	// An explicit folder_id always wins; otherwise the target is resolved
+	// from the local directory's <id>_<name>.folder.json marker. Either way
+	// the resolved target is reported back so a wrong destination is visible
+	// immediately instead of surfacing as a confusing server error.
+	folderID, resolvedFrom, err := resolveCreateTarget(args, folderPath)
 	if err != nil {
 		return fmt.Sprintf("Error resolving folder ID: %v", err), true
 	}
 
 	v := NewValidator(ctx, 0)
-	processID := v.CreateEmptyConv(folderID, processName, "", convType)
+	processID, cerr := v.CreateEmptyConv(folderID, processName, "", convType)
 	if processID == 0 {
-		return fmt.Sprintf("Error: failed to create %s '%s'", convType, processName), true
+		// Pass the server's reason through: "Stage is immutable" in the tool
+		// result is actionable, "failed to create" alone is not.
+		return fmt.Sprintf("Error: failed to create %s '%s' in folder #%d (%s): %v", convType, processName, folderID, resolvedFrom, cerr), true
 	}
 
 	procInfo1, err := v.ExportProcess()
@@ -502,7 +533,7 @@ func createConv(ctx context.Context, args map[string]interface{}, convType strin
 		return fmt.Sprintf("Error marshaling process: %v", err), true
 	}
 
-	safeName := strings.ReplaceAll(processName, " ", "_")
+	safeName := sanitizeFileSegment(processName)
 	fileName := fmt.Sprintf("%d_%s.json", processID, safeName)
 	filePath := filepath.Join(folderPath, fileName)
 	if err := os.WriteFile(filePath, data, 0644); err != nil {
@@ -513,7 +544,27 @@ func createConv(ctx context.Context, args map[string]interface{}, convType strin
 	if convType == "state" {
 		label = "State diagram"
 	}
-	return fmt.Sprintf("%s '%s' created and saved to %s", label, processName, filePath), false
+	return fmt.Sprintf("%s '%s' created in Corezoid folder #%d (%s) and saved to %s",
+		label, processName, folderID, resolvedFrom, filePath), false
+}
+
+// resolveCreateTarget picks the Corezoid folder a create lands in: an explicit
+// integer folder_id argument if given, else the local directory's marker file.
+// The second return value describes HOW the target was chosen, for the tool's
+// result message.
+func resolveCreateTarget(args map[string]interface{}, dir string) (int, string, error) {
+	if raw, ok := args["folder_id"]; ok {
+		id, err := intArg(args, "folder_id")
+		if err != nil {
+			return 0, "", fmt.Errorf("invalid folder_id %v: %v", raw, err)
+		}
+		return id, "explicit folder_id", nil
+	}
+	id, marker, err := resolveFolderIDFromDir(dir)
+	if err != nil {
+		return 0, "", err
+	}
+	return id, fmt.Sprintf("resolved from local marker %s in '%s'", marker, dir), nil
 }
 
 // handleCreateFolder creates a new folder under the given parent, mirrors it
@@ -526,7 +577,7 @@ func handleCreateFolder(ctx context.Context, args map[string]interface{}) (strin
 		return "Error: " + err.Error(), true
 	}
 
-	parentFolderID, err := resolveFolderIDFromDir(parentPath)
+	parentFolderID, parentResolvedFrom, err := resolveCreateTarget(args, parentPath)
 	if err != nil {
 		return fmt.Sprintf("Error resolving parent folder ID: %v", err), true
 	}
@@ -537,7 +588,7 @@ func handleCreateFolder(ctx context.Context, args map[string]interface{}) (strin
 		return fmt.Sprintf("Error creating folder '%s': %v", folderName, err), true
 	}
 
-	safeName := strings.ReplaceAll(folderName, " ", "_")
+	safeName := sanitizeFileSegment(folderName)
 	dirName := fmt.Sprintf("%d_%s", newFolderID, safeName)
 	dirPath := filepath.Join(parentPath, dirName)
 	if err := os.MkdirAll(dirPath, 0755); err != nil {
@@ -568,8 +619,10 @@ func handleCreateFolder(ctx context.Context, args map[string]interface{}) (strin
 		return fmt.Sprintf("Error writing folder file: %v", err), true
 	}
 
-	return fmt.Sprintf("Folder '%s' created and saved to %s", folderName, filePath), false
+	return fmt.Sprintf("Folder '%s' created in Corezoid folder #%d (%s) and saved to %s",
+		folderName, parentFolderID, parentResolvedFrom, filePath), false
 }
+
 
 // handleShowFolder returns metadata for a single folder (title, obj_type,
 // parent). Used to introspect folders without writing anything to disk.

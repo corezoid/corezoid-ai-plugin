@@ -252,7 +252,7 @@ func (v *Executor) resolveFolderPathFromAPI(folderID int) (string, error) {
 		if info.ObjType == 3 || (v.StageID != 0 && info.ObjID == v.StageID) {
 			break
 		}
-		safeName := strings.ReplaceAll(info.Title, " ", "_")
+		safeName := sanitizeFileSegment(info.Title)
 		segments = append(segments, segment{id: info.ObjID, title: safeName})
 		if info.ParentObjID == 0 || info.ParentObjID == currentID {
 			break

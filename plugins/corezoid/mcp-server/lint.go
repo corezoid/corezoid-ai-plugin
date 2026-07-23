@@ -15,6 +15,7 @@ type LintResult struct {
 	NoopConditions         []NoopCondition
 	UnusedSetParams        []UnusedSetParam
 	OrphanedNodes          []OrphanedNode
+	RpcReplyMismatches     []RpcReplyMismatch
 	PassthroughEscalations []PassthroughEscalation
 	LiteralReplyValues     []LiteralReplyValue
 	SharedErrorClusters    []SharedErrorCluster
@@ -23,10 +24,24 @@ type LintResult struct {
 	MissingDefaultGo       []MissingDefaultGo
 	ShortTimers            []ShortTimer
 	BrokenLinks            []BrokenLink
+	UnderspecifiedAPINodes []UnderspecifiedAPINode
 	TotalNodes             int
 	ReachableCount         int
 	SchemaValid            bool
 	SchemaError            string
+}
+
+// RpcReplyMismatch records an api_rpc_reply node where res_data/res_data_type
+// (or extra/extra_type) keys do not align, which the server rejects at commit
+// time with the vague message "invalid value res_data or res_data_type, or both".
+type RpcReplyMismatch struct {
+	NodeID      string
+	NodeTitle   string
+	DataField   string   // "res_data" or "extra"
+	TypeField   string   // "res_data_type" or "extra_type"
+	UntypedKeys []string // data keys with no matching type entry → server rejects these
+	UnusedTypes []string // type keys with no matching data entry → suspicious but not a hard error
+	Issue       string
 }
 
 type NoopCondition struct {
@@ -83,6 +98,24 @@ type LiteralReplyValue struct {
 	Title  string
 	Fields []string
 	Issue  string
+}
+
+// UnderspecifiedAPINode is an api logic node that is missing one or more fields
+// from the full canonical set the Corezoid commit service requires. Such nodes
+// pass JSON schema validation and the lint-process tool cleanly, but the server
+// cannot commit an under-specified api logic: it stops responding, and after
+// ~15–20 s push-process fails with "Error deploying process: failed to commit
+// changes: no response from server" — with no indication of the node or field at
+// fault. This failure mode has been reproduced in multiple independent sessions.
+//
+// The canonical fields beyond the schema-required subset are listed in
+// apiCanonicalFields. Finding any of them absent surfaces an actionable error
+// before the slow server round-trip.
+type UnderspecifiedAPINode struct {
+	NodeID        string
+	NodeTitle     string
+	MissingFields []string
+	Issue         string
 }
 
 // OldFormatNode is a node the platform's "Convert process to new format" dialog
@@ -181,6 +214,7 @@ func lintProcess(filePath string) (*LintResult, error) {
 	typed := parseProcessNodes(nodes)
 	result.NoopConditions, result.UnusedSetParams = findNoopNodes(typed)
 	result.OrphanedNodes, result.ReachableCount = findOrphanedNodes(typed)
+	result.RpcReplyMismatches = findRpcReplyMismatches(typed)
 	result.PassthroughEscalations = findPassthroughEscalations(typed)
 	result.LiteralReplyValues = findLiteralReplyValues(typed)
 	result.SharedErrorClusters = findSharedErrorClusters(typed)
@@ -189,6 +223,7 @@ func lintProcess(filePath string) (*LintResult, error) {
 	result.MissingDefaultGo = findMissingDefaultGo(typed)
 	result.ShortTimers = findShortTimers(typed)
 	result.BrokenLinks = findBrokenLinks(typed)
+	result.UnderspecifiedAPINodes = findUnderspecifiedAPINodes(typed)
 
 	schemaErr := ValidateJSONSchema(filePath, debug)
 	if schemaErr != nil {
@@ -896,6 +931,64 @@ func findLiteralReplyValues(nodes []processNode) []LiteralReplyValue {
 	return result
 }
 
+// apiCanonicalFields is the set of api logic fields that the Corezoid commit
+// service requires beyond those already enforced by the JSON schema (type,
+// method, url, extra_headers, max_threads, err_node_id). A node carrying only
+// the schema-required subset is "under-specified": the server commit hangs for
+// ~15–20 s then returns the generic "no response from server" error with no
+// indication of which node or field caused it.
+//
+// These fields must be PRESENT (the key must exist); the value may be the
+// zero/default for the type (e.g. empty {}, false, "" or 0).
+var apiCanonicalFields = []string{
+	"extra",
+	"extra_type",
+	"format",
+	"send_sys",
+	"debug_info",
+	"customize_response",
+	"rfc_format",
+	"cert_pem",
+	"version",
+}
+
+// findUnderspecifiedAPINodes scans every node for api logics that are missing
+// one or more fields from the canonical server-required set. A node that passes
+// schema validation but lacks these fields causes the server commit to hang
+// without a descriptive error (see UnderspecifiedAPINode doc comment).
+func findUnderspecifiedAPINodes(nodes []processNode) []UnderspecifiedAPINode {
+	var result []UnderspecifiedAPINode
+	for _, n := range nodes {
+		for _, lg := range n.logics {
+			if t, _ := lg["type"].(string); t != "api" {
+				continue
+			}
+			var missing []string
+			for _, field := range apiCanonicalFields {
+				if _, ok := lg[field]; !ok {
+					missing = append(missing, field)
+				}
+			}
+			if len(missing) == 0 {
+				continue
+			}
+			displayTitle := n.title
+			if displayTitle == "" {
+				displayTitle = "(untitled)"
+			}
+			result = append(result, UnderspecifiedAPINode{
+				NodeID:        n.id,
+				NodeTitle:     displayTitle,
+				MissingFields: missing,
+				Issue: fmt.Sprintf(
+					"api logic is missing canonical fields [%s] — the server commit hangs ~15–20 s then fails with \"no response from server\" instead of a descriptive error. Add the missing fields (copy the GET example from docs/nodes/api-call-node.md as a template)",
+					strings.Join(missing, ", ")),
+			})
+		}
+	}
+	return result
+}
+
 // describeLiteral renders a res_data value for the lint message ([], {}, 0, true, null).
 func describeLiteral(v interface{}) string {
 	b, err := json.Marshal(v)
@@ -1033,6 +1126,15 @@ func FormatLintResult(result *LintResult) string {
 		}
 	}
 
+	if len(result.RpcReplyMismatches) > 0 {
+		hasIssues = true
+		sb.WriteString(fmt.Sprintf("\n=== API_RPC_REPLY MISMATCHES (%d) ===\n", len(result.RpcReplyMismatches)))
+		for _, m := range result.RpcReplyMismatches {
+			sb.WriteString(fmt.Sprintf("  [%s] %s\n", m.NodeID, m.NodeTitle))
+			sb.WriteString(fmt.Sprintf("  Issue: %s\n", m.Issue))
+		}
+	}
+
 	if len(result.PassthroughEscalations) > 0 {
 		hasIssues = true
 		sb.WriteString(fmt.Sprintf("\n=== PASSTHROUGH ESCALATION NODES (%d) ===\n", len(result.PassthroughEscalations)))
@@ -1106,6 +1208,16 @@ func FormatLintResult(result *LintResult) string {
 		}
 	}
 
+	if len(result.UnderspecifiedAPINodes) > 0 {
+		hasIssues = true
+		sb.WriteString(fmt.Sprintf("\n=== UNDERSPECIFIED API CALL NODES (%d) — server commit hangs then \"no response from server\" ===\n", len(result.UnderspecifiedAPINodes)))
+		for _, ua := range result.UnderspecifiedAPINodes {
+			sb.WriteString(fmt.Sprintf("  [%s] %s\n", ua.NodeID, ua.NodeTitle))
+			sb.WriteString(fmt.Sprintf("  Missing: %s\n", strings.Join(ua.MissingFields, ", ")))
+			sb.WriteString(fmt.Sprintf("  Issue: %s\n", ua.Issue))
+		}
+	}
+
 	if !hasIssues {
 		sb.WriteString("\nNo issues found.")
 	} else {
@@ -1113,11 +1225,97 @@ func FormatLintResult(result *LintResult) string {
 		if !result.SchemaValid {
 			schemaIssues = 1
 		}
-		total := len(result.NoopConditions) + len(result.UnusedSetParams) + len(result.OrphanedNodes) + len(result.PassthroughEscalations) + len(result.LiteralReplyValues) + len(result.SharedErrorClusters) + len(result.OldFormatNodes) + len(result.UnrepliedTerminals) + len(result.MissingDefaultGo) + len(result.ShortTimers) + len(result.BrokenLinks) + schemaIssues
+		total := len(result.NoopConditions) + len(result.UnusedSetParams) + len(result.OrphanedNodes) + len(result.RpcReplyMismatches) + len(result.PassthroughEscalations) + len(result.LiteralReplyValues) + len(result.SharedErrorClusters) + len(result.OldFormatNodes) + len(result.UnrepliedTerminals) + len(result.MissingDefaultGo) + len(result.ShortTimers) + len(result.BrokenLinks) + len(result.UnderspecifiedAPINodes) + schemaIssues
 		sb.WriteString(fmt.Sprintf("\nTotal issues: %d\n", total))
 	}
 
 	return sb.String()
+}
+
+// findRpcReplyMismatches scans every api_rpc_reply logic in all nodes and
+// reports cases where data and type dictionaries do not align.  The server
+// enforces this alignment at commit time but only returns the generic message
+// "invalid value res_data or res_data_type, or both", making it hard to pinpoint
+// the offending key.  By catching the mismatch client-side we can name the exact
+// key so the author can fix it in one pass.
+func findRpcReplyMismatches(nodes []processNode) []RpcReplyMismatch {
+	var mismatches []RpcReplyMismatch
+	for _, n := range nodes {
+		for _, lg := range n.logics {
+			if t, _ := lg["type"].(string); t != "api_rpc_reply" {
+				continue
+			}
+			if m := checkDataTypeAlignment(n, lg, "res_data", "res_data_type"); m != nil {
+				mismatches = append(mismatches, *m)
+			}
+			if m := checkDataTypeAlignment(n, lg, "extra", "extra_type"); m != nil {
+				mismatches = append(mismatches, *m)
+			}
+		}
+	}
+	return mismatches
+}
+
+// checkDataTypeAlignment compares the keys of a data field (res_data or extra)
+// against the keys of its type companion (res_data_type or extra_type) in one
+// api_rpc_reply logic block.  Returns a mismatch descriptor when the sets differ,
+// or nil when they are consistent (including when neither field is present).
+func checkDataTypeAlignment(n processNode, lg map[string]interface{}, dataField, typeField string) *RpcReplyMismatch {
+	data, hasData := lg[dataField].(map[string]interface{})
+	typ, hasType := lg[typeField].(map[string]interface{})
+
+	if !hasData && !hasType {
+		return nil
+	}
+	if !hasData {
+		data = map[string]interface{}{}
+	}
+	if !hasType {
+		typ = map[string]interface{}{}
+	}
+
+	var untypedKeys []string
+	for k := range data {
+		if _, ok := typ[k]; !ok {
+			untypedKeys = append(untypedKeys, k)
+		}
+	}
+	sort.Strings(untypedKeys)
+
+	var unusedTypes []string
+	for k := range typ {
+		if _, ok := data[k]; !ok {
+			unusedTypes = append(unusedTypes, k)
+		}
+	}
+	sort.Strings(unusedTypes)
+
+	if len(untypedKeys) == 0 && len(unusedTypes) == 0 {
+		return nil
+	}
+
+	displayTitle := n.title
+	if displayTitle == "" {
+		displayTitle = "(untitled)"
+	}
+
+	var parts []string
+	for _, k := range untypedKeys {
+		parts = append(parts, fmt.Sprintf("%s key %q has no matching %s entry", dataField, k, typeField))
+	}
+	for _, k := range unusedTypes {
+		parts = append(parts, fmt.Sprintf("%s key %q has no matching %s entry", typeField, k, dataField))
+	}
+
+	return &RpcReplyMismatch{
+		NodeID:      n.id,
+		NodeTitle:   displayTitle,
+		DataField:   dataField,
+		TypeField:   typeField,
+		UntypedKeys: untypedKeys,
+		UnusedTypes: unusedTypes,
+		Issue:       strings.Join(parts, "; "),
+	}
 }
 
 // toMapSlice safely converts an interface{} to []map[string]interface{}

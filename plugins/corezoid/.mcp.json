@@ -1,6 +1,6 @@
 {
   "corezoid": {
     "command": "sh",
-    "args": ["-c", "export COREZOID_WORK_DIR=\"$PWD\"; exec sh \"$CLAUDE_PLUGIN_ROOT/mcp-server/run.sh\""]
+    "args": ["-c", "WORK_DIR=\"$PWD\"; PLUGIN_ROOT=\"$CLAUDE_PLUGIN_ROOT\"; if [ -n \"$PLUGIN_ROOT\" ] && [ ! -f \"$PLUGIN_ROOT/mcp-server/run.sh\" ]; then PLUGIN_ROOT=\"\"; fi; CODEX_CACHE_ROOT=\"\"; if [ -n \"$CODEX_HOME\" ]; then CODEX_CACHE_ROOT=\"$CODEX_HOME\"; elif [ -n \"$HOME\" ]; then CODEX_CACHE_ROOT=\"$HOME/.codex\"; fi; if [ -z \"$PLUGIN_ROOT\" ] && [ -n \"$CODEX_CACHE_ROOT\" ]; then OLD_IFS=$IFS; IFS=$(printf '\\n.'); IFS=${IFS%.}; for dir in $(ls -td \"$CODEX_CACHE_ROOT\"/plugins/cache/corezoid/corezoid/* 2>/dev/null); do IFS=$OLD_IFS; if [ -f \"$dir/mcp-server/run.sh\" ]; then PLUGIN_ROOT=\"$dir\"; break; fi; done; IFS=$OLD_IFS; fi; if [ -z \"$PLUGIN_ROOT\" ] && [ -f \"$PWD/mcp-server/run.sh\" ]; then PLUGIN_ROOT=\"$PWD\"; fi; if [ -z \"$PLUGIN_ROOT\" ] && [ -f \"$PWD/plugins/corezoid/mcp-server/run.sh\" ]; then PLUGIN_ROOT=\"$PWD/plugins/corezoid\"; fi; if [ -z \"$PLUGIN_ROOT\" ]; then echo \"ERROR: cannot locate Corezoid plugin root; set CLAUDE_PLUGIN_ROOT or install corezoid@corezoid via Codex\" >&2; exit 1; fi; export COREZOID_WORK_DIR=\"$WORK_DIR\"; exec sh \"$PLUGIN_ROOT/mcp-server/run.sh\""]
   }
 }
