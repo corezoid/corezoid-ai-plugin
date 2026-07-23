@@ -104,6 +104,58 @@ func TestLintProcess_EmptyNodes(t *testing.T) {
 	}
 }
 
+// TestLintProcess_RpcReplyMismatch verifies that api_rpc_reply nodes with
+// res_data keys that have no matching res_data_type entry are reported with
+// the exact key name so the author can fix it in one pass.
+func TestLintProcess_RpcReplyMismatch(t *testing.T) {
+	result, err := lintProcess("samples/api_rpc_reply_mismatch.json")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(result.RpcReplyMismatches) == 0 {
+		t.Fatal("expected at least one RpcReplyMismatch, got none")
+	}
+	m := result.RpcReplyMismatches[0]
+	if m.NodeTitle != "Reply Node" {
+		t.Errorf("expected node title 'Reply Node', got %q", m.NodeTitle)
+	}
+	if m.DataField != "res_data" || m.TypeField != "res_data_type" {
+		t.Errorf("unexpected field names: DataField=%q TypeField=%q", m.DataField, m.TypeField)
+	}
+	if !sliceContains(m.UntypedKeys, "status") {
+		t.Errorf("expected untyped key 'status', got UntypedKeys=%v", m.UntypedKeys)
+	}
+	if sliceContains(m.UntypedKeys, "result") {
+		t.Errorf("'result' has a type entry and must not appear in UntypedKeys; got %v", m.UntypedKeys)
+	}
+	if !strings.Contains(m.Issue, `"status"`) {
+		t.Errorf("Issue message must name the offending key, got: %q", m.Issue)
+	}
+}
+
+// TestLintProcess_RpcReplyClean verifies that a well-aligned api_rpc_reply
+// node produces no RpcReplyMismatch entries.
+func TestLintProcess_RpcReplyClean(t *testing.T) {
+	result, err := lintProcess("samples/multi_action_logics.json")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(result.RpcReplyMismatches) != 0 {
+		t.Errorf("expected 0 RpcReplyMismatches for aligned node, got %d: %+v",
+			len(result.RpcReplyMismatches), result.RpcReplyMismatches)
+	}
+}
+
+// sliceContains reports whether target appears in ss.
+func sliceContains(ss []string, target string) bool {
+	for _, s := range ss {
+		if s == target {
+			return true
+		}
+	}
+	return false
+}
+
 // TestFormatLintResult_Golden compares FormatLintResult output against a golden file.
 // Run with -update to regenerate golden files.
 func TestFormatLintResult_Golden(t *testing.T) {
