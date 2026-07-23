@@ -511,6 +511,10 @@ func handleLogout(_ context.Context, _ map[string]interface{}) (string, bool) {
 	if err != nil {
 		credPath = "~/.corezoid/credentials"
 	}
+
+	// Snapshot accountURL before clearing so we can include the browser-logout hint.
+	_, _, _, snapAccountURL, _ := authSnapshot()
+
 	if err := deleteCredentials(); err != nil {
 		return fmt.Sprintf("Failed to remove credentials: %v", err), true
 	}
@@ -533,5 +537,16 @@ func handleLogout(_ context.Context, _ map[string]interface{}) (string, bool) {
 		apiLogin = ""
 		apiSecret = ""
 	})
-	return fmt.Sprintf("Logged out. ACCESS_TOKEN removed from %s.", credPath), false
+
+	browserHost := strings.TrimRight(snapAccountURL, "/")
+	if browserHost == "" {
+		browserHost = "https://account.corezoid.com"
+	}
+
+	return fmt.Sprintf(
+		"Logged out. ACCESS_TOKEN removed from %s.\n\n"+
+			"Important: your browser may still have an active SSO session at %s. "+
+			"If a subsequent login produces an already-expired token (\"exp\" in the past), "+
+			"you must also log out of that site in your browser before calling login again.",
+		credPath, browserHost), false
 }

@@ -99,6 +99,11 @@ func oauthPKCEFlow(accountURL, clientID string) (*PKCEResult, error) {
 		"code_challenge":        {challenge},
 		"code_challenge_method": {"S256"},
 		"state":                 {state},
+		// prompt=login forces the authorization server to re-authenticate the user
+		// rather than silently reusing a stale browser SSO session whose token may
+		// already be expired.  Without this, repeated logout+login cycles can issue
+		// tokens pinned to a dead session's expiry (exp < now on arrival).
+		"prompt": {"login"},
 	}
 	authorizeURL := accountURL + "/oauth2/authorize"
 	tokenURL := accountURL + "/oauth2/token"
@@ -220,10 +225,39 @@ func oauthPKCEFlow(accountURL, clientID string) (*PKCEResult, error) {
 		return nil, fmt.Errorf("no token in OAuth response: %s", string(body))
 	}
 
+	expiry := parseJWTExpiry(accessToken)
+	if err := checkTokenExpiry(expiry, accountURL); err != nil {
+		return nil, err
+	}
+
 	return &PKCEResult{
 		AccessToken: accessToken,
-		ExpiresAt:   parseJWTExpiry(accessToken),
+		ExpiresAt:   expiry,
 	}, nil
+}
+
+// checkTokenExpiry returns a descriptive error when a freshly issued token is
+// already expired.  This happens when the browser silently reused a stale SSO
+// session: account.corezoid.com mints a new access token whose exp is pinned
+// to the dead session's original expiry (in the past), so exp < iat on arrival.
+// The plugin must not silently accept such a token — it will be rejected by
+// every downstream API.
+func checkTokenExpiry(expiry time.Time, accountURL string) error {
+	if expiry.IsZero() {
+		// Cannot determine expiry — optimistically allow and let the API reject.
+		return nil
+	}
+	if expiry.After(time.Now()) {
+		return nil
+	}
+	return fmt.Errorf(
+		"the access token just issued is already expired (exp=%s, now=%s UTC). "+
+			"This usually means the browser reused a stale SSO session. "+
+			"Please log out of %s in your browser, then call login again.",
+		expiry.UTC().Format("2006-01-02T15:04:05Z"),
+		time.Now().UTC().Format("2006-01-02T15:04:05Z"),
+		accountURL,
+	)
 }
 
 type accountClient struct {
