@@ -14,6 +14,8 @@ The plugin bundles a Go MCP server that exposes Corezoid operations as MCP tools
 | `corezoid-init`                | "set up", "login", "pull workspace"      | OAuth login, workspace pull, environment setup    |
 | `corezoid-create`              | "create a process", "new process"        | Building processes from scratch                   |
 | `corezoid-edit`                | "edit", "modify", "update" a process     | Modifying existing `.conv.json` files             |
+| `corezoid-state-diagram-create` | "create state diagram", "build a state machine", "conv_type state" | Building state diagrams from scratch (`conv_type: "state"`) |
+| `corezoid-state-diagram-edit`  | "edit state diagram", "add a state", "change transitions" | Modifying existing state diagrams — states, transitions, side effects |
 | `corezoid-review`              | "review", "audit", "check" a process     | Analysis, dead code, best-practice violations     |
 | `corezoid-project-review`      | "review project", "audit folder"         | Cross-process audit of an entire folder           |
 | `corezoid-node-layout`         | "arrange nodes", "lay out", "tidy up the diagram", "fix positions", "remove overlaps" | Auto-arrange node x/y into a clean top-to-bottom flow with error handling railed right and no overlaps (positions only) |
