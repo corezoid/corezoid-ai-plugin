@@ -28,14 +28,14 @@
     },
     "x": {
       "type": "integer",
-      "minimum": -10000,
-      "maximum": 10000,
+      "minimum": -100000,
+      "maximum": 100000,
       "description": "X coordinate on canvas"
     },
     "y": {
       "type": "integer",
-      "minimum": -10000,
-      "maximum": 10000,
+      "minimum": -100000,
+      "maximum": 100000,
       "description": "Y coordinate on canvas"
     },
     "extra": {
