@@ -67,7 +67,7 @@ claude plugin install corezoid@corezoid
 
 ```bash
 codex plugin marketplace add corezoid/corezoid-ai-plugin
-codex plugin install corezoid@corezoid
+codex plugin add corezoid@corezoid
 ```
 
 **Or from a local clone:**
@@ -75,7 +75,7 @@ codex plugin install corezoid@corezoid
 ```bash
 git clone https://github.com/corezoid/corezoid-ai-plugin
 codex plugin marketplace add ./corezoid-ai-plugin
-codex plugin install corezoid@corezoid
+codex plugin add corezoid@corezoid
 ```
 
 No build step, no extra setup. The MCP server starts automatically on first use.
@@ -99,8 +99,12 @@ Open the workspace in Kiro — the `corezoid` MCP server, skills, and steering a
 
 ```bash
 claude plugin update corezoid@corezoid   # Claude Code
-codex plugin update corezoid@corezoid    # Codex
+codex plugin marketplace upgrade && codex plugin add corezoid@corezoid    # Codex
 ```
+
+Codex has no `plugin update` subcommand — refresh the marketplace snapshot with
+`codex plugin marketplace upgrade` (upgrades all configured Git marketplaces; pass a
+name to target one) and re-run `codex plugin add` to install the refreshed version.
 
 ```bash
 git pull && sh plugins/corezoid/scripts/install-kiro.sh .   # AWS Kiro
@@ -325,7 +329,7 @@ corezoid-ai-plugin/
 ├── .agents/
 │   └── plugins/
 │       └── marketplace.json     # Codex marketplace listing (points to plugins/corezoid)
-├── plugins/corezoid/            # Plugin root (CLAUDE_PLUGIN_ROOT for both Claude Code and Codex)
+├── plugins/corezoid/            # Plugin root (skill path token; MCP launcher resolves it per host)
 │   ├── .claude-plugin/
 │   │   └── plugin.json          # Claude Code plugin manifest
 │   ├── .codex-plugin/

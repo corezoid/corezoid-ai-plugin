@@ -49,10 +49,10 @@ log in to Corezoid
 
 ```bash
 codex plugin marketplace add ./
-codex plugin install corezoid@corezoid
+codex plugin add corezoid@corezoid
 ```
 
-Restart Codex, open Plugin Directory, select **Corezoid**, and confirm the plugin installs and the skills are available.
+Restart Codex and check `/mcp`: the `corezoid` server should start successfully and expose its tools. Also run a quick Corezoid prompt so the skills load from the installed plugin.
 
 ## 3b. Test in AWS Kiro
 
@@ -104,14 +104,14 @@ claude plugin install corezoid@corezoid
 
 ```bash
 codex plugin marketplace add corezoid/corezoid-ai-plugin --ref vX.Y.Z
-codex plugin install corezoid@corezoid
+codex plugin add corezoid@corezoid
 ```
 
 **Codex (development tracking):**
 
 ```bash
 codex plugin marketplace add corezoid/corezoid-ai-plugin --ref main
-codex plugin install corezoid@corezoid
+codex plugin add corezoid@corezoid
 ```
 
 **AWS Kiro:**
@@ -137,4 +137,4 @@ can resolve metadata from the tag.
 After tagging, ask users to upgrade their local marketplace and plugin:
 
 - **Claude Code:** `claude plugin marketplace update && claude plugin update corezoid@corezoid`
-- **Codex:** `codex plugin update corezoid@corezoid`
+- **Codex:** `codex plugin marketplace upgrade && codex plugin add corezoid@corezoid`
