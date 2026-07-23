@@ -209,7 +209,8 @@ func handlePushProcess(ctx context.Context, args map[string]interface{}) (string
 	if lintRes, lintErr := lintProcess(filePath); lintErr == nil {
 		hard := len(lintRes.BrokenLinks) + len(lintRes.OldFormatNodes) +
 			len(lintRes.MissingDefaultGo) + len(lintRes.ShortTimers) +
-			len(lintRes.LiteralReplyValues) + len(lintRes.UnrepliedTerminals)
+			len(lintRes.RpcReplyMismatches) + len(lintRes.LiteralReplyValues) +
+			len(lintRes.UnrepliedTerminals)
 		advisory := len(lintRes.NoopConditions) + len(lintRes.UnusedSetParams) +
 			len(lintRes.OrphanedNodes) + len(lintRes.PassthroughEscalations) +
 			len(lintRes.SharedErrorClusters)
