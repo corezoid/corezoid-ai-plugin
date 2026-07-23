@@ -237,10 +237,13 @@ The API Call node undergoes validation during process commit with these checks:
 4. If `err_node_id` is specified, it must reference a valid node
 5. `max_threads` must be a positive integer if specified
 
-> Note: schema validation only enforces `type`, `method`, `url`, and `err_node_id`. Omitting the
-> other canonical fields is **not** caught client-side and makes the deploy fail at commit
-> (`no response from server`) — see
-> [Required node shape](#required-node-shape-author-the-full-canonical-api-logic).
+`lint-process` enforces the canonical field set locally before any server
+round-trip. A node missing `extra`, `extra_type`, `format`, `send_sys`,
+`debug_info`, `customize_response`, `rfc_format`, `cert_pem`, or `version` is
+reported as an **UNDERSPECIFIED API CALL NODE** with the exact missing field
+names — turning the ~15–20 s server hang into an immediate, actionable message.
+Fields already enforced by JSON schema (`extra_headers`, `max_threads`) continue
+to be caught by schema validation.
 
 ## Best Practices
 
