@@ -111,6 +111,21 @@ func handlePullProcess(ctx context.Context, args map[string]interface{}) (string
 	if err := os.WriteFile(filePath, data, 0644); err != nil {
 		return fmt.Sprintf("Error writing file: %v", err), true
 	}
+	// Record the server version this file was pulled at, so a later push can
+	// detect that someone else changed the process in the meantime (see
+	// baseline.go and the push-process conflict gate). Best-effort: a failure
+	// here only means the push can't verify freshness, never a pull failure.
+	if proc, gerr := v.GetProcessByID(processID); gerr == nil {
+		if berr := writeBaseline(dir, processID, baselineFromServer(proc)); berr != nil {
+			logger.Warn("pull-process: could not record baseline for %d: %v", processID, berr)
+		}
+	} else {
+		logger.Warn("pull-process: could not fetch baseline for %d: %v", processID, gerr)
+	}
+	// Store the pulled scheme as the 3-way merge ancestor (see baseline.go).
+	if aerr := writeAncestorScheme(dir, processID, string(data)); aerr != nil {
+		logger.Warn("pull-process: could not record ancestor for %d: %v", processID, aerr)
+	}
 	return fmt.Sprintf("Process %d saved to %s", processID, filePath), false
 }
 
@@ -131,7 +146,10 @@ func handlePullFolder(ctx context.Context, args map[string]interface{}) (string,
 	if err := downloadStageRecursively(v, folderID, "."); err != nil {
 		return fmt.Sprintf("Error fetching folder: %v", err), true
 	}
-	return fmt.Sprintf("Folder %d saved to current directory", folderID), false
+	// Record a pull baseline for every process so push-process can detect a
+	// concurrent server-side change before overwriting it.
+	captured := captureFolderBaselines(v, ".")
+	return fmt.Sprintf("Folder %d saved to current directory (%d baseline(s) recorded)", folderID, captured), false
 }
 
 // handleCreateVariable creates a Corezoid env variable scoped to the given stage.
@@ -228,6 +246,26 @@ func handlePushProcess(ctx context.Context, args map[string]interface{}) (string
 		}
 	}
 
+	// Concurrency gate: if this process was pulled and someone else changed it
+	// on the server since, a plain push would silently overwrite their edits
+	// (DeleteNotUsedNodes drops server nodes absent from the local scheme).
+	// Block with an impact report unless force=true. New/never-pulled processes
+	// have no baseline and are unaffected.
+	merge, _ := args["merge"].(bool)
+	if objID := extractObjIDFromJSON(jsonContent); objID != 0 {
+		res := resolveConflict(v, filePath, objID, jsonContent, force, merge)
+		switch res.action {
+		case conflictBlock:
+			return res.message, true
+		case conflictMerged:
+			return res.message, false // merged file written for review — do not push now
+		case conflictProceed:
+			if res.message != "" {
+				fmt.Fprintln(os.Stderr, res.message) // advisory (e.g. no baseline) — do not block
+			}
+		}
+	}
+
 	// Auto-snapshot: if process already exists on server (obj_id != null/0),
 	// capture current server state before overwriting. Never blocks on failure.
 	var snapshotNote string
@@ -252,6 +290,24 @@ func handlePushProcess(ctx context.Context, args map[string]interface{}) (string
 
 	if _, err := v.ProcessJSON(filePath, jsonContent); err != nil {
 		return fmt.Sprintf("Error deploying process: %v", err), true
+	}
+
+	// Refresh the pull baseline AND the merge ancestor to the version we just
+	// committed, so the next push starts current instead of re-flagging our own
+	// change, and a later concurrent-edit conflict still has a 3-way ancestor
+	// (without this, a push→edit→push flow degrades to the delete-only report).
+	if v.ProcessID != 0 {
+		dir := filepath.Dir(filePath)
+		if proc, gerr := v.GetProcessByID(v.ProcessID); gerr == nil {
+			if berr := writeBaseline(dir, v.ProcessID, baselineFromServer(proc)); berr != nil {
+				logger.Warn("push: could not refresh baseline for %d: %v", v.ProcessID, berr)
+			}
+		}
+		if theirsConv, ok := exportConv(v); ok {
+			if aerr := writeAncestorScheme(dir, v.ProcessID, theirsConv); aerr != nil {
+				logger.Warn("push: could not refresh ancestor for %d: %v", v.ProcessID, aerr)
+			}
+		}
 	}
 
 	result := fmt.Sprintf("Process deployed successfully, ProcessID: %d", procID)
@@ -670,7 +726,16 @@ func handleDeleteProcess(ctx context.Context, args map[string]interface{}) (stri
 
 	v := NewValidator(ctx, 0)
 	if err := v.DeleteProcess(processID); err != nil {
-		return fmt.Sprintf("Error: %v", err), true
+		msg := fmt.Sprintf("Error: %v", err)
+		// "object not found" means the server has no such process: it was
+		// already deleted, or the id came from a local file pulled against a
+		// different stage. Either way the caller may be acting on a stale local
+		// copy — the exact trap behind mass "object not found" deletes. Nudge
+		// them to reconcile with the server before trusting local files further.
+		if strings.Contains(strings.ToLower(err.Error()), "not found") {
+			msg += fmt.Sprintf("\nHint: process #%d is not on the server (already deleted, or its local .conv.json was pulled from a different stage). Any local file for it is now STALE — re-pull the folder and reconcile before deleting or running reachability analysis on local files, so you don't act on outdated state.", processID)
+		}
+		return msg, true
 	}
 	return fmt.Sprintf("Process #%d moved to Trash.", processID), false
 }
