@@ -4,19 +4,34 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"sort"
 	"strings"
 )
 
 // LintResult holds the combined lint output
 type LintResult struct {
-	ProcessTitle    string
-	NoopConditions  []NoopCondition
-	UnusedSetParams []UnusedSetParam
-	OrphanedNodes   []OrphanedNode
-	TotalNodes      int
-	ReachableCount  int
-	SchemaValid     bool
-	SchemaError     string
+	ProcessTitle       string
+	NoopConditions     []NoopCondition
+	UnusedSetParams    []UnusedSetParam
+	OrphanedNodes      []OrphanedNode
+	RpcReplyMismatches []RpcReplyMismatch
+	TotalNodes         int
+	ReachableCount     int
+	SchemaValid        bool
+	SchemaError        string
+}
+
+// RpcReplyMismatch records an api_rpc_reply node where res_data/res_data_type
+// (or extra/extra_type) keys do not align, which the server rejects at commit
+// time with the vague message "invalid value res_data or res_data_type, or both".
+type RpcReplyMismatch struct {
+	NodeID      string
+	NodeTitle   string
+	DataField   string   // "res_data" or "extra"
+	TypeField   string   // "res_data_type" or "extra_type"
+	UntypedKeys []string // data keys with no matching type entry → server rejects these
+	UnusedTypes []string // type keys with no matching data entry → suspicious but not a hard error
+	Issue       string
 }
 
 type NoopCondition struct {
@@ -98,6 +113,7 @@ func lintProcess(filePath string) (*LintResult, error) {
 	typed := parseProcessNodes(nodes)
 	result.NoopConditions, result.UnusedSetParams = findNoopNodes(typed)
 	result.OrphanedNodes, result.ReachableCount = findOrphanedNodes(typed)
+	result.RpcReplyMismatches = findRpcReplyMismatches(typed)
 
 	schemaErr := ValidateJSONSchema(filePath, debug)
 	if schemaErr != nil {
@@ -343,6 +359,15 @@ func FormatLintResult(result *LintResult) string {
 		}
 	}
 
+	if len(result.RpcReplyMismatches) > 0 {
+		hasIssues = true
+		sb.WriteString(fmt.Sprintf("\n=== API_RPC_REPLY MISMATCHES (%d) ===\n", len(result.RpcReplyMismatches)))
+		for _, m := range result.RpcReplyMismatches {
+			sb.WriteString(fmt.Sprintf("  [%s] %s\n", m.NodeID, m.NodeTitle))
+			sb.WriteString(fmt.Sprintf("  Issue: %s\n", m.Issue))
+		}
+	}
+
 	if !hasIssues {
 		sb.WriteString("\nNo issues found.")
 	} else {
@@ -350,11 +375,97 @@ func FormatLintResult(result *LintResult) string {
 		if !result.SchemaValid {
 			schemaIssues = 1
 		}
-		total := len(result.NoopConditions) + len(result.UnusedSetParams) + len(result.OrphanedNodes) + schemaIssues
+		total := len(result.NoopConditions) + len(result.UnusedSetParams) + len(result.OrphanedNodes) + len(result.RpcReplyMismatches) + schemaIssues
 		sb.WriteString(fmt.Sprintf("\nTotal issues: %d\n", total))
 	}
 
 	return sb.String()
+}
+
+// findRpcReplyMismatches scans every api_rpc_reply logic in all nodes and
+// reports cases where data and type dictionaries do not align.  The server
+// enforces this alignment at commit time but only returns the generic message
+// "invalid value res_data or res_data_type, or both", making it hard to pinpoint
+// the offending key.  By catching the mismatch client-side we can name the exact
+// key so the author can fix it in one pass.
+func findRpcReplyMismatches(nodes []processNode) []RpcReplyMismatch {
+	var mismatches []RpcReplyMismatch
+	for _, n := range nodes {
+		for _, lg := range n.logics {
+			if t, _ := lg["type"].(string); t != "api_rpc_reply" {
+				continue
+			}
+			if m := checkDataTypeAlignment(n, lg, "res_data", "res_data_type"); m != nil {
+				mismatches = append(mismatches, *m)
+			}
+			if m := checkDataTypeAlignment(n, lg, "extra", "extra_type"); m != nil {
+				mismatches = append(mismatches, *m)
+			}
+		}
+	}
+	return mismatches
+}
+
+// checkDataTypeAlignment compares the keys of a data field (res_data or extra)
+// against the keys of its type companion (res_data_type or extra_type) in one
+// api_rpc_reply logic block.  Returns a mismatch descriptor when the sets differ,
+// or nil when they are consistent (including when neither field is present).
+func checkDataTypeAlignment(n processNode, lg map[string]interface{}, dataField, typeField string) *RpcReplyMismatch {
+	data, hasData := lg[dataField].(map[string]interface{})
+	typ, hasType := lg[typeField].(map[string]interface{})
+
+	if !hasData && !hasType {
+		return nil
+	}
+	if !hasData {
+		data = map[string]interface{}{}
+	}
+	if !hasType {
+		typ = map[string]interface{}{}
+	}
+
+	var untypedKeys []string
+	for k := range data {
+		if _, ok := typ[k]; !ok {
+			untypedKeys = append(untypedKeys, k)
+		}
+	}
+	sort.Strings(untypedKeys)
+
+	var unusedTypes []string
+	for k := range typ {
+		if _, ok := data[k]; !ok {
+			unusedTypes = append(unusedTypes, k)
+		}
+	}
+	sort.Strings(unusedTypes)
+
+	if len(untypedKeys) == 0 && len(unusedTypes) == 0 {
+		return nil
+	}
+
+	displayTitle := n.title
+	if displayTitle == "" {
+		displayTitle = "(untitled)"
+	}
+
+	var parts []string
+	for _, k := range untypedKeys {
+		parts = append(parts, fmt.Sprintf("%s key %q has no matching %s entry", dataField, k, typeField))
+	}
+	for _, k := range unusedTypes {
+		parts = append(parts, fmt.Sprintf("%s key %q has no matching %s entry", typeField, k, dataField))
+	}
+
+	return &RpcReplyMismatch{
+		NodeID:      n.id,
+		NodeTitle:   displayTitle,
+		DataField:   dataField,
+		TypeField:   typeField,
+		UntypedKeys: untypedKeys,
+		UnusedTypes: unusedTypes,
+		Issue:       strings.Join(parts, "; "),
+	}
 }
 
 // toMapSlice safely converts an interface{} to []map[string]interface{}
