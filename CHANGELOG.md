@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+- Fix: `push-process` no longer destroys a hand-arranged layout. On push the auto-layout re-lays-out the whole process only when **every** node is unplaced (`x==0 && y==0`); an edit that dropped node coordinates therefore used to wipe a nice arrangement. Push now **re-hydrates** any lost coordinate from the process's current server version first (matched by node title, or `obj_type`+ordinal for untitled nodes), so an existing layout is preserved — whether the edit dropped every coordinate or just some — and only genuinely-new nodes are placed; it reports `Restored N node coordinate(s)`. The server is consulted only when some node arrives unplaced.
+- Feat: a **from-scratch process now gets the full layout engine** on push (the same waterfall / layered+error-rail / regions strategies as the `layout-process` tool), instead of the lean grid — so a new process comes out cleanly arranged by default rather than cramped.
+- Feat: **smooth expansion** when inserting a node. Adding a node directly above its own placed down-child now slides that child and its downstream subtree down one row to open an in-style gap, instead of nudging the new node far below; unrelated/parallel nodes stay put, and incidental overlaps still nudge. Already-placed nodes are otherwise never moved.
 - **Breaking / behaviour**: tool calls now REJECT undeclared arguments with an
   error naming the unknown keys and the accepted list (previously unknown keys
   were silently dropped — a call could quietly act on the wrong object).

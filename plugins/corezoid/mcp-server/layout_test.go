@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"testing"
 )
 
@@ -123,28 +124,22 @@ func TestApplyLayoutAllNewLaysOut(t *testing.T) {
 	s, nodes := mk()
 	applyLayout(s, "process")
 
+	// A from-scratch process is laid out by the full engine (Fix 2). Assert the
+	// engine's guarantees rather than the old baseLayout grid: every node is
+	// placed off the origin, and no two node boxes overlap.
 	for _, nd := range nodes {
 		x, y := xy(nd)
 		if x == 0 && y == 0 {
 			t.Errorf("node %v still at origin", nd["id"])
 		}
-		if x == 0 {
-			t.Errorf("node %v has x==0 (expected >= spineX)", nd["id"])
-		}
-		if !onGrid(x) || !onGrid(y) {
-			t.Errorf("node %v off grid: (%v,%v)", nd["id"], x, y)
-		}
 	}
-	// Spine logic nodes sit in column 0 at x == spineX (600).
-	for _, id := range []string{"l1", "l2"} {
-		var found map[string]interface{}
-		for _, nd := range nodes {
-			if nd["id"] == id {
-				found = nd
+	for i := 0; i < len(nodes); i++ {
+		for j := i + 1; j < len(nodes); j++ {
+			xi, yi := xy(nodes[i])
+			xj, yj := xy(nodes[j])
+			if xi == xj && yi == yj {
+				t.Errorf("nodes %v and %v overlap at (%v,%v)", nodes[i]["id"], nodes[j]["id"], xi, yi)
 			}
-		}
-		if x, _ := xy(found); x != spineX {
-			t.Errorf("spine node %s x = %v, want %d", id, x, spineX)
 		}
 	}
 
@@ -226,6 +221,57 @@ func TestPreserveNudgesRectOverlap(t *testing.T) {
 	}
 }
 
+func TestPreserveInsertShiftsSubtree(t *testing.T) {
+	t.Setenv("COREZOID_AUTOLAYOUT", "")
+	// Placed chain P(600,200) -> C(600,400). Insert new N between them: P -> N -> C.
+	// N should take C's slot and C should slide down one step (smooth expansion),
+	// not have N nudged far below.
+	p := node("p", 0, 600, 200, goLogic("n"))
+	n := node("n", 0, 0, 0, goLogic("c")) // new; its own down-child is the placed C
+	c := node("c", 2, 600, 400)
+	sc := scheme(p, n, c)
+	applyLayout(sc, "process")
+
+	if x, y := xy(p); x != 600 || y != 200 {
+		t.Errorf("parent p moved to (%v,%v)", x, y)
+	}
+	if x, y := xy(n); x != 600 || y != 400 {
+		t.Errorf("inserted n = (%v,%v), want (600,400)", x, y)
+	}
+	if x, y := xy(c); x != 600 || y != 600 {
+		t.Errorf("child c not shifted down: (%v,%v), want (600,600)", x, y)
+	}
+	if anyIntersect(allRects(p, n, c)) {
+		t.Errorf("overlap after insert-shift")
+	}
+}
+
+func TestPreserveInsertLeavesParallelBranch(t *testing.T) {
+	t.Setenv("COREZOID_AUTOLAYOUT", "")
+	// P -> C -> D on the spine, plus a parallel branch B off P. Insert N above C:
+	// C and D (N's downstream) slide down; the parallel B must NOT move.
+	p := node("p", 0, 600, 200, goLogic("n"), condLogic("b"))
+	n := node("n", 0, 0, 0, goLogic("c")) // new
+	c := node("c", 0, 600, 400, goLogic("d"))
+	d := node("d", 2, 600, 600)
+	b := node("b", 2, 840, 400) // parallel branch target, not downstream of C
+	sc := scheme(p, n, c, d, b)
+	applyLayout(sc, "process")
+
+	if _, y := xy(c); y != 600 {
+		t.Errorf("c not shifted down: y=%v want 600", y)
+	}
+	if _, y := xy(d); y != 800 {
+		t.Errorf("d not shifted down: y=%v want 800", y)
+	}
+	if x, y := xy(b); x != 840 || y != 400 {
+		t.Errorf("parallel branch b moved to (%v,%v), want (840,400)", x, y)
+	}
+	if anyIntersect(allRects(p, n, c, d, b)) {
+		t.Errorf("overlap after insert-shift with parallel branch")
+	}
+}
+
 func TestPreservePushRoundTripUnchanged(t *testing.T) {
 	t.Setenv("COREZOID_AUTOLAYOUT", "")
 	// A small, fully-placed process (every node has non-(0,0) coords, with
@@ -281,9 +327,42 @@ func TestApplyLayoutMalformed(t *testing.T) {
 	applyLayout(map[string]interface{}{"nodes": "oops"}, "process")
 }
 
+func TestApplyLayoutLargeUsesFastPath(t *testing.T) {
+	t.Setenv("COREZOID_AUTOLAYOUT", "")
+	// A from-scratch process above maxEngineLayoutNodes must fall back to the
+	// lean baseLayout grid so push stays fast — not run the full engine.
+	const N = maxEngineLayoutNodes + 12
+	var nodes []map[string]interface{}
+	for i := 0; i < N; i++ {
+		id := fmt.Sprintf("n%03d", i)
+		switch {
+		case i == 0:
+			nodes = append(nodes, node(id, 1, 0, 0, goLogic("n001"))) // start
+		case i == N-1:
+			nodes = append(nodes, node(id, 2, 0, 0)) // final
+		default:
+			nodes = append(nodes, node(id, 0, 0, 0, goLogic(fmt.Sprintf("n%03d", i+1))))
+		}
+	}
+	applyLayout(scheme(nodes...), "process")
+
+	for _, nd := range nodes {
+		if x, y := xy(nd); x == 0 && y == 0 {
+			t.Fatalf("node %v left at origin — layout did not run", nd["id"])
+		}
+	}
+	// baseLayout keeps the spine chain in column 0 at spineX; the engine would not.
+	if x, _ := xy(nodes[1]); x != spineX {
+		t.Fatalf("large from-scratch process should use the baseLayout fast path (spine x=%d), got %v", spineX, x)
+	}
+}
+
 func TestSpineStraightCol0(t *testing.T) {
 	t.Setenv("COREZOID_AUTOLAYOUT", "")
-	// A spine A->B->C with branches hanging off each, all new -> baseLayout.
+	// A spine A->B->C with branches hanging off each. This exercises baseLayout
+	// directly (the from-scratch fallback): applyLayout's all-new path now uses
+	// the full engine (Fix 2), so baseLayout's straight-col-0 spine guarantee is
+	// asserted against baseLayout itself.
 	start := node("start", 1, 0, 0, goLogic("a"))
 	a := node("a", 0, 0, 0, goLogic("b"), condLogic("ba"))
 	ba := node("ba", 0, 0, 0)
@@ -291,8 +370,7 @@ func TestSpineStraightCol0(t *testing.T) {
 	bb := node("bb", 0, 0, 0)
 	c := node("c", 0, 0, 0, goLogic("end"))
 	end := node("end", 2, 0, 0)
-	s := scheme(start, a, ba, b, bb, c, end)
-	applyLayout(s, "process")
+	baseLayout([]map[string]interface{}{start, a, ba, b, bb, c, end})
 
 	for _, id := range []string{"a", "b", "c"} {
 		var found map[string]interface{}
