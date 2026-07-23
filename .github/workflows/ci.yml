@@ -178,6 +178,9 @@ jobs:
           fi
           echo "All CLAUDE_PLUGIN_ROOT paths look correct."
 
+      - name: Skills list sync (filesystem ↔ CLAUDE.md ↔ README.md)
+        run: python3 scripts/check-skills-sync.py
+
       - name: No tracked .env or credential files
         run: |
           if git ls-files | grep -E '\.env$|credentials\.(json|yaml|yml)$'; then
