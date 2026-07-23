@@ -26,7 +26,11 @@ var toolHandlers = map[string]toolHandler{
 	"pull-process":         handlePullProcess,
 	"pull-folder":          handlePullFolder,
 	"create-variable":      handleCreateVariable,
+	"list-variables":       handleListVariables,
+	"modify-variable":      handleModifyVariable,
+	"delete-variable":      handleDeleteVariable,
 	"push-process":         handlePushProcess,
+	"layout-process":       handleLayoutProcess,
 	"lint-process":         handleLintProcess,
 	"run-task":             handleRunTask,
 	"create-process":       handleCreateProcess,
@@ -36,16 +40,19 @@ var toolHandlers = map[string]toolHandler{
 	"list-folders":         handleListFolders,
 	"modify-folder":        handleModifyFolder,
 	"delete-folder":        handleDeleteFolder,
+	"delete-process":       handleDeleteProcess,
 	"create-alias":         handleCreateAlias,
 
 	// discovery
-	"list-workspaces": handleListWorkspaces,
-	"list-projects":   handleListProjects,
-	"list-stages":     handleListStages,
-	"create-project":  handleCreateProject,
-	"modify-project":  handleModifyProject,
-	"delete-project":  handleDeleteProject,
-	"show-project":    handleShowProject,
+	"list-workspaces":     handleListWorkspaces,
+	"list-projects":       handleListProjects,
+	"list-stages":         handleListStages,
+	"deploy-stage":        handleDeployStage,
+	"set-stage-immutable": handleSetStageImmutable,
+	"create-project":      handleCreateProject,
+	"modify-project":      handleModifyProject,
+	"delete-project":      handleDeleteProject,
+	"show-project":        handleShowProject,
 
 	// tasks
 	"list-task-history": handleListTaskHistory,
@@ -81,6 +88,12 @@ var toolHandlers = map[string]toolHandler{
 
 	// feedback
 	"send-feedback": handleSendFeedback,
+
+	// process snapshots
+	"create-snapshot": handleCreateSnapshot,
+	"list-snapshots":  handleListSnapshots,
+	"delete-snapshot": handleDeleteSnapshot,
+	"get-snapshot":    handleGetSnapshot,
 }
 
 // noAuthTools don't need any credentials. lint runs entirely on local files;
@@ -88,22 +101,25 @@ var toolHandlers = map[string]toolHandler{
 // send-feedback must not require auth so users can report problems that
 // occurred before or during the login flow.
 var noAuthTools = map[string]struct{}{
-	"lint-process":  {},
-	"login":         {},
-	"logout":        {},
-	"send-feedback": {},
+	"layout-process": {},
+	"lint-process":   {},
+	"login":          {},
+	"logout":         {},
+	"send-feedback":  {},
 }
 
 // tokenOnlyTools need an OAuth token but not a fully configured workspace or
 // stage — they help the user discover those values during initial setup.
 var tokenOnlyTools = map[string]struct{}{
-	"list-workspaces": {},
-	"list-projects":   {},
-	"list-stages":     {},
-	"create-project":  {},
-	"modify-project":  {},
-	"delete-project":  {},
-	"show-project":    {},
+	"list-workspaces":     {},
+	"list-projects":       {},
+	"list-stages":         {},
+	"deploy-stage":        {},
+	"set-stage-immutable": {},
+	"create-project":      {},
+	"modify-project":      {},
+	"delete-project":      {},
+	"show-project":        {},
 }
 
 // handleToolCall dispatches an MCP tool invocation. ctx must be non-nil — it
@@ -142,6 +158,7 @@ func handleToolCall(ctx context.Context, name string, args map[string]interface{
 
 	if analyticsEnabled.Load() {
 		apiURLv, _, _, _, _ := authSnapshot()
+		clientNameV, clientVersionV := clientIdentityFor(ctx)
 		e := AnalyticsEvent{
 			Ts:             start.UTC().Format(time.RFC3339),
 			Tool:           name,
@@ -152,6 +169,8 @@ func handleToolCall(ctx context.Context, name string, args map[string]interface{
 			ServerVersion:  mcpServerVersion,
 			InstallationID: installationID,
 			UserEmail:      telemetryEmail,
+			ClientName:     clientNameV,
+			ClientVersion:  clientVersionV,
 		}
 		if isError {
 			e.ErrorType = classifyError(result)

@@ -57,24 +57,30 @@ Condition nodes:
 
 ### 1. Basic Error Routing
 
-The simplest error handling pattern routes tasks to a dedicated error node when an error occurs:
+The simplest pattern routes `err_node_id` directly to a Final Error node when no action
+is needed on the error path:
 
 ```
 Operation Node ──→ Success Path
       │
-      └─── [error] ──→ Error Node → End Node
+      └─── [err_node_id] ──→ Final Error Node (obj_type:2)
 ```
 
 Implementation:
 
 ```json
 {
-  "type": "api",
-  "method": "GET",
-  "url": "https://api.example.com",
-  "err_node_id": "error_node_id"
+  "type": "api_rpc",
+  "conv_id": 12345,
+  "err_node_id": "<final_error_node_id>"
 }
 ```
+
+> **Rule:** Wire `err_node_id` directly to a Final Error node (`obj_type: 2`) when the
+> error path needs no logic. Only interpose an Escalation node (`obj_type: 3`) when the
+> error path requires an action such as replying to the caller or conditional retry routing.
+> An escalation node that only contains a bare `go` with no action logic is an anti-pattern
+> and is flagged by `lint-process` as a **passthrough escalation**.
 
 ### 2. Error Type Differentiation
 
@@ -214,6 +220,8 @@ Example:
 {
   "type": "api",
   "method": "GET",
+  "extra_headers": {},
+  "max_threads": 5,
   "url": "https://api.example.com",
   "extra": {},
   "extra_type": {},
@@ -321,17 +329,66 @@ Standardize error responses using this format:
 | Process call error        | Invalid process ID, access denied   | Verify process ID, check permissions                     |
 | Validation error          | Invalid input data                  | Improve input validation, provide clear error messages   |
 
-## Dedicated Error Nodes Pattern
+## Dedicated Error Cluster Pattern (standard)
 
-Each Code node should have its own dedicated error escalation node rather than sharing a common
-error node:
+Every node that can return an error must have its **own** error cluster — never funnel several
+failing nodes into a single shared Reply/Error node. Each failure point gets a distinct, descriptively
+named Error node so the diagram reads clearly.
 
-1. Create a basic "error" END node positioned to the right of each Code node
-2. Connect the Code node's error path (via the "err_node_id" parameter) to its dedicated error node
-3. This one-to-one mapping between Code nodes and their error nodes improves error isolation and
-   troubleshooting
+A cluster is two nodes pinned tight to the node they protect:
 
-Example Code Node with Dedicated Error Node:
+1. **Reply to Process** node (`api_rpc_reply`, `obj_type: 3` — it is an `err_node_id`
+   target) that returns the error to the caller, kept
+   **collapsed** (`"extra": "{\"modeForm\":\"collapse\",\"icon\":\"\"}"`). Placed just to the
+   right of the failing node and slightly below its row so the link leaves the row lane free.
+2. **Error** END node (`obj_type: 2`, **collapsed** like the rest of the cluster:
+   `"extra": "{\"modeForm\":\"collapse\",\"icon\":\"error\"}"`) **named after the specific failure**
+   (e.g. `Charge Payment Error`, not a generic `Error`/`Final`). Placed one more step down-right
+   from the Reply node, forming the compact staircase described below.
+
+Exact coordinates do not matter when authoring — `layout-process` rewrites `x`/`y` into the
+staircase (see "Placement of the standard retry shape" below); what matters is the wiring and
+the collapse flags.
+
+Wiring: failing node `err_node_id` → its Reply node; the Reply node's `go` → its Error node.
+
+For fire-and-forget processes that do not reply to a caller, omit the Reply node and wire
+`err_node_id` directly to the dedicated named Error node.
+
+What "own" means precisely: a single node's error may fan out through its **own**
+Condition node (any number of `go_if_const` branches — hardware vs software, retry
+vs fatal) into **one** Error terminal — that whole cluster still belongs to that one
+node. What is forbidden is any **sharing across failing nodes**: a neighbour's
+`err_node_id` pointing at your error node, or two escalation tails converging on one
+Error terminal. `lint-process` flags both shapes as **shared error clusters**.
+
+The WHOLE dedicated cluster is set **collapsed** at authoring time: the
+error-routing Condition (`go_if_const` retry/fatal switch), the retry **Delay**,
+the Reply node AND the named Error final all carry `modeForm: "collapse"` —
+hand-tuned production layouts collapse the full cluster. This applies to the
+error-path Condition only, not to business-logic Conditions.
+
+Two "new format" rules the platform enforces on every cluster (violating either
+still deploys, but the UI shows *"Convert process to new format"* on open and
+rewrites the scheme; `lint-process` flags both as OLD FORMAT NODES):
+
+1. **Every `err_node_id` target is `obj_type: 3`.** The Reply node AND the
+   retry/fatal Condition the error escalates into are escalation nodes, not
+   `obj_type: 0`. Business-flow Conditions reached via `go` stay `obj_type: 0`.
+2. **Never mix an action logic with `go_if_const` in one node.** A step that
+   sets parameters and then branches is TWO nodes: the `set_param` node with a
+   `go` into a separate Condition node. The converter splits such nodes itself.
+
+Placement of the standard retry shape (distilled from hand-tuned layouts, and
+what `layout-process` produces): the Delay sits level with its owner's row to
+the right; its Condition hangs directly below the Delay; the Reply → Error
+chain steps down-right in a compact staircase. A plain (no-retry) cluster
+enters slightly below the owner's row so the link leaves the row lane free.
+
+This one-to-one mapping between each error-prone node and its named Error node — instead of one shared
+terminal — improves error isolation, troubleshooting, and readability.
+
+Example Code Node with its dedicated Reply + Error cluster (Reply collapsed and pinned to the node):
 
 ```json
 {
@@ -342,7 +399,7 @@ Example Code Node with Dedicated Error Node:
       {
         "type": "api_code",
         "code": "data.result = data.a + data.b;",
-        "err_node_id": "code_error_node_id",
+        "err_node_id": "code_reply_error_node_id",
         "extra": {},
         "extra_type": {}
       },
@@ -359,7 +416,42 @@ Example Code Node with Dedicated Error Node:
 }
 ```
 
-Corresponding dedicated error node:
+Its dedicated **Reply** node (collapsed, pinned to the right of the failing node and slightly below its row; `layout-process` produces the exact staircase):
+
+```json
+{
+  "id": "code_reply_error_node_id",
+  "obj_type": 3,
+  "condition": {
+    "logics": [
+      {
+        "type": "api_rpc_reply",
+        "mode": "key_value",
+        "res_data": {
+          "status": "error",
+          "description": "{{__conveyor_code_return_description__}}"
+        },
+        "res_data_type": {
+          "status": "string",
+          "description": "string"
+        },
+        "throw_exception": false
+      },
+      {
+        "type": "go",
+        "to_node_id": "code_error_node_id"
+      }
+    ],
+    "semaphors": []
+  },
+  "title": "Reply: Calculate Sum Error",
+  "x": 450,
+  "y": 300,
+  "extra": "{\"modeForm\":\"collapse\",\"icon\":\"\"}"
+}
+```
+
+Its dedicated, descriptively-named **Error** node (collapsed, immediately to the right, slightly below the row):
 
 ```json
 {
@@ -370,12 +462,14 @@ Corresponding dedicated error node:
     "semaphors": []
   },
   "title": "Calculate Sum Error",
-  "x": 450,
-  "y": 300
+  "x": 700,
+  "y": 300,
+  "extra": "{\"modeForm\":\"collapse\",\"icon\":\"error\"}"
 }
 ```
 
-This dedicated error node pattern is the standard practice for error handling in Corezoid processes.
+This dedicated error cluster pattern — one Reply + one named Error node per error-prone node — is the
+standard practice for error handling in Corezoid processes.
 
 ## Related Documentation
 

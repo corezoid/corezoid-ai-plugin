@@ -14,10 +14,23 @@ The plugin bundles a Go MCP server that exposes Corezoid operations as MCP tools
 | `corezoid-init`                | "set up", "login", "pull workspace"      | OAuth login, workspace pull, environment setup    |
 | `corezoid-create`              | "create a process", "new process"        | Building processes from scratch                   |
 | `corezoid-edit`                | "edit", "modify", "update" a process     | Modifying existing `.conv.json` files             |
+| `corezoid-state-diagram-create` | "create state diagram", "build a state machine", "conv_type state" | Building state diagrams from scratch (`conv_type: "state"`) |
+| `corezoid-state-diagram-edit`  | "edit state diagram", "add a state", "change transitions" | Modifying existing state diagrams — states, transitions, side effects |
 | `corezoid-review`              | "review", "audit", "check" a process     | Analysis, dead code, best-practice violations     |
 | `corezoid-project-review`      | "review project", "audit folder"         | Cross-process audit of an entire folder           |
+| `corezoid-node-layout`         | "arrange nodes", "lay out", "tidy up the diagram", "fix positions", "remove overlaps" | Auto-arrange node x/y into a clean top-to-bottom flow with error handling railed right and no overlaps (positions only) |
 | `corezoid-dashboard-manager`   | "create dashboard", "add chart", "visualize metrics" | Dashboards, charts, node metrics, real-time monitoring |
 | `corezoid-process-tech-writer` | "document", "write docs", "describe process" | Markdown docs + enriched JSON with node descriptions |
+| `corezoid-retro`               | "retro", "what did we learn", "capture learnings" | End-of-session retrospective: routes learnings to workspace CLAUDE.md, team feedback, settings, or personal memory — with user confirmation |
+| `corezoid-access`              | "share", "give access", "create group", "create api key" | Object sharing, user groups, API keys, invites    |
+| `corezoid-alias-manager`       | "alias", "short name", "rename alias"    | Create, list, modify, delete process aliases      |
+| `corezoid-variable-manager`    | "variable", "env var", "create variable" | Create, list, modify, delete environment variables |
+| `corezoid-api-connector`       | "call Corezoid API", "api/2/json", "api_secret_outer" | Processes that call the Corezoid public API       |
+| `corezoid-process-optimizer`   | "optimize", "reduce tacts", "improve"    | Merge nodes, clean data flow, add resilience      |
+| `corezoid-describe`            | "update description", "add description", "describe this process" | Set or refresh the description of a process, folder, or project |
+| `corezoid-feedback`            | "report a bug", "this is broken", "send feedback" | Collect and submit bug reports / improvement requests |
+| `marketplace-publish-validation` | "publish to marketplace", "check before publish" | Pre-publication checklist for Corezoid marketplace |
+| `corezoid-gitcall`             | "git call", "gitcall", "run my code", "custom code node", "python/go/php in a process" | Custom code (Python/Go/Java/PHP/JS/…) as a git_call step — parsing, libraries, crypto, attachments; handles the container build on push |
 
 ## Design philosophy
 
@@ -28,7 +41,7 @@ workflows through natural conversation.
 
 ## Requirements
 
-- [Claude Code](https://claude.ai/code) or [Codex](https://openai.com/codex) installed
+- [Claude Code](https://claude.ai/code), [Codex](https://openai.com/codex), or [AWS Kiro](https://kiro.dev) installed
 - A Corezoid account
 
 ## Installation
@@ -56,7 +69,7 @@ claude plugin install corezoid@corezoid
 
 ```bash
 codex plugin marketplace add corezoid/corezoid-ai-plugin
-codex plugin install corezoid@corezoid
+codex plugin add corezoid@corezoid
 ```
 
 **Or from a local clone:**
@@ -64,7 +77,7 @@ codex plugin install corezoid@corezoid
 ```bash
 git clone https://github.com/corezoid/corezoid-ai-plugin
 codex plugin marketplace add ./corezoid-ai-plugin
-codex plugin install corezoid@corezoid
+codex plugin add corezoid@corezoid
 ```
 
 No build step, no extra setup. The MCP server starts automatically on first use.
@@ -74,11 +87,29 @@ No build step, no extra setup. The MCP server starts automatically on first use.
 > export COREZOID_ANALYTICS_DISABLED=1   # add to ~/.zshrc or ~/.bashrc to persist
 > ```
 
+### AWS Kiro
+
+```bash
+git clone https://github.com/corezoid/corezoid-ai-plugin
+cd corezoid-ai-plugin
+sh plugins/corezoid/scripts/install-kiro.sh .
+```
+
+Open the workspace in Kiro — the `corezoid` MCP server, skills, and steering are picked up automatically. This also registers the plugin as a Kiro Power (`~/.kiro/powers/installed/power-corezoid/`), so it stays available in every Kiro workspace, not just this one — restart Kiro (or reload the window) to pick it up.
+
 ### Updating
 
 ```bash
 claude plugin update corezoid@corezoid   # Claude Code
-codex plugin update corezoid@corezoid    # Codex
+codex plugin marketplace upgrade && codex plugin add corezoid@corezoid    # Codex
+```
+
+Codex has no `plugin update` subcommand — refresh the marketplace snapshot with
+`codex plugin marketplace upgrade` (upgrades all configured Git marketplaces; pass a
+name to target one) and re-run `codex plugin add` to install the refreshed version.
+
+```bash
+git pull && sh plugins/corezoid/scripts/install-kiro.sh .   # AWS Kiro
 ```
 
 Restart Claude Code / Codex after updating to apply the new version.
@@ -120,6 +151,7 @@ export ACCESS_TOKEN=your_token_here
 | `COREZOID_APIGW_URL`       | No       | Override the API Gateway URL                      |
 | `COREZOID_OAUTH_CLIENT_ID` | No       | OAuth2 client ID — on-prem deployments with a custom authorization server should set this to their own client ID; cloud (account.corezoid.com) users do not need it |
 | `COREZOID_HTTP_PORT`       | No       | Activate the Streamable HTTP transport on this port (e.g. `8080`). When set the server listens for MCP over HTTP instead of stdio — intended for hosted marketplace deployments. Credentials must be pre-configured via env vars; the browser OAuth login flow is not available in HTTP mode |
+| `COREZOID_AUTOLAYOUT`      | No       | Set to `off` to disable auto-placement of new `(0,0)` nodes on `push-process` (default: preserve) |
 
 ## Telemetry
 
@@ -188,6 +220,8 @@ validation errors, and summarize what each process does.
 | `logout`            | Remove saved credentials                           |
 | `list-workspaces`   | List available workspaces and stages               |
 | `list-stages`       | List stages in a workspace                         |
+| `deploy-stage`      | Deploy/promote one stage onto another (develop→production); dry-run by default, requires explicit confirm to apply |
+| `set-stage-immutable` | Make a stage read-only (immutable) or editable; immutable stages are the only valid deploy targets; requires explicit confirm |
 | `list-projects`     | List folders and processes in a stage              |
 | `create-project`    | Create a new project (with optional stages) in a workspace |
 | `modify-project`    | Update a project's title, short_name and/or description |
@@ -196,6 +230,7 @@ validation errors, and summarize what each process does.
 | `pull-folder`       | Export an entire folder/stage to local files       |
 | `pull-process`      | Export a single process to a `.conv.json` file     |
 | `push-process`      | Validate and deploy a `.conv.json` to Corezoid     |
+| `layout-process`    | Auto-arrange node coordinates (waterfall / layered / table-star regions); local, changes only x/y and collapse flags |
 | `lint-process`      | Validate process structure locally (no API call)   |
 | `run-task`          | Send a task to a deployed process                  |
 | `list-node-tasks`   | List tasks currently sitting in a node             |
@@ -210,8 +245,12 @@ validation errors, and summarize what each process does.
 | `list-folders`      | List immediate children of a folder (no disk I/O)  |
 | `modify-folder`     | Rename a folder or update its description          |
 | `delete-folder`     | Move a folder to the recycle bin                   |
+| `delete-process`    | Move a process or state diagram to the recycle bin |
 | `create-alias`      | Create a short alias for a process                 |
 | `create-variable`   | Create a Corezoid environment variable             |
+| `list-variables`    | List a stage's environment variables (secrets masked) |
+| `modify-variable`   | Change a variable's value/title/data_type or rename it — dry-run + confirm-gated |
+| `delete-variable`   | PERMANENTLY delete a variable (no recycle bin) — dry-run + confirm-gated |
 | `create-dashboard`  | Create a new dashboard for visualizing node metrics |
 | `get-dashboard`     | Get a dashboard with its charts and series         |
 | `add-chart`         | Add a chart (column, pie, funnel, table) to a dashboard |
@@ -234,6 +273,10 @@ validation errors, and summarize what each process does.
 | `find-principal`    | Resolve user / group / API-key name to obj_id      |
 | `invite-user`       | Invite an external email and share an object in one call |
 | `send-feedback`     | Submit feedback about plugin behavior (returns ticket id) |
+| `create-snapshot`   | Create a snapshot of the current server state of a process (auto-created before every push-process on existing processes) |
+| `list-snapshots`    | List all snapshots for a process with version, title, author and creation time |
+| `delete-snapshot`   | Delete a snapshot by its obj_id |
+| `get-snapshot`      | Get the node list of a specific snapshot for diff comparison |
 
 ## Feedback
 
@@ -264,9 +307,9 @@ Claude Code / Codex
         ├── Auth          login, logout
         ├── Workspace     list-workspaces, list-stages, list-projects,
         │                 create-project, modify-project, delete-project, show-project
-        ├── Processes     pull-process, pull-folder, push-process, lint-process
+        ├── Processes     pull-process, pull-folder, push-process, lint-process, layout-process
         │                 create-process, create-folder, create-alias, create-variable
-        │                 show-folder, list-folders, modify-folder, delete-folder
+        │                 show-folder, list-folders, modify-folder, delete-folder, delete-process
         ├── Tasks         run-task, list-node-tasks, list-task-history
         │                 modify-task, delete-task
         ├── Dashboards    create-dashboard, get-dashboard, add-chart,
@@ -288,7 +331,7 @@ corezoid-ai-plugin/
 ├── .agents/
 │   └── plugins/
 │       └── marketplace.json     # Codex marketplace listing (points to plugins/corezoid)
-├── plugins/corezoid/            # Plugin root (CLAUDE_PLUGIN_ROOT for both Claude Code and Codex)
+├── plugins/corezoid/            # Plugin root (skill path token; MCP launcher resolves it per host)
 │   ├── .claude-plugin/
 │   │   └── plugin.json          # Claude Code plugin manifest
 │   ├── .codex-plugin/

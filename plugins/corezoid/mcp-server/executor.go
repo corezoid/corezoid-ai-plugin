@@ -25,6 +25,10 @@ type Executor struct {
 	Debug         bool
 	Version       int
 	NewProc       bool
+	// gitCallBuildLog accumulates a human-readable build log per git_call node
+	// built during a push, so the push handler can show the user what the
+	// container build service reported (progress + result) — not just on failure.
+	gitCallBuildLog []string
 }
 
 // checkCancel returns v.Ctx.Err() if the executor's context has been
@@ -53,10 +57,11 @@ func NewValidator(ctx context.Context, inProcessID int) *Executor {
 		ctx = context.Background()
 	}
 	apiURLv, tokenv, workspaceIDv, _, stageIDv := authSnapshot()
+	snapAPILogin, snapAPISecret := apiKeySnapshot()
 	v := &Executor{
 		Ctx:         ctx,
-		APILogin:    "",
-		APISecret:   "",
+		APILogin:    snapAPILogin,
+		APISecret:   snapAPISecret,
 		APIUrl:      apiURLv,
 		Token:       tokenv,
 		WorkspaceID: workspaceIDv,

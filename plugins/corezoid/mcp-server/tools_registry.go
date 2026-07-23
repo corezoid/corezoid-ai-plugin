@@ -59,22 +59,139 @@ var toolRegistry = []mcpTool{
 		},
 	},
 	{
+		Name:        "list-variables",
+		Description: "List all environment variables (env_var) in a Corezoid stage: short_name, obj_id, data_type (raw/json), env_var_type (visible/secret), title, value and change time. Read-only. Secret variables are ALWAYS shown masked — their value is never retrievable after creation, only fingerprints. Returns the obj_id needed by modify-variable / delete-variable.",
+		InputSchema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"stage_id": map[string]interface{}{
+					"type":        "integer",
+					"description": "Stage (root folder) ID to list variables from. Defaults to COREZOID_STAGE_ID from .env.",
+				},
+			},
+			"required": []string{},
+		},
+	},
+	{
+		Name:        "modify-variable",
+		Description: "Modify a Corezoid environment variable: change its value, description (display title), data_type (raw/json), and/or rename it (new_name). CONSEQUENTIAL: renaming breaks every {{env_var[@old-name]}} reference in the stage's processes, and a value change takes effect immediately in running processes without redeploy. env_var_type (visible/secret) CANNOT be changed after creation — the server silently ignores such changes. Modify is partial: omitted fields keep their current value (a secret's value survives a modify that does not send value). SAFETY: apply=false (default) is a dry-run showing the current → new diff and, for renames, a local reference scan — nothing is changed. To apply you MUST show the diff to the user, get their explicit confirmation, then call with apply=true AND confirm=\"<short_name>#<obj_id>\" (the CURRENT short_name, before any rename). Never modify a variable without the user confirming.",
+		InputSchema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"name": map[string]interface{}{
+					"type":        "string",
+					"description": "Current short_name of the variable (as used in {{env_var[@name]}}).",
+				},
+				"obj_id": map[string]interface{}{
+					"type":        "integer",
+					"description": "Optional numeric variable ID (from list-variables). If given together with name, both must refer to the same variable.",
+				},
+				"stage_id": map[string]interface{}{
+					"type":        "integer",
+					"description": "Stage the variable lives in. Defaults to COREZOID_STAGE_ID from .env.",
+				},
+				"new_name": map[string]interface{}{
+					"type":        "string",
+					"description": "New short_name (rename). WARNING: breaks all {{env_var[@old-name]}} references — the dry-run reports affected local .conv.json files.",
+				},
+				"description": map[string]interface{}{
+					"type":        "string",
+					"description": "New human-readable label (stored as the variable's title, same as create-variable). An empty string is ignored — titles cannot be cleared.",
+				},
+				"value": map[string]interface{}{
+					"type":        "string",
+					"description": "New value. For data_type=json, a JSON-encoded string. Omit to keep the current value (secrets survive).",
+				},
+				"data_type": map[string]interface{}{
+					"type":        "string",
+					"enum":        []string{"raw", "json"},
+					"description": "New data type (raw or json).",
+				},
+				"apply": map[string]interface{}{
+					"type":        "boolean",
+					"description": "false (default) = dry-run: show the current → new diff only. true = perform the modification (also requires a matching confirm).",
+				},
+				"confirm": map[string]interface{}{
+					"type":        "string",
+					"description": "Required when apply=true: must equal \"<short_name>#<obj_id>\" of the CURRENT variable (e.g. \"payment-api-url#2192\"). Guards against accidental and wrong-variable modifications.",
+				},
+			},
+			"required": []string{"name"},
+		},
+	},
+	{
+		Name:        "delete-variable",
+		Description: "PERMANENTLY delete a Corezoid environment variable. DESTRUCTIVE AND IRREVERSIBLE: unlike processes/folders/projects there is NO recycle bin for variables — the value (secrets included) is gone immediately, and any process still referencing {{env_var[@name]}} will fail at runtime. SAFETY: apply=false (default) is a dry-run that shows the variable's full details plus a local reference scan — nothing is deleted. To delete you MUST show the user the dry-run warning block VERBATIM, get their explicit confirmation, then call with apply=true AND confirm=\"<short_name>#<obj_id>\". Never delete a variable without the user confirming.",
+		InputSchema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"name": map[string]interface{}{
+					"type":        "string",
+					"description": "short_name of the variable to delete.",
+				},
+				"obj_id": map[string]interface{}{
+					"type":        "integer",
+					"description": "Optional numeric variable ID (from list-variables). If given together with name, both must match.",
+				},
+				"stage_id": map[string]interface{}{
+					"type":        "integer",
+					"description": "Stage the variable lives in. Defaults to COREZOID_STAGE_ID from .env.",
+				},
+				"apply": map[string]interface{}{
+					"type":        "boolean",
+					"description": "false (default) = dry-run preview only. true = perform the permanent deletion (also requires a matching confirm).",
+				},
+				"confirm": map[string]interface{}{
+					"type":        "string",
+					"description": "Required when apply=true: must equal \"<short_name>#<obj_id>\" (e.g. \"stripe-key#2192\"). Guards against accidental and wrong-variable deletion.",
+				},
+			},
+			"required": []string{"name"},
+		},
+	},
+	{
 		Name:        "push-process",
-		Description: "Validate and deploy a process file to Corezoid.",
+		Description: "Validate and deploy a process file to Corezoid. Runs lint-process first and blocks the deploy on issues that would break it (broken node links, old-format nodes, RPC paths without reply, nodes missing a default go, sub-30s timers, literal reply values); advisory findings are shown but do not block. Pass force=true to deploy despite blocking lint issues. Note: the server regenerates node IDs on every push and the local file is rewritten in place with the server's canonical scheme — reference nodes by title when iterating, and re-read the file after a push instead of reusing old node IDs.",
 		InputSchema: map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
 				"process_path": map[string]interface{}{
 					"type":        "string",
-					"description": "Relative path to the process JSON file.",
+					"description": "Path to the process JSON file, relative to the project root (absolute paths are accepted when they point inside the project).",
+				},
+				"force": map[string]interface{}{
+					"type":        "boolean",
+					"description": "Deploy even if the pre-push lint finds blocking issues. Advisory findings never block. Default false.",
 				},
 			},
 			"required": []string{"process_path"},
 		},
 	},
 	{
+		Name:        "layout-process",
+		Description: "Auto-arrange a process's node coordinates into a clean, readable layout (waterfall for simple trees, layered+error-rail for meshes, aligned table/star grids for region bundles). Rewrites ONLY x/y and the extra.modeForm collapse flag in the file — edges, logic, conv_id and aliases stay intact, so a re-layout can never alter behaviour. Runs entirely on the local file (no API, no auth). The result always reports the chosen strategy, canvas size and overlap count; dry=true previews placements without writing.",
+		InputSchema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"process_path": map[string]interface{}{
+					"type":        "string",
+					"description": "Relative path to the process JSON file. Optional when the working directory contains exactly one .conv.json.",
+				},
+				"density": map[string]interface{}{
+					"type":        "string",
+					"enum":        []interface{}{"compact", "medium", "roomy"},
+					"description": "Spacing mode: compact | medium (default) | roomy (keeps the coarse block rhythm, skips compaction).",
+				},
+				"dry": map[string]interface{}{
+					"type":        "boolean",
+					"description": "Preview the planned coordinates without modifying the file.",
+				},
+			},
+		},
+	},
+	{
 		Name:        "lint-process",
-		Description: "Validate process structure. Reports orphaned nodes, noop conditions, and unused set_params.",
+		Description: "Validate process structure. Reports orphaned nodes, noop conditions, unused set_params, passthrough escalations, shared error clusters (an error node fed by several different failing nodes — each needs its own Reply/Error cluster), old-format nodes (obj_type:0 err_node_id targets, or action logic mixed with go_if_const — the UI would force-convert the process), finals reachable without api_rpc_reply in a process that replies elsewhere (an RPC caller would hang), nodes whose logics do not end with a default go and time semaphors under the 30s server minimum (both reject the deploy), and literal non-string values in api_rpc_reply res_data (a scheme shape that hangs the server commit on push).",
 		InputSchema: map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
@@ -88,7 +205,7 @@ var toolRegistry = []mcpTool{
 	},
 	{
 		Name:        "run-task",
-		Description: "Run a task on an already-deployed Corezoid process (without re-deploying).",
+		Description: "Run a task on an already-deployed Corezoid process (without re-deploying) and wait for it to reach a final node. Polls up to wait_sec (default 30), so tasks that cross async nodes (api, api_rpc, db_call, delay) still return their final result. On timeout reports the node the task is parked at, plus TaskRef/TaskID for follow-up via list-task-history.",
 		InputSchema: map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
@@ -99,6 +216,10 @@ var toolRegistry = []mcpTool{
 				"data": map[string]interface{}{
 					"type":        "string",
 					"description": "JSON string with task input parameters",
+				},
+				"wait_sec": map[string]interface{}{
+					"type":        "integer",
+					"description": "How long to wait (seconds) for the task to reach a final node before reporting it as in progress. Default 30, max 600. Raise it for processes with slow external calls or delay nodes.",
 				},
 			},
 			"required": []string{"process_path", "data"},
@@ -223,6 +344,20 @@ var toolRegistry = []mcpTool{
 		},
 	},
 	{
+		Name:        "delete-process",
+		Description: "Move a Corezoid process (or state diagram) to the recycle bin (Trash). Can be restored from the Corezoid UI. Use pull-process first if you want a local backup before deleting.",
+		InputSchema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"process_id": map[string]interface{}{
+					"type":        "integer",
+					"description": "Corezoid process ID to delete",
+				},
+			},
+			"required": []string{"process_id"},
+		},
+	},
+	{
 		Name:        "create-alias",
 		Description: "Create a short alias for a Corezoid process.",
 		InputSchema: map[string]interface{}{
@@ -278,6 +413,70 @@ var toolRegistry = []mcpTool{
 				},
 			},
 			"required": []string{"project_id", "company_id"},
+		},
+	},
+	{
+		Name:        "deploy-stage",
+		Description: "Deploy (promote) one stage's processes onto another within a Corezoid project — e.g. develop → production. Wraps the admin obj_scheme compare+merge that the UI \"Deploy\" button issues (on /api/2/compare and /api/2/merge). DESTRUCTIVE, and irreversible on an immutable target. SAFETY: apply=false (default) is a dry-run that only shows the diff and any conflicts — nothing is deployed. To actually deploy you MUST first get the user's explicit confirmation of the exact source→target, then call with apply=true AND confirm=\"<source_stage_id>-><target_stage_id>\". Never deploy without the user confirming. The merge is asynchronous; this tool waits for it to finish over the progress WebSocket.",
+		InputSchema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"project_id": map[string]interface{}{
+					"type":        "integer",
+					"description": "Project ID that both stages belong to.",
+				},
+				"source_stage_id": map[string]interface{}{
+					"type":        "integer",
+					"description": "Stage to deploy FROM (the source of truth, e.g. develop).",
+				},
+				"target_stage_id": map[string]interface{}{
+					"type":        "integer",
+					"description": "Stage to deploy INTO (e.g. production). Its scheme is overwritten with the source's.",
+				},
+				"company_id": map[string]interface{}{
+					"type":        "string",
+					"description": "Workspace (company) ID the project belongs to.",
+				},
+				"apply": map[string]interface{}{
+					"type":        "boolean",
+					"description": "false (default) = dry-run: show the diff/conflicts only. true = perform the deploy (also requires a matching confirm).",
+				},
+				"confirm": map[string]interface{}{
+					"type":        "string",
+					"description": "Required when apply=true: must equal \"<source_stage_id>-><target_stage_id>\" (e.g. \"684083->684082\"). Guards against accidental and wrong-stage deploys.",
+				},
+			},
+			"required": []string{"project_id", "source_stage_id", "target_stage_id", "company_id"},
+		},
+	},
+	{
+		Name:        "set-stage-immutable",
+		Description: "Set a stage's immutable (read-only) flag. Immutable stages are the ONLY valid deploy/merge targets (see deploy-stage); an immutable stage can no longer be edited directly — only changed via deploy. Consequential: making a stage editable removes that protection. Requires explicit user confirmation — call with confirm=\"<stage_id>:<true|false>\" (e.g. \"684082:true\"). Never change immutability without the user confirming.",
+		InputSchema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"stage_id": map[string]interface{}{
+					"type":        "integer",
+					"description": "Stage ID whose immutable flag to set.",
+				},
+				"project_id": map[string]interface{}{
+					"type":        "integer",
+					"description": "Project ID the stage belongs to.",
+				},
+				"company_id": map[string]interface{}{
+					"type":        "string",
+					"description": "Workspace (company) ID the project belongs to.",
+				},
+				"immutable": map[string]interface{}{
+					"type":        "boolean",
+					"description": "true = make read-only (a valid deploy target); false = make editable again.",
+				},
+				"confirm": map[string]interface{}{
+					"type":        "string",
+					"description": "Required: must equal \"<stage_id>:<immutable>\" (e.g. \"684082:true\"). Guards against accidental read-only changes.",
+				},
+			},
+			"required": []string{"stage_id", "project_id", "company_id", "immutable"},
 		},
 	},
 	{
@@ -378,7 +577,7 @@ var toolRegistry = []mcpTool{
 	},
 	{
 		Name:        "login",
-		Description: "Authenticate with Corezoid via OAuth2 browser flow. Opens a browser window and saves the token so it persists across sessions. Optionally accepts account_url, workspace_id, and stage_id to skip interactive prompts.",
+		Description: "Authenticate with Corezoid. Supports two auth methods: (1) OAuth2 browser flow — opens a browser window and saves the token so it persists across sessions; (2) API key — provide api_login and api_secret to skip the browser flow (credentials saved to project .env). Optionally accepts account_url, workspace_id, and stage_id to skip interactive prompts.",
 		InputSchema: map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
@@ -393,6 +592,14 @@ var toolRegistry = []mcpTool{
 				"stage_id": map[string]interface{}{
 					"type":        "string",
 					"description": "Corezoid stage (root folder) ID",
+				},
+				"api_login": map[string]interface{}{
+					"type":        "string",
+					"description": "API key login (alternative to OAuth2 browser flow). If both api_login and api_secret are provided, browser authentication is skipped.",
+				},
+				"api_secret": map[string]interface{}{
+					"type":        "string",
+					"description": "API key secret (alternative to OAuth2 browser flow). Must be paired with api_login. Stored in project .env — ensure .env is in .gitignore.",
 				},
 			},
 		},
@@ -986,6 +1193,74 @@ var toolRegistry = []mcpTool{
 				},
 			},
 			"required": []string{"problem"},
+		},
+	},
+	{
+		Name:        "create-snapshot",
+		Description: "Create a snapshot of the current server state of a process before making changes. Useful as a manual checkpoint before experiments. Auto-snapshot is also created automatically before every push-process on existing processes.",
+		InputSchema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"process_path": map[string]interface{}{
+					"type":        "string",
+					"description": "Path to the .conv.json file.",
+				},
+				"title": map[string]interface{}{
+					"type":        "string",
+					"description": "Optional snapshot title. Defaults to 'manual snapshot <ProcessName> <datetime>'.",
+				},
+			},
+			"required": []string{"process_path"},
+		},
+	},
+	{
+		Name:        "list-snapshots",
+		Description: "List all snapshots for a process. Returns version, title, author and creation time for each snapshot.",
+		InputSchema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"process_path": map[string]interface{}{
+					"type":        "string",
+					"description": "Path to the .conv.json file.",
+				},
+			},
+			"required": []string{"process_path"},
+		},
+	},
+	{
+		Name:        "delete-snapshot",
+		Description: "Delete a snapshot by its obj_id. Use list-snapshots to find the snapshot_id.",
+		InputSchema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"process_path": map[string]interface{}{
+					"type":        "string",
+					"description": "Path to the .conv.json file.",
+				},
+				"snapshot_id": map[string]interface{}{
+					"type":        "integer",
+					"description": "The obj_id of the snapshot to delete (from list-snapshots).",
+				},
+			},
+			"required": []string{"process_path", "snapshot_id"},
+		},
+	},
+	{
+		Name:        "get-snapshot",
+		Description: "Get the node list of a specific snapshot for diff comparison against the current process state. Returns all nodes as they existed at snapshot time.",
+		InputSchema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"process_path": map[string]interface{}{
+					"type":        "string",
+					"description": "Path to the .conv.json file.",
+				},
+				"snapshot_id": map[string]interface{}{
+					"type":        "integer",
+					"description": "The obj_id of the snapshot to retrieve (from list-snapshots).",
+				},
+			},
+			"required": []string{"process_path", "snapshot_id"},
 		},
 	},
 }

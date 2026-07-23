@@ -109,6 +109,12 @@ alignment:
    - Position error handling nodes to the right of the main flow
    - Connect error nodes with horizontal lines from the main flow
    - Maintain consistent horizontal spacing (recommended: 200px from main flow)
+   - **Dedicated error cluster per error-prone node:** each failing node gets its own collapsed
+     **Reply to Process** node (`obj_type: 3`) leading to its own descriptively-named **Error**
+     node, pinned tight to the right of the node it protects and stepping slightly down-right in a
+     compact staircase — so it reads as attached, not drifting off with a large gap. Exact
+     coordinates are produced by `layout-process`; author the wiring and collapse flags, not the
+     positions. See [Dedicated Error Cluster Pattern](error-handling.md#dedicated-error-cluster-pattern-standard).
 
 2. **Escalation Paths**
 
@@ -274,6 +280,19 @@ Applying symmetry to process layouts creates visually balanced and aesthetically
 
 
 ```
+
+## Automatic Placement on Push
+
+New nodes may be added with placeholder coordinates `x: 0, y: 0`. On
+`push-process` the MCP server auto-places them (preserve mode): existing
+coordinates are always kept, and only the new `(0,0)` nodes are positioned near
+their graph neighbours without overlapping placed nodes. A process where every
+node is new gets a full clean layered layout.
+
+- Disable entirely with the environment variable `COREZOID_AUTOLAYOUT=off`
+  (coordinates are then written through unchanged).
+- For a full re-layout of an existing, already-placed process, use the
+  dedicated node-layout skill rather than this on-push placement.
 
 ## Related Documentation
 

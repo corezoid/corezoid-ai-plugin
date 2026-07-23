@@ -37,6 +37,15 @@ func handleLogin(ctx context.Context, args map[string]interface{}) (string, bool
 		stageID, _ = strconv.Atoi(os.Getenv("COREZOID_STAGE_ID"))
 		apiURL = os.Getenv("COREZOID_API_URL")
 
+		// Reload API key credentials if currently empty (e.g. added to .env
+		// after the server started).
+		if apiLogin == "" {
+			apiLogin = os.Getenv("API_LOGIN")
+		}
+		if apiSecret == "" {
+			apiSecret = os.Getenv("API_SECRET")
+		}
+
 		// Record initial stageID to detect if it gets set during this call.
 		stageIDAtStart = stageID
 
@@ -73,18 +82,34 @@ func handleLogin(ctx context.Context, args map[string]interface{}) (string, bool
 				}
 			}
 		}
+		// Handle api_login and api_secret arguments.
+		if v := optStrArg(args, "api_login"); v != "" {
+			apiLogin = v
+			os.Setenv("API_LOGIN", v)
+			if err := updateEnvFile(envPath, "API_LOGIN", v); err != nil {
+				logger.Warn("login: could not save API_LOGIN from arg: %v", err)
+			}
+		}
+		if v := optStrArg(args, "api_secret"); v != "" {
+			apiSecret = v
+			os.Setenv("API_SECRET", v)
+			if err := updateEnvFile(envPath, "API_SECRET", v); err != nil {
+				logger.Warn("login: could not save API_SECRET from arg: %v", err)
+			}
+		}
 	})
 
 	// Snapshot the post-reload state for use in this handler — long-running
 	// OAuth / elicitation must not hold the auth lock, so we drive most
 	// logic from these locals and only re-acquire the lock for writes.
 	_, snapToken, snapWorkspaceID, snapAccountURL, snapStageID := authSnapshot()
-	logger.Info("login: accountURL=%q workspaceID=%q stageID=%d", snapAccountURL, snapWorkspaceID, snapStageID)
+	snapAPILogin, snapAPISecret := apiKeySnapshot()
+	logger.Info("login: accountURL=%q workspaceID=%q stageID=%d hasAPIKey=%v", snapAccountURL, snapWorkspaceID, snapStageID, snapAPILogin != "" && snapAPISecret != "")
 
 	// Step 1: ensure Account API URL.
 	if snapAccountURL == "" {
 		var resolved string
-		if clientSupportsElicitation {
+		if clientElicitationSupported() {
 			content, action, err := elicitValues(
 				"Enter your Account API URL to get started:",
 				map[string]interface{}{
@@ -124,9 +149,10 @@ func handleLogin(ctx context.Context, args map[string]interface{}) (string, bool
 		}
 	}
 
-	// Step 2: OAuth2 PKCE browser flow (skipped if already authenticated).
+	// Step 2: OAuth2 PKCE browser flow (skipped if already authenticated or if
+	// API key credentials are present — API key auth doesn't require a browser flow).
 	var tokenExpiry time.Time
-	if snapToken == "" {
+	if snapToken == "" && !(snapAPILogin != "" && snapAPISecret != "") {
 		res, err := oauthPKCEFlow(snapAccountURL, oauthClientID)
 		if err != nil {
 			return fmt.Sprintf("Authentication failed: %v", err), true
@@ -160,7 +186,7 @@ func handleLogin(ctx context.Context, args map[string]interface{}) (string, bool
 				logger.Info("login: derived COREZOID_API_URL=%q from clients API", corezoidURL)
 			}
 		}
-	} else {
+	} else if snapToken != "" {
 		// If we already have a token but no derived API URL (e.g. token came from
 		// .env directly without completing OAuth), fetch the URL now.
 		authStateMu.RLock()
@@ -179,11 +205,28 @@ func handleLogin(ctx context.Context, args map[string]interface{}) (string, bool
 				logger.Info("login: derived COREZOID_API_URL=%q from clients API (pre-existing token)", corezoidURL)
 			}
 		}
+	} else {
+		// API key flow: COREZOID_API_URL cannot be derived via /face/api/1/clients
+		// (that endpoint requires a Bearer/Simulator token). Fall back to ACCOUNT_URL —
+		// in most Corezoid deployments the API is served from the same host as the
+		// admin UI. Users who need a different API host can set COREZOID_API_URL in .env.
+		authStateMu.RLock()
+		apiURLEmpty := apiURL == ""
+		authStateMu.RUnlock()
+		if apiURLEmpty && snapAccountURL != "" {
+			fallback := strings.TrimRight(snapAccountURL, "/")
+			withAuthLock(func() { apiURL = fallback })
+			os.Setenv("COREZOID_API_URL", fallback)
+			if err := updateEnvFile(envPath, "COREZOID_API_URL", fallback); err != nil {
+				logger.Warn("login: could not save COREZOID_API_URL fallback: %v", err)
+			}
+			logger.Info("login: COREZOID_API_URL not set — defaulting to ACCOUNT_URL %q", fallback)
+		}
 	}
 
 	// Step 3: workspace selection.
 	if snapWorkspaceID == "" {
-		if clientSupportsElicitation {
+		if clientElicitationSupported() {
 			workspaces, fetchErr := fetchWorkspaceList(ctx)
 			if fetchErr != nil {
 				logger.Warn("login: fetchWorkspaceList failed: %v — falling back to text input", fetchErr)
@@ -262,7 +305,7 @@ func handleLogin(ctx context.Context, args map[string]interface{}) (string, bool
 
 	// Steps 4 & 5: pick project then stage.
 	if snapStageID == 0 {
-		if clientSupportsElicitation {
+		if clientElicitationSupported() {
 			var selectedProjectID int64
 
 			// Step 4: fetch project list and elicit selection.
@@ -427,7 +470,7 @@ func handleLogin(ctx context.Context, args map[string]interface{}) (string, bool
 
 	// One-time opt-in: ask for email to include in telemetry.
 	// Only shown once per installation; skipping is always valid.
-	if clientSupportsElicitation {
+	if clientElicitationSupported() {
 		prefs := loadUserPreferences()
 		if !prefs.TelemetryEmailAsked {
 			content, action, err := elicitValues(
@@ -460,22 +503,50 @@ func handleLogin(ctx context.Context, args map[string]interface{}) (string, bool
 }
 
 // handleLogout deletes the saved credentials from ~/.corezoid/credentials and
-// clears the cached access token. The token write is under the auth lock so a
-// concurrent in-flight request can't briefly use the cleared token-before-deletion state.
+// clears the cached access token. API key credentials are also removed from the
+// project .env. The writes are under the auth lock so a concurrent in-flight
+// request can't briefly use the cleared credentials.
 func handleLogout(_ context.Context, _ map[string]interface{}) (string, bool) {
 	credPath, err := credentialsFilePath()
 	if err != nil {
 		credPath = "~/.corezoid/credentials"
 	}
+
+	// Snapshot accountURL before clearing so we can include the browser-logout hint.
+	_, _, _, snapAccountURL, _ := authSnapshot()
+
 	if err := deleteCredentials(); err != nil {
 		return fmt.Sprintf("Failed to remove credentials: %v", err), true
 	}
+	// Remove API key credentials from the project .env.
+	envPath := envFilePath()
+	if err := removeEnvKey(envPath, "API_LOGIN"); err != nil {
+		logger.Warn("logout: could not remove API_LOGIN from .env: %v", err)
+	}
+	if err := removeEnvKey(envPath, "API_SECRET"); err != nil {
+		logger.Warn("logout: could not remove API_SECRET from .env: %v", err)
+	}
+	os.Unsetenv("API_LOGIN")
+	os.Unsetenv("API_SECRET")
 	withAuthLock(func() {
 		apiToken = ""
 		accountURL = ""
 		workspaceID = ""
 		stageID = 0
 		apiURL = ""
+		apiLogin = ""
+		apiSecret = ""
 	})
-	return fmt.Sprintf("Logged out. ACCESS_TOKEN removed from %s.", credPath), false
+
+	browserHost := strings.TrimRight(snapAccountURL, "/")
+	if browserHost == "" {
+		browserHost = "https://account.corezoid.com"
+	}
+
+	return fmt.Sprintf(
+		"Logged out. ACCESS_TOKEN removed from %s.\n\n"+
+			"Important: your browser may still have an active SSO session at %s. "+
+			"If a subsequent login produces an already-expired token (\"exp\" in the past), "+
+			"you must also log out of that site in your browser before calling login again.",
+		credPath, browserHost), false
 }

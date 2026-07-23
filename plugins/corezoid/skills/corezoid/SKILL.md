@@ -25,6 +25,7 @@ You have access to the Corezoid API via the `corezoid` MCP server.
 | `pull-process` | Export a single process to a file |
 | `push-process` | Validate and deploy a `.conv.json` file |
 | `lint-process` | Validate process structure locally (no API needed) |
+| `layout-process` | Auto-arrange node coordinates into a clean layout (local; only x/y and collapse flags change) |
 | `run-task` | Run a task on an already-deployed process |
 | `create-process` | Create a new empty process (`conv_type: "process"`) in a folder |
 | `create-state-diagram` | Create a new empty state diagram (`conv_type: "state"`) in a folder |
@@ -49,6 +50,10 @@ You have access to the Corezoid API via the `corezoid` MCP server.
 | `list-api-keys` | List API keys in the workspace |
 | `find-principal` | Resolve user / group / API-key name → obj_id (call before share-object) |
 | `invite-user` | Invite an external email AND share an object in one call |
+| `create-snapshot` | Create a snapshot of a process (auto-created before every push-process on existing processes) |
+| `list-snapshots` | List all snapshots for a process |
+| `delete-snapshot` | Delete a snapshot by snapshot_id |
+| `get-snapshot` | Get snapshot node list for diff comparison against current process |
 
 ## Platform Architecture
 
@@ -80,8 +85,8 @@ Workspace
 | API Call | 0 | `api` | External HTTP request |
 | Call a Process | 0 | `api_rpc` | Invoke another process |
 | Set Parameters | 0 | `set_param` | Variable assignment |
-| Condition | 0 | `go_if_const` | Branching logic |
-| Reply to Process | 0 | `api_rpc_reply` | Return result to caller |
+| Condition | 0 | `go_if_const` | Branching logic (business flow; `3` when it is an `err_node_id` target) |
+| Reply to Process | 0 | `api_rpc_reply` | Return result to caller (`3` when it is an `err_node_id` target) |
 | End / Error | 2 | _(none)_ | Terminal node |
 
 ## Key Validation Rules
@@ -130,6 +135,8 @@ For domain-specific workflows use the specialized skills:
 - `/corezoid-variable-manager` — creating, listing, modifying, deleting variables (visible/secret, raw/json)
 - `/corezoid-process-optimizer` — reduce tacts (merge nodes), clean data flow, fill names, add semaphors
 - `/corezoid-api-connector` — build processes that call the Corezoid public API (`/api/2/json/`) using `api_secret_outer`
+- `/corezoid-retro` — end-of-session retrospective: extract learnings (failed→fixed push deltas, data-shape surprises, corrections) and route them to workspace CLAUDE.md, team feedback, settings, or personal memory with user confirmation
+- `/corezoid-describe` — update or create the description of a process, folder, or project without editing its logic
 
 ## Reference Documents
 
@@ -137,7 +144,10 @@ Use the `Read` tool to load these files when you need deeper detail:
 
 | Path | When to read |
 |---|---|
-| `${CLAUDE_PLUGIN_ROOT}/docs/node-structures.md` | JSON schemas for all node types (canonical reference) |
+| `${CLAUDE_PLUGIN_ROOT}/docs/node-structures.md` | JSON schemas for all node types + full Logics fields reference (canonical) |
+| `${CLAUDE_PLUGIN_ROOT}/docs/nodes/set-parameters-built-in-functions.md` | Built-in functions: `$.math`, `$.date`, `$.random`, `$.sha1_hex`, `$.md5_hex`, `$.base64_encode`, `$.unixtime`, `$.map`, `$.filter` |
+| `${CLAUDE_PLUGIN_ROOT}/docs/nodes/set-parameters-dynamic-values.md` | Dynamic values: `{{var}}`, `{{node[id].count}}`, `{{node[id].SumID}}`, `{{conv[@alias].ref[...]}}`, `{{env_var[@name].key[1]}}` |
+| `${CLAUDE_PLUGIN_ROOT}/docs/tasks/task-metadata.md` | Global `root.*` fields: `root.task_id`, `root.ref`, `root.conv_id`, `root.node_id`, `root.prev_node_id`, `root.user_id`, `root.change_time`, `root.create_time` |
 | `${CLAUDE_PLUGIN_ROOT}/docs/nodes/code-node.md` | Code node details and available JS libraries |
 | `${CLAUDE_PLUGIN_ROOT}/docs/nodes/call-process-node.md` | Call a Process node, semaphores, cross-folder calls |
 | `${CLAUDE_PLUGIN_ROOT}/docs/nodes/api-call-node.md` | HTTP API call configuration |
@@ -150,6 +160,17 @@ Use the `Read` tool to load these files when you need deeper detail:
 | `${CLAUDE_PLUGIN_ROOT}/docs/state-diagrams/state-diagram-node-structures.md` | JSON schemas for nodes inside a state diagram |
 | `${CLAUDE_PLUGIN_ROOT}/docs/state-diagrams/state-diagram-process-interaction.md` | How driver processes read / create / modify state tasks |
 | `${CLAUDE_PLUGIN_ROOT}/docs/variables-guide.md` | Variable naming rules, creation workflow, usage examples |
+
+## Description Update Rule
+
+After any successful change to a process, folder, or project, always set or refresh its description. Full authoring rules are in `/corezoid-describe`.
+
+Summary:
+- **Process** — update `description` in `.conv.json` root **before** `push-process` (no second push needed). 1–2 sentences, start with a verb (*Calls*, *Creates*, *Validates*…), under 200 characters, no *"This process…"*
+- **Folder** — call `modify-folder` with `description` if the folder was structurally changed. Resolve `folder_id` from the process's parent or by name via `list-folders`; if unresolvable, skip.
+- **Project** — call `modify-project` with `description` if project scope changed.
+
+---
 
 ## Tips
 

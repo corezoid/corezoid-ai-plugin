@@ -44,11 +44,10 @@ Apply changes to `PROCESS_PATH`.
 ### Core rules
 
 - Connect nodes only through the `go` field
-- Every node that can fail must have `err_node_id` pointing to a dedicated error node
-- Node IDs must be unique 24-character hex strings: `^[0-9a-f]{24}$`
+- Every node that can fail must have `err_node_id` — point it **directly at a Final Error node** (`obj_type: 2`) unless the error path needs logic (reply to caller, retry routing). Never create an Escalation node (`obj_type: 3`) that only contains a bare `go` — that is a passthrough anti-pattern flagged by `lint-process`
+- Node IDs must be unique 24-character hex strings: `^[0-9a-f]{24}$`. **Always `pull-process` before editing** and reference only canonical, server-assigned IDs — IDs you invented in a previous push were reassigned by the server and no longer exist. New nodes added now get placeholder IDs that the server will likewise reassign on push. Existing nodes' IDs are preserved. See [Node ID Lifecycle](${CLAUDE_PLUGIN_ROOT}/docs/process/process-development-guide.md#node-id-lifecycle-server-assignment--stability-on-push).
 - Use descriptive node `title` values (e.g., "Call Payment Process", not "RPC")
-- Place new nodes below existing ones, incrementing `y` by 200–250px
-- Position error nodes to the right of their parent (`x + 300`)
+- Leave new nodes at placeholder coordinates `x: 0, y: 0` — `push-process` auto-places them near their graph neighbours (preserve mode: existing nodes keep their positions; error nodes land to the right of their parent). Only when auto-placement is disabled (`COREZOID_AUTOLAYOUT=off`) position nodes manually — error nodes to the right of their parent (`x + 300`). Do NOT re-layout the whole process unless the user asks — see the `corezoid-node-layout` skill's authorship policy
 
 ### Variables for constants
 
@@ -68,7 +67,7 @@ See `${CLAUDE_PLUGIN_ROOT}/docs/variables-guide.md` for details.
 | Code Node | 0 | `api_code` |
 | Call a Process | 0 | `api_rpc` |
 | API Call | 0 | `api` |
-| Reply to Process | 0 | `api_rpc_reply` |
+| Reply to Process | 0 (3 as `err_node_id` target) | `api_rpc_reply` |
 | End / Error | 2 | _(no logics)_ |
 
 For complete JSON structures see `${CLAUDE_PLUGIN_ROOT}/docs/node-structures.md`.
@@ -82,13 +81,33 @@ For complete JSON structures see `${CLAUDE_PLUGIN_ROOT}/docs/node-structures.md`
 
 ---
 
-## Step 3: Deploy the Changes
+## Step 3: Update the Description
+
+Before deploying, update the root-level `description` field in `PROCESS_PATH` to reflect the process's current behaviour after your edits.
+
+**Guard — preserve existing descriptions when appropriate:** if the process already has a non-empty description and your edits did not change the overall purpose (e.g. you fixed a bug, adjusted a timeout, or rewired an error path without altering what the process fundamentally does), preserve the existing description rather than replacing it.
+
+Follow the **Description Update Rule** from the `corezoid` skill:
+- 1–2 sentences, starting with a verb (*Calls*, *Creates*, *Validates*, *Routes*, *Aggregates*)
+- Sentence 1: what the process does — verb + action + subject
+- Sentence 2 (optional): key inputs/outputs or notable behaviour
+- Under 200 characters, no *"This process…"* preamble
+
+Write the updated `description` directly into the JSON file. This costs nothing extra — the description rides the same `push-process` call.
+
+If the parent folder was structurally affected (process added, removed, or renamed), also call MCP tool **`modify-folder`** with a one-sentence `description` of what the folder contains.
+
+---
+
+## Step 4: Deploy the Changes
 
 **MANDATORY: Always run this step whenever any changes were made to the process file — even if there are open questions or the work is not fully complete. Without deploying, all changes are lost.**
 
 Deploy the modified process by calling MCP tool **`push-process`** with `process_path: "<PROCESS_PATH>"`.
 
 If deployment fails, fix the reported errors and re-run `push-process` until it succeeds. Do not skip this step or postpone it — changes exist only in memory until pushed.
+
+> **Auto-snapshot:** if the process already existed on the server (`obj_id` ≠ null), `push-process` automatically creates a snapshot of the current server state before deploying your changes. No action needed — this is transparent. The snapshot appears in the Corezoid UI and can be managed with `list-snapshots` / `get-snapshot` / `delete-snapshot`.
 
 After a successful deploy, notify the user:
 
@@ -102,14 +121,17 @@ Use the `Read` tool to load these files when specific node or validation details
 
 | Path | When to read |
 |---|---|
-| `${CLAUDE_PLUGIN_ROOT}/docs/node-structures.md` | JSON schemas for all node types (canonical reference) |
+| `${CLAUDE_PLUGIN_ROOT}/docs/node-structures.md` | JSON schemas for all node types + full Logics fields reference (canonical) |
+| `${CLAUDE_PLUGIN_ROOT}/docs/nodes/set-parameters-built-in-functions.md` | Built-in functions: `$.math`, `$.date`, `$.random`, `$.sha1_hex`, `$.md5_hex`, `$.base64_encode`, `$.unixtime`, `$.map`, `$.filter` |
+| `${CLAUDE_PLUGIN_ROOT}/docs/nodes/set-parameters-dynamic-values.md` | Dynamic values: `{{var}}`, `{{node[id].count}}`, `{{node[id].SumID}}`, `{{conv[@alias].ref[...]}}`, `{{env_var[@name].key[1]}}` |
+| `${CLAUDE_PLUGIN_ROOT}/docs/tasks/task-metadata.md` | Global `root.*` fields: `root.task_id`, `root.ref`, `root.conv_id`, `root.node_id`, `root.prev_node_id`, `root.user_id`, `root.change_time`, `root.create_time` |
 | `${CLAUDE_PLUGIN_ROOT}/docs/nodes/code-node.md` | Code node details and available JS libraries |
 | `${CLAUDE_PLUGIN_ROOT}/docs/nodes/call-process-node.md` | Call a Process node, semaphores, cross-folder calls |
 | `${CLAUDE_PLUGIN_ROOT}/docs/nodes/reply-to-process-node.md` | Reply formats, object stringification |
 | `${CLAUDE_PLUGIN_ROOT}/docs/nodes/api-call-node.md` | HTTP API call configuration |
 | `${CLAUDE_PLUGIN_ROOT}/docs/nodes/end-node.md` | End node success/error configuration |
 | `${CLAUDE_PLUGIN_ROOT}/docs/nodes/condition-node.md` | Condition node (branching logic) |
-| `${CLAUDE_PLUGIN_ROOT}/docs/nodes/delay-node.md` | Delay node (timers and waiting) |
+| `${CLAUDE_PLUGIN_ROOT}/docs/nodes/delay-node.md` | Delay node (timers and waiting); 30s limit is static-literal only — dynamic absolute-timestamp `value` for scheduled or sub-30s delays |
 | `${CLAUDE_PLUGIN_ROOT}/docs/nodes/copy-task-node.md` | Copy Task node (task duplication) |
 | `${CLAUDE_PLUGIN_ROOT}/docs/process/process-json-validation.md` | Validation rules and common errors |
 | `${CLAUDE_PLUGIN_ROOT}/docs/process/error-handling.md` | Error handling patterns (hardware vs software errors) |

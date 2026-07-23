@@ -6,6 +6,9 @@
   interaction.
 - Enables request-response patterns between processes.
 - Returns computed or processed data back to the calling process.
+- **Mandatory on every path of an RPC-called process** — success path included. A path
+  that reaches a final without a Reply leaves the caller's task hanging in the Call
+  node until its timeout semaphor.
 
 ## Parameters
 
@@ -15,6 +18,13 @@
    - Key-value pairs to be returned to the calling process.
    - Example: `"res_data": {"res": "{{res}}"}`
    - Validation: Must be a valid JSON object with properly formatted values.
+   - **Every value must be a string** — either a `"{{variable}}"` template or a plain
+     string literal. Literal non-string values (`[]`, `{}`, `0`, `true`, `null`) pass
+     JSON-schema validation but hang the server-side commit when the process is pushed
+     through the API (`push-process` fails with the opaque "no response from server").
+     To return an empty array / zero / etc., set it in an upstream Code node
+     (`data.links = []`) and reference it as `"{{links}}"` with the real type declared
+     in `res_data_type`. `lint-process` flags this pattern.
 2. **Response Data Type** (Object)
    - Specifies the data types of the returned values.
    - Example: `"res_data_type": {"res": "string"}`

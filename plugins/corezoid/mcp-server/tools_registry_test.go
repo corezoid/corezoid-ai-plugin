@@ -76,6 +76,14 @@ func TestSkillPathsExist(t *testing.T) {
 		matches := re.FindAllSubmatch(data, -1)
 		for _, m := range matches {
 			relPath := string(m[1])
+			// Strip URL fragment (#anchor) — the test checks file existence,
+			// not whether a specific heading exists inside the file.
+			if idx := strings.Index(relPath, "#"); idx >= 0 {
+				relPath = relPath[:idx]
+			}
+			if relPath == "" {
+				continue
+			}
 			absPath := filepath.Join(pluginRoot, relPath)
 			if _, err := os.Stat(absPath); os.IsNotExist(err) {
 				t.Errorf("%s/SKILL.md: references non-existent path ${CLAUDE_PLUGIN_ROOT}/%s (resolved: %s)",

@@ -95,3 +95,4 @@ jobs:
             dist/checksums.txt
             public/llms.txt
             public/.well-known/skills/index.json
+            POWER.md

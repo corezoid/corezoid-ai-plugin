@@ -4,7 +4,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Repository Purpose
 
-This is a Claude Code plugin (`@corezoid/corezoid-ai-plugin`) that gives Claude the knowledge and tools to create, edit, and review [Corezoid](https://corezoid.com) BPM processes directly from the IDE. It is primarily a **documentation and workflow plugin** — there is no build step or test suite. The repo ships static `.md` files, JSON samples, and plugin manifests.
+This is a Claude Code / Codex / Kiro plugin (`@corezoid/corezoid-ai-plugin`) that gives the AI the knowledge and tools to create, edit, and review [Corezoid](https://corezoid.com) BPM processes directly from the IDE. The repo ships:
+
+- Static skills (`plugins/corezoid/skills/*/SKILL.md` + reference docs, JSON samples).
+- Plugin manifests for Claude Code, Codex, and the agents marketplace.
+- A Go-based MCP server (`convctl`) in `plugins/corezoid/mcp-server/` that exposes Corezoid operations as MCP tools. It has real tests (`go test -race`), golden tests for layout and lint, integration tests, and a release pipeline that builds signed multi-platform binaries.
 
 ## Plugin Development Commands
 
@@ -27,6 +31,39 @@ To test the MCP server without Claude:
 cd plugins/corezoid/mcp-server && npx @modelcontextprotocol/inspector go run . mcp-server
 ```
 
+### MCP server: build, test, lint
+
+Run these from `plugins/corezoid/mcp-server/`:
+
+```bash
+go build ./...                                    # compile
+go vet ./...                                      # static analysis
+go test -race -coverprofile=coverage.out ./...    # tests with race detector
+go tool cover -func=coverage.out                  # coverage summary
+```
+
+Golden tests (layout coordinates in `testdata/golden/layout_*.json`, lint output in `testdata/golden/lint_*.txt`) are regenerated with the `-update` flag after an intentional algorithm change:
+
+```bash
+go test -run TestLayoutGolden -update ./...
+```
+
+### Repo-level checks
+
+CI (`.github/workflows/ci.yml`) also runs:
+
+- JSON validation for all four plugin manifests + `.mcp.json`.
+- Version sync across `plugins/corezoid/.claude-plugin/plugin.json`, `plugins/corezoid/.codex-plugin/plugin.json`, `.claude-plugin/marketplace.json`, `.agents/plugins/marketplace.json`.
+- License consistency (must be MIT everywhere).
+- Markdown link check.
+- Skills-list sync (`scripts/check-skills-sync.py`): the skill directories under `plugins/corezoid/skills/` must match the lists in `CLAUDE.md` and `README.md`.
+
+To regenerate the machine-readable discovery files (`public/llms.txt`, `public/.well-known/skills/index.json`) locally — normally the release workflow does this automatically:
+
+```bash
+python3 scripts/generate-discovery.py
+```
+
 <!-- AUTO:ARCHITECTURE:START -->
 ## Architecture
 
@@ -38,17 +75,26 @@ plugins/corezoid/
     corezoid/                       — Main skill: platform overview, MCP tools, routing
       SKILL.md
       references/                   — Lookup documents (variables guide, env setup)
-    corezoid-init/                  — Sub-skill: environment setup and workspace pull
-    corezoid-create/                — Sub-skill: create a new process from scratch
-    corezoid-edit/                  — Sub-skill: modify an existing process
-    corezoid-state-diagram-create/  — Sub-skill: create a new state diagram (conv_type "state") from scratch
-    corezoid-state-diagram-edit/    — Sub-skill: modify an existing state diagram
-    corezoid-review/                — Sub-skill: audit and analyze a single process
-    corezoid-project-review/        — Sub-skill: audit a whole project / multiple processes
-    corezoid-dashboard-manager/     — Sub-skill: create and edit Corezoid dashboards
-    corezoid-process-tech-writer/   — Sub-skill: generate technical documentation for processes
-    corezoid-access/                — Sub-skill: share processes/folders, manage groups/API keys
-    marketplace-publish-validation/ — Sub-skill: validation checklist for marketplace publishing
+    corezoid-init/                  — Environment setup, OAuth login, workspace pull
+    corezoid-create/                — Create a new process from scratch
+    corezoid-edit/                  — Modify an existing process
+    corezoid-state-diagram-create/  — Create a new state diagram (conv_type "state") from scratch
+    corezoid-state-diagram-edit/    — Modify an existing state diagram
+    corezoid-review/                — Audit and analyze a single process
+    corezoid-project-review/        — Audit a whole project / multiple processes
+    corezoid-process-optimizer/     — Reduce tacts, merge nodes, clean data flow, add resilience
+    corezoid-node-layout/           — Auto-arrange node x/y (positions only) before push
+    corezoid-process-tech-writer/   — Generate Markdown docs + enriched JSON with node descriptions
+    corezoid-describe/              — Set/refresh description on a process, folder, or project
+    corezoid-dashboard-manager/     — Create and edit Corezoid dashboards
+    corezoid-alias-manager/         — Create, list, modify, delete process aliases
+    corezoid-variable-manager/      — Create, list, modify, delete environment variables (env_var)
+    corezoid-api-connector/         — Build processes that call the Corezoid public API (/api/2/json)
+    corezoid-gitcall/               — Custom code (Python/Go/Java/PHP/JS/…) as a git_call step
+    corezoid-access/                — Share processes/folders, manage groups/API keys
+    corezoid-retro/                 — End-of-session retrospective: route learnings to CLAUDE.md, feedback, settings, or memory
+    corezoid-feedback/              — Collect and submit bug reports / improvement requests to the Corezoid team
+    marketplace-publish-validation/ — Pre-publication checklist for the Corezoid marketplace
   docs/
     nodes/                        — Per-node-type documentation (24 node types)
     process/                      — Process structure, validation rules, error handling
@@ -56,6 +102,12 @@ plugins/corezoid/
     tasks/                        — Task metadata and examples
     node-structures.md            — JSON schemas for all node types (canonical reference)
   samples/                        — Example .conv.json processes (state-diagrams/ holds state-diagram samples)
+scripts/
+  generate-discovery.py           — Generate public/llms.txt and public/.well-known/skills/index.json (runs at release)
+  check-skills-sync.py            — CI check: skills directories vs CLAUDE.md vs README.md skill lists
+public/
+  llms.txt                        — Machine-readable skill + MCP-tool index (autogenerated at release)
+  .well-known/skills/index.json   — JSON skill index (autogenerated at release)
 ```
 
 ### How skills work
@@ -64,7 +116,7 @@ Each skill has a frontmatter `description` with trigger phrases — Claude Code 
 
 The main `corezoid/SKILL.md` is the universal entry point for general Corezoid questions and routes to the specialized sub-skills.
 
-Commands use the path variable `${CLAUDE_PLUGIN_ROOT}` to reference files relative to the installed plugin root.
+Skills and commands use `${CLAUDE_PLUGIN_ROOT}` to reference files relative to the installed plugin root. This token is a host-side text substitution that Claude Code performs at skill-load time (see anthropics/claude-code#48230). Codex resolves the same token by the same name for skill/reference paths. **Do not rename it** — there is currently no mechanism to register a host-neutral alias, and the rename silently breaks reference-doc loading because Bash-tool invocations don't see `${CLAUDE_PLUGIN_ROOT}` in their environment and the substitution is the only thing that resolves it. MCP subprocesses are different: Codex does not expose `CLAUDE_PLUGIN_ROOT` as an environment variable there, so `.mcp.json` must preserve the user's `PWD` as `COREZOID_WORK_DIR` and resolve the installed plugin root separately. For AWS Kiro, the install script (`plugins/corezoid/scripts/install-kiro.sh`) hard-copies skills and sed-substitutes the token to the absolute plugin path at install time.
 <!-- AUTO:ARCHITECTURE:END -->
 
 ## Key Corezoid Process Rules
@@ -85,6 +137,13 @@ Processes are stored as `.conv.json` files named `<ID>_<name>.conv.json`.
 ## Adding Documentation
 
 When adding a new node type, follow the template at `plugins/corezoid/docs/nodes/node-documentation-template.md` and add a corresponding JSON schema example to `plugins/corezoid/docs/node-structures.md`.
+
+Changes to node structure or lint rules may require refreshing MCP-server golden files:
+
+- `plugins/corezoid/mcp-server/testdata/golden/layout_*.json` — layout coordinates. Regenerate with `go test -run TestLayoutGolden -update ./...`.
+- `plugins/corezoid/mcp-server/testdata/golden/lint_*.txt` — lint output. Regenerate with `go test -run TestFormatLintResult_Golden -update ./...`.
+
+When adding a new skill, also update this file's Architecture section AND the skills table in `README.md`. CI (`scripts/check-skills-sync.py`) fails the build if the two lists diverge from the actual directory.
 
 ## Bug/improvement reporting rule (Corezoid plugin)
 

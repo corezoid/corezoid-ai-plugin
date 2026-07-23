@@ -107,28 +107,66 @@ jobs:
           print("License OK:", expected)
           EOF
 
-      - name: MCP server source exists (smoke test for .mcp.json)
+      - name: MCP launcher resolves plugin root and preserves workspace
         run: |
           python3 - <<'EOF'
-          import json, os, re, sys
+          import json, os, pathlib, stat, subprocess, tempfile
 
           with open("plugins/corezoid/.mcp.json") as f:
               cfg = json.load(f)
 
-          errors = []
-          for name, server in cfg.items():
-              for arg in server.get("args", []):
-                  for m in re.finditer(r'\$CLAUDE_PLUGIN_ROOT/([^\s"\'\\]+)', arg):
-                      rel = m.group(1)
-                      path = os.path.join("plugins/corezoid", rel)
-                      if not os.path.exists(path):
-                          errors.append(f".mcp.json server '{name}': path '{path}' does not exist")
+          server = cfg.get("mcpServers", cfg)["corezoid"]
 
-          if errors:
-              for e in errors:
-                  print("ERROR:", e)
-              sys.exit(1)
-          print(".mcp.json smoke test passed.")
+          def fake_run_sh(plugin_root):
+              run = pathlib.Path(plugin_root) / "mcp-server" / "run.sh"
+              run.parent.mkdir(parents=True, exist_ok=True)
+              run.write_text("#!/bin/sh\nprintf '%s\n' \"$COREZOID_WORK_DIR\" > \"$PROBE_OUT\"\n")
+              run.chmod(run.stat().st_mode | stat.S_IXUSR)
+              return run
+
+          def run_case(label, env_extra, home_builder):
+              with tempfile.TemporaryDirectory() as home, tempfile.TemporaryDirectory() as workspace:
+                  probe_out = pathlib.Path(home) / "probe.txt"
+                  env = {
+                      "HOME": home,
+                      "PATH": os.environ["PATH"],
+                      "PROBE_OUT": str(probe_out),
+                      **env_extra,
+                  }
+                  env.update(home_builder(home, probe_out) or {})
+                  res = subprocess.run(
+                      [server["command"], *server.get("args", [])],
+                      cwd=workspace,
+                      env=env,
+                      text=True,
+                      capture_output=True,
+                      timeout=10,
+                  )
+                  if res.returncode != 0:
+                      raise SystemExit(f"{label}: launcher failed\nstdout={res.stdout}\nstderr={res.stderr}")
+                  got = probe_out.read_text().strip()
+                  want = os.path.realpath(workspace)
+                  if got != want:
+                      raise SystemExit(f"{label}: COREZOID_WORK_DIR={got!r}, want {want!r}")
+
+          with tempfile.TemporaryDirectory() as claude_root:
+              fake_run_sh(claude_root)
+              run_case("claude", {"CLAUDE_PLUGIN_ROOT": claude_root}, lambda home, out: None)
+
+          def codex_home_case(home, probe_out):
+              root = pathlib.Path(home) / ".codex" / "plugins" / "cache" / "corezoid" / "corezoid" / "999.0.0"
+              fake_run_sh(root)
+
+          run_case("codex-home", {}, codex_home_case)
+
+          def codex_home_env_case(home, probe_out):
+              codex_home = pathlib.Path(home) / "custom-codex-home"
+              root = codex_home / "plugins" / "cache" / "corezoid" / "corezoid" / "999.0.0"
+              fake_run_sh(root)
+              return {"CODEX_HOME": str(codex_home)}
+
+          run_case("codex-home-env", {}, codex_home_env_case)
+          print(".mcp.json launcher smoke test passed.")
           EOF
 
       - name: No invalid CLAUDE_PLUGIN_ROOT paths in skills
@@ -139,6 +177,9 @@ jobs:
             exit 1
           fi
           echo "All CLAUDE_PLUGIN_ROOT paths look correct."
+
+      - name: Skills list sync (filesystem ↔ CLAUDE.md ↔ README.md)
+        run: python3 scripts/check-skills-sync.py
 
       - name: No tracked .env or credential files
         run: |

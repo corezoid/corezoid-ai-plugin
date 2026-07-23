@@ -9,35 +9,72 @@ import (
 	"strings"
 )
 
-// confineToWorkdir is a lexical guard against path-traversal in LLM-supplied
-// path arguments. It rejects absolute paths and any relative path whose
-// cleaned form starts with ".." (i.e. escapes the working directory).
+// confineToWorkdir is a guard against path-traversal in LLM-supplied path
+// arguments. Relative paths are checked lexically (the cleaned form must not
+// start with ".."). Absolute paths are accepted only when they resolve inside
+// the working directory, in which case they are rewritten to the equivalent
+// relative path.
 //
 // Threat model: a prompt-injected LLM might call lint-process with
 // process_path="../../etc/passwd" or pull-folder writing to ~/.ssh/. Handlers
 // run with the user's full file permissions, so anything the path argument
 // says, the OS will do. This check is defence-in-depth: it blocks the
-// path-traversal escape without restricting legitimate relative paths inside
-// the workspace.
+// path-traversal escape without restricting legitimate paths inside the
+// workspace.
 //
-// Design note: absolute paths are rejected outright rather than allowed-if-
-// under-cwd. The "under-cwd" form invites subtle symlink edge cases (on
-// macOS in particular, /var/folders/... and /private/var/folders/... are the
-// same directory via symlink, breaking lexical Rel comparison) and the MCP
-// server always runs with cwd set to the project root via COREZOID_WORK_DIR,
-// so legitimate paths are naturally relative.
+// Design note: the absolute-path comparison resolves symlinks on both sides
+// (filepath.EvalSymlinks) before filepath.Rel. A purely lexical comparison is
+// unsound — on macOS /var/folders/... and /private/var/folders/... are the
+// same directory via symlink — which is why earlier versions rejected
+// absolute paths outright. Resolving both sides removes that failure mode
+// while keeping the guarantee: a path that escapes cwd is still rejected.
+// Callers (IDE agents in particular) routinely produce absolute paths for
+// files they just read or wrote inside the project; forcing them to guess the
+// project-relative spelling caused a needless error/retry loop.
 func confineToWorkdir(p string) (string, error) {
 	if p == "" {
 		return p, nil
 	}
 	if filepath.IsAbs(p) {
-		return "", fmt.Errorf("absolute paths are not allowed (received %q); pass a path relative to the project root", p)
+		rel, err := relativeToCwd(p)
+		if err != nil {
+			return "", fmt.Errorf("absolute path %q is not inside the working directory; pass a path relative to the project root (%v)", p, err)
+		}
+		return rel, nil
 	}
 	clean := filepath.Clean(p)
 	if clean == ".." || strings.HasPrefix(clean, ".."+string(filepath.Separator)) {
 		return "", fmt.Errorf("path %q escapes working directory", p)
 	}
 	return p, nil
+}
+
+// relativeToCwd converts an absolute path to its cwd-relative form, resolving
+// symlinks on both sides so the comparison holds on macOS (/var → /private/var)
+// and similar layouts. The path's parent directory must exist — EvalSymlinks
+// needs a real directory — but the file itself may not (write targets).
+// Returns an error when the path lies outside the working directory.
+func relativeToCwd(p string) (string, error) {
+	cwd, err := os.Getwd()
+	if err != nil {
+		return "", fmt.Errorf("cannot determine working directory: %v", err)
+	}
+	cwdReal, err := filepath.EvalSymlinks(cwd)
+	if err != nil {
+		return "", fmt.Errorf("cannot resolve working directory: %v", err)
+	}
+	dirReal, err := filepath.EvalSymlinks(filepath.Dir(p))
+	if err != nil {
+		return "", fmt.Errorf("cannot resolve path: %v", err)
+	}
+	rel, err := filepath.Rel(cwdReal, filepath.Join(dirReal, filepath.Base(p)))
+	if err != nil {
+		return "", fmt.Errorf("cannot relativize path: %v", err)
+	}
+	if rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return "", fmt.Errorf("path resolves outside the working directory")
+	}
+	return rel, nil
 }
 
 // resolveFolderIDFromDir looks for a file matching <id>_<name>.folder.json or

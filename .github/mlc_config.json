@@ -4,7 +4,9 @@
     { "pattern": "^https://your\\." },
     { "pattern": "^https://corezoid\\.com" },
     { "pattern": "^https://api\\.corezoid\\.com" },
-    { "pattern": "^https://account\\.corezoid\\.com" }
+    { "pattern": "^https://account\\.corezoid\\.com" },
+    { "pattern": "\\$\\{[A-Z_]+\\}" },
+    { "pattern": "^\\$[A-Z_]+/" }
   ],
   "retryOn429": true,
   "retryCount": 2,

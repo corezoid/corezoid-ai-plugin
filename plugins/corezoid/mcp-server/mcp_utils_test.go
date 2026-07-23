@@ -232,17 +232,47 @@ func TestConfineToWorkdir_Allows(t *testing.T) {
 	}
 }
 
-func TestConfineToWorkdir_RejectsAllAbsolute(t *testing.T) {
-	// Absolute paths are rejected unconditionally — even those that point
-	// inside cwd — to dodge symlink edge cases (macOS /var → /private/var).
+func TestConfineToWorkdir_AllowsAbsoluteInsideCwd(t *testing.T) {
+	// Absolute paths pointing inside cwd are accepted and rewritten to the
+	// relative form. On macOS t.TempDir() lives under /var/folders/... which
+	// is a symlink to /private/var/folders/... — exactly the case that made a
+	// lexical comparison unsound — so this test exercises the EvalSymlinks
+	// resolution for real.
 	dir := t.TempDir()
 	orig, _ := os.Getwd()
 	os.Chdir(dir)                        //nolint:errcheck
 	t.Cleanup(func() { os.Chdir(orig) }) //nolint:errcheck
 
-	abs := filepath.Join(dir, "ok.conv.json")
-	if _, err := confineToWorkdir(abs); err == nil {
-		t.Error("expected absolute path to be rejected, got nil error")
+	if err := os.MkdirAll(filepath.Join(dir, "sub"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	cases := map[string]string{
+		filepath.Join(dir, "ok.conv.json"):          "ok.conv.json",
+		filepath.Join(dir, "sub", "in.conv.json"):   filepath.Join("sub", "in.conv.json"),
+	}
+	for abs, want := range cases {
+		got, err := confineToWorkdir(abs)
+		if err != nil {
+			t.Errorf("confineToWorkdir(%q) = err %v, want nil", abs, err)
+			continue
+		}
+		if got != want {
+			t.Errorf("confineToWorkdir(%q) = %q, want %q", abs, got, want)
+		}
+	}
+}
+
+func TestConfineToWorkdir_RejectsAbsoluteOutsideCwd(t *testing.T) {
+	dir := t.TempDir()
+	orig, _ := os.Getwd()
+	os.Chdir(dir)                        //nolint:errcheck
+	t.Cleanup(func() { os.Chdir(orig) }) //nolint:errcheck
+
+	outside := t.TempDir() // sibling temp dir — exists, but not under cwd
+	for _, abs := range []string{filepath.Join(outside, "x.conv.json"), "/etc/passwd"} {
+		if _, err := confineToWorkdir(abs); err == nil {
+			t.Errorf("confineToWorkdir(%q) = nil, want error", abs)
+		}
 	}
 }
 

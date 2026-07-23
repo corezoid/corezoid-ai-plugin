@@ -13,3 +13,12 @@ coverage.out
 # Root-level only — plugins/corezoid/.mcp.json must stay tracked (it ships in the marketplace package).
 # Do NOT change to **/.mcp.json.
 /.mcp.json
+
+# Python
+__pycache__/
+*.pyc
+/dist/
+
+# Kiro Power build output
+.kiro
+/power-corezoid/

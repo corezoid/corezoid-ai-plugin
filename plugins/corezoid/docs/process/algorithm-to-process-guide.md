@@ -221,6 +221,8 @@ Implement the algorithm's core logic:
      {
        "type": "api",
        "method": "POST",
+       "max_threads": 5,
+       "extra_headers": {},
        "url": "https://api.example.com/validate",
        "extra": {
          "customer_id": "{{customer_id}}",

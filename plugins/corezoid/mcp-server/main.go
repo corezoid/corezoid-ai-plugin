@@ -8,11 +8,13 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 
 	"github.com/santhosh-tekuri/jsonschema/v6"
 )
@@ -42,10 +44,31 @@ var apiURL string
 var accountURL string
 var apiToken string
 var workspaceID string
-var debug bool
+
+// debug gates the Executor's detailed API request/response tracing (full
+// payload dumps via the `if v.Debug` guards). It shares the COREZOID_DEBUG
+// switch with logger.IsDebug — before this assignment the var was never set,
+// so the executor trace was unreachable dead code and API-level issues could
+// not be diagnosed at all.
+var debug = debugFromEnv()
+
+// debugFromEnv reports whether COREZOID_DEBUG requests the detailed trace.
+// Split out so tests can exercise the wiring with t.Setenv.
+func debugFromEnv() bool { return os.Getenv("COREZOID_DEBUG") != "" }
 var apigwURL string
 var stageID int
 var insecureTLS bool
+// cachedProjectID is written once (protected by authStateMu) and then read-only.
+// Reset to 0 on every loadConfig so a workspace switch gets a fresh value.
+var cachedProjectID int
+
+// apiLogin and apiSecret are the Corezoid API key credentials (API_LOGIN /
+// API_SECRET). They provide an alternative to OAuth2 PKCE for environments
+// where browser-based authentication is not available. When both are set,
+// requests are signed using the Corezoid double-salted SHA1 pattern instead of using a Simulator bearer token.
+// These are distinct from gitLoginID / gitSecret which are used for git-sync.
+var apiLogin string
+var apiSecret string
 
 // authSnapshot returns a coherent snapshot of the auth-state globals taken
 // under the read lock. Callers that subsequently need to mutate state must
@@ -54,6 +77,14 @@ func authSnapshot() (apiURLv, tokenv, workspaceIDv, accountURLv string, stageIDv
 	authStateMu.RLock()
 	defer authStateMu.RUnlock()
 	return apiURL, apiToken, workspaceID, accountURL, stageID
+}
+
+// apiKeySnapshot returns a coherent snapshot of the API key credentials taken
+// under the read lock. Same pattern as authSnapshot.
+func apiKeySnapshot() (login, secret string) {
+	authStateMu.RLock()
+	defer authStateMu.RUnlock()
+	return apiLogin, apiSecret
 }
 
 // withAuthLock runs fn while holding the auth-state write lock. Use for
@@ -156,7 +187,12 @@ func loadConfig() {
 		apigwURL = "https://api-apigw.corezoid.com"
 	}
 	stageID, _ = strconv.Atoi(os.Getenv("COREZOID_STAGE_ID"))
+	debug = debugFromEnv() // executor API trace; same switch as logger.IsDebug
 	insecureTLS = os.Getenv("COREZOID_INSECURE_TLS") != ""
+	cachedProjectID = 0              // reset on workspace switch so it is re-resolved
+	os.Unsetenv("COREZOID_PROJECT_ID") // prevent stale process env from short-circuiting resolution
+	apiLogin = os.Getenv("API_LOGIN")
+	apiSecret = os.Getenv("API_SECRET")
 }
 
 // runCLI executes a single MCP tool from the command line and exits.
@@ -183,6 +219,21 @@ func runCLI(toolName string, rawArgs []string) {
 	}
 	fmt.Println(result)
 	os.Exit(0)
+}
+
+// installShutdownFlush flushes buffered analytics events before the process
+// exits on SIGINT/SIGTERM (e.g. the MCP client terminating the server).
+// Go's default signal handling terminates immediately without running
+// deferred calls, so this is the only chance to send events queued right
+// before shutdown.
+func installShutdownFlush() {
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
+	go func() {
+		<-sigCh
+		stopAnalytics()
+		os.Exit(0)
+	}()
 }
 
 func main() {
@@ -220,17 +271,27 @@ func main() {
 	}
 	logger.IsDebug = os.Getenv("COREZOID_DEBUG") != ""
 
+	// Flush any buffered analytics events before exit. Covers both a normal
+	// return (stdio EOF, HTTP server closed cleanly) via defer, and the
+	// client killing the process with SIGINT/SIGTERM, which by default
+	// terminates immediately without running deferred calls.
+	defer stopAnalytics()
+	installShutdownFlush()
+
 	cwd, _ := os.Getwd()
 	logger.Debug("Starting corezoid-mcp server, cwd=%s", cwd)
 
 	loadConfig()
 	logger.Debug("Loaded configuration: apiURL=%s workspaceID=%s apigwURL=%s hasToken=%v", apiURL, workspaceID, apigwURL, apiToken != "")
 
-	if apiToken == "" {
+	if apiToken == "" && (apiLogin == "" || apiSecret == "") {
 		fmt.Fprintln(os.Stderr, "[corezoid-mcp] NOTICE: No credentials found.")
-		fmt.Fprintln(os.Stderr, "[corezoid-mcp] Run the 'login' MCP tool to authenticate via OAuth2.")
+		fmt.Fprintln(os.Stderr, "[corezoid-mcp] Authenticate via one of:")
+		fmt.Fprintln(os.Stderr, "[corezoid-mcp]   1. OAuth2 browser flow — run the 'login' MCP tool.")
+		fmt.Fprintln(os.Stderr, "[corezoid-mcp]   2. API key — set API_LOGIN and API_SECRET in your project .env,")
+		fmt.Fprintln(os.Stderr, "[corezoid-mcp]      then call the 'login' MCP tool to select workspace/stage.")
 		if credPath, err := credentialsFilePath(); err == nil {
-			fmt.Fprintf(os.Stderr, "[corezoid-mcp] Token will be saved to: %s\n", credPath)
+			fmt.Fprintf(os.Stderr, "[corezoid-mcp] OAuth2 token will be saved to: %s\n", credPath)
 		}
 	}
 
@@ -240,6 +301,7 @@ func main() {
 		addr := "127.0.0.1:" + port
 		if err := runHTTPServer(addr); err != nil {
 			fmt.Fprintf(os.Stderr, "[corezoid-mcp] HTTP server error: %v\n", err)
+			stopAnalytics()
 			os.Exit(1)
 		}
 		return
@@ -482,6 +544,14 @@ func fixStruct(dataBin string, inProcessID int) (string, []string) {
 										}
 									}
 								}
+								if logicMap["type"] == "git_call" || logicMap["type"] == "api_git" {
+									// git_call deploys via a separate container build (see BuildGitCallNodes).
+									// Mark the source valid so Commit accepts the node; the build runs
+									// between compile and commit.
+									if _, set := logicMap["code_error"]; !set {
+										logicMap["code_error"] = false
+									}
+								}
 								if logicMap["type"] == "api" {
 									if extra, ok := logicMap["extra"].(map[string]interface{}); ok {
 										if body, ok := extra["body"].(string); ok && len(extra) == 1 {
@@ -514,9 +584,124 @@ func fixStruct(dataBin string, inProcessID int) (string, []string) {
 		}
 	}
 
+	// Auto-place NEW nodes (x==0 && y==0) before serialising. schemeMap aliases
+	// data["scheme"], so mutating it persists into the marshaled output.
+	if schemeMap != nil {
+		convType, _ := data["conv_type"].(string)
+		messages = append(messages, applyLayout(schemeMap, convType)...)
+	}
+
 	dataRspBin, err := json.MarshalIndent(data, "", "  ")
 	if err != nil {
 		return dataBin, messages
 	}
 	return string(dataRspBin), messages
+}
+
+// resolveAndCacheProjectID returns the project ID for the current stage and an
+// optional user-visible notice when COREZOID_PROJECT_ID is written to .env for
+// the first time. The notice is non-empty only on the first API resolution.
+// Priority: in-memory cache → COREZOID_PROJECT_ID env var → API (ShowFolder).
+// Thread-safe: reads under RLock, writes under Lock.
+func resolveAndCacheProjectID(v *Executor) (int, string) {
+	// Fast path: cache hit (read lock only).
+	authStateMu.RLock()
+	id := cachedProjectID
+	authStateMu.RUnlock()
+	if id != 0 {
+		return id, ""
+	}
+
+	// Try env var (no API call needed).
+	if s := os.Getenv("COREZOID_PROJECT_ID"); s != "" {
+		if parsed, err := strconv.Atoi(s); err == nil && parsed != 0 {
+			withAuthLock(func() { cachedProjectID = parsed })
+			return parsed, ""
+		}
+	}
+
+	// Resolve via API — must not hold the lock during I/O.
+	if v.StageID == 0 {
+		return 0, ""
+	}
+	resolved := v.GetProjectIDByStageID(v.StageID)
+	if resolved == 0 {
+		return 0, ""
+	}
+	withAuthLock(func() { cachedProjectID = resolved })
+	os.Setenv("COREZOID_PROJECT_ID", strconv.Itoa(resolved))
+	if written := appendToDotEnv("COREZOID_PROJECT_ID", strconv.Itoa(resolved)); written {
+		notice := fmt.Sprintf("(COREZOID_PROJECT_ID=%d saved to .env for future use)", resolved)
+		return resolved, notice
+	}
+	return resolved, ""
+}
+
+// appendToDotEnv appends key=value to the nearest .env file if the key is absent.
+// Returns true when the value was actually written (first time only).
+// The read-check-write is serialised under authStateMu to prevent duplicate entries
+// from concurrent resolveAndCacheProjectID calls.
+func appendToDotEnv(key, value string) bool {
+	authStateMu.Lock()
+	defer authStateMu.Unlock()
+
+	envPath := findDotEnvPath()
+	if envPath == "" {
+		return false
+	}
+	data, _ := os.ReadFile(envPath)
+	// Skip if key already present.
+	for _, line := range strings.Split(string(data), "\n") {
+		if strings.HasPrefix(strings.TrimSpace(line), key+"=") {
+			return false
+		}
+	}
+	f, err := os.OpenFile(envPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if err != nil {
+		logger.Warn("[snapshot] could not update .env: %v", err)
+		return false
+	}
+	defer f.Close()
+	_, _ = fmt.Fprintf(f, "\n%s=%s\n", key, value)
+	logger.Info("[snapshot] wrote %s=%s to %s", key, value, envPath)
+	return true
+}
+
+// findDotEnvPath returns the path of the nearest .env file by walking up from cwd.
+func findDotEnvPath() string {
+	cwd, err := os.Getwd()
+	if err != nil {
+		return ""
+	}
+	dir := cwd
+	for {
+		candidate := filepath.Join(dir, ".env")
+		if _, err := os.Stat(candidate); err == nil {
+			return candidate
+		}
+		if isProjectRoot(dir) {
+			// Create .env at project root if none exists yet.
+			return filepath.Join(dir, ".env")
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			return filepath.Join(cwd, ".env")
+		}
+		dir = parent
+	}
+}
+
+// extractObjIDFromJSON returns the obj_id from a process JSON string.
+// Returns 0 if obj_id is null or missing (new / unsaved process).
+func extractObjIDFromJSON(jsonContent string) int {
+	var m map[string]interface{}
+	if err := json.Unmarshal([]byte(jsonContent), &m); err != nil {
+		return 0
+	}
+	switch v := m["obj_id"].(type) {
+	case float64:
+		return int(v)
+	default:
+		return 0
+	}
 }

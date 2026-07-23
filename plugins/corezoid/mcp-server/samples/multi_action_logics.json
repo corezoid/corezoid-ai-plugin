@@ -26,7 +26,8 @@
           "logics": [
             {
               "type": "set_param",
-              "params": [{"name": "x", "value": "1", "type": "string"}],
+              "extra": {"x": "1"},
+              "extra_type": {"x": "string"},
               "err_node_id": "ddaabbccddaabbccddaa0003"
             },
             {

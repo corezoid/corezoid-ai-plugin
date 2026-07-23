@@ -18,6 +18,27 @@ import (
 // handlers that resolve a process ID from a file path.
 var reProcessIDFromFilename = regexp.MustCompile(`^(\d+)_`)
 
+// sanitizeFileSegment converts a raw Corezoid title into a safe filename or
+// directory-name segment. It replaces spaces AND every character that is either
+// a path separator on any supported OS or illegal in Windows filenames with an
+// underscore. This means a title like "/chat_v2" becomes "_chat_v2", which
+// matches the server-side naming that pull-folder already produces.
+//
+// Characters replaced: space  /  \  :  *  ?  "  <  >  |
+func sanitizeFileSegment(title string) string {
+	const illegal = ` /\:*?"<>|`
+	var b strings.Builder
+	b.Grow(len(title))
+	for _, r := range title {
+		if strings.ContainsRune(illegal, r) {
+			b.WriteByte('_')
+		} else {
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
+}
+
 // extractProcessIDFromPath returns the numeric process ID encoded in the
 // filename, or an error message describing the expected format.
 func extractProcessIDFromPath(filePath string) (int, string) {
@@ -58,7 +79,7 @@ func handlePullProcess(ctx context.Context, args map[string]interface{}) (string
 	fileName := fmt.Sprintf("%d.conv.json", processID)
 	if m, ok := procInfo.(map[string]interface{}); ok {
 		if title, _ := m["title"].(string); title != "" {
-			safeName := strings.ReplaceAll(title, " ", "_")
+			safeName := sanitizeFileSegment(title)
 			fileName = fmt.Sprintf("%d_%s.conv.json", processID, safeName)
 		}
 	}
@@ -102,6 +123,11 @@ func handlePullFolder(ctx context.Context, args map[string]interface{}) (string,
 	}
 
 	v := NewValidator(ctx, 0)
+
+	// Pre-warm project_id cache so push-process never needs an extra API call.
+	// folderID is the stage; its parent is the project.
+	_, _ = resolveAndCacheProjectID(v)
+
 	if err := downloadStageRecursively(v, folderID, "."); err != nil {
 		return fmt.Sprintf("Error fetching folder: %v", err), true
 	}
@@ -174,11 +200,73 @@ func handlePushProcess(ctx context.Context, args map[string]interface{}) (string
 		return fmt.Sprintf("Validation failed: %v", err), true
 	}
 
+	// Structural lint gate: catch deploy-breaking / caller-breaking shapes
+	// offline before mutating the live process. Hard findings block the push;
+	// advisory findings (noop, unused set_param, orphans, passthrough, shared
+	// clusters) are surfaced but do not stop it. force=true overrides the block.
+	force, _ := args["force"].(bool)
+	var lintNote string // advisory findings surfaced on a proceeding push (see below)
+	if lintRes, lintErr := lintProcess(filePath); lintErr == nil {
+		hard := len(lintRes.BrokenLinks) + len(lintRes.OldFormatNodes) +
+			len(lintRes.MissingDefaultGo) + len(lintRes.ShortTimers) +
+			len(lintRes.LiteralReplyValues) + len(lintRes.UnrepliedTerminals)
+		advisory := len(lintRes.NoopConditions) + len(lintRes.UnusedSetParams) +
+			len(lintRes.OrphanedNodes) + len(lintRes.PassthroughEscalations) +
+			len(lintRes.SharedErrorClusters)
+		if hard > 0 && !force {
+			return fmt.Sprintf("Push blocked: lint found %d issue(s) that would break the deploy or its callers. Fix them, or re-run with force=true to override.\n\n%s",
+				hard, FormatLintResult(lintRes)), true
+		}
+		if hard > 0 && force {
+			fmt.Fprintf(os.Stderr, "[lint] %d blocking issue(s) overridden with force=true\n", hard)
+		}
+		// The push proceeds. Surface any findings so the promise "advisory
+		// findings are shown but do not block" is actually kept — otherwise
+		// advisory-only issues would deploy silently and never be seen.
+		if hard+advisory > 0 {
+			lintNote = FormatLintResult(lintRes)
+		}
+	}
+
+	// Auto-snapshot: if process already exists on server (obj_id != null/0),
+	// capture current server state before overwriting. Never blocks on failure.
+	var snapshotNote string
+	if existingObjID := extractObjIDFromJSON(jsonContent); existingObjID != 0 {
+		if projectID, envNotice := resolveAndCacheProjectID(v); projectID != 0 && v.StageID != 0 {
+			name := extractProcessNameFromPath(filePath)
+			title := fmt.Sprintf("pre-push %s %s", name, time.Now().UTC().Format("2006-01-02 15:04"))
+			if snapObjID, snapVer, snapErr := v.CreateSnapshot(existingObjID, projectID, v.StageID, title); snapErr != nil {
+				logger.Warn("[snapshot] auto-snapshot failed, continuing: %v", snapErr)
+				snapshotNote = fmt.Sprintf("Warning: auto-snapshot failed (%v).", snapErr)
+			} else {
+				logger.Info("[snapshot] created version %d (obj_id=%d) for process %d", snapVer, snapObjID, existingObjID)
+				snapshotNote = fmt.Sprintf("Snapshot created before push (version %d, obj_id=%d).", snapVer, snapObjID)
+			}
+			if envNotice != "" && snapshotNote != "" {
+				snapshotNote += " " + envNotice
+			}
+		} else {
+			snapshotNote = "Warning: auto-snapshot skipped (project_id unresolved)."
+		}
+	}
+
 	if _, err := v.ProcessJSON(filePath, jsonContent); err != nil {
 		return fmt.Sprintf("Error deploying process: %v", err), true
 	}
 
-	return fmt.Sprintf("Process deployed successfully, ProcessID: %d", procID), false
+	result := fmt.Sprintf("Process deployed successfully, ProcessID: %d", procID)
+	if snapshotNote != "" {
+		result += "\n" + snapshotNote
+	}
+	if lintNote != "" {
+		result += "\n\nLint (non-blocking, deployed anyway):\n" + lintNote
+	}
+	// Surface the git_call container build log so the user sees what the build
+	// service reported (progress + result), not just silence on success.
+	if len(v.gitCallBuildLog) > 0 {
+		result += "\n\ngit_call build:\n" + strings.Join(v.gitCallBuildLog, "\n")
+	}
+	return result, false
 }
 
 // handleLintProcess validates a local .conv.json without touching the server.
@@ -195,8 +283,28 @@ func handleLintProcess(_ context.Context, args map[string]interface{}) (string, 
 	return FormatLintResult(result), false
 }
 
-// handleRunTask deploys the local process, fires a task at it, and reports
-// which node the task settled on. Used to smoke-test a process end-to-end.
+// runTaskDefaultWaitSec is how long run-task waits for the task to reach a
+// final node before reporting it as still in progress. Long enough to ride out
+// typical async hops (api / api_rpc / db_call), short enough not to stall an
+// interactive session.
+const runTaskDefaultWaitSec = 30
+
+// runTaskMaxWaitSec caps the user-supplied wait_sec so a single tool call
+// cannot pin the session for more than 10 minutes.
+const runTaskMaxWaitSec = 600
+
+// runTaskPollEvery is the interval between show_task polls while waiting.
+var runTaskPollEvery = 2 * time.Second
+
+// runTaskFirstPollAfter is the delay before the first show_task poll — short,
+// so a synchronous process that finishes in milliseconds returns immediately
+// instead of waiting out a full poll interval.
+var runTaskFirstPollAfter = 300 * time.Millisecond
+
+// handleRunTask deploys the local process, fires a task at it, and polls until
+// the task reaches a final node or wait_sec elapses. Used to smoke-test a
+// process end-to-end — including processes whose path crosses async nodes
+// (api, api_rpc, db_call, delay), which take longer than one scheduler tick.
 func handleRunTask(ctx context.Context, args map[string]interface{}) (string, bool) {
 	filePath, err := resolveProcessPath(args, "process_path")
 	if err != nil {
@@ -205,6 +313,20 @@ func handleRunTask(ctx context.Context, args map[string]interface{}) (string, bo
 	dataStr, err := strArg(args, "data")
 	if err != nil {
 		return "Error: " + err.Error(), true
+	}
+	waitSec := runTaskDefaultWaitSec
+	if _, ok := args["wait_sec"]; ok {
+		n, err := intArg(args, "wait_sec")
+		if err != nil {
+			return "Error: " + err.Error(), true
+		}
+		waitSec = n
+	}
+	if waitSec < 1 {
+		waitSec = 1
+	}
+	if waitSec > runTaskMaxWaitSec {
+		waitSec = runTaskMaxWaitSec
 	}
 
 	procID, errMsg := extractProcessIDFromPath(filePath)
@@ -233,16 +355,59 @@ func handleRunTask(ctx context.Context, args map[string]interface{}) (string, bo
 		return fmt.Sprintf("Error creating task: %v", err), true
 	}
 
-	time.Sleep(time.Second * 5)
+	// Poll until the task settles on a final node or the wait budget runs out.
+	// The first poll fires after a short beat so a synchronous process that
+	// completes in milliseconds returns without paying the full poll interval;
+	// subsequent polls run on the regular cadence.
+	deadline := time.Now().Add(time.Duration(waitSec) * time.Second)
+	var rspTask map[string]interface{}
+	sawTask := false
+	nextPoll := runTaskFirstPollAfter
+	for {
+		select {
+		case <-ctx.Done():
+			return fmt.Sprintf("Error: cancelled while waiting for task (ref %s): %v", ref, ctx.Err()), true
+		case <-time.After(nextPoll):
+		}
+		nextPoll = runTaskPollEvery
 
-	rspTask, err := v.showTask(ref)
-	if err != nil {
-		return fmt.Sprintf("Error getting task result: %v", err), true
+		rsp, err := v.showTask(ref)
+		if err != nil {
+			// A task that reached a final node without save_task is dropped by
+			// the platform, so show_task stops finding it. Once we have seen
+			// the task at least once, report that instead of failing with a
+			// confusing lookup error.
+			if sawTask {
+				return fmt.Sprintf(
+					"Task finished, but its final data is not available: the task left the process and show_task no longer finds it (ref %s).\n"+
+						"Most likely the final node has no save_task option. Enable {\"save_task\":true} on the final node or add an api_rpc_reply before it to inspect results.\n"+
+						"Last error: %v", ref, err), false
+			}
+			if time.Now().After(deadline) {
+				return fmt.Sprintf("Error getting task result (ref %s): %v", ref, err), true
+			}
+			continue
+		}
+		sawTask = true
+		rspTask = rsp
+
+		serverNodeID, _ := rsp["node_id"].(string)
+		if ni, ok := lookupNode(v, serverNodeID); ok && ni.Type == 2 {
+			break // final node reached
+		}
+		if time.Now().After(deadline) {
+			break // still in flight — report the parked node below
+		}
 	}
+
 	logger.Info("Task response: %+v", rspTask)
 	rspTaskData, _ := rspTask["data"].(map[string]interface{})
 	rspTaskDataBin, _ := json.Marshal(rspTaskData)
 	serverNodeID, _ := rspTask["node_id"].(string)
+	taskID := ""
+	if idv, ok := rspTask["obj_id"]; ok && idv != nil {
+		taskID = fmt.Sprintf("%v", idv)
+	}
 
 	if v.Debug {
 		for k, ni := range v.NodeIDMap {
@@ -250,19 +415,11 @@ func handleRunTask(ctx context.Context, args map[string]interface{}) (string, bo
 		}
 	}
 
-	nodeInfo, found := v.NodeIDMap[serverNodeID]
-	if !found {
-		for _, ni := range v.NodeIDMap {
-			if serverNodeID == ni.ServerID {
-				nodeInfo = ni
-				found = true
-				break
-			}
-		}
-	}
+	nodeInfo, found := lookupNode(v, serverNodeID)
 	logger.Info("Node info (found=%v): %+v", found, nodeInfo)
 	nodeType := "logic (not final)"
-	msg := "Task failed: it stopped at the non-final node"
+	msg := fmt.Sprintf("Task is still in progress after %ds: it is parked at a non-final node (an async node keeps it there). "+
+		"Re-check later with list-task-history or list-node-tasks, or re-run with a larger wait_sec", waitSec)
 	isErr := true
 	if nodeInfo.Type == 1 {
 		nodeType = "start"
@@ -277,9 +434,24 @@ func handleRunTask(ctx context.Context, args map[string]interface{}) (string, bo
 		}
 	}
 
-	summary := fmt.Sprintf("%s\nNodeID: %s\nNodeName: %s\nNodeType: %s\nProcessID: %d\nData: %s",
-		msg, serverNodeID, nodeInfo.Name, nodeType, v.ProcessID, string(rspTaskDataBin))
+	summary := fmt.Sprintf("%s\nNodeID: %s\nNodeName: %s\nNodeType: %s\nProcessID: %d\nTaskRef: %s\nTaskID: %s\nData: %s",
+		msg, serverNodeID, nodeInfo.Name, nodeType, v.ProcessID, ref, taskID, string(rspTaskDataBin))
 	return summary, isErr
+}
+
+// lookupNode resolves a server node ID against the validator's NodeIDMap,
+// falling back to a scan over ServerID values (the map is keyed by local IDs
+// after a push, but show_task returns server-side IDs).
+func lookupNode(v *Executor, serverNodeID string) (NodeInfo, bool) {
+	if ni, ok := v.NodeIDMap[serverNodeID]; ok {
+		return ni, true
+	}
+	for _, ni := range v.NodeIDMap {
+		if serverNodeID == ni.ServerID {
+			return ni, true
+		}
+	}
+	return NodeInfo{}, false
 }
 
 // handleCreateProcess creates an empty process in the given local folder and
@@ -330,7 +502,7 @@ func createConv(ctx context.Context, args map[string]interface{}, convType strin
 		return fmt.Sprintf("Error marshaling process: %v", err), true
 	}
 
-	safeName := strings.ReplaceAll(processName, " ", "_")
+	safeName := sanitizeFileSegment(processName)
 	fileName := fmt.Sprintf("%d_%s.json", processID, safeName)
 	filePath := filepath.Join(folderPath, fileName)
 	if err := os.WriteFile(filePath, data, 0644); err != nil {
@@ -365,7 +537,7 @@ func handleCreateFolder(ctx context.Context, args map[string]interface{}) (strin
 		return fmt.Sprintf("Error creating folder '%s': %v", folderName, err), true
 	}
 
-	safeName := strings.ReplaceAll(folderName, " ", "_")
+	safeName := sanitizeFileSegment(folderName)
 	dirName := fmt.Sprintf("%d_%s", newFolderID, safeName)
 	dirPath := filepath.Join(parentPath, dirName)
 	if err := os.MkdirAll(dirPath, 0755); err != nil {
@@ -485,6 +657,22 @@ func handleModifyFolder(ctx context.Context, args map[string]interface{}) (strin
 		parts = append(parts, fmt.Sprintf("description=%q", description))
 	}
 	return fmt.Sprintf("Folder #%d updated (%s)", folderID, strings.Join(parts, ", ")), false
+}
+
+// handleDeleteProcess moves a process (conv) to the Corezoid recycle bin
+// (Trash). The operation is reversible from the UI; permanent destruction is
+// intentionally not exposed via this tool.
+func handleDeleteProcess(ctx context.Context, args map[string]interface{}) (string, bool) {
+	processID, err := intArg(args, "process_id")
+	if err != nil {
+		return "Error: " + err.Error(), true
+	}
+
+	v := NewValidator(ctx, 0)
+	if err := v.DeleteProcess(processID); err != nil {
+		return fmt.Sprintf("Error: %v", err), true
+	}
+	return fmt.Sprintf("Process #%d moved to Trash.", processID), false
 }
 
 // handleDeleteFolder moves a folder to the recycle bin. The Corezoid UI's

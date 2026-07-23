@@ -184,6 +184,32 @@ in `extra` values, in condition `arg`/`val` fields, in API Call URLs and headers
 To manage environment variables (create, list, modify, delete), see
 `${CLAUDE_PLUGIN_ROOT}/skills/corezoid-variable-manager/SKILL.md`.
 
+### Nested env_var keys
+
+When an environment variable stores a JSON object or array, downstream nodes can
+read nested fields using dot- and bracket-notation directly inside the
+`{{env_var[...]}}` reference. The runtime parses the variable value as JSON once
+and resolves the path against it.
+
+```
+{{env_var[@payment-config].host}}              // object: top-level field
+{{env_var[@payment-config].retry.max}}         // object: nested dot path
+{{env_var[@allowed-currencies][0]}}            // array: first element
+{{env_var[@allowed-currencies][2].code}}       // array of objects
+{{env_var[@routing-table].key[1].param}}       // mixed object + array
+```
+
+Rules:
+
+1. The stored env_var value must be valid JSON for nested access to work — plain
+   string variables only support the bare `{{env_var[@name]}}` form.
+2. Use dot notation for object keys (`.host`) and bracket notation for array
+   indices (`[0]`). They can be chained freely.
+3. If a key or index does not exist, the reference resolves to an empty string —
+   guard against it in the next Condition node.
+4. Dynamic indices (`[{{i}}]`) are supported and follow the same 0–100 limit as
+   regular array references.
+
 ## System Variables
 
 The following system variables are available in Set Parameters nodes:
@@ -262,9 +288,25 @@ Examples:
 // Using dynamic process and task references
 {{conv[{{my_process_id}}].ref[{{my_task_ref}}].amount_owed}}
 
-// Using special process references
+// Using special process references (state diagrams via @alias)
 {{conv[@user-states].ref[{{my_task_ref}}]}}
+
+// Both alias and ref are dynamic
+{{conv[{{conv_alias}}].ref[{{my_ref}}].balance}}
 ```
+
+Rules:
+
+1. The alias inside `conv[@...]` must exist on the **current stage** at the time
+   the process is deployed — `BeforeValidation` rejects unknown aliases.
+2. `{{my_ref}}` must resolve to a non-empty string at runtime. If the referenced
+   task does not exist in the target state diagram, the expression resolves to
+   an empty string.
+3. Append a field after `ref[...]` (e.g. `.balance`, `.status`) to read a single
+   parameter; without a trailing field the reference returns the whole task
+   object.
+4. Use a numeric `conv_id` (`{{conv[1023399].ref[...]}}`) for cross-project
+   references when no `@alias` is available.
 
 ## Built-in Functions
 

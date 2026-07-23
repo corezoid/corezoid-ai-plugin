@@ -4,11 +4,17 @@
   "description": "Schema for the api_git logic type in Corezoid processes",
   "type": "object",
   "additionalProperties": false,
-  "required": ["type", "err_node_id"],
+  "required": [
+    "type",
+    "err_node_id"
+  ],
   "properties": {
     "type": {
       "type": "string",
-      "enum": ["api_git", "git_call"],
+      "enum": [
+        "api_git",
+        "git_call"
+      ],
       "description": "Specifies this is a Git Call logic block"
     },
     "version": {
@@ -18,7 +24,11 @@
     },
     "lang": {
       "type": "string",
-      "enum": ["js", "python", "golang"],
+      "enum": [
+        "js",
+        "python",
+        "golang"
+      ],
       "description": "Language of the script",
       "default": "js"
     },
@@ -51,7 +61,10 @@
       "description": "Path to the script file in the repository"
     },
     "log": {
-      "type": ["boolean", "object"],
+      "type": [
+        "boolean",
+        "object"
+      ],
       "description": "Whether to log execution details or log configuration",
       "default": {}
     },
@@ -59,6 +72,10 @@
       "type": "integer",
       "description": "Execution timeout in seconds",
       "default": 30
+    },
+    "code_error": {
+      "type": "boolean",
+      "description": "Build status flag. push-process sets it false after a successful container build so Commit accepts the node."
     }
   },
   "examples": [
