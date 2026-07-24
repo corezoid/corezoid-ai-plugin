@@ -1,22 +1,23 @@
 # Changelog
 
-## [Unreleased]
+## [2.10.0]
 
-- Fix: `push-process` no longer destroys a hand-arranged layout. On push the auto-layout re-lays-out the whole process only when **every** node is unplaced (`x==0 && y==0`); an edit that dropped node coordinates therefore used to wipe a nice arrangement. Push now **re-hydrates** any lost coordinate from the process's current server version first (matched by node title, or `obj_type`+ordinal for untitled nodes), so an existing layout is preserved — whether the edit dropped every coordinate or just some — and only genuinely-new nodes are placed; it reports `Restored N node coordinate(s)`. The server is consulted only when some node arrives unplaced.
 - Feat: a **from-scratch process now gets the full layout engine** on push (the same waterfall / layered+error-rail / regions strategies as the `layout-process` tool), instead of the lean grid — so a new process comes out cleanly arranged by default rather than cramped.
 - Feat: **smooth expansion** when inserting a node. Adding a node directly above its own placed down-child now slides that child and its downstream subtree down one row to open an in-style gap, instead of nudging the new node far below; unrelated/parallel nodes stay put, and incidental overlaps still nudge. Already-placed nodes are otherwise never moved.
-- **Breaking / behaviour**: tool calls now REJECT undeclared arguments with an
-  error naming the unknown keys and the accepted list (previously unknown keys
-  were silently dropped — a call could quietly act on the wrong object).
-  Integrations passing stray keys must remove them.
-- **Breaking / behaviour**: `create-process` / `create-state-diagram` /
-  `create-folder` refuse a working directory that contains MORE than one
-  `<id>_<name>.folder/stage.json` marker instead of silently picking the first
-  one (which could target a production stage). Pass the new explicit
-  `folder_id` argument or run from the specific folder's directory.
-- Feature: create tools accept an explicit `folder_id` and report the resolved
-  target ("created in Corezoid folder #N (explicit folder_id / resolved from
-  marker X)") in the result.
+- Feat: create tools (`create-process` / `create-state-diagram` / `create-folder`) accept an explicit `folder_id` and report the resolved target ("created in Corezoid folder #N (explicit folder_id / resolved from marker X)") in the result.
+- Feat: `run-task` accepts an optional `ref` — pass a caller-supplied task ref (e.g. one a downstream process keys off) instead of always generating a random `unix_ts_rand`. Backward compatible: omit `ref` and the auto-generated one is used.
+- Feat: `lint-process` blocks two more server-hang classes before push — an `api_rpc_reply` whose `res_data`/`res_data_type` disagree, and an `api_*` logic node missing the canonical extras (`extra`, `extra_type`, `format`, `send_sys`, `debug_info`, `customize_response`, `rfc_format`, `cert_pem`, `version`). Both used to make `push-process` hang ~15–20s and fail with the opaque "no response from server"; they now surface immediately with the exact node and field named.
+- Feat: `lint-process`'s reply-mismatch check now names the offending key. A `res_data` entry without its `res_data_type` (or vice versa) — including template, literal, `mode:"key_value"` and `mode:""` variants — is reported as `res_data key "status" has no matching res_data_type entry` instead of the server's vague "invalid value res_data or res_data_type, or both".
+- **Breaking / behaviour**: tool calls now REJECT undeclared arguments with an error naming the unknown keys and the accepted list (previously unknown keys were silently dropped — a call could quietly act on the wrong object). Integrations passing stray keys must remove them.
+- **Breaking / behaviour**: `create-process` / `create-state-diagram` / `create-folder` refuse a working directory that contains MORE than one `<id>_<name>.folder/stage.json` marker instead of silently picking the first one (which could target a production stage). Pass the new explicit `folder_id` argument or run from the specific folder's directory.
+- Fix: `push-process` no longer destroys a hand-arranged layout. On push the auto-layout re-lays-out the whole process only when **every** node is unplaced (`x==0 && y==0`); an edit that dropped node coordinates therefore used to wipe a nice arrangement. Push now **re-hydrates** any lost coordinate from the process's current server version first (matched by node title, or `obj_type`+ordinal for untitled nodes), so an existing layout is preserved — whether the edit dropped every coordinate or just some — and only genuinely-new nodes are placed; it reports `Restored N node coordinate(s)`. The server is consulted only when some node arrives unplaced.
+- Fix(login): add `prompt=login` to the OAuth `/authorize` request and validate `exp` on the returned token — the browser used to reuse a stale SSO session and hand back a token whose `exp` was already in the past, and the plugin silently accepted it and reported "Setup complete". `logout` now also reminds the user that the browser SSO session at `account.corezoid.com` must be cleared for a clean re-login.
+- Fix(codex): MCP server startup now works under Codex. The `.mcp.json` command chain preserves the caller's `PWD` as `COREZOID_WORK_DIR` and resolves the installed plugin root separately, since Codex does not expose `CLAUDE_PLUGIN_ROOT` inside MCP subprocesses.
+- Fix(pull-process): sanitize `/ \ : * ? " < > |` in titles when computing on-disk filenames (previously only spaces). A process titled `/chat_v2` now writes as `_chat_v2.conv.json`, matching the naming `pull-folder` already used. Also applied to `create-process`, `create-folder`, and to parent folder titles used as directory segments.
+- Fix(run-sh): actionable error when a prebuilt `convctl` asset can't be downloaded — the script prints the exact version and a direct link to the GitHub releases page instead of silently falling through to `go run .`. If Go is also missing, it now exits with a clear message listing the two recovery paths (update the plugin, or install Go) instead of `exec: go: not found`.
+- Fix: widen node `x`/`y` schema bounds from ±10000 to ±100000. Large real-world processes (a 760-node process was observed with nodes at ~25500 / -10920) legitimately lay out beyond ±10000, and schema validation happens *before* the lint force override, so `force=true` couldn't rescue them; push now accepts them.
+- CI: `scripts/check-skills-sync.py` verifies that every directory under `plugins/corezoid/skills/` is referenced in both `CLAUDE.md` (Architecture section) and `README.md` (skills table), and vice versa — so new skills can't silently drift out of the docs.
+- Docs: `CLAUDE.md` and `README.md` skill lists brought back in sync with the current skill set (state-diagram-create/edit, node-layout, describe, alias-manager, variable-manager, api-connector, gitcall, retro, feedback, process-optimizer, process-tech-writer); `CLAUDE.md` gains the MCP-server build/test/lint commands and a summary of repo-level CI checks.
 
 ## [2.9.0]
 
