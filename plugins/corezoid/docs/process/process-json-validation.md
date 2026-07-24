@@ -243,7 +243,12 @@ The schema enforces the following requirements:
 - Node IDs must be 24-character hexadecimal strings
 - Node IDs must be unique within the process
 - UUIDs must follow the UUID-v4 format
-- Node obj_type values must be within the allowed list [0,1,2,3]
+- Node obj_type values must be within the allowed list [0,1,2,3,4]
+- Active Call Process Stub Mode uses node `obj_type: 4`. It is valid JSON, but
+  it bypasses the real called process and returns temporary mock replies.
+  `push-process` shows it as a warning on a resolved mutable non-production-like
+  stage, and blocks immutable, production-like, or unknown stages unless
+  `allow_active_stub_mode=true` is passed.
 - Parent_id should be set to 0 for root level processes/folders unless specified otherwise
 - Use single backslash for escaping quotes in JSON strings (\" instead of \\")
 

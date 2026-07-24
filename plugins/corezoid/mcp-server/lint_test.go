@@ -117,6 +117,84 @@ func TestLintProcess_LiteralReplyValues_CleanReply(t *testing.T) {
 	}
 }
 
+// TestLintProcess_StubbedApiRpcExport verifies that the plugin accepts the
+// Corezoid UI export shape for Call a Process stubs: obj_type:4 with
+// condition.stub.logics. Stub conditions intentionally omit to_node_id because
+// they select a mock api_rpc_reply instead of routing through the graph. The
+// fixture covers both key_value replies and the Stub-specific keys shape where
+// res_data is an array and res_data_type remains an object.
+func TestLintProcess_StubbedApiRpcExport(t *testing.T) {
+	result, err := lintProcess("samples/stubbed_api_rpc.json")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !result.SchemaValid {
+		t.Fatalf("expected schema-valid stubbed api_rpc export, got: %s", result.SchemaError)
+	}
+	if len(result.OrphanedNodes) != 0 {
+		t.Fatalf("expected no orphaned nodes, got %+v", result.OrphanedNodes)
+	}
+	if len(result.BrokenLinks) != 0 {
+		t.Fatalf("expected no broken links, got %+v", result.BrokenLinks)
+	}
+	if len(result.StubModeNodes) != 1 {
+		t.Fatalf("expected active Stub Mode finding, got %+v", result.StubModeNodes)
+	}
+	if result.StubModeNodes[0].Branches != 2 {
+		t.Fatalf("expected 2 stub branches, got %+v", result.StubModeNodes[0])
+	}
+}
+
+func TestLintProcess_InactiveStubConfigDoesNotWarn(t *testing.T) {
+	data, err := os.ReadFile("samples/stubbed_api_rpc.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	data = []byte(strings.Replace(string(data), `"obj_type": 4`, `"obj_type": 0`, 1))
+
+	f, err := os.CreateTemp("", "inactive-stub-*.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.Remove(f.Name())
+	if _, err := f.Write(data); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := lintProcess(f.Name())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !result.SchemaValid {
+		t.Fatalf("expected schema-valid inactive stub config, got: %s", result.SchemaError)
+	}
+	if len(result.StubModeNodes) != 0 {
+		t.Fatalf("expected no active Stub Mode finding for obj_type:0, got %+v", result.StubModeNodes)
+	}
+}
+
+func TestFormatLintResult_StubModeExplainsRisk(t *testing.T) {
+	result, err := lintProcess("samples/stubbed_api_rpc.json")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	out := FormatLintResult(result)
+	for _, want := range []string{
+		"ACTIVE STUB MODE NODES",
+		"temporary mock replies",
+		"bypasses the real called process",
+		"before production, disable Stub Mode",
+		"allow_active_stub_mode=true",
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("expected Stub lint output to contain %q, got:\n%s", want, out)
+		}
+	}
+}
+
 // TestLintProcess_MalformedJSON verifies graceful error on invalid JSON.
 func TestLintProcess_MalformedJSON(t *testing.T) {
 	f, err := os.CreateTemp("", "bad-*.json")
@@ -224,9 +302,9 @@ func sliceContains(ss []string, target string) bool {
 // Run with -update to regenerate golden files.
 func TestFormatLintResult_Golden(t *testing.T) {
 	cases := []struct {
-		name    string
-		sample  string
-		golden  string
+		name   string
+		sample string
+		golden string
 	}{
 		{"clean", "samples/valid_process.json", "testdata/golden/lint_clean.txt"},
 		{"orphaned", "samples/orphaned_node.json", "testdata/golden/lint_orphaned.txt"},

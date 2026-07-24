@@ -301,3 +301,46 @@ func TestFixStruct_ConvIDStringToInt(t *testing.T) {
 		t.Errorf("expected conv_id: 12345 in output, got: %s", out)
 	}
 }
+
+func TestFixStruct_StubObjTypeLogicNormalized(t *testing.T) {
+	input := `{
+		"obj_id":1,
+		"scheme":{"nodes":[{
+			"id":"aabbcc001122334455667788",
+			"obj_type":4,
+			"condition":{
+				"logics":[{
+					"type":"api_rpc",
+					"conv_id":"12345",
+					"err_node_id":"bbbbcc001122334455667788",
+					"extra":{},
+					"extra_type":{},
+					"group":"all"
+				},{"type":"go","to_node_id":"cccccc001122334455667788"}],
+				"stub":{"logics":[[
+					{"type":"go_if_const","conditions":[{"param":"{{amount}}","const":"10","fun":"gt","cast":"number"}]},
+					{"type":"api_rpc_reply","mode":"key_value","res_data":{"status":"ok"},"res_data_type":{"status":"string"}}
+				]]}
+			}
+		}]}
+	}`
+	out, msgs := fixStruct(input, 1)
+	if strings.Contains(out, `"conv_id":"12345"`) {
+		t.Error("expected obj_type:4 conv_id to be integer, found string")
+	}
+	if !strings.Contains(out, `"conv_id": 12345`) {
+		t.Errorf("expected conv_id: 12345 in output, got: %s", out)
+	}
+	if !strings.Contains(out, `"fun": "more"`) {
+		t.Errorf("expected Stub go_if_const gt->more replacement, output: %s", out)
+	}
+	found := false
+	for _, m := range msgs {
+		if strings.Contains(m, `"fun":"gt" replaced with "fun":"more"`) {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("expected Stub fun alias replacement message, got: %+v", msgs)
+	}
+}

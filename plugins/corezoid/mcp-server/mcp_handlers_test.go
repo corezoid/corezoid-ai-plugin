@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -15,15 +16,25 @@ func resetGlobals(t *testing.T) {
 	origAPIURL := apiURL
 	origWorkspaceID := workspaceID
 	origStageID := stageID
+	origCachedProjectID := cachedProjectID
+	origProjectIDEnv, hadProjectIDEnv := os.LookupEnv("COREZOID_PROJECT_ID")
 	apiToken = ""
 	apiURL = ""
 	workspaceID = ""
 	stageID = 0
+	cachedProjectID = 0
+	os.Unsetenv("COREZOID_PROJECT_ID") //nolint:errcheck
 	t.Cleanup(func() {
 		apiToken = origAPIToken
 		apiURL = origAPIURL
 		workspaceID = origWorkspaceID
 		stageID = origStageID
+		cachedProjectID = origCachedProjectID
+		if hadProjectIDEnv {
+			os.Setenv("COREZOID_PROJECT_ID", origProjectIDEnv) //nolint:errcheck
+		} else {
+			os.Unsetenv("COREZOID_PROJECT_ID") //nolint:errcheck
+		}
 	})
 }
 
@@ -134,6 +145,341 @@ func TestHandlePushProcess_BlocksRpcReplyMismatch(t *testing.T) {
 	} {
 		if !strings.Contains(result, want) {
 			t.Fatalf("expected result to contain %q, got:\n%s", want, result)
+		}
+	}
+}
+
+func TestHandlePushProcess_BlocksActiveStubMode(t *testing.T) {
+	resetGlobals(t)
+
+	sample, err := os.ReadFile(filepath.Join("samples", "stubbed_api_rpc.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	dir := t.TempDir()
+	p := filepath.Join(dir, "123_stubbed.conv.json")
+	if err := os.WriteFile(p, sample, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	orig, _ := os.Getwd()
+	if err := os.Chdir(dir); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chdir(orig) }) //nolint:errcheck
+
+	result, isErr := handlePushProcess(context.Background(), map[string]interface{}{
+		"process_path": filepath.Base(p),
+		"force":        true,
+	})
+	if !isErr {
+		t.Fatalf("expected push-process to block active Stub Mode, got success: %q", result)
+	}
+	for _, want := range []string{
+		"Push blocked: active Stub Mode found",
+		"allow_active_stub_mode=true",
+		"target stage is unknown",
+		"ACTIVE STUB MODE NODES",
+		"bypasses the real called process",
+	} {
+		if !strings.Contains(result, want) {
+			t.Fatalf("expected result to contain %q, got:\n%s", want, result)
+		}
+	}
+}
+
+func TestHandlePushProcess_BlocksActiveStubModeOnImmutableStage(t *testing.T) {
+	resetGlobals(t)
+	stageID = 999
+
+	sample, err := os.ReadFile(filepath.Join("samples", "stubbed_api_rpc.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	sample = []byte(strings.Replace(string(sample), `"parent_id": 1`, `"parent_id": 321`, 1))
+
+	dir := t.TempDir()
+	p := filepath.Join(dir, "123_stubbed.conv.json")
+	if err := os.WriteFile(p, sample, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	orig, _ := os.Getwd()
+	if err := os.Chdir(dir); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chdir(orig) }) //nolint:errcheck
+
+	calls := 0
+	srv, _ := mockAPIServer(t, func(ops []map[string]interface{}) interface{} {
+		calls++
+		if len(ops) != 1 {
+			t.Fatalf("expected one op per call, got %#v", ops)
+		}
+		op := ops[0]
+		if op["type"] != "show" {
+			t.Fatalf("expected only read-only show calls before Stub block, got %#v", op)
+		}
+		switch op["obj"] {
+		case "folder":
+			if id, _ := op["obj_id"].(float64); int(id) != 321 {
+				t.Fatalf("expected policy to resolve stage from process parent_id 321, got show folder op %#v", op)
+			}
+			return wrapOp(map[string]interface{}{
+				"proc":            "ok",
+				"obj_id":          float64(321),
+				"obj_type":        float64(0),
+				"parent_obj_id":   float64(654),
+				"parent_obj_type": "project",
+			})
+		case "stage":
+			if id, _ := op["obj_id"].(float64); int(id) != 321 {
+				t.Fatalf("expected stageInfo for parent stage 321, got %#v", op)
+			}
+			return wrapOp(map[string]interface{}{
+				"proc":       "ok",
+				"immutable":  true,
+				"title":      "production",
+				"short_name": "prod",
+			})
+		default:
+			t.Fatalf("expected show folder or show stage, got %#v", op)
+		}
+		return wrapOp(map[string]interface{}{"proc": "error", "description": "unexpected op"})
+	})
+	setProjectAuth(t, srv.URL)
+
+	result, isErr := handlePushProcess(context.Background(), map[string]interface{}{
+		"process_path": filepath.Base(p),
+	})
+	if !isErr {
+		t.Fatalf("expected push-process to block active Stub Mode on immutable stage, got success: %q", result)
+	}
+	if calls != 2 {
+		t.Fatalf("expected two read-only stage policy calls and no deploy mutations, got %d calls", calls)
+	}
+	for _, want := range []string{
+		"Push blocked: active Stub Mode found",
+		"stage 321",
+		"immutable/read-only",
+		"allow_active_stub_mode=true",
+	} {
+		if !strings.Contains(result, want) {
+			t.Fatalf("expected result to contain %q, got:\n%s", want, result)
+		}
+	}
+}
+
+func TestHandlePushProcess_WarnsOnlyForDevelopStageStubMode(t *testing.T) {
+	resetGlobals(t)
+	stageID = 999
+
+	sample, err := os.ReadFile(filepath.Join("samples", "stubbed_api_rpc.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	sample = []byte(strings.Replace(string(sample), `"parent_id": 1`, `"parent_id": 321`, 1))
+
+	dir := t.TempDir()
+	p := filepath.Join(dir, "123_stubbed.conv.json")
+	if err := os.WriteFile(p, sample, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	orig, _ := os.Getwd()
+	if err := os.Chdir(dir); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chdir(orig) }) //nolint:errcheck
+
+	calls := 0
+	srv, _ := mockAPIServer(t, func(ops []map[string]interface{}) interface{} {
+		calls++
+		if len(ops) == 1 && ops[0]["type"] == "show" && ops[0]["obj"] == "folder" {
+			if id, _ := ops[0]["obj_id"].(float64); int(id) != 321 {
+				return wrapOp(map[string]interface{}{"proc": "error", "description": "stopped after Stub warning"})
+			}
+			return wrapOp(map[string]interface{}{
+				"proc":            "ok",
+				"obj_id":          float64(321),
+				"obj_type":        float64(0),
+				"parent_obj_id":   float64(654),
+				"parent_obj_type": "project",
+			})
+		}
+		if len(ops) == 1 && ops[0]["type"] == "show" && ops[0]["obj"] == "stage" {
+			return wrapOp(map[string]interface{}{
+				"proc":       "ok",
+				"immutable":  false,
+				"title":      "develop",
+				"short_name": "dev",
+			})
+		}
+		return wrapOp(map[string]interface{}{"proc": "error", "description": "stopped after Stub warning"})
+	})
+	setProjectAuth(t, srv.URL)
+
+	result, isErr := handlePushProcess(context.Background(), map[string]interface{}{
+		"process_path": filepath.Base(p),
+	})
+	if !isErr {
+		t.Fatalf("expected downstream deploy error from mock API, got success: %q", result)
+	}
+	if calls < 3 {
+		t.Fatalf("expected push-process to continue past Stub warning, got %d API call(s); result:\n%s", calls, result)
+	}
+	if strings.Contains(result, "Push blocked: active Stub Mode found") {
+		t.Fatalf("develop stage should not return the Stub block message, got:\n%s", result)
+	}
+	if !strings.Contains(result, "stopped after Stub warning") {
+		t.Fatalf("expected downstream mock API error, got:\n%s", result)
+	}
+}
+
+func TestStageNameLooksProduction(t *testing.T) {
+	for _, tc := range []struct {
+		title     string
+		shortName string
+		want      bool
+	}{
+		{title: "production", shortName: "p", want: true},
+		{title: "Release", shortName: "prod", want: true},
+		{title: "prod old", shortName: "p-old", want: true},
+		{title: "production mirror", shortName: "mirror", want: true},
+		{title: "pre production", shortName: "pre", want: true},
+		{title: "Product sandbox", shortName: "dev", want: false},
+		{title: "develop", shortName: "dev", want: false},
+	} {
+		if got := stageNameLooksProduction(tc.title, tc.shortName); got != tc.want {
+			t.Fatalf("stageNameLooksProduction(%q, %q) = %v, want %v", tc.title, tc.shortName, got, tc.want)
+		}
+	}
+}
+
+func TestResolveStageAndProjectFromFolder_WalksToStageRoot(t *testing.T) {
+	resetGlobals(t)
+
+	var seen []int
+	srv, e := mockAPIServer(t, func(ops []map[string]interface{}) interface{} {
+		if len(ops) != 1 || ops[0]["type"] != "show" || ops[0]["obj"] != "folder" {
+			t.Fatalf("expected show folder, got %#v", ops)
+		}
+		id, _ := ops[0]["obj_id"].(float64)
+		seen = append(seen, int(id))
+		switch int(id) {
+		case 111:
+			return wrapOp(map[string]interface{}{
+				"proc":            "ok",
+				"obj_id":          float64(111),
+				"obj_type":        float64(0),
+				"parent_obj_id":   float64(222),
+				"parent_obj_type": "folder",
+			})
+		case 222:
+			return wrapOp(map[string]interface{}{
+				"proc":            "ok",
+				"obj_id":          float64(222),
+				"obj_type":        float64(0),
+				"parent_obj_id":   float64(333),
+				"parent_obj_type": "project",
+			})
+		default:
+			return wrapOp(map[string]interface{}{"proc": "error", "description": "unexpected folder"})
+		}
+	})
+	e.APIUrl = srv.URL
+	e.WorkspaceID = "i260836082"
+	e.Token = "test-token"
+
+	stage, project, err := resolveStageAndProjectFromFolder(e, 111)
+	if err != nil {
+		t.Fatalf("resolveStageAndProjectFromFolder: %v", err)
+	}
+	if stage != 222 || project != 333 {
+		t.Fatalf("resolved stage/project = %d/%d, want 222/333", stage, project)
+	}
+	if strings.Join([]string{strconv.Itoa(seen[0]), strconv.Itoa(seen[1])}, ",") != "111,222" {
+		t.Fatalf("unexpected folder walk: %+v", seen)
+	}
+}
+
+func TestHandlePushProcess_AllowStubModeContinuesPastStubGate(t *testing.T) {
+	resetGlobals(t)
+
+	sample, err := os.ReadFile(filepath.Join("samples", "stubbed_api_rpc.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	dir := t.TempDir()
+	p := filepath.Join(dir, "123_stubbed.conv.json")
+	if err := os.WriteFile(p, sample, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	orig, _ := os.Getwd()
+	if err := os.Chdir(dir); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chdir(orig) }) //nolint:errcheck
+
+	calls := 0
+	srv, _ := mockAPIServer(t, func(ops []map[string]interface{}) interface{} {
+		calls++
+		return wrapOp(map[string]interface{}{"proc": "error", "description": "stopped after stub gate"})
+	})
+	setProjectAuth(t, srv.URL)
+
+	result, isErr := handlePushProcess(context.Background(), map[string]interface{}{
+		"process_path":           filepath.Base(p),
+		"allow_active_stub_mode": true,
+	})
+	if !isErr {
+		t.Fatalf("expected downstream deploy error from mock API, got success: %q", result)
+	}
+	if calls == 0 {
+		t.Fatalf("expected push-process to continue to API after allow_active_stub_mode=true; result:\n%s", result)
+	}
+	if strings.Contains(result, "Push blocked: active Stub Mode found") {
+		t.Fatalf("allow_active_stub_mode=true should not return the Stub block message, got:\n%s", result)
+	}
+	if !strings.Contains(result, "stopped after stub gate") {
+		t.Fatalf("expected downstream mock API error, got:\n%s", result)
+	}
+}
+
+func TestPushProcessToolSchema_DocumentsStubModeConfirmation(t *testing.T) {
+	var pushTool *mcpTool
+	for i := range toolRegistry {
+		if toolRegistry[i].Name == "push-process" {
+			pushTool = &toolRegistry[i]
+			break
+		}
+	}
+	if pushTool == nil {
+		t.Fatal("push-process tool not found")
+	}
+	if !strings.Contains(pushTool.Description, "allow_active_stub_mode=true") {
+		t.Fatalf("expected push-process description to mention allow_active_stub_mode=true, got:\n%s", pushTool.Description)
+	}
+
+	inputSchema, ok := pushTool.InputSchema.(map[string]interface{})
+	if !ok {
+		t.Fatalf("unexpected push-process input schema: %#v", pushTool.InputSchema)
+	}
+	schema, ok := inputSchema["properties"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("unexpected push-process input schema: %#v", pushTool.InputSchema)
+	}
+	rawAllow, ok := schema["allow_active_stub_mode"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("expected allow_active_stub_mode property in push-process schema, got %#v", schema)
+	}
+	desc, _ := rawAllow["description"].(string)
+	for _, want := range []string{"Stub Mode", "obj_type:4", "temporary mock replies"} {
+		if !strings.Contains(desc, want) {
+			t.Fatalf("expected allow_active_stub_mode description to contain %q, got:\n%s", want, desc)
 		}
 	}
 }

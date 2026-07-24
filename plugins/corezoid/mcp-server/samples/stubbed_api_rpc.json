@@ -1,0 +1,137 @@
+{
+  "conv_type": "process",
+  "description": "Fixture: Call a Process node with Corezoid UI stub/mock replies.",
+  "obj_id": 1,
+  "obj_type": 1,
+  "params": [],
+  "parent_id": 1,
+  "ref_mask": true,
+  "scheme": {
+    "nodes": [
+      {
+        "condition": {
+          "logics": [
+            {
+              "to_node_id": "bbbbbbbbbbbbbbbbbbbbbbbb",
+              "type": "go"
+            }
+          ],
+          "semaphors": []
+        },
+        "description": "",
+        "extra": "{\"modeForm\":\"collapse\",\"icon\":\"\"}",
+        "id": "aaaaaaaaaaaaaaaaaaaaaaaa",
+        "obj_type": 1,
+        "options": null,
+        "title": "Start",
+        "x": 100,
+        "y": 100
+      },
+      {
+        "condition": {
+          "logics": [
+            {
+              "conv_id": 123456,
+              "err_node_id": "dddddddddddddddddddddddd",
+              "extra": {
+                "objId": "{{objId}}"
+              },
+              "extra_type": {
+                "objId": "string"
+              },
+              "group": "all",
+              "type": "api_rpc",
+              "user_id": 66423
+            },
+            {
+              "to_node_id": "cccccccccccccccccccccccc",
+              "type": "go"
+            }
+          ],
+          "semaphors": [],
+          "stub": {
+            "logics": [
+              [
+                {
+                  "conditions": [
+                    {
+                      "cast": "string",
+                      "const": "error",
+                      "fun": "eq",
+                      "param": "{{mode}}"
+                    }
+                  ],
+                  "type": "go_if_const"
+                },
+                {
+                  "exception_reason": "stub error",
+                  "mode": "key_value",
+                  "res_data": {
+                    "status": "error"
+                  },
+                  "res_data_type": {
+                    "status": "string"
+                  },
+                  "throw_exception": true,
+                  "type": "api_rpc_reply"
+                }
+              ],
+              [
+                {
+                  "mode": "keys",
+                  "res_data": [
+                    "stub_node_response"
+                  ],
+                  "res_data_type": {
+                    "stub_node_response": "string"
+                  },
+                  "throw_exception": false,
+                  "type": "api_rpc_reply"
+                }
+              ]
+            ]
+          }
+        },
+        "description": "",
+        "extra": "{\"modeForm\":\"expand\",\"icon\":\"\"}",
+        "id": "bbbbbbbbbbbbbbbbbbbbbbbb",
+        "obj_type": 4,
+        "options": null,
+        "title": "Call with Stub",
+        "x": 100,
+        "y": 300
+      },
+      {
+        "condition": {
+          "logics": [],
+          "semaphors": []
+        },
+        "description": "",
+        "extra": "{\"modeForm\":\"collapse\",\"icon\":\"success\"}",
+        "id": "cccccccccccccccccccccccc",
+        "obj_type": 2,
+        "options": "{\"save_task\":true}",
+        "title": "Final",
+        "x": 100,
+        "y": 500
+      },
+      {
+        "condition": {
+          "logics": [],
+          "semaphors": []
+        },
+        "description": "",
+        "extra": "{\"modeForm\":\"collapse\",\"icon\":\"error\"}",
+        "id": "dddddddddddddddddddddddd",
+        "obj_type": 2,
+        "options": null,
+        "title": "Error",
+        "x": 360,
+        "y": 300
+      }
+    ],
+    "web_settings": []
+  },
+  "status": "active",
+  "title": "Stubbed API RPC"
+}

@@ -28,7 +28,7 @@
     "group": {
       "type": "string",
       "enum": ["all", ""],
-      "description": "Wait mode for the called process",
+      "description": "Call parameter mode used by the UI: \"all\" sends all task parameters to the called process; empty string sends only extra/extra_type fields",
       "default": "all"
     },
     "conv_id": {
