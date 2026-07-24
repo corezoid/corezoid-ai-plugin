@@ -316,7 +316,7 @@ Complete JSON structures for all node types used when modifying Corezoid process
 
 ---
 
-## Call a Process Node (`obj_type: 0`, `type: "api_rpc"`)
+## Call a Process Node (`obj_type: 0` or Stub-enabled `obj_type: 4`, `type: "api_rpc"`)
 
 ```json
 {
@@ -362,8 +362,22 @@ Complete JSON structures for all node types used when modifying Corezoid process
 - `extra` and `extra_type` are **required** (use `{}` if no params needed)
 - Keys in `extra` and `extra_type` must **match exactly**
 - Object values in `extra` must be stringified: `"{\"key\":\"value\"}"`
-- `group: "all"` — waits for the called process to reply
+- `group: "all"` sends all current task parameters to the called process;
+  `group: ""` sends only fields listed in `extra` / `extra_type`.
 - `err_node_id` is **required**
+- Stub/mock replies configured in the UI are stored under `condition.stub`.
+  Stub Mode is active only when the Call a Process node is saved as
+  `obj_type: 4`; with `obj_type: 0`, the runtime calls the real target process.
+  Stub conditions are evaluated against the parameters sent to the called
+  process, so use `group: "all"` or explicitly map the fields through `extra`.
+  Stub branches return `api_rpc_reply`; optional `go_if_const` branches inside
+  the stub do not use `to_node_id` because they select a mock reply, not a graph
+  route.
+- Treat active Stub Mode as a temporary development/integration mock. It
+  bypasses the real called process. `push-process` shows it as a warning on a
+  resolved mutable non-production-like stage, but blocks it on immutable,
+  production-like, or unknown stages unless `allow_active_stub_mode=true` is
+  passed after explicit confirmation.
 
 ---
 
