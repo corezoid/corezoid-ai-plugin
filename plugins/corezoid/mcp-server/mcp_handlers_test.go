@@ -2,6 +2,9 @@ package main
 
 import (
 	"context"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -242,6 +245,169 @@ func TestHandleToolCall_CreateAlias_BadFilename(t *testing.T) {
 		t.Error("expected isError=true for bad filename")
 	}
 	_ = result
+}
+
+// TestHandleToolCall_CreateAlias_StageMismatchHint verifies that when the
+// server returns "Object is not in stage" (the exact failure mode from
+// issue #26), the tool surfaces a hint that explains stage_id derivation and
+// mentions the configured COREZOID_STAGE_ID when it was NOT used.
+func TestHandleToolCall_CreateAlias_StageMismatchHint(t *testing.T) {
+	resetGlobals(t)
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		// Fail every op with the exact server phrase we want to detect.
+		json.NewEncoder(w).Encode(map[string]interface{}{ //nolint:errcheck
+			"request_proc": "ok",
+			"ops": []interface{}{map[string]interface{}{
+				"proc":        "error",
+				"description": "Object is not in stage",
+			}},
+		})
+	}))
+	t.Cleanup(srv.Close)
+
+	origAccount := accountURL
+	accountURL = srv.URL
+	t.Cleanup(func() { accountURL = origAccount })
+
+	apiURL = srv.URL
+	apiToken = "test-token"
+	workspaceID = "1"
+	stageID = 9026 // frozen (wrong) env stage — the bug from the issue
+
+	dir := t.TempDir()
+	orig, _ := os.Getwd()
+	os.Chdir(dir)                        //nolint:errcheck
+	t.Cleanup(func() { os.Chdir(orig) }) //nolint:errcheck
+
+	p := filepath.Join(dir, "123_proc.conv.json")
+	os.WriteFile(p, []byte(`{"obj_id":123}`), 0644) //nolint:errcheck
+
+	result, isErr := handleToolCall(context.Background(), "create-alias", map[string]interface{}{
+		"process_path": "123_proc.conv.json",
+		"short_name":   "my-alias",
+		"stage_id":     float64(10605), // explicit correct stage
+	})
+	if !isErr {
+		t.Fatalf("expected isError=true when server rejects with 'Object is not in stage', got %q", result)
+	}
+	if !strings.Contains(result, "Object is not in stage") {
+		t.Errorf("expected server error to be surfaced, got %q", result)
+	}
+	if !strings.Contains(result, "COREZOID_STAGE_ID is set to 9026") {
+		t.Errorf("expected hint mentioning frozen env stage, got %q", result)
+	}
+	if !strings.Contains(result, "stage 10605") {
+		t.Errorf("expected hint mentioning attempted stage, got %q", result)
+	}
+}
+
+// TestHandleToolCall_CreateAlias_UsesParentIDFromFile verifies that the tool
+// walks the process's parent_id chain (via ShowFolder) to find the correct
+// stage instead of blindly using COREZOID_STAGE_ID. This is the core fix for
+// issue #26.
+func TestHandleToolCall_CreateAlias_UsesParentIDFromFile(t *testing.T) {
+	resetGlobals(t)
+
+	// Mock server that answers ShowFolder + create_alias flows.
+	// parent_id 555 → stage 10605 (obj_type 3), and create_alias returns ok
+	// only when stage_id in the payload is 10605.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Ops []map[string]interface{} `json:"ops"`
+		}
+		json.NewDecoder(r.Body).Decode(&body) //nolint:errcheck
+		w.Header().Set("Content-Type", "application/json")
+
+		opsOut := make([]interface{}, 0, len(body.Ops))
+		for _, op := range body.Ops {
+			switch op["obj"] {
+			case "folder":
+				id, _ := op["obj_id"].(float64)
+				switch int(id) {
+				case 555: // subfolder → parent = stage
+					opsOut = append(opsOut, map[string]interface{}{
+						"proc":            "ok",
+						"obj_id":          float64(555),
+						"obj_type":        float64(0),
+						"parent_obj_id":   float64(10605),
+						"parent_obj_type": "folder",
+					})
+				case 10605: // the correct stage
+					opsOut = append(opsOut, map[string]interface{}{
+						"proc":            "ok",
+						"obj_id":          float64(10605),
+						"obj_type":        float64(3),
+						"parent_obj_id":   float64(7000),
+						"parent_obj_type": "project",
+					})
+				default:
+					// GetProjectIDByStageID walk (called by CreateAlias) also lands here.
+					opsOut = append(opsOut, map[string]interface{}{
+						"proc":            "ok",
+						"obj_id":          id,
+						"obj_type":        float64(3),
+						"parent_obj_id":   float64(7000),
+						"parent_obj_type": "project",
+					})
+				}
+			case "alias":
+				// Reject if the request tries to create in the wrong stage.
+				stage, _ := op["stage_id"].(float64)
+				if int(stage) != 10605 {
+					opsOut = append(opsOut, map[string]interface{}{
+						"proc":        "error",
+						"description": "Object is not in stage",
+					})
+					continue
+				}
+				opsOut = append(opsOut, map[string]interface{}{
+					"proc":   "ok",
+					"obj_id": float64(9999),
+				})
+			default:
+				opsOut = append(opsOut, map[string]interface{}{"proc": "ok"})
+			}
+		}
+		json.NewEncoder(w).Encode(map[string]interface{}{ //nolint:errcheck
+			"request_proc": "ok",
+			"ops":          opsOut,
+		})
+	}))
+	t.Cleanup(srv.Close)
+
+	origAccount := accountURL
+	accountURL = srv.URL
+	t.Cleanup(func() { accountURL = origAccount })
+
+	apiURL = srv.URL
+	apiToken = "test-token"
+	workspaceID = "1"
+	stageID = 9026 // wrong env stage — the frozen value from the issue
+
+	dir := t.TempDir()
+	orig, _ := os.Getwd()
+	os.Chdir(dir)                        //nolint:errcheck
+	t.Cleanup(func() { os.Chdir(orig) }) //nolint:errcheck
+
+	// parent_id 555 → stage 10605 (per the mock).
+	p := filepath.Join(dir, "123_proc.conv.json")
+	os.WriteFile(p, []byte(`{"obj_id":123,"parent_id":555}`), 0644) //nolint:errcheck
+
+	result, isErr := handleToolCall(context.Background(), "create-alias", map[string]interface{}{
+		"process_path": "123_proc.conv.json",
+		"short_name":   "my-alias",
+	})
+	if isErr {
+		t.Fatalf("expected success; alias should have been created in derived stage 10605, got error: %q", result)
+	}
+	if !strings.Contains(result, "AliasID: 9999") {
+		t.Errorf("expected AliasID in success message, got %q", result)
+	}
+	if !strings.Contains(result, "stage 10605") {
+		t.Errorf("expected derived stage 10605 in success message, got %q", result)
+	}
 }
 
 // ---- modify-task / delete-task argument validation -------------------------
