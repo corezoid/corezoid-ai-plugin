@@ -4,11 +4,12 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Repository Purpose
 
-This is a Claude Code / Codex / Kiro plugin (`@corezoid/corezoid-ai-plugin`) that gives the AI the knowledge and tools to create, edit, and review [Corezoid](https://corezoid.com) BPM processes directly from the IDE. The repo ships:
+This is a Claude Code / Codex / Kiro / OpenCode plugin (`@corezoid/corezoid-ai-plugin`) that gives the AI the knowledge and tools to create, edit, and review [Corezoid](https://corezoid.com) BPM processes directly from the IDE. The repo ships:
 
 - Static skills (`plugins/corezoid/skills/*/SKILL.md` + reference docs, JSON samples).
-- Plugin manifests for Claude Code, Codex, and the agents marketplace.
+- Plugin manifests for Claude Code, Codex, Kiro, OpenCode, and the agents marketplace.
 - A Go-based MCP server (`convctl`) in `plugins/corezoid/mcp-server/` that exposes Corezoid operations as MCP tools. It has real tests (`go test -race`), golden tests for layout and lint, integration tests, and a release pipeline that builds signed multi-platform binaries.
+- An OpenCode adapter (`plugins/corezoid/opencode-plugin/`) — a TypeScript module that registers each skill as an OpenCode tool with `${CLAUDE_PLUGIN_ROOT}` substituted at install time. Bundled into `~/.config/opencode/plugins/corezoid.ts` by `scripts/install-opencode.sh`.
 
 ## Plugin Development Commands
 
@@ -52,8 +53,8 @@ go test -run TestLayoutGolden -update ./...
 
 CI (`.github/workflows/ci.yml`) also runs:
 
-- JSON validation for all four plugin manifests + `.mcp.json`.
-- Version sync across `plugins/corezoid/.claude-plugin/plugin.json`, `plugins/corezoid/.codex-plugin/plugin.json`, `.claude-plugin/marketplace.json`, `.agents/plugins/marketplace.json`.
+- JSON validation for all plugin manifests + `.mcp.json` + `.mcp.opencode.json`.
+- Version sync across `plugins/corezoid/.claude-plugin/plugin.json`, `plugins/corezoid/.codex-plugin/plugin.json`, `plugins/corezoid/.opencode-plugin/plugin.json`, `plugins/corezoid/opencode-plugin/package.json`, `.claude-plugin/marketplace.json`, `.agents/plugins/marketplace.json`.
 - License consistency (must be MIT everywhere).
 - Markdown link check.
 - Skills-list sync (`scripts/check-skills-sync.py`): the skill directories under `plugins/corezoid/skills/` must match the lists in `CLAUDE.md` and `README.md`.
@@ -71,6 +72,14 @@ python3 scripts/generate-discovery.py
 .claude-plugin/plugin.json        — Plugin manifest (name, version, description)
 plugins/corezoid/
   mcp-server/                     — Go MCP server source (starts automatically via .mcp.json)
+  opencode-plugin/                — TypeScript adapter for OpenCode (opencode.ai). Registers
+                                    each SKILL.md under skills/ as an OpenCode tool with
+                                    ${CLAUDE_PLUGIN_ROOT} resolved at install time.
+                                    index.ts + skills-loader.ts + index.test.ts (bun test).
+  scripts/
+    install-kiro.sh               — Kiro workspace / Power installer
+    install-opencode.sh           — OpenCode installer: patches opencode.json (MCP entry)
+                                    and bundles the TS adapter to ~/.config/opencode/plugins/
   skills/
     corezoid/                       — Main skill: platform overview, MCP tools, routing
       SKILL.md

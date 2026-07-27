@@ -312,6 +312,8 @@ FOOTER
 
   sync_version "$PLUGIN_ROOT/.kiro-plugin/plugin.json"
   sync_version "$PLUGIN_ROOT/.codex-plugin/plugin.json"
+  sync_version "$PLUGIN_ROOT/.opencode-plugin/plugin.json"
+  sync_version "$PLUGIN_ROOT/opencode-plugin/package.json"
   sync_version "$REPO_ROOT/.claude-plugin/marketplace.json"
   sync_version "$REPO_ROOT/.agents/plugins/marketplace.json"
 

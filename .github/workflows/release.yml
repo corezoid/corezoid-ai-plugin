@@ -96,3 +96,40 @@ jobs:
             public/llms.txt
             public/.well-known/skills/index.json
             POWER.md
+
+  publish-opencode-plugin:
+    name: Publish OpenCode plugin to npm
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: plugins/corezoid/opencode-plugin
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          registry-url: "https://registry.npmjs.org"
+
+      - name: Verify package.json version matches tag
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          PKG_VERSION=$(node -p "require('./package.json').version")
+          EXPECTED="${TAG#v}"
+          if [ "$PKG_VERSION" != "$EXPECTED" ]; then
+            echo "ERROR: package.json version ($PKG_VERSION) does not match tag ($EXPECTED)"
+            exit 1
+          fi
+          echo "Versions match: $PKG_VERSION"
+
+      - name: Publish to npm
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          if [ -z "$NODE_AUTH_TOKEN" ]; then
+            echo "NPM_TOKEN secret is not set — skipping npm publish."
+            echo "Set the NPM_TOKEN repo secret to enable automatic publishing."
+            exit 0
+          fi
+          npm publish --access public

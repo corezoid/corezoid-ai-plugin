@@ -1,0 +1,43 @@
+{
+  "name": "@corezoid/opencode-plugin",
+  "version": "2.10.0",
+  "description": "OpenCode host adapter for the Corezoid AI plugin. Registers Corezoid skills as OpenCode tools.",
+  "type": "module",
+  "main": "index.ts",
+  "exports": {
+    ".": "./index.ts"
+  },
+  "files": [
+    "index.ts",
+    "README.md"
+  ],
+  "author": {
+    "name": "Corezoid",
+    "url": "https://corezoid.com"
+  },
+  "homepage": "https://github.com/corezoid/corezoid-ai-plugin",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/corezoid/corezoid-ai-plugin.git",
+    "directory": "plugins/corezoid/opencode-plugin"
+  },
+  "license": "MIT",
+  "keywords": [
+    "opencode",
+    "opencode-plugin",
+    "corezoid",
+    "bpm",
+    "workflow",
+    "mcp"
+  ],
+  "peerDependencies": {
+    "@opencode-ai/plugin": "*"
+  },
+  "devDependencies": {
+    "@opencode-ai/plugin": "*",
+    "@types/node": "^20"
+  },
+  "scripts": {
+    "test": "bun test"
+  }
+}

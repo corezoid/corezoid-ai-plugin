@@ -20,7 +20,10 @@ jobs:
           python3 -m json.tool .agents/plugins/marketplace.json > /dev/null
           python3 -m json.tool plugins/corezoid/.claude-plugin/plugin.json > /dev/null
           python3 -m json.tool plugins/corezoid/.codex-plugin/plugin.json > /dev/null
+          python3 -m json.tool plugins/corezoid/.opencode-plugin/plugin.json > /dev/null
           python3 -m json.tool plugins/corezoid/.mcp.json > /dev/null
+          python3 -m json.tool plugins/corezoid/.mcp.opencode.json > /dev/null
+          python3 -m json.tool plugins/corezoid/opencode-plugin/package.json > /dev/null
 
       - name: No dead plugin paths in marketplace manifests
         run: |
@@ -62,6 +65,10 @@ jobs:
               claude_ver = json.load(f)["version"]
           with open("plugins/corezoid/.codex-plugin/plugin.json") as f:
               codex_ver = json.load(f)["version"]
+          with open("plugins/corezoid/.opencode-plugin/plugin.json") as f:
+              opencode_ver = json.load(f)["version"]
+          with open("plugins/corezoid/opencode-plugin/package.json") as f:
+              opencode_pkg_ver = json.load(f)["version"]
           with open(".claude-plugin/marketplace.json") as f:
               market_ver = json.load(f)["plugins"][0]["version"]
           with open(".agents/plugins/marketplace.json") as f:
@@ -70,6 +77,8 @@ jobs:
           versions = {
               "claude plugin.json": claude_ver,
               "codex plugin.json": codex_ver,
+              "opencode plugin.json": opencode_ver,
+              "opencode-plugin package.json": opencode_pkg_ver,
               ".claude-plugin/marketplace.json": market_ver,
               ".agents/plugins/marketplace.json": agents_ver,
           }
@@ -90,6 +99,8 @@ jobs:
           manifests = [
               ("plugins/corezoid/.claude-plugin/plugin.json", lambda d: d.get("license")),
               ("plugins/corezoid/.codex-plugin/plugin.json", lambda d: d.get("license")),
+              ("plugins/corezoid/.opencode-plugin/plugin.json", lambda d: d.get("license")),
+              ("plugins/corezoid/opencode-plugin/package.json", lambda d: d.get("license")),
               (".claude-plugin/marketplace.json",             lambda d: d["plugins"][0].get("license")),
               (".agents/plugins/marketplace.json",            lambda d: d["plugins"][0].get("license")),
           ]
@@ -192,6 +203,25 @@ jobs:
       - name: Lint run.sh (syntax check)
         run: sh -n plugins/corezoid/mcp-server/run.sh
 
+      - name: Lint install-opencode.sh (syntax check)
+        run: sh -n plugins/corezoid/scripts/install-opencode.sh
+
+      - name: install-opencode.sh --print-mcp emits valid JSON
+        run: |
+          bash plugins/corezoid/scripts/install-opencode.sh --print-mcp \
+            | python3 -m json.tool > /dev/null
+
+      - name: install-opencode.sh is idempotent
+        run: |
+          TMP=$(mktemp -d)
+          export XDG_CONFIG_HOME="$TMP/config"
+          export HOME="$TMP"
+          bash plugins/corezoid/scripts/install-opencode.sh "$TMP/opencode.json" > /dev/null
+          cp "$TMP/opencode.json" "$TMP/first.json"
+          bash plugins/corezoid/scripts/install-opencode.sh "$TMP/opencode.json" > /dev/null
+          diff "$TMP/first.json" "$TMP/opencode.json"
+          echo "Idempotency OK"
+
   docs:
     name: Docs link check
     runs-on: ubuntu-latest
@@ -203,6 +233,28 @@ jobs:
         with:
           use-quiet-mode: "yes"
           config-file: ".github/mlc_config.json"
+
+  opencode-plugin:
+    name: OpenCode plugin build & test
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: plugins/corezoid/opencode-plugin
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install deps
+        run: bun install
+
+      - name: Type-check
+        run: bunx tsc --noEmit
+
+      - name: Test
+        run: bun test
 
   mcp-server:
     name: MCP server build & test

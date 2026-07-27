@@ -1,6 +1,6 @@
-# Corezoid — Claude Code & Codex Plugin
+# Corezoid — Claude Code, Codex, Kiro & OpenCode Plugin
 
-A plugin for [Claude Code](https://claude.ai/code) and [Codex](https://openai.com/codex) that connects the [Corezoid](https://corezoid.com) platform to Claude via MCP. Claude gets direct access to Corezoid processes and deep platform knowledge to create, edit, review, and deploy workflows through natural conversation.
+A plugin for [Claude Code](https://claude.ai/code), [Codex](https://openai.com/codex), [AWS Kiro](https://kiro.dev) and [OpenCode](https://opencode.ai) that connects the [Corezoid](https://corezoid.com) platform to the coding agent via MCP. The agent gets direct access to Corezoid processes and deep platform knowledge to create, edit, review, and deploy workflows through natural conversation.
 
 > *Not just an MCP wrapper over the Corezoid API — an AI-Native management layer for the platform.*
 
@@ -41,7 +41,7 @@ workflows through natural conversation.
 
 ## Requirements
 
-- [Claude Code](https://claude.ai/code), [Codex](https://openai.com/codex), or [AWS Kiro](https://kiro.dev) installed
+- [Claude Code](https://claude.ai/code), [Codex](https://openai.com/codex), [AWS Kiro](https://kiro.dev), or [OpenCode](https://opencode.ai) installed
 - A Corezoid account
 
 ## Installation
@@ -97,6 +97,29 @@ sh plugins/corezoid/scripts/install-kiro.sh .
 
 Open the workspace in Kiro — the `corezoid` MCP server, skills, and steering are picked up automatically. This also registers the plugin as a Kiro Power (`~/.kiro/powers/installed/power-corezoid/`), so it stays available in every Kiro workspace, not just this one — restart Kiro (or reload the window) to pick it up.
 
+### OpenCode
+
+**From npm (recommended):**
+
+```bash
+opencode plugin @corezoid/opencode-plugin
+opencode mcp add   # choose local, command: sh <path-to>/mcp-server/run.sh
+```
+
+`opencode plugin` installs the TypeScript adapter that registers every Corezoid skill as an OpenCode tool with the `corezoid_` prefix. `opencode mcp add` walks you through the MCP server entry — the same `convctl` Go server used by Claude Code / Codex. Both are added to `~/.config/opencode/opencode.json`.
+
+**From a local clone:**
+
+```bash
+git clone https://github.com/corezoid/corezoid-ai-plugin
+cd corezoid-ai-plugin
+sh plugins/corezoid/scripts/install-opencode.sh
+```
+
+Does both steps at once — merges an `mcp.corezoid` block into `./opencode.json` and bundles the TypeScript adapter to `~/.config/opencode/plugins/corezoid.ts` with paths pre-resolved to your checkout. Use this when the npm package isn't available or you want to test unreleased changes.
+
+See [`plugins/corezoid/docs/opencode-setup.md`](plugins/corezoid/docs/opencode-setup.md) for user-scope install, uninstall, and troubleshooting.
+
 ### Updating
 
 ```bash
@@ -112,7 +135,12 @@ name to target one) and re-run `codex plugin add` to install the refreshed versi
 git pull && sh plugins/corezoid/scripts/install-kiro.sh .   # AWS Kiro
 ```
 
-Restart Claude Code / Codex after updating to apply the new version.
+```bash
+opencode plugin @corezoid/opencode-plugin --force   # OpenCode (from npm)
+git pull && sh plugins/corezoid/scripts/install-opencode.sh   # OpenCode (from a local clone)
+```
+
+Restart Claude Code / Codex / OpenCode after updating to apply the new version.
 
 ## Authentication
 
