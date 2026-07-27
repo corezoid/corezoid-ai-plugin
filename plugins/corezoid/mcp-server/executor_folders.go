@@ -196,16 +196,22 @@ func (v *Executor) DeleteFolder(folderID int) error {
 
 // CreateFolder creates a new folder under parentFolderID and returns the new folder's obj_id.
 func (v *Executor) CreateFolder(parentFolderID int, title, desc string) (int, error) {
-	ops := []map[string]any{
-		{
-			"title":       title,
-			"description": desc,
-			"folder_id":   parentFolderID,
-			"company_id":  v.WorkspaceID,
-			"obj":         "folder",
-			"type":        "create",
-		},
+	createOp := map[string]any{
+		"title":       title,
+		"description": desc,
+		"folder_id":   parentFolderID,
+		"company_id":  v.WorkspaceID,
+		"obj":         "folder",
+		"type":        "create",
 	}
+	// v6.12.0 silently ignores folder_id when it points to a subfolder unless
+	// project_id is also present — the folder lands at stage root instead.
+	if v.StageID != 0 {
+		if projectID := v.GetProjectIDByStageID(v.StageID); projectID != 0 {
+			createOp["project_id"] = projectID
+		}
+	}
+	ops := []map[string]any{createOp}
 	response, err := v.req("json", ops)
 	if err != nil {
 		return 0, fmt.Errorf("CreateFolder request failed: %w", err)

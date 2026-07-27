@@ -71,6 +71,71 @@ func TestCreateEmptyConv_SendsGivenFolderID(t *testing.T) {
 	}
 }
 
+// ---- project_id accompanies folder_id when creating in a subfolder --------------
+
+// On Corezoid v6.12.0 the server silently drops the new object at stage root
+// unless project_id is present alongside folder_id (issue #36). Both
+// CreateEmptyConv and CreateFolder must send project_id whenever the
+// executor knows its stage — otherwise create-folder / create-process into a
+// subfolder appear to succeed but land in the wrong place.
+
+func TestCreateEmptyConv_SendsProjectIDWhenStageKnown(t *testing.T) {
+	var gotProjectID interface{}
+	call := 0
+	_, e := mockAPIServer(t, func(ops []map[string]interface{}) interface{} {
+		call++
+		if call == 1 {
+			// GetProjectIDByStageID → ShowFolder(stageID)
+			return map[string]interface{}{
+				"request_proc": "ok",
+				"ops": []interface{}{map[string]interface{}{
+					"proc": "ok", "obj_id": float64(16089), "parent_obj_id": float64(4242),
+				}},
+			}
+		}
+		gotProjectID = ops[0]["project_id"]
+		return map[string]interface{}{
+			"request_proc": "ok",
+			"ops":          []interface{}{map[string]interface{}{"proc": "ok", "obj_id": float64(777)}},
+		}
+	})
+	e.StageID = 16089
+	if _, err := e.CreateEmptyConv(16091, "t", "", "process"); err != nil {
+		t.Fatalf("CreateEmptyConv: %v", err)
+	}
+	if got, ok := gotProjectID.(float64); !ok || int(got) != 4242 {
+		t.Errorf("project_id on the wire = %v, want 4242", gotProjectID)
+	}
+}
+
+func TestCreateFolder_SendsProjectIDWhenStageKnown(t *testing.T) {
+	var gotProjectID interface{}
+	call := 0
+	_, e := mockAPIServer(t, func(ops []map[string]interface{}) interface{} {
+		call++
+		if call == 1 {
+			return map[string]interface{}{
+				"request_proc": "ok",
+				"ops": []interface{}{map[string]interface{}{
+					"proc": "ok", "obj_id": float64(16089), "parent_obj_id": float64(4242),
+				}},
+			}
+		}
+		gotProjectID = ops[0]["project_id"]
+		return map[string]interface{}{
+			"request_proc": "ok",
+			"ops":          []interface{}{map[string]interface{}{"proc": "ok", "obj_id": float64(555)}},
+		}
+	})
+	e.StageID = 16089
+	if _, err := e.CreateFolder(16091, "v2", ""); err != nil {
+		t.Fatalf("CreateFolder: %v", err)
+	}
+	if got, ok := gotProjectID.(float64); !ok || int(got) != 4242 {
+		t.Errorf("project_id on the wire = %v, want 4242", gotProjectID)
+	}
+}
+
 // ---- the server's reason reaches the tool result -------------------------------
 
 // The server explains WHY a create failed ("Stage is immutable", access

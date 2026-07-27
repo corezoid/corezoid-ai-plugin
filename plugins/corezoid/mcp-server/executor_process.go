@@ -502,20 +502,26 @@ func (v *Executor) CreateEmptyConv(folderID int, title, desc, convType string) (
 	if convType == "" {
 		convType = "process"
 	}
-	ops := []map[string]any{
-		{
-			"title":       title,
-			"description": desc,
-			"folder_id":   folderID,
-			"company_id":  v.WorkspaceID,
-			"obj":         "conv",
-			"create_mode": "without_nodes",
-			"conv_type":   convType,
-			"type":        "create",
-			"obj_type":    0,
-			"status":      "active",
-		},
+	op := map[string]any{
+		"title":       title,
+		"description": desc,
+		"folder_id":   folderID,
+		"company_id":  v.WorkspaceID,
+		"obj":         "conv",
+		"create_mode": "without_nodes",
+		"conv_type":   convType,
+		"type":        "create",
+		"obj_type":    0,
+		"status":      "active",
 	}
+	// v6.12.0 silently ignores folder_id when it points to a subfolder unless
+	// project_id is also present — the process lands at stage root instead.
+	if v.StageID != 0 {
+		if projectID := v.GetProjectIDByStageID(v.StageID); projectID != 0 {
+			op["project_id"] = projectID
+		}
+	}
+	ops := []map[string]any{op}
 	if v.Debug {
 		logger.Debug("Sending create empty process request")
 	}
