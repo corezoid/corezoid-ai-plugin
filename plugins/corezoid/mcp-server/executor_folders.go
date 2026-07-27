@@ -679,6 +679,36 @@ func (v *Executor) GetProjectIDByStageID(folderID int) int {
 	return 0
 }
 
+// ResolveStageIDByFolder walks up from folderID until it hits a stage
+// (FolderInfo.ObjType == 3). folderID itself may already be the stage. Returns
+// 0 if the walk cannot find one within maxDepth or an API call fails — the
+// caller is expected to fall back to the env COREZOID_STAGE_ID or explicit
+// argument. Used by stage-scoped tools (create-alias, env-var ops) so they can
+// target the stage the process actually lives in instead of blindly trusting
+// the env value, which caused "Object is not in stage" when the two diverged.
+func (v *Executor) ResolveStageIDByFolder(folderID int) (int, error) {
+	const maxDepth = 20
+	if folderID == 0 {
+		return 0, fmt.Errorf("folder id is 0")
+	}
+	currentID := folderID
+	for i := 0; i < maxDepth; i++ {
+		info, err := v.ShowFolder(currentID)
+		if err != nil {
+			return 0, fmt.Errorf("show folder %d: %w", currentID, err)
+		}
+		// obj_type 3 is a stage (per FolderInfo doc), the top of the walk we care about.
+		if info.ObjType == 3 {
+			return info.ObjID, nil
+		}
+		if info.ParentObjID == 0 || info.ParentObjID == info.ObjID {
+			return 0, fmt.Errorf("folder %d has no stage ancestor within %d levels", folderID, i+1)
+		}
+		currentID = info.ParentObjID
+	}
+	return 0, fmt.Errorf("folder walk exceeded %d levels starting from %d", maxDepth, folderID)
+}
+
 
 // envVarProjectID resolves the project for a stage PRESERVING the underlying
 // failure — the bare "could not resolve project for stage N" hid the real

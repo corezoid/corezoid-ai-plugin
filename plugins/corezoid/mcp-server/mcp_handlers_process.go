@@ -744,8 +744,17 @@ func handleDeleteFolder(ctx context.Context, args map[string]interface{}) (strin
 }
 
 // handleCreateAlias creates a Corezoid alias (short_name → conv) pointing at
-// the process whose ID is encoded in the file path. Requires a configured
-// COREZOID_STAGE_ID since aliases are stage-scoped.
+// the process whose ID is encoded in the file path.
+//
+// Aliases are stage-scoped, so we need to know which stage the target process
+// lives in. Resolution priority:
+//  1. explicit stage_id argument (belt-and-braces override for scripts);
+//  2. stage derived from the process file's parent_id (walk up folders until
+//     obj_type==3) — this is the correct answer for the target process and
+//     avoids the frozen-env failure mode where COREZOID_STAGE_ID pointed at a
+//     different project's stage and the server rejected with the cryptic
+//     "Object is not in stage";
+//  3. COREZOID_STAGE_ID from .env (legacy fallback for pre-parent_id files).
 func handleCreateAlias(ctx context.Context, args map[string]interface{}) (string, bool) {
 	filePath, err := resolveProcessPath(args, "process_path")
 	if err != nil {
@@ -762,13 +771,86 @@ func handleCreateAlias(ctx context.Context, args map[string]interface{}) (string
 	}
 
 	v := NewValidator(ctx, 0)
-	if v.StageID == 0 {
-		return "Error: COREZOID_STAGE_ID environment variable is not set or invalid", true
+
+	stageID, stageSrc, sErr := resolveAliasStageID(v, args, filePath)
+	if sErr != nil {
+		return "Error: " + sErr.Error(), true
 	}
-	aliasID, err := v.CreateAlias(shortName, procID, v.StageID)
+
+	aliasID, err := v.CreateAlias(shortName, procID, stageID)
 	if err != nil {
+		msg := err.Error()
+		if strings.Contains(strings.ToLower(msg), "object is not in stage") {
+			hint := fmt.Sprintf(" — the process (obj_id %d) does not live in stage %d (%s).", procID, stageID, stageSrc)
+			if v.StageID != 0 && v.StageID != stageID {
+				hint += fmt.Sprintf(" COREZOID_STAGE_ID is set to %d; that value was NOT used here.", v.StageID)
+			}
+			hint += " Pass an explicit stage_id, or pull-process this file again so its parent_id points at the current stage."
+			return fmt.Sprintf("Error creating alias: %s%s", msg, hint), true
+		}
 		return fmt.Sprintf("Error creating alias: %v", err), true
 	}
 
-	return fmt.Sprintf("Alias '%s' created successfully, AliasID: %d", shortName, aliasID), false
+	return fmt.Sprintf("Alias '%s' created successfully, AliasID: %d (stage %d, %s)", shortName, aliasID, stageID, stageSrc), false
+}
+
+// resolveAliasStageID picks the stage_id for a create-alias call. It returns
+// the resolved ID, a short label describing where it came from (for user
+// messages), and a hard error only if no source produced a usable stage.
+func resolveAliasStageID(v *Executor, args map[string]interface{}, filePath string) (int, string, error) {
+	if _, ok := args["stage_id"]; ok {
+		s, err := intArg(args, "stage_id")
+		if err != nil {
+			return 0, "", err
+		}
+		if s == 0 {
+			return 0, "", fmt.Errorf("stage_id argument is 0")
+		}
+		return s, "from stage_id argument", nil
+	}
+
+	if parentID, ok := readParentIDFromFile(filePath); ok && parentID != 0 {
+		stage, err := v.ResolveStageIDByFolder(parentID)
+		if err == nil && stage != 0 {
+			label := "derived from process parent_id"
+			if v.StageID != 0 && v.StageID != stage {
+				label = fmt.Sprintf("derived from process parent_id — overrides COREZOID_STAGE_ID=%d", v.StageID)
+			}
+			return stage, label, nil
+		}
+		if err != nil {
+			logger.Warn("create-alias: could not derive stage from parent_id %d: %v", parentID, err)
+		}
+	}
+
+	if v.StageID != 0 {
+		return v.StageID, "from COREZOID_STAGE_ID (fallback — process file had no parent_id)", nil
+	}
+	return 0, "", fmt.Errorf("could not resolve stage_id: process file has no parent_id, no stage_id argument was passed, and COREZOID_STAGE_ID is not set. Re-pull the process (so parent_id is written), pass stage_id explicitly, or set COREZOID_STAGE_ID.")
+}
+
+// readParentIDFromFile reads a .conv.json file just far enough to extract its
+// top-level parent_id. Returns (0, false) on any error — the caller is
+// expected to fall back gracefully; we never fail the tool because a file was
+// unparsable, that's the fallback's job.
+func readParentIDFromFile(filePath string) (int, bool) {
+	data, err := os.ReadFile(filePath)
+	if err != nil {
+		return 0, false
+	}
+	var head struct {
+		ParentID interface{} `json:"parent_id"`
+	}
+	if err := json.Unmarshal(data, &head); err != nil {
+		return 0, false
+	}
+	switch p := head.ParentID.(type) {
+	case float64:
+		return int(p), p != 0
+	case string:
+		if n, err := strconv.Atoi(p); err == nil {
+			return n, n != 0
+		}
+	}
+	return 0, false
 }
