@@ -22,10 +22,12 @@ jobs:
         env:
           VERSION: ${{ github.ref_name }}
         run: |
-          for GOOS in darwin linux; do
+          for GOOS in darwin linux windows; do
             for GOARCH in amd64 arm64; do
+              EXT=""
+              if [ "$GOOS" = "windows" ]; then EXT=".exe"; fi
               CGO_ENABLED=0 GOOS=$GOOS GOARCH=$GOARCH \
-                go build -ldflags="-s -w -X main.Version=${VERSION}" -o "convctl-${GOOS}-${GOARCH}" .
+                go build -ldflags="-s -w -X main.Version=${VERSION}" -o "convctl-${GOOS}-${GOARCH}${EXT}" .
             done
           done
 
