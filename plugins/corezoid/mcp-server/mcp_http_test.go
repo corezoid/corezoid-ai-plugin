@@ -126,7 +126,7 @@ func dispatchJSON(t *testing.T, method string, params interface{}) map[string]js
 
 func TestHTTPDispatch_Initialize(t *testing.T) {
 	out := dispatchJSON(t, "initialize", map[string]interface{}{
-		"protocolVersion": "2025-03-26",
+		"protocolVersion": mcpProtocolVersion,
 		"capabilities":    map[string]interface{}{},
 	})
 	if out["error"] != nil {
@@ -136,6 +136,86 @@ func TestHTTPDispatch_Initialize(t *testing.T) {
 	json.Unmarshal(out["result"], &result) //nolint:errcheck
 	if result["protocolVersion"] == nil {
 		t.Error("expected protocolVersion in initialize result")
+	}
+}
+
+func TestHTTPDispatch_InitializeUnsupportedVersion(t *testing.T) {
+	out := dispatchJSON(t, "initialize", map[string]interface{}{
+		"protocolVersion": "1900-01-01",
+		"capabilities":    map[string]interface{}{},
+	})
+	if out["result"] != nil {
+		t.Fatalf("expected no result for an unsupported protocolVersion, got %s", out["result"])
+	}
+	var rpcErr struct {
+		Code    int    `json:"code"`
+		Message string `json:"message"`
+		Data    struct {
+			Supported []string `json:"supported"`
+			Requested string   `json:"requested"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(out["error"], &rpcErr); err != nil {
+		t.Fatalf("error parse: %v", err)
+	}
+	if rpcErr.Code != mcpUnsupportedProtocolVersionCode {
+		t.Errorf("error code = %d, want %d", rpcErr.Code, mcpUnsupportedProtocolVersionCode)
+	}
+	if rpcErr.Message != "Unsupported protocol version" {
+		t.Errorf("error message = %q, want %q", rpcErr.Message, "Unsupported protocol version")
+	}
+	if len(rpcErr.Data.Supported) != 1 || rpcErr.Data.Supported[0] != mcpProtocolVersion {
+		t.Errorf("data.supported = %v, want [%q]", rpcErr.Data.Supported, mcpProtocolVersion)
+	}
+	if rpcErr.Data.Requested != "1900-01-01" {
+		t.Errorf("data.requested = %q, want %q", rpcErr.Data.Requested, "1900-01-01")
+	}
+}
+
+func TestHTTPDispatch_InitializeMissingVersion(t *testing.T) {
+	out := dispatchJSON(t, "initialize", map[string]interface{}{
+		"capabilities": map[string]interface{}{},
+	})
+	if out["error"] != nil {
+		t.Fatalf("initialize without protocolVersion returned error: %s", out["error"])
+	}
+	var result map[string]interface{}
+	json.Unmarshal(out["result"], &result) //nolint:errcheck
+	if got := result["protocolVersion"]; got != mcpProtocolVersion {
+		t.Errorf("protocolVersion = %v, want %q", got, mcpProtocolVersion)
+	}
+}
+
+func TestHTTPDispatch_ServerDiscover(t *testing.T) {
+	out := dispatchJSON(t, "server/discover", nil)
+	if out["error"] != nil {
+		t.Fatalf("unexpected error: %s", out["error"])
+	}
+	var result struct {
+		ProtocolVersion           string   `json:"protocolVersion"`
+		SupportedProtocolVersions []string `json:"supportedProtocolVersions"`
+		Capabilities              struct {
+			Tools     map[string]interface{} `json:"tools"`
+			Resources map[string]interface{} `json:"resources"`
+			Prompts   map[string]interface{} `json:"prompts"`
+		} `json:"capabilities"`
+		ServerInfo struct {
+			Name    string `json:"name"`
+			Version string `json:"version"`
+		} `json:"serverInfo"`
+	}
+	json.Unmarshal(out["result"], &result) //nolint:errcheck
+	if result.ProtocolVersion != mcpProtocolVersion {
+		t.Errorf("protocolVersion = %q, want %q", result.ProtocolVersion, mcpProtocolVersion)
+	}
+	if len(result.SupportedProtocolVersions) != 1 || result.SupportedProtocolVersions[0] != mcpProtocolVersion {
+		t.Errorf("supportedProtocolVersions = %v, want [%q]", result.SupportedProtocolVersions, mcpProtocolVersion)
+	}
+	if result.Capabilities.Tools == nil || result.Capabilities.Resources == nil || result.Capabilities.Prompts == nil {
+		t.Errorf("expected tools/resources/prompts capabilities, got %+v", result.Capabilities)
+	}
+	if result.ServerInfo.Name != "convctl-mcp" || result.ServerInfo.Version != mcpServerVersion {
+		t.Errorf("serverInfo = %+v, want {convctl-mcp %s}", result.ServerInfo, mcpServerVersion)
 	}
 }
 

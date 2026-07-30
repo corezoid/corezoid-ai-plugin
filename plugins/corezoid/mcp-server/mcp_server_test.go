@@ -61,6 +61,54 @@ func TestParseInitializeParams_MalformedJSONLeavesGlobalsUnchanged(t *testing.T)
 	}
 }
 
+// ---- protocol version -------------------------------------------------------
+
+func TestParseInitializeProtocolVersion(t *testing.T) {
+	cases := []struct {
+		name string
+		raw  string
+		want string
+	}{
+		{"declared", fmt.Sprintf(`{"protocolVersion": %q, "capabilities": {}}`, mcpProtocolVersion), mcpProtocolVersion},
+		{"unsupported still returned verbatim", `{"protocolVersion": "1900-01-01"}`, "1900-01-01"},
+		{"omitted", `{"capabilities": {}}`, ""},
+		{"explicitly empty", `{"protocolVersion": ""}`, ""},
+		{"malformed JSON", `not json`, ""},
+		{"wrong type", `{"protocolVersion": 42}`, ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := parseInitializeProtocolVersion([]byte(tc.raw)); got != tc.want {
+				t.Errorf("parseInitializeProtocolVersion(%s) = %q, want %q", tc.raw, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestIsSupportedProtocolVersion(t *testing.T) {
+	if !isSupportedProtocolVersion(mcpProtocolVersion) {
+		t.Errorf("expected %q to be supported", mcpProtocolVersion)
+	}
+	for _, v := range []string{"", "1900-01-01", "2026-07-28", "2025-03-25"} {
+		if isSupportedProtocolVersion(v) {
+			t.Errorf("expected %q to be unsupported", v)
+		}
+	}
+}
+
+// TestSupportedProtocolVersions_NotSharedAcrossCalls guards the reason the
+// list is built per call: it is embedded in JSON responses, and a shared
+// package-level slice would be mutable through every caller that holds one.
+func TestSupportedProtocolVersions_NotSharedAcrossCalls(t *testing.T) {
+	first := supportedProtocolVersions()
+	first[0] = "tampered"
+
+	second := supportedProtocolVersions()
+	if len(second) != 1 || second[0] != mcpProtocolVersion {
+		t.Errorf("supportedProtocolVersions() = %v, want [%q]", second, mcpProtocolVersion)
+	}
+}
+
 // ---- concurrency (HTTP mode runs one goroutine per request) ---------------
 
 // TestParseInitializeParams_ConcurrentHTTPInitializes reproduces the scenario

@@ -210,7 +210,7 @@ func httpHandlePost(w http.ResponseWriter, r *http.Request) {
 	if req.Method == "initialize" {
 		sessionID = generateUUIDv4()
 		w.Header().Set("Mcp-Session-Id", sessionID)
-	} else if sessionID != "" && !strings.HasPrefix(req.Method, "notifications/") {
+	} else if sessionID != "" && req.Method != "server/discover" && !strings.HasPrefix(req.Method, "notifications/") {
 		// The client is asserting an existing session (evicted by idle
 		// eviction, orphaned by a server restart, or simply invented) that we
 		// don't recognize. Per the Streamable HTTP spec this must be a 404,
@@ -223,6 +223,9 @@ func httpHandlePost(w http.ResponseWriter, r *http.Request) {
 		// clientIdentityFor, same as before this check existed. Notifications
 		// are exempt: they get no JSON-RPC response to signal recovery on,
 		// and 202-with-empty-body is already the correct reply either way.
+		// server/discover is exempt too: it is a pre-session capability probe,
+		// so it must answer regardless of what session ID (if any) the client
+		// happens to be carrying.
 		if _, found := httpSessionIdentity(sessionID); !found {
 			w.WriteHeader(http.StatusNotFound)
 			return
@@ -281,25 +284,35 @@ func httpDispatch(reqCtx context.Context, req mcpRequest) interface{} {
 		// as clientIdentityFor's fallback for a request that arrives without
 		// a recognized session, and for the initialize log line right below.
 		_, name, version := parseInitializeParams(req.Params)
+		logger.Info("initialize: clientName=%q clientVersion=%q", name, version)
+
+		// Same version contract as stdio — see the initialize case in
+		// runMCPServer. Checked before registerHTTPSession so a rejected
+		// handshake doesn't leave a session entry behind. The mismatch travels
+		// as a JSON-RPC error inside a 200 body; it is not an HTTP-level
+		// failure.
+		if pv := parseInitializeProtocolVersion(req.Params); pv != "" && !isSupportedProtocolVersion(pv) {
+			logger.Info("initialize: unsupported protocolVersion=%q", pv)
+			return httpJSONRPCErrorWithData(req.ID, mcpUnsupportedProtocolVersionCode,
+				"Unsupported protocol version", unsupportedProtocolVersionData(pv))
+		}
+
 		if sid, ok := reqCtx.Value(httpSessionIDContextKey).(string); ok {
 			registerHTTPSession(sid, name, version)
 		}
-		logger.Info("initialize: clientName=%q clientVersion=%q", name, version)
+
 		return mcpResponse{
 			JSONRPC: "2.0",
 			ID:      req.ID,
-			Result: map[string]interface{}{
-				"protocolVersion": "2025-03-26",
-				"capabilities": map[string]interface{}{
-					"tools":     map[string]interface{}{},
-					"resources": map[string]interface{}{},
-					"prompts":   map[string]interface{}{},
-				},
-				"serverInfo": map[string]interface{}{
-					"name":    "convctl-mcp",
-					"version": mcpServerVersion,
-				},
-			},
+			Result:  buildInitializeResult(),
+		}
+
+	case "server/discover":
+		// Pre-session probe from a modern client — see the stdio case.
+		return mcpResponse{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Result:  buildDiscoverResult(),
 		}
 
 	case "notifications/initialized", "notifications/cancelled":
@@ -405,6 +418,16 @@ func httpJSONRPCError(id interface{}, code int, msg string) mcpResponse {
 		JSONRPC: "2.0",
 		ID:      id,
 		Error:   &mcpError{Code: code, Message: msg},
+	}
+}
+
+// httpJSONRPCErrorWithData is httpJSONRPCError plus a JSON-RPC `data` payload.
+// Kept separate so the existing error call-sites stay byte-identical.
+func httpJSONRPCErrorWithData(id interface{}, code int, msg string, data interface{}) mcpResponse {
+	return mcpResponse{
+		JSONRPC: "2.0",
+		ID:      id,
+		Error:   &mcpError{Code: code, Message: msg, Data: data},
 	}
 }
 
