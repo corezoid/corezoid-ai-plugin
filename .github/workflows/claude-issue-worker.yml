@@ -1,0 +1,148 @@
+name: Claude – issue worker
+
+# Implements a GitHub issue end-to-end.
+# Triggered two ways:
+#   1. Automatically when label `ai` is applied to an issue (immediate).
+#   2. Manually / from the scanner via workflow_dispatch (safety net).
+#
+# Only fires for issues opened in this repository — writes go to a
+# TICKET-style branch and end in a PR against main.
+#
+# Required secrets: ANTHROPIC_API_KEY
+
+on:
+  issues:
+    types: [labeled]
+  workflow_dispatch:
+    inputs:
+      issue_number:
+        description: 'GitHub issue number'
+        required: true
+        type: string
+
+jobs:
+  implement:
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'issues' && github.event.label.name == 'ai')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+      issues: write
+      id-token: write
+    steps:
+      - name: Resolve and validate issue number
+        id: issue
+        env:
+          RAW: ${{ inputs.issue_number || github.event.issue.number }}
+        run: |
+          set -euo pipefail
+          if ! printf '%s' "$RAW" | grep -Eq '^[0-9]+$'; then
+            echo "Invalid issue number: $RAW"
+            exit 1
+          fi
+          echo "number=$RAW" >> "$GITHUB_OUTPUT"
+          echo "branch=ai-issue-$RAW" >> "$GITHUB_OUTPUT"
+
+      - name: Verify the `ai` label was applied by an admin
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ISSUE_NUMBER: ${{ steps.issue.outputs.number }}
+        run: |
+          set -euo pipefail
+          # Latest actor who added the `ai` label to this issue.
+          labeler=$(gh api --paginate \
+            "repos/${GITHUB_REPOSITORY}/issues/${ISSUE_NUMBER}/events" \
+            --jq '[.[] | select(.event == "labeled" and .label.name == "ai")] | last | .actor.login')
+          if [ -z "$labeler" ] || [ "$labeler" = "null" ]; then
+            echo "Issue #${ISSUE_NUMBER} has no `ai` label event — refusing to run."
+            exit 1
+          fi
+
+          perm=$(gh api \
+            "repos/${GITHUB_REPOSITORY}/collaborators/${labeler}/permission" \
+            --jq '.permission')
+          echo "`ai` label on #${ISSUE_NUMBER} applied by ${labeler} (permission: ${perm})"
+
+          if [ "$perm" != "admin" ]; then
+            gh issue comment "$ISSUE_NUMBER" --body \
+              "AI worker refused to run: only repository admins can apply the \`ai\` label. Latest labeler @${labeler} has \`${perm}\` permission."
+            # Strip the label so the scanner does not keep re-dispatching.
+            gh issue edit "$ISSUE_NUMBER" --remove-label ai || true
+            exit 1
+          fi
+
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: plugins/corezoid/mcp-server/go.mod
+          cache: true
+
+      - name: Skip if a PR for this issue already exists
+        id: guard
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          BRANCH: ${{ steps.issue.outputs.branch }}
+        run: |
+          set -euo pipefail
+          if gh pr list --state all --head "$BRANCH" --json number --jq '.[].number' | grep -q .; then
+            echo "PR for $BRANCH already exists, skipping"
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Fetch issue into files
+        if: steps.guard.outputs.skip != 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ISSUE_NUMBER: ${{ steps.issue.outputs.number }}
+        run: |
+          set -euo pipefail
+          mkdir -p .issue
+          gh issue view "$ISSUE_NUMBER" --json number,title,body,labels,author \
+            > .issue/raw.json
+          jq -r '.title // ""' .issue/raw.json > .issue/title.txt
+          jq -r '.body // ""'  .issue/raw.json > .issue/body.txt
+          echo "Fetched issue #$ISSUE_NUMBER ($(wc -c < .issue/body.txt) bytes)"
+
+      - uses: anthropics/claude-code-action@v1
+        if: steps.guard.outputs.skip != 'true'
+        env:
+          ISSUE_NUMBER: ${{ steps.issue.outputs.number }}
+          BRANCH: ${{ steps.issue.outputs.branch }}
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          prompt: |
+            You are implementing GitHub issue #$ISSUE_NUMBER in the
+            @corezoid/corezoid-ai-plugin repo.
+              Title is at .issue/title.txt, body at .issue/body.txt — read them first.
+              Target branch name is in the environment variable BRANCH.
+
+            ## Repo context
+            Claude Code / Codex plugin. Ships static skills under
+            plugins/corezoid/skills/, four plugin manifests, and a Go MCP server
+            `convctl` at plugins/corezoid/mcp-server/. All project-specific rules
+            are in CLAUDE.md — obey them.
+
+            ## Steps
+            1. Read .issue/title.txt and .issue/body.txt.
+            2. `git checkout main && git pull` then `git checkout -b "$BRANCH"`.
+            3. Implement the change.
+            4. If touching the MCP server:
+                 cd plugins/corezoid/mcp-server
+                 go build ./... && go vet ./... && go test -race ./...
+            5. If adding/removing a skill: update CLAUDE.md and README.md and run
+               `python3 scripts/check-skills-sync.py`.
+            6. Version bump: if the change is user-visible, bump the version in the
+               four manifests (they must all match — see CI check).
+            7. `git add <specific files>` and commit with a terse imperative message.
+            8. `git push -u origin "$BRANCH"`.
+            9. `gh pr create --base main --head "$BRANCH" --title <title> \
+                  --body "Closes #$ISSUE_NUMBER\n\n<summary>"` — the `Closes #N`
+               keyword auto-links and auto-closes the issue on merge.
+          claude_args: |
+            --allowedTools "Bash(git:*),Bash(gh:*),Bash(go:*),Bash(python3:*),Bash(npm:*),Bash(node:*),Bash(cd:*),Bash(ls:*),Bash(cat:*),Bash(wc:*),Bash(jq:*),Read,Edit,Write,Glob,Grep"

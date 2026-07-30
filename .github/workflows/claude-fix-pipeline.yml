@@ -1,0 +1,146 @@
+name: Claude – Fix broken pipeline
+
+# Reacts to a failing CI run on a pull request. Fetches the failed logs,
+# checks out the PR branch, asks Claude to fix the root cause, pushes back.
+#
+# Only runs for PRs from the same repository (skips forks) — we cannot push
+# to a fork's branch and workflow_run with secrets on a fork is a supply-chain
+# hazard we don't want to enable.
+#
+# Required secrets: ANTHROPIC_API_KEY
+
+on:
+  workflow_run:
+    workflows: ['CI']
+    types: [completed]
+
+jobs:
+  fix:
+    if: >-
+      github.event.workflow_run.conclusion == 'failure' &&
+      github.event.workflow_run.event == 'pull_request' &&
+      github.event.workflow_run.head_repository.full_name == github.repository
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+      actions: read
+      id-token: write
+    steps:
+      - name: Verify PR author is a repository admin
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SENDER: ${{ github.event.workflow_run.actor.login }}
+        run: |
+          set -euo pipefail
+          if [ -z "$SENDER" ]; then
+            echo "No actor on workflow_run event"
+            exit 1
+          fi
+          perm=$(gh api \
+            "repos/${GITHUB_REPOSITORY}/collaborators/${SENDER}/permission" \
+            --jq '.permission')
+          echo "workflow_run actor ${SENDER} has permission: ${perm}"
+          if [ "$perm" != "admin" ]; then
+            echo "Only admin-authored PRs get auto-fixed — sender is '${perm}'."
+            exit 1
+          fi
+
+      - name: Resolve PR number and validate branch name
+        id: pr
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          HEAD_BRANCH: ${{ github.event.workflow_run.head_branch }}
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          set -euo pipefail
+          # allowlist: alnum, dot, underscore, dash, slash — nothing else
+          if ! printf '%s' "$HEAD_BRANCH" | grep -Eq '^[A-Za-z0-9._/-]+$'; then
+            echo "Rejecting suspicious branch name"
+            exit 1
+          fi
+          pr_number=$(gh pr list --head "$HEAD_BRANCH" --state open \
+            --json number --jq '.[0].number // empty')
+          if [ -z "$pr_number" ]; then
+            echo "No open PR for branch, nothing to fix"
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "number=$pr_number"  >> "$GITHUB_OUTPUT"
+          echo "branch=$HEAD_BRANCH" >> "$GITHUB_OUTPUT"
+          echo "sha=$HEAD_SHA"       >> "$GITHUB_OUTPUT"
+
+      - uses: actions/checkout@v4
+        if: steps.pr.outputs.skip != 'true'
+        with:
+          # ref by SHA (not branch name) — SHA is an immutable, safe identifier
+          ref: ${{ steps.pr.outputs.sha }}
+          fetch-depth: 0
+
+      - name: Move HEAD onto the PR branch
+        if: steps.pr.outputs.skip != 'true'
+        env:
+          BRANCH: ${{ steps.pr.outputs.branch }}
+          SHA: ${{ steps.pr.outputs.sha }}
+        run: |
+          set -euo pipefail
+          git checkout -B "$BRANCH" "$SHA"
+
+      - uses: actions/setup-go@v5
+        if: steps.pr.outputs.skip != 'true'
+        with:
+          go-version-file: plugins/corezoid/mcp-server/go.mod
+          cache: true
+
+      - name: Download failed logs
+        if: steps.pr.outputs.skip != 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RUN_ID: ${{ github.event.workflow_run.id }}
+        run: |
+          set -euo pipefail
+          mkdir -p .claude-ci
+          gh run view "$RUN_ID" --log-failed > .claude-ci/failed.log || true
+          # cap the log to 40k so the prompt stays reasonable
+          head -c 40000 .claude-ci/failed.log > .claude-ci/failed.trunc.log
+          echo "Log bytes: $(wc -c < .claude-ci/failed.trunc.log)"
+
+      - uses: anthropics/claude-code-action@v1
+        if: steps.pr.outputs.skip != 'true'
+        env:
+          PR_NUMBER: ${{ steps.pr.outputs.number }}
+          BRANCH: ${{ steps.pr.outputs.branch }}
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          prompt: |
+            CI failed. Details in environment variables:
+              PR_NUMBER — pull request number
+              BRANCH    — branch name to fix and push
+            Truncated failed-job log lives at .claude-ci/failed.trunc.log — read it first.
+
+            ## Repo context
+            @corezoid/corezoid-ai-plugin. Plugin manifests + skills + a Go MCP
+            server at plugins/corezoid/mcp-server/. All project rules in CLAUDE.md.
+
+            ## CI check catalogue (which one failed?)
+            - `validate-manifests`      — JSON parse, version sync across 4 manifests,
+                                          MIT license, MCP launcher smoke test,
+                                          CLAUDE_PLUGIN_ROOT path check, skills-sync,
+                                          run.sh syntax
+            - `docs`                    — markdown link check
+            - `mcp-server`              — `go build`, `go vet`, `go test -race`
+
+            ## Steps
+            1. Read .claude-ci/failed.trunc.log and diagnose the root cause.
+            2. Fix on branch $BRANCH:
+                 - Version drift → sync the four manifests
+                 - Skills sync → update CLAUDE.md / README.md skills tables
+                 - MCP tests → `cd plugins/corezoid/mcp-server && go test -race ./...`
+                 - Vet/build → same directory, `go vet ./...` / `go build ./...`
+                 - Markdown links → fix the broken links
+            3. Commit with a terse message like "fix ci: <what>".
+            4. `git push origin "$BRANCH"`.
+            5. `gh pr comment "$PR_NUMBER" --body "..."` summarising the fix.
+          claude_args: |
+            --allowedTools "Bash(git:*),Bash(gh:*),Bash(go:*),Bash(python3:*),Bash(cd:*),Bash(ls:*),Bash(cat:*),Bash(head:*),Bash(wc:*),Read,Edit,Write,Glob,Grep"

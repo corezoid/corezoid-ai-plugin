@@ -1,0 +1,94 @@
+name: Claude – mention handler
+
+# Reacts to `@claude` mentions on issues and pull requests.
+# Replaces the GitLab `scanner_mr` + `worker_review` pair — a human writes
+# `@claude review this` or `@claude implement X` and this workflow fires.
+#
+# Required secrets:
+#   ANTHROPIC_API_KEY — Anthropic API key
+# The default GITHUB_TOKEN is used for repo access (comments, commits, PRs).
+
+on:
+  issue_comment:
+    types: [created]
+  pull_request_review_comment:
+    types: [created]
+  pull_request_review:
+    types: [submitted]
+  issues:
+    types: [opened, assigned]
+
+jobs:
+  claude:
+    if: |
+      (github.event_name == 'issue_comment' && contains(github.event.comment.body, '@claude')) ||
+      (github.event_name == 'pull_request_review_comment' && contains(github.event.comment.body, '@claude')) ||
+      (github.event_name == 'pull_request_review' && contains(github.event.review.body, '@claude')) ||
+      (github.event_name == 'issues' && (contains(github.event.issue.body, '@claude') || contains(github.event.issue.title, '@claude')))
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+      issues: write
+      id-token: write
+      actions: read
+    steps:
+      - name: Verify sender is a repository admin
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SENDER: ${{ github.event.sender.login }}
+        run: |
+          set -euo pipefail
+          if [ -z "$SENDER" ]; then
+            echo "No sender in event payload"
+            exit 1
+          fi
+          perm=$(gh api \
+            "repos/${GITHUB_REPOSITORY}/collaborators/${SENDER}/permission" \
+            --jq '.permission')
+          echo "Sender ${SENDER} has permission: ${perm}"
+          if [ "$perm" != "admin" ]; then
+            echo "Only repository admins can invoke @claude — sender is '${perm}'."
+            exit 1
+          fi
+
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: plugins/corezoid/mcp-server/go.mod
+          cache: true
+
+      - uses: anthropics/claude-code-action@v1
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          prompt: |
+            You are helping on the @corezoid/corezoid-ai-plugin repository (Claude Code /
+            Codex plugin that ships static Corezoid skills plus a Go MCP server `convctl`
+            in plugins/corezoid/mcp-server/).
+
+            ## When invoked on a pull request
+            Review the PR against CLAUDE.md rules:
+            - Skills list stays in sync (scripts/check-skills-sync.py)
+            - Version pins match across the four manifests
+              (plugins/corezoid/.claude-plugin/plugin.json,
+               plugins/corezoid/.codex-plugin/plugin.json,
+               .claude-plugin/marketplace.json,
+               .agents/plugins/marketplace.json)
+            - License stays MIT in every manifest
+            - For MCP server changes: `go build ./... && go vet ./... && go test -race ./...`
+              from plugins/corezoid/mcp-server/
+            - No hardcoded ${CLAUDE_PLUGIN_ROOT}/plugins/corezoid/ (doubled prefix)
+            - Corezoid process files (*.conv.json) follow the rules in CLAUDE.md
+              (24-char hex node IDs, extra/extra_type pairing, err_node_id on fallible
+              nodes, env_var[@name] instead of hardcoded constants)
+            Approve if green, request changes with concrete line comments otherwise.
+
+            ## When invoked on an issue
+            Read the issue body, plan the change, open a branch named after the issue,
+            implement it, and open a PR against main. Follow the same CLAUDE.md rules.
+          claude_args: |
+            --allowedTools "Bash(git:*),Bash(gh:*),Bash(go:*),Bash(python3:*),Bash(npm:*),Bash(node:*),Bash(cd:*),Bash(ls:*),Bash(cat:*),Read,Edit,Write,Glob,Grep"
