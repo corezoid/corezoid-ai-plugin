@@ -1,12 +1,18 @@
 name: Claude – issue worker
 
-# Implements a GitHub issue end-to-end.
+# Implements a GitHub issue end-to-end, then self-reviews.
 # Triggered two ways:
 #   1. Automatically when label `ai` is applied to an issue (immediate).
-#   2. Manually / from the scanner via workflow_dispatch (safety net).
+#   2. Manually via workflow_dispatch with an issue number.
 #
 # Only fires for issues opened in this repository — writes go to a
 # TICKET-style branch and end in a PR against main.
+#
+# Two Claude sessions run back-to-back on the same runner:
+#   • Implement — reads the issue, writes code, opens the PR.
+#   • Self-review — fresh session, reviews the diff against CLAUDE.md,
+#     commits fixes to the same branch if issues are found, comments
+#     the verdict on the PR.
 #
 # Required secrets: ANTHROPIC_API_KEY
 
@@ -108,7 +114,8 @@ jobs:
           jq -r '.body // ""'  .issue/raw.json > .issue/body.txt
           echo "Fetched issue #$ISSUE_NUMBER ($(wc -c < .issue/body.txt) bytes)"
 
-      - uses: anthropics/claude-code-action@v1
+      - name: Implement the issue
+        uses: anthropics/claude-code-action@v1
         if: steps.guard.outputs.skip != 'true'
         env:
           ISSUE_NUMBER: ${{ steps.issue.outputs.number }}
@@ -146,3 +153,73 @@ jobs:
                keyword auto-links and auto-closes the issue on merge.
           claude_args: |
             --allowedTools "Bash(git:*),Bash(gh:*),Bash(go:*),Bash(python3:*),Bash(npm:*),Bash(node:*),Bash(cd:*),Bash(ls:*),Bash(cat:*),Bash(wc:*),Bash(jq:*),Read,Edit,Write,Glob,Grep"
+
+      - name: Resolve the PR opened by implement step
+        id: pr
+        if: steps.guard.outputs.skip != 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          BRANCH: ${{ steps.issue.outputs.branch }}
+        run: |
+          set -euo pipefail
+          number=$(gh pr list --state open --head "$BRANCH" \
+            --json number --jq '.[0].number // empty')
+          if [ -z "$number" ]; then
+            echo "Implement step did not open a PR — skipping self-review."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "number=$number" >> "$GITHUB_OUTPUT"
+            echo "Found PR #$number for review"
+          fi
+
+      - name: Self-review the changes
+        uses: anthropics/claude-code-action@v1
+        if: steps.guard.outputs.skip != 'true' && steps.pr.outputs.skip != 'true'
+        env:
+          ISSUE_NUMBER: ${{ steps.issue.outputs.number }}
+          BRANCH: ${{ steps.issue.outputs.branch }}
+          PR_NUMBER: ${{ steps.pr.outputs.number }}
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          prompt: |
+            You are a senior code reviewer. A previous Claude session just
+            implemented issue #$ISSUE_NUMBER on branch $BRANCH and opened
+            PR #$PR_NUMBER. Review the diff with fresh eyes — do not trust
+            the previous session's judgement.
+
+            ## Repo context
+            @corezoid/corezoid-ai-plugin. Static skills, four plugin manifests,
+            and a Go MCP server (`convctl`) at plugins/corezoid/mcp-server/.
+            CLAUDE.md holds all project-specific rules.
+
+            ## Steps
+            1. `git fetch origin main` and `git diff --stat origin/main...HEAD`
+               to see what changed.
+            2. Read the full diff with `git diff origin/main...HEAD`.
+            3. Read .issue/title.txt and .issue/body.txt to know the goal.
+            4. Review the diff against CLAUDE.md and general quality:
+                 - Does the change actually solve the stated issue?
+                 - Skills-list sync (CLAUDE.md + README.md ↔ filesystem)?
+                 - Manifest versions in the four files still match?
+                 - MIT license preserved everywhere?
+                 - For MCP server: `cd plugins/corezoid/mcp-server &&
+                   go build ./... && go vet ./... && go test -race ./...` still green?
+                 - Corezoid process files (*.conv.json) follow rules
+                   (24-char hex IDs, extra/extra_type pairing, err_node_id
+                   on fallible nodes, no hardcoded constants)?
+                 - Any obvious correctness/security issues in the diff itself?
+            5. If issues found, fix them:
+                 - Make the corrections directly on the current branch.
+                 - Commit with message "review: <what you fixed>".
+                 - `git push origin "$BRANCH"`.
+            6. Post one PR comment via `gh pr comment "$PR_NUMBER" --body ...`
+               summarising the review. Structure it as:
+                 - **Verdict**: `passed` / `fixed <N> issues` / `blocked`
+                 - **Checked**: bullet list of what you verified
+                 - **Fixes applied** (if any): what and why
+                 - **Open concerns** (if any): what still needs a human
+            7. Do NOT close the PR, do NOT approve it — reviewers post
+               comments only.
+          claude_args: |
+            --allowedTools "Bash(git:*),Bash(gh:*),Bash(go:*),Bash(python3:*),Bash(cd:*),Bash(ls:*),Bash(cat:*),Bash(wc:*),Bash(jq:*),Read,Edit,Write,Glob,Grep"
