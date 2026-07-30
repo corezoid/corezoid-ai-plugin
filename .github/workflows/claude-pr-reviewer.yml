@@ -1,0 +1,310 @@
+name: Claude – PR reviewer (second line)
+
+# Second-line deep review for AI-processed pull requests.
+# The issue-worker already runs a silent self-review inside itself; this
+# workflow is the independent reviewer that runs after the fact.
+#
+# In addition to findings, the reviewer produces a change-magnitude score
+# (0–10). Decision matrix:
+#   • findings != OK                                → comment + assign HUMAN_REVIEWER (never merge)
+#   • findings == OK, score <= AUTO_MERGE_MAX_SCORE → auto-merge (squash)
+#   • findings == OK, score >  AUTO_MERGE_MAX_SCORE → comment + assign HUMAN_REVIEWER
+# Fail-closed: missing/invalid score.json is treated as score=10.
+#
+# Triggers:
+#   • pull_request: labeled — a human admin adds the `ai` label to a PR.
+#     Note: labels applied by GITHUB_TOKEN (i.e. by our own worker) do
+#     NOT fire this trigger — GitHub blocks that path to prevent loops.
+#     For the auto-chain from the worker we use workflow_dispatch below.
+#   • workflow_dispatch — the issue-worker calls
+#       `gh workflow run claude-pr-reviewer.yml -f pr_number=<N>`
+#     at the end of its run.
+#
+# Required secrets: ANTHROPIC_API_KEY
+# Required repo setting: Settings → General → Pull Requests → "Allow
+#   auto-merge" must be enabled. Without it `gh pr merge --auto` fails
+#   and the workflow escalates instead of merging.
+
+on:
+  pull_request:
+    types: [labeled]
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: 'PR number'
+        required: true
+        type: string
+
+env:
+  AUTO_MERGE_MAX_SCORE: '5'
+  HUMAN_REVIEWER: 'salimovartem'
+
+jobs:
+  review:
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'pull_request' && github.event.label.name == 'ai')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write        # needed for gh pr merge
+      pull-requests: write
+      issues: write
+      id-token: write
+    steps:
+      - name: Resolve and validate PR number
+        id: pr
+        env:
+          RAW: ${{ inputs.pr_number || github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+          if ! printf '%s' "$RAW" | grep -Eq '^[0-9]+$'; then
+            echo "Invalid PR number: $RAW"
+            exit 1
+          fi
+          echo "number=$RAW" >> "$GITHUB_OUTPUT"
+
+      - name: Verify sender is admin or our worker
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SENDER: ${{ github.event.sender.login || github.triggering_actor }}
+        run: |
+          set -euo pipefail
+          if [ -z "$SENDER" ]; then
+            echo "No sender"; exit 1
+          fi
+          if [ "$SENDER" = "github-actions[bot]" ]; then
+            echo "Dispatched by our own worker — accept"
+            exit 0
+          fi
+          perm=$(gh api \
+            "repos/${GITHUB_REPOSITORY}/collaborators/${SENDER}/permission" \
+            --jq '.permission')
+          echo "Sender ${SENDER} has permission ${perm}"
+          if [ "$perm" != "admin" ]; then
+            echo "Only admins can label PRs with 'ai'"
+            exit 1
+          fi
+
+      - name: Resolve PR head (skip forks)
+        id: prref
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ steps.pr.outputs.number }}
+        run: |
+          set -euo pipefail
+          data=$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}")
+          head_repo=$(echo "$data" | jq -r '.head.repo.full_name')
+          head_ref=$(echo "$data" | jq -r '.head.ref')
+          head_sha=$(echo "$data" | jq -r '.head.sha')
+          if [ "$head_repo" != "$GITHUB_REPOSITORY" ]; then
+            echo "PR is from a fork — refusing to run the deep review"
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if ! printf '%s' "$head_ref" | grep -Eq '^[A-Za-z0-9._/-]+$'; then
+            echo "Suspicious branch name: $head_ref"; exit 1
+          fi
+          echo "sha=$head_sha" >> "$GITHUB_OUTPUT"
+          echo "ref=$head_ref" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/checkout@v4
+        if: steps.prref.outputs.skip != 'true'
+        with:
+          ref: ${{ steps.prref.outputs.sha }}
+          fetch-depth: 0
+
+      - uses: actions/setup-go@v5
+        if: steps.prref.outputs.skip != 'true'
+        with:
+          go-version-file: plugins/corezoid/mcp-server/go.mod
+          cache: true
+
+      - name: Prepare review workspace
+        if: steps.prref.outputs.skip != 'true'
+        run: |
+          mkdir -p .review
+          : > .review/findings.md
+          : > .review/score.json
+
+      # Deterministic diff stats — passed to the model as ground truth so
+      # the score is anchored to real numbers, not to the model's mood.
+      - name: Compute diff stats
+        if: steps.prref.outputs.skip != 'true'
+        id: stats
+        run: |
+          set -euo pipefail
+          git fetch origin main --quiet
+          base="origin/main"
+          files_changed=$(git diff --name-only "$base"...HEAD | wc -l | tr -d ' ')
+          files_added=$(git diff --diff-filter=A --name-only "$base"...HEAD | wc -l | tr -d ' ')
+          files_deleted=$(git diff --diff-filter=D --name-only "$base"...HEAD | wc -l | tr -d ' ')
+          files_renamed=$(git diff --diff-filter=R --name-only "$base"...HEAD | wc -l | tr -d ' ')
+          lines=$(git diff --shortstat "$base"...HEAD || true)
+          {
+            echo "FILES_CHANGED=$files_changed"
+            echo "FILES_ADDED=$files_added"
+            echo "FILES_DELETED=$files_deleted"
+            echo "FILES_RENAMED=$files_renamed"
+          } >> "$GITHUB_OUTPUT"
+          echo "SHORTSTAT<<EOF" >> "$GITHUB_OUTPUT"
+          echo "$lines" >> "$GITHUB_OUTPUT"
+          echo "EOF" >> "$GITHUB_OUTPUT"
+
+      - name: Deep review + magnitude score
+        uses: anthropics/claude-code-action@v1
+        if: steps.prref.outputs.skip != 'true'
+        env:
+          PR_NUMBER: ${{ steps.pr.outputs.number }}
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          prompt: |
+            You are the second-line code reviewer for @corezoid/corezoid-ai-plugin.
+            PR #$PR_NUMBER has already been implemented and passed a first
+            silent self-review. Your job is (a) to catch what that pass
+            missed and (b) to score the magnitude of the change.
+
+            ## Repo context
+            Claude Code / Codex plugin: static skills, four plugin manifests,
+            and a Go MCP server (`convctl`) at plugins/corezoid/mcp-server/.
+            CLAUDE.md holds all project-specific rules.
+
+            ## Deterministic diff stats (ground truth, already computed)
+            - files changed: ${{ steps.stats.outputs.FILES_CHANGED }}
+            - files added: ${{ steps.stats.outputs.FILES_ADDED }}
+            - files deleted: ${{ steps.stats.outputs.FILES_DELETED }}
+            - files renamed: ${{ steps.stats.outputs.FILES_RENAMED }}
+            - shortstat: ${{ steps.stats.outputs.SHORTSTAT }}
+
+            ## Review
+            1. `git fetch origin main` and read `git diff origin/main...HEAD`.
+            2. Read the PR title/body: `gh pr view $PR_NUMBER --json title,body`.
+            3. Evaluate against:
+                 - Does the change actually solve the stated issue?
+                 - CLAUDE.md rules — skills-list sync, manifest version sync
+                   (four files), MIT license everywhere, no doubled
+                   ${CLAUDE_PLUGIN_ROOT}/plugins/corezoid prefix, Corezoid
+                   process rules (24-char hex IDs, extra/extra_type pairs,
+                   err_node_id on fallible nodes, env_var not hardcoded).
+                 - MCP server tests: `cd plugins/corezoid/mcp-server &&
+                   go build ./... && go vet ./... && go test -race ./...`.
+                 - Subtle bugs, race conditions, edge cases, security holes.
+                 - Half-finished code, stray TODOs, dead debug statements.
+                 - Test coverage for new code.
+
+            ## Magnitude score (0–10)
+            Score how large/risky the change is, using the diff stats above
+            AND your understanding of the diff semantics. Rubric:
+              - 0–1: docs, comments, typos, formatting, version bumps.
+              - 2–3: tiny localized fix, 1–3 files, no new public surface.
+              - 4–5: small feature or bug fix, a handful of files, no
+                architectural impact, no public API / manifest schema
+                changes, adequate tests included.
+              - 6–7: new component, tool, skill or module; changes to
+                public API, MCP tool schemas, plugin manifests structure;
+                cross-cutting changes touching many packages.
+              - 8–9: significant refactoring, moved/renamed subsystems,
+                many files added AND deleted, changed core control flow,
+                changed auth/security-sensitive code, CI/workflow changes.
+              - 10: sweeping rewrite / architectural overhaul.
+
+            Hard rules (apply regardless of your semantic judgment — the
+            score MUST be at least 6 if ANY of these hit):
+              - Any change to `.github/workflows/**`.
+              - Any change to `plugins/*/.mcp.json`.
+              - Any change to `plugins/corezoid/scripts/install-*.sh`.
+              - Any change to `LICENSE*`.
+              - Any change to security-sensitive code (auth, token
+                handling, command execution) or deletion of existing tests.
+              - More than 20 files changed OR more than 800 lines
+                added+deleted.
+            When in doubt, round the score UP.
+
+            ## Output — these are the ONLY things you produce
+            1. Write your verdict to `.review/findings.md`:
+               - If everything is fine: write exactly "OK" (nothing else).
+               - If issues found: write a short markdown report:
+                     ## Findings
+                     1. **<title>** — <what and why>
+                        Location: `<file:line>`
+                     2. ...
+
+                     ## Recommendation
+                     <one-line action for the human>
+
+            2. Write the score to `.review/score.json` as strict JSON,
+               single line, no markdown fences:
+                 {"score": <int 0-10>, "reasons": ["<short reason>", "..."]}
+
+            Do NOT push code. Do NOT comment on the PR. Do NOT approve,
+            merge, or request changes. Only the two files above.
+          claude_args: |
+            --allowedTools "Bash(git:*),Bash(gh:*),Bash(go:*),Bash(python3:*),Bash(cd:*),Bash(ls:*),Bash(cat:*),Bash(wc:*),Bash(jq:*),Read,Write,Glob,Grep"
+
+      - name: Decide — merge or escalate
+        if: steps.prref.outputs.skip != 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ steps.pr.outputs.number }}
+        run: |
+          set -euo pipefail
+          findings="$(cat .review/findings.md 2>/dev/null || true)"
+          trimmed="$(printf '%s' "$findings" | tr -d '[:space:]')"
+
+          # --- Parse score, fail-closed to 10 on any problem -------------
+          score=""
+          reasons="(score file missing or invalid — treated as max risk)"
+          if jq -e . .review/score.json >/dev/null 2>&1; then
+            score=$(jq -r '.score' .review/score.json)
+            reasons=$(jq -r '.reasons | map("- " + .) | join("\n")' \
+              .review/score.json 2>/dev/null || echo "$reasons")
+          fi
+          if ! printf '%s' "$score" | grep -Eq '^[0-9]+$' || [ "$score" -gt 10 ]; then
+            echo "::warning::Invalid or missing score — failing closed to 10"
+            score=10
+          fi
+          echo "Magnitude score: $score (threshold: $AUTO_MERGE_MAX_SCORE)"
+
+          # --- Case 1: findings — always escalate, never merge -----------
+          if [ -n "$trimmed" ] && [ "$trimmed" != "OK" ]; then
+            echo "Findings detected — assigning @$HUMAN_REVIEWER"
+            {
+              cat .review/findings.md
+              printf '\n---\n**Change magnitude:** %s/10\n%s\n' "$score" "$reasons"
+            } > .review/comment.md
+            gh pr comment "$PR_NUMBER" --body-file .review/comment.md
+            gh pr edit "$PR_NUMBER" --add-assignee "$HUMAN_REVIEWER"
+            exit 0
+          fi
+
+          # --- Case 2: clean, but big change — human approval -------------
+          if [ "$score" -gt "$AUTO_MERGE_MAX_SCORE" ]; then
+            echo "Clean review but score $score > $AUTO_MERGE_MAX_SCORE — escalating"
+            {
+              printf 'Second-line review passed clean, but the change is too large for auto-merge.\n\n'
+              printf '**Change magnitude:** %s/10 (auto-merge threshold: %s)\n\n%s\n\n' \
+                "$score" "$AUTO_MERGE_MAX_SCORE" "$reasons"
+              printf 'Manual approval required — assigned to @%s.\n' "$HUMAN_REVIEWER"
+            } > .review/comment.md
+            gh pr comment "$PR_NUMBER" --body-file .review/comment.md
+            gh pr edit "$PR_NUMBER" --add-assignee "$HUMAN_REVIEWER"
+            exit 0
+          fi
+
+          # --- Case 3: clean and small — auto-merge -----------------------
+          echo "Clean review, score $score <= $AUTO_MERGE_MAX_SCORE — auto-merging"
+          {
+            printf 'Second-line review passed clean.\n\n'
+            printf '**Change magnitude:** %s/10 (<= %s) — auto-merging.\n\n%s\n' \
+              "$score" "$AUTO_MERGE_MAX_SCORE" "$reasons"
+          } > .review/comment.md
+          gh pr comment "$PR_NUMBER" --body-file .review/comment.md
+          # --auto waits for required status checks (branch protection).
+          # If it fails (auto-merge disabled in repo settings, protection
+          # blocks the token, etc.) we escalate rather than bypass CI.
+          if ! gh pr merge "$PR_NUMBER" --squash --auto --delete-branch; then
+            echo "::warning::gh pr merge --auto failed — escalating to @$HUMAN_REVIEWER"
+            gh pr comment "$PR_NUMBER" --body \
+              "Auto-merge could not be enabled (auto-merge disabled in repo settings, or branch protection blocked the token). Assigned to @$HUMAN_REVIEWER for manual merge."
+            gh pr edit "$PR_NUMBER" --add-assignee "$HUMAN_REVIEWER"
+          fi
