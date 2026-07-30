@@ -125,3 +125,83 @@ func TestParseInitializeParams_ConcurrentHTTPInitializes(t *testing.T) {
 		t.Error(msg)
 	}
 }
+
+// ---- checkInitializeProtocolVersion -----------------------------------------
+
+func TestCheckInitializeProtocolVersion(t *testing.T) {
+	cases := []struct {
+		name          string
+		params        string
+		wantRequested string
+		wantOK        bool
+	}{
+		{"supported version", `{"protocolVersion":"2025-03-26"}`, "2025-03-26", true},
+		{"unsupported version", `{"protocolVersion":"1900-01-01"}`, "1900-01-01", false},
+		{"future version", `{"protocolVersion":"2026-07-28"}`, "2026-07-28", false},
+		{"field omitted", `{"capabilities":{}}`, "", true},
+		{"field empty", `{"protocolVersion":""}`, "", true},
+		// Malformed or absent params must not turn into a rejection — the
+		// existing initialize handlers already tolerate them and carry on.
+		{"malformed params", `not json`, "", true},
+		{"nil params", ``, "", true},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			requested, ok := checkInitializeProtocolVersion([]byte(tc.params))
+			if requested != tc.wantRequested {
+				t.Errorf("requested: got %q, want %q", requested, tc.wantRequested)
+			}
+			if ok != tc.wantOK {
+				t.Errorf("ok: got %v, want %v", ok, tc.wantOK)
+			}
+		})
+	}
+}
+
+func TestSupportedProtocolVersions_FreshSliceEachCall(t *testing.T) {
+	first := supportedProtocolVersions()
+	if len(first) != 1 || first[0] != mcpProtocolVersion {
+		t.Fatalf("unexpected supported list: %v", first)
+	}
+	first[0] = "mutated"
+	if second := supportedProtocolVersions(); second[0] != mcpProtocolVersion {
+		t.Errorf("caller mutation leaked into a later call: %v", second)
+	}
+}
+
+func TestUnsupportedProtocolVersionData_MatchesSpecShape(t *testing.T) {
+	data := unsupportedProtocolVersionData("1900-01-01")
+	if data["requested"] != "1900-01-01" {
+		t.Errorf("unexpected requested: %v", data["requested"])
+	}
+	supported, ok := data["supported"].([]string)
+	if !ok || len(supported) != 1 || supported[0] != "2025-03-26" {
+		t.Errorf("unexpected supported: %v", data["supported"])
+	}
+}
+
+// A rejected handshake must not leave the client's declared identity behind in
+// the process globals — the initialize cases check the version before calling
+// parseInitializeParams, and this pins that ordering.
+func TestInitialize_RejectedVersionLeavesClientStateUntouched(t *testing.T) {
+	withCleanHTTPSessions(t)
+	prevElicit, prevName, prevVersion := clientSupportsElicitation, clientName, clientVersion
+	t.Cleanup(func() {
+		clientSupportsElicitation, clientName, clientVersion = prevElicit, prevName, prevVersion
+	})
+	clientSupportsElicitation, clientName, clientVersion = false, "Previous Client", "9.9.9"
+
+	dispatchJSON(t, "initialize", map[string]interface{}{
+		"protocolVersion": "1900-01-01",
+		"capabilities":    map[string]interface{}{"elicitation": map[string]interface{}{}},
+		"clientInfo":      map[string]interface{}{"name": "Rejected Client", "version": "0.0.1"},
+	})
+
+	if name, version := clientIdentitySnapshot(); name != "Previous Client" || version != "9.9.9" {
+		t.Errorf("rejected handshake overwrote client identity: name=%q version=%q", name, version)
+	}
+	if clientElicitationSupported() {
+		t.Error("rejected handshake enabled elicitation support")
+	}
+}

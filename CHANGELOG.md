@@ -1,5 +1,9 @@
 # Changelog
 
+## [2.10.1]
+
+- Feat(mcp-server): an `initialize` request declaring a `protocolVersion` this server does not implement now gets the MCP-standard `UnsupportedProtocolVersionError` — JSON-RPC code `-32022`, message `Unsupported protocol version`, and `data: {supported: ["2025-03-26"], requested: "<client value>"}` — on both the stdio and HTTP transports. Previously the declared version was ignored entirely and the server echoed back its own, so a version-mismatched client got no signal and failed deeper into the handshake with an ambiguous error. Clients that send the supported version, or omit `protocolVersion` altogether, are unaffected — the missing-field path stays deliberately tolerant for older clients. The JSON-RPC error still travels inside an HTTP 200.
+
 ## [2.10.0]
 
 - Feat: a **from-scratch process now gets the full layout engine** on push (the same waterfall / layered+error-rail / regions strategies as the `layout-process` tool), instead of the lean grid — so a new process comes out cleanly arranged by default rather than cramped.

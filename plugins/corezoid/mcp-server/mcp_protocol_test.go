@@ -110,6 +110,86 @@ func TestMCPProtocol_Initialize(t *testing.T) {
 	}
 }
 
+func TestMCPProtocol_InitializeUnsupportedVersion(t *testing.T) {
+	bin := buildTestBinary(t)
+	sess := newMCPSession(t, bin)
+
+	sess.send(map[string]interface{}{
+		"jsonrpc": "2.0",
+		"id":      1,
+		"method":  "initialize",
+		"params": map[string]interface{}{
+			"protocolVersion": "1900-01-01",
+			"capabilities":    map[string]interface{}{},
+			"clientInfo":      map[string]interface{}{"name": "test", "version": "0.0.1"},
+		},
+	})
+
+	resp := sess.recv()
+	if resp["result"] != nil {
+		t.Fatalf("expected no result for an unsupported protocol version, got: %s", resp["result"])
+	}
+	if resp["error"] == nil {
+		t.Fatal("expected an error for an unsupported protocol version")
+	}
+
+	var rpcErr struct {
+		Code    int    `json:"code"`
+		Message string `json:"message"`
+		Data    struct {
+			Supported []string `json:"supported"`
+			Requested string   `json:"requested"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(resp["error"], &rpcErr); err != nil {
+		t.Fatalf("error parse: %v — %s", err, resp["error"])
+	}
+	if rpcErr.Code != -32022 {
+		t.Errorf("expected code -32022, got %d", rpcErr.Code)
+	}
+	if rpcErr.Message != "Unsupported protocol version" {
+		t.Errorf("unexpected message: %q", rpcErr.Message)
+	}
+	if len(rpcErr.Data.Supported) != 1 || rpcErr.Data.Supported[0] != "2025-03-26" {
+		t.Errorf("expected data.supported [2025-03-26], got %v", rpcErr.Data.Supported)
+	}
+	if rpcErr.Data.Requested != "1900-01-01" {
+		t.Errorf("expected data.requested 1900-01-01, got %q", rpcErr.Data.Requested)
+	}
+}
+
+// A client that omits protocolVersion entirely must still get a normal
+// handshake — plenty of older clients never send the field.
+func TestMCPProtocol_InitializeMissingVersion(t *testing.T) {
+	bin := buildTestBinary(t)
+	sess := newMCPSession(t, bin)
+
+	sess.send(map[string]interface{}{
+		"jsonrpc": "2.0",
+		"id":      1,
+		"method":  "initialize",
+		"params": map[string]interface{}{
+			"capabilities": map[string]interface{}{},
+			"clientInfo":   map[string]interface{}{"name": "test", "version": "0.0.1"},
+		},
+	})
+
+	resp := sess.recv()
+	if resp["error"] != nil {
+		t.Fatalf("initialize without protocolVersion returned error: %s", resp["error"])
+	}
+	var result map[string]interface{}
+	if err := json.Unmarshal(resp["result"], &result); err != nil {
+		t.Fatalf("result parse: %v", err)
+	}
+	if result["protocolVersion"] != "2025-03-26" {
+		t.Errorf("expected protocolVersion 2025-03-26, got %v", result["protocolVersion"])
+	}
+	if result["serverInfo"] == nil {
+		t.Error("expected serverInfo in initialize result")
+	}
+}
+
 func TestMCPProtocol_ToolsList(t *testing.T) {
 	bin := buildTestBinary(t)
 	sess := newMCPSession(t, bin)

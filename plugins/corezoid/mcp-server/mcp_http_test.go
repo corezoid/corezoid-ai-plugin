@@ -29,6 +29,38 @@ func TestHTTPJSONRPCError_Fields(t *testing.T) {
 	}
 }
 
+func TestHTTPJSONRPCError_OmitsDataMember(t *testing.T) {
+	raw, err := json.Marshal(httpJSONRPCError("req-1", -32601, "method not found: nope"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(raw), `"data"`) {
+		t.Errorf("plain errors must not grow a data member: %s", raw)
+	}
+}
+
+func TestHTTPJSONRPCErrorWithData_Fields(t *testing.T) {
+	resp := httpJSONRPCErrorWithData("req-1", mcpErrUnsupportedProtocolVersion,
+		mcpErrMsgUnsupportedProtocolVersion, unsupportedProtocolVersionData("1900-01-01"))
+	if resp.Error == nil {
+		t.Fatal("expected non-nil error")
+	}
+	if resp.Error.Code != -32022 {
+		t.Errorf("expected code -32022, got %d", resp.Error.Code)
+	}
+	data, ok := resp.Error.Data.(map[string]interface{})
+	if !ok {
+		t.Fatalf("expected map data, got %T", resp.Error.Data)
+	}
+	if data["requested"] != "1900-01-01" {
+		t.Errorf("unexpected requested: %v", data["requested"])
+	}
+	supported, ok := data["supported"].([]string)
+	if !ok || len(supported) != 1 || supported[0] != "2025-03-26" {
+		t.Errorf("unexpected supported: %v", data["supported"])
+	}
+}
+
 // ---- writeHTTPJSONRPC ------------------------------------------------------
 
 func TestWriteHTTPJSONRPC_SetsContentType(t *testing.T) {
@@ -136,6 +168,95 @@ func TestHTTPDispatch_Initialize(t *testing.T) {
 	json.Unmarshal(out["result"], &result) //nolint:errcheck
 	if result["protocolVersion"] == nil {
 		t.Error("expected protocolVersion in initialize result")
+	}
+}
+
+func TestHTTPDispatch_InitializeUnsupportedVersion(t *testing.T) {
+	withCleanHTTPSessions(t)
+
+	out := dispatchJSON(t, "initialize", map[string]interface{}{
+		"protocolVersion": "1900-01-01",
+		"capabilities":    map[string]interface{}{},
+	})
+	if out["result"] != nil {
+		t.Fatalf("expected no result for an unsupported protocol version, got: %s", out["result"])
+	}
+	var rpcErr struct {
+		Code    int    `json:"code"`
+		Message string `json:"message"`
+		Data    struct {
+			Supported []string `json:"supported"`
+			Requested string   `json:"requested"`
+		} `json:"data"`
+	}
+	if out["error"] == nil {
+		t.Fatal("expected an error for an unsupported protocol version")
+	}
+	if err := json.Unmarshal(out["error"], &rpcErr); err != nil {
+		t.Fatalf("error parse: %v — %s", err, out["error"])
+	}
+	if rpcErr.Code != -32022 {
+		t.Errorf("expected code -32022, got %d", rpcErr.Code)
+	}
+	if rpcErr.Message != "Unsupported protocol version" {
+		t.Errorf("unexpected message: %q", rpcErr.Message)
+	}
+	if len(rpcErr.Data.Supported) != 1 || rpcErr.Data.Supported[0] != "2025-03-26" {
+		t.Errorf("expected data.supported [2025-03-26], got %v", rpcErr.Data.Supported)
+	}
+	if rpcErr.Data.Requested != "1900-01-01" {
+		t.Errorf("expected data.requested 1900-01-01, got %q", rpcErr.Data.Requested)
+	}
+
+	// A JSON-RPC error is not an HTTP-level error: it rides back inside a 200.
+	w := postMCP(t, `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"1900-01-01","capabilities":{}}}`, "")
+	if w.Code != http.StatusOK {
+		t.Errorf("expected HTTP 200 for a JSON-RPC error, got %d", w.Code)
+	}
+	var body struct {
+		Error *struct {
+			Code int `json:"code"`
+			Data struct {
+				Supported []string `json:"supported"`
+				Requested string   `json:"requested"`
+			} `json:"data"`
+		} `json:"error"`
+		Result interface{} `json:"result"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+		t.Fatalf("body parse: %v — %s", err, w.Body.String())
+	}
+	if body.Result != nil {
+		t.Errorf("expected no result in body, got %v", body.Result)
+	}
+	if body.Error == nil {
+		t.Fatal("expected a JSON-RPC error in the 200 body")
+	}
+	if body.Error.Code != -32022 {
+		t.Errorf("expected code -32022 in body, got %d", body.Error.Code)
+	}
+	if len(body.Error.Data.Supported) != 1 || body.Error.Data.Supported[0] != "2025-03-26" {
+		t.Errorf("expected data.supported [2025-03-26] in body, got %v", body.Error.Data.Supported)
+	}
+	if body.Error.Data.Requested != "1900-01-01" {
+		t.Errorf("expected data.requested 1900-01-01 in body, got %q", body.Error.Data.Requested)
+	}
+}
+
+// The tolerant path: no protocolVersion at all still completes the handshake.
+func TestHTTPDispatch_InitializeMissingVersion(t *testing.T) {
+	withCleanHTTPSessions(t)
+
+	out := dispatchJSON(t, "initialize", map[string]interface{}{
+		"capabilities": map[string]interface{}{},
+	})
+	if out["error"] != nil {
+		t.Fatalf("unexpected error: %s", out["error"])
+	}
+	var result map[string]interface{}
+	json.Unmarshal(out["result"], &result) //nolint:errcheck
+	if result["protocolVersion"] != "2025-03-26" {
+		t.Errorf("expected protocolVersion 2025-03-26, got %v", result["protocolVersion"])
 	}
 }
 

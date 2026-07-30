@@ -271,6 +271,14 @@ func httpHandleSSE(w http.ResponseWriter, r *http.Request) {
 func httpDispatch(reqCtx context.Context, req mcpRequest) interface{} {
 	switch req.Method {
 	case "initialize":
+		// Reject an unimplementable protocol revision before registering the
+		// session or touching the process-global client state — a handshake
+		// we're about to fail shouldn't leave anything behind.
+		if requested, ok := checkInitializeProtocolVersion(req.Params); !ok {
+			logger.Info("initialize: rejecting unsupported protocolVersion=%q (supported=%v)", requested, supportedProtocolVersions())
+			return httpJSONRPCErrorWithData(req.ID, mcpErrUnsupportedProtocolVersion, mcpErrMsgUnsupportedProtocolVersion, unsupportedProtocolVersionData(requested))
+		}
+
 		// Read client identity for analytics attribution. Elicitation support
 		// is intentionally ignored here — the comment on httpHandleSSE explains
 		// why server-initiated elicitation isn't wired up over HTTP.
@@ -289,7 +297,7 @@ func httpDispatch(reqCtx context.Context, req mcpRequest) interface{} {
 			JSONRPC: "2.0",
 			ID:      req.ID,
 			Result: map[string]interface{}{
-				"protocolVersion": "2025-03-26",
+				"protocolVersion": mcpProtocolVersion,
 				"capabilities": map[string]interface{}{
 					"tools":     map[string]interface{}{},
 					"resources": map[string]interface{}{},
@@ -405,6 +413,20 @@ func httpJSONRPCError(id interface{}, code int, msg string) mcpResponse {
 		JSONRPC: "2.0",
 		ID:      id,
 		Error:   &mcpError{Code: code, Message: msg},
+	}
+}
+
+// httpJSONRPCErrorWithData is httpJSONRPCError plus the JSON-RPC `data`
+// member, for the errors whose contract carries a structured payload
+// (currently only UnsupportedProtocolVersionError). Kept separate so the
+// existing plain call-sites stay byte-identical. Like httpJSONRPCError it
+// still travels back to the client inside a 200 — a JSON-RPC error is not an
+// HTTP-level error.
+func httpJSONRPCErrorWithData(id interface{}, code int, msg string, data interface{}) mcpResponse {
+	return mcpResponse{
+		JSONRPC: "2.0",
+		ID:      id,
+		Error:   &mcpError{Code: code, Message: msg, Data: data},
 	}
 }
 
