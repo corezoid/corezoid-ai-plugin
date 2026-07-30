@@ -53,6 +53,30 @@ type mcpToolResult struct {
 // Keep this in sync with .claude-plugin/plugin.json.
 const mcpServerVersion = "2.3.5"
 
+// mcpProtocolVersion is the MCP spec revision this server implements, echoed
+// back verbatim in the initialize response. Distinct from mcpServerVersion:
+// that one tracks the plugin release, this one tracks the protocol and only
+// moves when the server actually implements a newer spec revision.
+const mcpProtocolVersion = "2025-03-26"
+
+// buildInitializeResult returns the result body of the MCP initialize
+// response. Both transports (stdio in runMCPServer, Streamable HTTP in
+// httpDispatch) share it so their handshakes can't drift apart.
+func buildInitializeResult() map[string]interface{} {
+	return map[string]interface{}{
+		"protocolVersion": mcpProtocolVersion,
+		"capabilities": map[string]interface{}{
+			"tools":     map[string]interface{}{},
+			"resources": map[string]interface{}{},
+			"prompts":   map[string]interface{}{},
+		},
+		"serverInfo": map[string]interface{}{
+			"name":    "convctl-mcp",
+			"version": mcpServerVersion,
+		},
+	}
+}
+
 // oauthClientID is the OAuth2 client ID used for PKCE flow.
 // Resolved from COREZOID_OAUTH_CLIENT_ID env var, falling back to the built-in default.
 var oauthClientID string
@@ -303,18 +327,7 @@ func runMCPServer() {
 			serverSend(mcpResponse{
 				JSONRPC: "2.0",
 				ID:      req.ID,
-				Result: map[string]interface{}{
-					"protocolVersion": "2025-03-26",
-					"capabilities": map[string]interface{}{
-						"tools":     map[string]interface{}{},
-						"resources": map[string]interface{}{},
-						"prompts":   map[string]interface{}{},
-					},
-					"serverInfo": map[string]interface{}{
-						"name":    "convctl-mcp",
-						"version": mcpServerVersion,
-					},
-				},
+				Result:  buildInitializeResult(),
 			})
 
 		case "notifications/initialized":
