@@ -393,4 +393,4 @@ See [docs/Troubleshooting.md](docs/Troubleshooting.md) for solutions to common p
 
 ## License
 
-MIT
+[MIT](LICENSE)
