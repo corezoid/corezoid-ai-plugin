@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -398,6 +399,33 @@ func TestHTTPHandlePost_Notification_ExemptFromSessionCheck(t *testing.T) {
 
 	if w.Code != http.StatusAccepted {
 		t.Errorf("expected 202 for a notification regardless of session header, got %d", w.Code)
+	}
+}
+
+func TestHTTPHandlePost_ServerDiscover_NoSessionRequired(t *testing.T) {
+	withCleanHTTPSessions(t)
+
+	// A modern client probes server/discover before it has a session at all.
+	body := `{"jsonrpc":"2.0","id":1,"method":"server/discover","params":{}}`
+	w := postMCP(t, body, "")
+
+	if w.Code != http.StatusOK {
+		t.Errorf("expected 200 for server/discover with no session header, got %d", w.Code)
+	}
+	if !strings.Contains(w.Body.String(), "supportedProtocolVersions") {
+		t.Errorf("expected supportedProtocolVersions in body, got %s", w.Body.String())
+	}
+}
+
+func TestHTTPHandlePost_ServerDiscover_ExemptFromSessionCheck(t *testing.T) {
+	withCleanHTTPSessions(t)
+
+	// A stale session header must not turn the era probe into a 404.
+	body := `{"jsonrpc":"2.0","id":1,"method":"server/discover","params":{}}`
+	w := postMCP(t, body, "session-that-was-never-registered")
+
+	if w.Code != http.StatusOK {
+		t.Errorf("expected 200 for server/discover regardless of session header, got %d", w.Code)
 	}
 }
 

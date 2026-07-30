@@ -139,6 +139,45 @@ func TestHTTPDispatch_Initialize(t *testing.T) {
 	}
 }
 
+func TestHTTPDispatch_ServerDiscover(t *testing.T) {
+	out := dispatchJSON(t, "server/discover", nil)
+	if out["error"] != nil {
+		t.Fatalf("unexpected error: %s", out["error"])
+	}
+	var result map[string]json.RawMessage
+	json.Unmarshal(out["result"], &result) //nolint:errcheck
+
+	if got := string(result["protocolVersion"]); got != `"2025-03-26"` {
+		t.Errorf("protocolVersion = %s, want \"2025-03-26\"", got)
+	}
+	var supported []string
+	json.Unmarshal(result["supportedProtocolVersions"], &supported) //nolint:errcheck
+	if len(supported) != 1 || supported[0] != "2025-03-26" {
+		t.Errorf("supportedProtocolVersions = %v, want [2025-03-26]", supported)
+	}
+
+	// Capabilities and serverInfo must be byte-identical to initialize so a
+	// modern client that early-exits on discover sees exactly what a legacy
+	// client would have negotiated.
+	initOut := dispatchJSON(t, "initialize", map[string]interface{}{
+		"protocolVersion": "2025-03-26",
+		"capabilities":    map[string]interface{}{},
+	})
+	var initResult map[string]json.RawMessage
+	json.Unmarshal(initOut["result"], &initResult) //nolint:errcheck
+	for _, field := range []string{"protocolVersion", "capabilities", "serverInfo"} {
+		if string(result[field]) != string(initResult[field]) {
+			t.Errorf("%s differs: discover=%s initialize=%s", field, result[field], initResult[field])
+		}
+	}
+	if len(result["serverInfo"]) == 0 {
+		t.Error("expected serverInfo in server/discover result")
+	}
+	if _, ok := result["capabilities"]; !ok {
+		t.Error("expected capabilities in server/discover result")
+	}
+}
+
 func TestHTTPDispatch_ToolsList(t *testing.T) {
 	out := dispatchJSON(t, "tools/list", nil)
 	if out["error"] != nil {

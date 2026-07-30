@@ -1,5 +1,9 @@
 # Changelog
 
+## [2.10.1]
+
+- Feat: implement the `server/discover` JSON-RPC method on both the stdio and HTTP transports. MCP 2026-07-28 clients probe `server/discover` first to classify a server's protocol era; the server previously answered `-32601 method not found`, which still triggered the correct legacy fallback but through an ambiguous error and with no capability hints. It now returns the same `protocolVersion`, `capabilities` and `serverInfo` as `initialize`, plus `supportedProtocolVersions: ["2025-03-26"]` — a deterministic "legacy server, negotiate 2025-03-26" fast path. Over HTTP the probe needs no `Mcp-Session-Id` (a fresh client has no session yet) and a stale one no longer turns it into a 404. `initialize` behaviour is unchanged; the server remains legacy-only.
+
 ## [2.10.0]
 
 - Feat: a **from-scratch process now gets the full layout engine** on push (the same waterfall / layered+error-rail / regions strategies as the `layout-process` tool), instead of the lean grid — so a new process comes out cleanly arranged by default rather than cramped.

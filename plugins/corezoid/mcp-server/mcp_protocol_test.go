@@ -110,6 +110,59 @@ func TestMCPProtocol_Initialize(t *testing.T) {
 	}
 }
 
+func TestMCPProtocol_ServerDiscover(t *testing.T) {
+	bin := buildTestBinary(t)
+	sess := newMCPSession(t, bin)
+
+	// An MCP 2026-07-28 client probes server/discover before initialize, to
+	// classify the server's protocol era. Send it first, with no handshake.
+	sess.send(map[string]interface{}{
+		"jsonrpc": "2.0",
+		"id":      1,
+		"method":  "server/discover",
+		"params":  map[string]interface{}{},
+	})
+
+	resp := sess.recv()
+	if resp["error"] != nil {
+		t.Fatalf("server/discover returned error: %s", resp["error"])
+	}
+	var result map[string]json.RawMessage
+	if err := json.Unmarshal(resp["result"], &result); err != nil {
+		t.Fatalf("result parse: %v", err)
+	}
+
+	var supported []string
+	if err := json.Unmarshal(result["supportedProtocolVersions"], &supported); err != nil {
+		t.Fatalf("supportedProtocolVersions parse: %v", err)
+	}
+	if len(supported) != 1 || supported[0] != "2025-03-26" {
+		t.Errorf("supportedProtocolVersions = %v, want [2025-03-26]", supported)
+	}
+
+	// Capabilities and serverInfo must match initialize byte for byte.
+	sess.send(map[string]interface{}{
+		"jsonrpc": "2.0",
+		"id":      2,
+		"method":  "initialize",
+		"params":  map[string]interface{}{"protocolVersion": "2025-03-26", "capabilities": map[string]interface{}{}, "clientInfo": map[string]interface{}{"name": "test", "version": "0"}},
+	})
+	initResp := sess.recv()
+	var initResult map[string]json.RawMessage
+	if err := json.Unmarshal(initResp["result"], &initResult); err != nil {
+		t.Fatalf("initialize result parse: %v", err)
+	}
+	for _, field := range []string{"protocolVersion", "capabilities", "serverInfo"} {
+		if len(result[field]) == 0 {
+			t.Errorf("expected %s in server/discover result", field)
+			continue
+		}
+		if string(result[field]) != string(initResult[field]) {
+			t.Errorf("%s differs: discover=%s initialize=%s", field, result[field], initResult[field])
+		}
+	}
+}
+
 func TestMCPProtocol_ToolsList(t *testing.T) {
 	bin := buildTestBinary(t)
 	sess := newMCPSession(t, bin)

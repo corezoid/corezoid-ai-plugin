@@ -53,6 +53,45 @@ type mcpToolResult struct {
 // Keep this in sync with .claude-plugin/plugin.json.
 const mcpServerVersion = "2.3.5"
 
+// mcpProtocolVersion is the MCP protocol revision this server speaks.
+const mcpProtocolVersion = "2025-03-26"
+
+// mcpSupportedProtocolVersions lists every protocol revision this server can
+// negotiate, reported by server/discover. This server is legacy-only: it does
+// not implement the 2026-07-28 per-request metadata model, so the list holds a
+// single entry. Keep it in sync with whatever an UnsupportedProtocolVersionError
+// would report as its supported set.
+var mcpSupportedProtocolVersions = []string{mcpProtocolVersion}
+
+// buildInitializeResult returns the result payload for an `initialize` request.
+// Shared by the stdio and HTTP transports so the two can't drift, and reused by
+// buildDiscoverResult. Returns a fresh map on every call, so callers may mutate it.
+func buildInitializeResult() map[string]interface{} {
+	return map[string]interface{}{
+		"protocolVersion": mcpProtocolVersion,
+		"capabilities": map[string]interface{}{
+			"tools":     map[string]interface{}{},
+			"resources": map[string]interface{}{},
+			"prompts":   map[string]interface{}{},
+		},
+		"serverInfo": map[string]interface{}{
+			"name":    "convctl-mcp",
+			"version": mcpServerVersion,
+		},
+	}
+}
+
+// buildDiscoverResult returns the result payload for a `server/discover` request:
+// the initialize result plus the list of protocol versions we support. MCP
+// 2026-07-28 clients probe server/discover first to classify a server's era; a
+// valid result here is their fast path to "legacy server, negotiate 2025-03-26"
+// without having to send a blind initialize.
+func buildDiscoverResult() map[string]interface{} {
+	result := buildInitializeResult()
+	result["supportedProtocolVersions"] = append([]string(nil), mcpSupportedProtocolVersions...)
+	return result
+}
+
 // oauthClientID is the OAuth2 client ID used for PKCE flow.
 // Resolved from COREZOID_OAUTH_CLIENT_ID env var, falling back to the built-in default.
 var oauthClientID string
@@ -303,18 +342,17 @@ func runMCPServer() {
 			serverSend(mcpResponse{
 				JSONRPC: "2.0",
 				ID:      req.ID,
-				Result: map[string]interface{}{
-					"protocolVersion": "2025-03-26",
-					"capabilities": map[string]interface{}{
-						"tools":     map[string]interface{}{},
-						"resources": map[string]interface{}{},
-						"prompts":   map[string]interface{}{},
-					},
-					"serverInfo": map[string]interface{}{
-						"name":    "convctl-mcp",
-						"version": mcpServerVersion,
-					},
-				},
+				Result:  buildInitializeResult(),
+			})
+
+		case "server/discover":
+			// Capability probe from an MCP 2026-07-28 client. Stateless: it
+			// carries no params we read and establishes no session, so it is
+			// answerable before (or entirely without) initialize.
+			serverSend(mcpResponse{
+				JSONRPC: "2.0",
+				ID:      req.ID,
+				Result:  buildDiscoverResult(),
 			})
 
 		case "notifications/initialized":
