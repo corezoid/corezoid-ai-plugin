@@ -51,6 +51,124 @@ func extractProcessIDFromPath(filePath string) (int, string) {
 	return id, ""
 }
 
+type stubModeStagePolicy struct {
+	requiresConfirmation bool
+	reason               string
+}
+
+func extractParentIDFromJSON(jsonContent string) int {
+	var processData map[string]interface{}
+	if err := json.Unmarshal([]byte(jsonContent), &processData); err != nil {
+		return 0
+	}
+	if f, ok := processData["parent_id"].(float64); ok {
+		return int(f)
+	}
+	if i, ok := processData["parent_id"].(int); ok {
+		return i
+	}
+	return 0
+}
+
+func resolveStageAndProjectFromFolder(v *Executor, folderID int) (stage, project int, err error) {
+	if folderID == 0 {
+		return 0, 0, fmt.Errorf("process parent_id is missing")
+	}
+	const maxDepth = 20
+	currentID := folderID
+	for i := 0; i < maxDepth; i++ {
+		info, showErr := v.ShowFolder(currentID)
+		if showErr != nil {
+			return 0, 0, fmt.Errorf("show folder %d: %w", currentID, showErr)
+		}
+		if info.ParentObjType == "project" {
+			return info.ObjID, info.ParentObjID, nil
+		}
+		if info.ParentObjID == 0 || info.ParentObjID == currentID {
+			break
+		}
+		currentID = info.ParentObjID
+	}
+	return 0, 0, fmt.Errorf("could not find stage root while walking parents from folder %d", folderID)
+}
+
+func stageNameLooksProduction(title, shortName string) bool {
+	for _, value := range []string{title, shortName} {
+		normalized := strings.ToLower(strings.TrimSpace(value))
+		for _, token := range strings.FieldsFunc(normalized, func(r rune) bool {
+			return !((r >= 'a' && r <= 'z') || (r >= '0' && r <= '9'))
+		}) {
+			switch token {
+			case "prod", "production", "preprod":
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func stubModeStagePolicyForPush(v *Executor, jsonContent string) stubModeStagePolicy {
+	if parentID := extractParentIDFromJSON(jsonContent); parentID != 0 && v.APIUrl != "" {
+		stageID, projectID, err := resolveStageAndProjectFromFolder(v, parentID)
+		if err != nil {
+			return stubModeStagePolicy{
+				requiresConfirmation: true,
+				reason:               fmt.Sprintf("target stage could not be resolved from process parent_id %d: %v", parentID, err),
+			}
+		}
+		return stubModePolicyForStage(v, stageID, projectID)
+	}
+
+	if v.StageID == 0 {
+		return stubModeStagePolicy{
+			requiresConfirmation: true,
+			reason:               "target stage is unknown because process parent_id could not be resolved and COREZOID_STAGE_ID is not configured",
+		}
+	}
+
+	projectID := v.GetProjectIDByStageID(v.StageID)
+	if projectID == 0 {
+		return stubModeStagePolicy{
+			requiresConfirmation: true,
+			reason:               fmt.Sprintf("target stage %d could not be resolved to a project", v.StageID),
+		}
+	}
+
+	return stubModePolicyForStage(v, v.StageID, projectID)
+}
+
+func stubModePolicyForStage(v *Executor, stageID, projectID int) stubModeStagePolicy {
+	immutable, _, title, shortName, err := v.stageInfo(stageID, projectID)
+	if err != nil {
+		return stubModeStagePolicy{
+			requiresConfirmation: true,
+			reason:               fmt.Sprintf("target stage %d metadata could not be read: %v", stageID, err),
+		}
+	}
+
+	stageLabel := fmt.Sprintf("stage %d", stageID)
+	if title != "" {
+		stageLabel += fmt.Sprintf(" (%q)", title)
+	}
+	if immutable {
+		return stubModeStagePolicy{
+			requiresConfirmation: true,
+			reason:               fmt.Sprintf("%s is immutable/read-only", stageLabel),
+		}
+	}
+	if stageNameLooksProduction(title, shortName) {
+		return stubModeStagePolicy{
+			requiresConfirmation: true,
+			reason:               fmt.Sprintf("%s looks production-like by title or short_name", stageLabel),
+		}
+	}
+
+	return stubModeStagePolicy{
+		requiresConfirmation: false,
+		reason:               fmt.Sprintf("%s is mutable and does not look production-like", stageLabel),
+	}
+}
+
 // handlePullProcess downloads a process by ID and writes its JSON to disk in
 // the folder that mirrors its parent_id chain, so re-pulling places the file
 // back where it lived.
@@ -221,10 +339,26 @@ func handlePushProcess(ctx context.Context, args map[string]interface{}) (string
 	// Structural lint gate: catch deploy-breaking / caller-breaking shapes
 	// offline before mutating the live process. Hard findings block the push;
 	// advisory findings (noop, unused set_param, orphans, passthrough, shared
-	// clusters) are surfaced but do not stop it. force=true overrides the block.
+	// clusters) are surfaced but do not stop it. force=true overrides generic
+	// hard findings. Active Stub Mode has its own stage-aware gate because it
+	// bypasses the real called process at runtime.
 	force, _ := args["force"].(bool)
+	allowStubMode, _ := args["allow_active_stub_mode"].(bool)
 	var lintNote string // advisory findings surfaced on a proceeding push (see below)
 	if lintRes, lintErr := lintProcess(filePath); lintErr == nil {
+		stubMode := len(lintRes.StubModeNodes)
+		if stubMode > 0 {
+			policy := stubModeStagePolicyForPush(v, jsonContent)
+			if policy.requiresConfirmation && !allowStubMode {
+				return fmt.Sprintf("Push blocked: active Stub Mode found in %d node(s). Stub replies bypass the real called process and are intended as temporary development/integration placeholders. Target policy: %s. Disable Stub Mode, or re-run with allow_active_stub_mode=true after explicit confirmation.\n\n%s",
+					stubMode, policy.reason, FormatLintResult(lintRes)), true
+			}
+			if allowStubMode {
+				fmt.Fprintf(os.Stderr, "[lint] %d active Stub Mode node(s) allowed with allow_active_stub_mode=true (%s)\n", stubMode, policy.reason)
+			} else {
+				fmt.Fprintf(os.Stderr, "[lint] %d active Stub Mode node(s) are warning-only for this push (%s)\n", stubMode, policy.reason)
+			}
+		}
 		hard := len(lintRes.BrokenLinks) + len(lintRes.OldFormatNodes) +
 			len(lintRes.MissingDefaultGo) + len(lintRes.ShortTimers) +
 			len(lintRes.RpcReplyMismatches) + len(lintRes.LiteralReplyValues) +
@@ -242,7 +376,7 @@ func handlePushProcess(ctx context.Context, args map[string]interface{}) (string
 		// The push proceeds. Surface any findings so the promise "advisory
 		// findings are shown but do not block" is actually kept — otherwise
 		// advisory-only issues would deploy silently and never be seen.
-		if hard+advisory > 0 {
+		if hard+advisory+stubMode > 0 {
 			lintNote = FormatLintResult(lintRes)
 		}
 	}
@@ -622,7 +756,6 @@ func handleCreateFolder(ctx context.Context, args map[string]interface{}) (strin
 	return fmt.Sprintf("Folder '%s' created in Corezoid folder #%d (%s) and saved to %s",
 		folderName, parentFolderID, parentResolvedFrom, filePath), false
 }
-
 
 // handleShowFolder returns metadata for a single folder (title, obj_type,
 // parent). Used to introspect folders without writing anything to disk.

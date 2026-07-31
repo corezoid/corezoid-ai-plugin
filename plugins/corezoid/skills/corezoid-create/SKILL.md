@@ -71,7 +71,7 @@ Every process follows this base structure:
 |------|----------|------------|
 | Start | 1 | `go` |
 | Code Node | 0 | `api_code` |
-| Call a Process | 0 | `api_rpc` |
+| Call a Process | 0 (`4` only for active Stub Mode) | `api_rpc` |
 | API Call | 0 | `api` |
 | Condition (business flow) | 0 | `go_if_const` |
 | Reply to Process (success, via `go`) | 0 | `api_rpc_reply` |
@@ -126,6 +126,7 @@ Fill in `description` based on the requirements gathered in Step 1 (see Descript
   - **Never mix an action logic with `go_if_const` in one node** (e.g. `set_param` + a conditional branch). That is old format too — the UI converter splits it. Author it as two nodes: the action node's `go` → a separate Condition node. `lint-process` flags both old-format shapes.
   - Never create an Escalation node (`obj_type: 3`) that only contains a bare `go` — that is a passthrough anti-pattern flagged by `lint-process`.
 - **A process invoked via Call a Process (`api_rpc`) must execute `api_rpc_reply` on EVERY path — success included.** The caller's task waits in the Call node until the callee replies; a path that reaches a final without a Reply hangs the caller until its timeout semaphor. Put a collapsed success Reply right before the success final. `lint-process` flags finals reachable without a Reply in any process that replies elsewhere.
+- **Do not create active Stub Mode unless the user explicitly asks for a temporary mock.** Stub Mode is `obj_type: 4` plus `condition.stub`; it bypasses the called process and returns configured mock replies. Use it only while the target process is not ready or for controlled integration tests, and avoid production unless the user explicitly confirms `allow_active_stub_mode=true`.
 - All constants (URLs, tokens, IDs) must be Corezoid variables — never hardcoded:
   1. Check for existing variables: read `_ENV_VARS_.json` (from `pull-folder`) or `.processes/variables.json` (from this session)
   2. Create a new variable if needed: call MCP tool **`create-variable`** with `name`, `description`, `value`
@@ -138,6 +139,7 @@ Fill in `description` based on the requirements gathered in Step 1 (see Descript
 
 - Using `"type": "call_process"` instead of `"type": "api_rpc"` — will fail validation
 - Missing `extra`/`extra_type` in Call a Process node — both required even if empty (`{}`)
+- Leaving active Stub Mode (`obj_type: 4`) in a production path — it returns mock data instead of calling the real process
 - Raw JSON objects as values in `extra` — must be stringified: `"{\"key\":\"val\"}"`
 - Keys in `extra` and `extra_type` must match exactly
 - Missing `rfc_format: true`, `customize_response: true`, or `version: 2` in API Call node

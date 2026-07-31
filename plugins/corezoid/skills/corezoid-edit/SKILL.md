@@ -65,7 +65,7 @@ See `${CLAUDE_PLUGIN_ROOT}/docs/variables-guide.md` for details.
 |------|----------|------------|
 | Start | 1 | `go` |
 | Code Node | 0 | `api_code` |
-| Call a Process | 0 | `api_rpc` |
+| Call a Process | 0 (`4` only for active Stub Mode) | `api_rpc` |
 | API Call | 0 | `api` |
 | Reply to Process | 0 (3 as `err_node_id` target) | `api_rpc_reply` |
 | End / Error | 2 | _(no logics)_ |
@@ -77,6 +77,7 @@ For complete JSON structures see `${CLAUDE_PLUGIN_ROOT}/docs/node-structures.md`
 - **Regenerating the whole scheme instead of editing it in place** — make targeted edits to the pulled file (change the one node/logic you need). Do NOT rewrite every node from scratch: that drops the existing `x`/`y` (the `x:0,y:0` authoring habit is for *brand-new* nodes only), and a scheme where every node is at `0,0` forces `push-process` to re-lay-out the entire process, discarding its arrangement. push re-hydrates coordinates from the server as a safety net, but editing surgically is the right habit.
 - Using `"type": "call_process"` instead of `"type": "api_rpc"` — will fail validation
 - Missing `extra`/`extra_type` in Call a Process node — both required even if empty (`{}`)
+- Treat active Stub Mode (`obj_type: 4` + `condition.stub`) as a temporary mock only: it bypasses the called process and can fake success. Preserve `condition.stub` during round trips, but do not leave `obj_type: 4` enabled on production paths unless the user explicitly confirms `allow_active_stub_mode=true`.
 - Raw JSON objects as values in `extra` — must be stringified: `"{\"key\":\"val\"}"`
 - Keys in `extra` and `extra_type` must match exactly
 

@@ -25,6 +25,7 @@ type LintResult struct {
 	ShortTimers            []ShortTimer
 	BrokenLinks            []BrokenLink
 	UnderspecifiedAPINodes []UnderspecifiedAPINode
+	StubModeNodes          []StubModeNode
 	TotalNodes             int
 	ReachableCount         int
 	SchemaValid            bool
@@ -157,6 +158,16 @@ type ShortTimer struct {
 	Issue string
 }
 
+// StubModeNode records an active Call Process Stub Mode node. It is valid
+// Corezoid JSON, but it bypasses the real called process and returns mock
+// replies, so push-process may require an explicit allow_active_stub_mode confirmation.
+type StubModeNode struct {
+	ID       string
+	Title    string
+	Branches int
+	Issue    string
+}
+
 // processNode is the typed representation of a Corezoid node used throughout lint checks.
 type processNode struct {
 	id      string
@@ -164,6 +175,7 @@ type processNode struct {
 	objType float64
 	logics  []map[string]interface{}
 	sems    []map[string]interface{}
+	stub    map[string]interface{}
 }
 
 // parseProcessNodes decodes raw node interfaces into typed processNode values.
@@ -179,12 +191,14 @@ func parseProcessNodes(rawNodes []interface{}) []processNode {
 		title, _ := n["title"].(string)
 		objType, _ := n["obj_type"].(float64)
 		cond, _ := n["condition"].(map[string]interface{})
+		stub, _ := cond["stub"].(map[string]interface{})
 		nodes = append(nodes, processNode{
 			id:      id,
 			title:   title,
 			objType: objType,
 			logics:  toMapSlice(cond["logics"]),
 			sems:    toMapSlice(cond["semaphors"]),
+			stub:    stub,
 		})
 	}
 	return nodes
@@ -224,6 +238,7 @@ func lintProcess(filePath string) (*LintResult, error) {
 	result.ShortTimers = findShortTimers(typed)
 	result.BrokenLinks = findBrokenLinks(typed)
 	result.UnderspecifiedAPINodes = findUnderspecifiedAPINodes(typed)
+	result.StubModeNodes = findStubModeNodes(typed)
 
 	schemaErr := ValidateJSONSchema(filePath, debug)
 	if schemaErr != nil {
@@ -652,6 +667,33 @@ func findShortTimers(nodes []processNode) []ShortTimer {
 				Issue: fmt.Sprintf("time semaphor resolves to %g sec — below the server minimum of 30 sec; the deploy is rejected", v*mult),
 			})
 		}
+	}
+	return result
+}
+
+// findStubModeNodes flags active Call Process Stub Mode nodes. The presence of
+// condition.stub alone is not enough: live Corezoid runtime uses obj_type:4 as
+// the actual Stub Mode switch. With obj_type:0, the real process is called.
+func findStubModeNodes(nodes []processNode) []StubModeNode {
+	var result []StubModeNode
+	for _, n := range nodes {
+		if n.objType != 4 {
+			continue
+		}
+		title := n.title
+		if title == "" {
+			title = "(untitled)"
+		}
+		branches := 0
+		if raw, ok := n.stub["logics"].([]interface{}); ok {
+			branches = len(raw)
+		}
+		result = append(result, StubModeNode{
+			ID:       n.id,
+			Title:    title,
+			Branches: branches,
+			Issue:    "Stub Mode is active (obj_type:4): the Call Process node bypasses the real called process and returns configured mock replies. Use this only as a temporary development/integration placeholder; before production, disable Stub Mode (obj_type:0) or deploy with allow_active_stub_mode=true after explicit confirmation.",
+		})
 	}
 	return result
 }
@@ -1218,6 +1260,16 @@ func FormatLintResult(result *LintResult) string {
 		}
 	}
 
+	if len(result.StubModeNodes) > 0 {
+		hasIssues = true
+		sb.WriteString(fmt.Sprintf("\n=== ACTIVE STUB MODE NODES (%d) — temporary mock replies ===\n", len(result.StubModeNodes)))
+		for _, sm := range result.StubModeNodes {
+			sb.WriteString(fmt.Sprintf("  [%s] %s\n", sm.ID, sm.Title))
+			sb.WriteString(fmt.Sprintf("  Stub branches: %d\n", sm.Branches))
+			sb.WriteString(fmt.Sprintf("  Issue: %s\n", sm.Issue))
+		}
+	}
+
 	if !hasIssues {
 		sb.WriteString("\nNo issues found.")
 	} else {
@@ -1225,7 +1277,7 @@ func FormatLintResult(result *LintResult) string {
 		if !result.SchemaValid {
 			schemaIssues = 1
 		}
-		total := len(result.NoopConditions) + len(result.UnusedSetParams) + len(result.OrphanedNodes) + len(result.RpcReplyMismatches) + len(result.PassthroughEscalations) + len(result.LiteralReplyValues) + len(result.SharedErrorClusters) + len(result.OldFormatNodes) + len(result.UnrepliedTerminals) + len(result.MissingDefaultGo) + len(result.ShortTimers) + len(result.BrokenLinks) + len(result.UnderspecifiedAPINodes) + schemaIssues
+		total := len(result.NoopConditions) + len(result.UnusedSetParams) + len(result.OrphanedNodes) + len(result.RpcReplyMismatches) + len(result.PassthroughEscalations) + len(result.LiteralReplyValues) + len(result.SharedErrorClusters) + len(result.OldFormatNodes) + len(result.UnrepliedTerminals) + len(result.MissingDefaultGo) + len(result.ShortTimers) + len(result.BrokenLinks) + len(result.UnderspecifiedAPINodes) + len(result.StubModeNodes) + schemaIssues
 		sb.WriteString(fmt.Sprintf("\nTotal issues: %d\n", total))
 	}
 

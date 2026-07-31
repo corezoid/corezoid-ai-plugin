@@ -13,6 +13,9 @@
     },
     "semaphors": {
       "$ref": "#/definitions/semaphors"
+    },
+    "stub": {
+      "$ref": "#/definitions/stub"
     }
   },
   "examples": [

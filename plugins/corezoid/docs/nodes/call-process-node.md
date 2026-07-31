@@ -33,8 +33,8 @@
 ### Optional
 
 1. **Group** (String)
-   - Specifies how to handle multiple calls.
-   - Default: "all" (waits for all responses)
+   - In the UI this backs **Send all parameters**.
+   - `"all"` sends all current task parameters to the called process; `""` sends only `extra` / `extra_type`.
    - Example: `"group": "all"`
 2. **User ID** (Number)
    - User ID for authentication purposes.
@@ -53,9 +53,10 @@
 
 2. **obj_type** (Number)
 
-   - Must be `0` for logic nodes
+   - `0` for normal Call Process logic nodes
+   - `4` for Call Process nodes with Stub Mode enabled
    - Example: `"obj_type": 0`
-   - Validation: Must be exactly `0` for Call Process nodes
+   - Validation: Must be either `0`, or `4` for Stub-enabled Call Process nodes
 
 
 
@@ -96,8 +97,7 @@
    - Validation: Must be a 24-character hexadecimal string
 
 6. **group** (String)
-   - Controls how multiple calls are handled
-   - Default: `"all"` (waits for all responses)
+   - Controls whether the call sends all task parameters (`"all"`) or only `extra` / `extra_type` (`""`)
    - Example: `"group": "all"`
    - Validation: Must be one of the allowed values
 
@@ -141,6 +141,105 @@ The Call a Process Node uses the `api_rpc` type in its JSON configuration:
   "options": null
 }
 ```
+
+## Stub / Mock Replies
+
+The Corezoid UI can attach Stub replies to a Call Process node. In exported
+`.conv.json` files this is stored under `condition.stub`, not inside the
+`api_rpc` logic object. Stub Mode is enabled when the node is saved as
+`obj_type: 4`; if the same stub block is present on an `obj_type: 0` Call
+Process node, normal runtime calls the real target process.
+
+Use Stub Mode as a temporary placeholder while the called process is not ready,
+or as a controlled integration-test fixture. It must not be left enabled
+accidentally: while active, the node bypasses the real called process and
+returns the configured mock reply. That can hide integration failures, skip real
+side effects, and return fake success data in production. `push-process` treats
+active Stub Mode as a warning only when the target stage is resolved as mutable
+and non-production-like. It blocks immutable, production-like, or unknown
+stages unless `allow_active_stub_mode=true` is passed after explicitly
+confirming that deploying the mock behavior is intentional.
+
+Stub scenario conditions are evaluated against the parameters sent to the
+called process. To match on incoming task data, enable **Send all parameters**
+(`group: "all"`) or map the required fields through `extra` / `extra_type`.
+A task processed through Stub Mode receives `__logic_stub_mode__: true`.
+
+```json
+{
+  "obj_type": 4,
+  "condition": {
+    "logics": [
+      {
+        "type": "api_rpc",
+        "conv_id": 9876543,
+        "err_node_id": "error_node",
+        "extra": {},
+        "extra_type": {},
+        "group": "all"
+      },
+      {
+        "type": "go",
+        "to_node_id": "next_node"
+      }
+    ],
+    "semaphors": [],
+    "stub": {
+      "logics": [
+        [
+          {
+            "type": "go_if_const",
+            "conditions": [
+              {
+                "param": "{{mode}}",
+                "const": "error",
+                "fun": "eq",
+                "cast": "string"
+              }
+            ]
+          },
+          {
+            "type": "api_rpc_reply",
+            "mode": "key_value",
+            "res_data": {
+              "status": "error"
+            },
+            "res_data_type": {
+              "status": "string"
+            },
+            "throw_exception": true,
+            "exception_reason": "stub error"
+          }
+        ],
+        [
+          {
+            "type": "api_rpc_reply",
+            "mode": "keys",
+            "res_data": [
+              "stub_node_response"
+            ],
+            "res_data_type": {
+              "stub_node_response": "string"
+            },
+            "throw_exception": false
+          }
+        ]
+      ]
+    }
+  }
+}
+```
+
+Stub `go_if_const` blocks do not have `to_node_id`: they select which mock
+`api_rpc_reply` to return, rather than routing the task to another node.
+Branches are evaluated top-to-bottom. Multiple conditions inside one branch are
+ANDed. A final branch without `go_if_const` acts as the default response.
+`throw_exception: true` routes the caller through the Call Process `err_node_id`
+and puts `exception_reason` into `__conveyor_rpc_reply_return_description__`.
+For Stub `mode: "keys"`, the UI/export shape is `res_data` as an array of key
+names while `res_data_type` remains an object keyed by those names.
+Preserve `condition.stub` during pull/push round trips; otherwise a deploy can
+silently remove the mock behavior configured in the UI.
 
 ## Using Semaphores in Call Process Nodes
 
@@ -267,7 +366,7 @@ and includes the necessary error handling connection.
         "err_node_id": "error_condition_node", // ID for error handling (example uses "61d5499782ba963bce68a253")
         "extra": {}, // Parameters to pass (empty in this example)
         "extra_type": {}, // Data types for parameters (empty as 'extra' is empty)
-        "group": "all", // Wait for the called process to respond
+        "group": "all", // Send all current task parameters to the called process
         "conv_id": 1023395, // ID of the target Process to call
         "obj_to_id": null, // Not typically used for standard calls
         "user_id": 56171, // Internal user ID

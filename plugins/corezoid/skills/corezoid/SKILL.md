@@ -83,7 +83,7 @@ Workspace
 | Start | 1 | `go` | Entry point |
 | Code Node | 0 | `api_code` | JS/Erlang code execution |
 | API Call | 0 | `api` | External HTTP request |
-| Call a Process | 0 | `api_rpc` | Invoke another process |
+| Call a Process | 0 (`4` when Stub Mode is active) | `api_rpc` | Invoke another process; Stub Mode returns configured mock replies instead |
 | Set Parameters | 0 | `set_param` | Variable assignment |
 | Condition | 0 | `go_if_const` | Branching logic (business flow; `3` when it is an `err_node_id` target) |
 | Reply to Process | 0 | `api_rpc_reply` | Return result to caller (`3` when it is an `err_node_id` target) |
@@ -96,6 +96,9 @@ Workspace
 - All constants (URLs, tokens, IDs) must use `{{env_var[@variable-name]}}` — never hardcoded
 - `extra` and `extra_type` keys must match exactly
 - Object values in `extra` must be stringified JSON strings
+- Active Call Process Stub Mode is `obj_type: 4` plus `condition.stub`; `obj_type: 0` with the same `condition.stub` is inactive and calls the real target process.
+- Use Stub Mode only as a temporary placeholder while the called process is not ready, or as a controlled integration-test fixture. It bypasses the real called process and can hide side effects or fake success in production.
+- `push-process` treats active Stub Mode as warning-only on a resolved mutable non-production-like stage, but blocks immutable, production-like, or unknown stages unless `allow_active_stub_mode=true` is passed after explicit confirmation.
 
 ## Common Operations
 
