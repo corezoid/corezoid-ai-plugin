@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -126,7 +127,7 @@ func dispatchJSON(t *testing.T, method string, params interface{}) map[string]js
 
 func TestHTTPDispatch_Initialize(t *testing.T) {
 	out := dispatchJSON(t, "initialize", map[string]interface{}{
-		"protocolVersion": "2025-03-26",
+		"protocolVersion": mcpProtocolVersion,
 		"capabilities":    map[string]interface{}{},
 	})
 	if out["error"] != nil {
@@ -136,6 +137,24 @@ func TestHTTPDispatch_Initialize(t *testing.T) {
 	json.Unmarshal(out["result"], &result) //nolint:errcheck
 	if result["protocolVersion"] == nil {
 		t.Error("expected protocolVersion in initialize result")
+	}
+}
+
+// The HTTP dispatcher must hand back the shared payload untouched — that
+// equality is the only thing keeping HTTP's advertised capabilities from
+// drifting away from stdio's.
+func TestHTTPDispatch_Initialize_ReturnsSharedPayload(t *testing.T) {
+	resp, ok := httpDispatch(context.Background(), mcpRequest{
+		JSONRPC: "2.0",
+		ID:      json.RawMessage(`1`),
+		Method:  "initialize",
+	}).(mcpResponse)
+	if !ok {
+		t.Fatal("initialize did not return an mcpResponse")
+	}
+	want := buildInitializeResult()
+	if !reflect.DeepEqual(resp.Result, want) {
+		t.Errorf("initialize result = %#v, want %#v", resp.Result, want)
 	}
 }
 

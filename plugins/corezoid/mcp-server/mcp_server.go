@@ -53,6 +53,33 @@ type mcpToolResult struct {
 // Keep this in sync with .claude-plugin/plugin.json.
 const mcpServerVersion = "2.3.5"
 
+// mcpProtocolVersion is the MCP spec revision this server implements, echoed
+// back verbatim in initialize responses. This is the protocol version, not the
+// server version (mcpServerVersion) — the two change on different cadences.
+const mcpProtocolVersion = "2025-03-26"
+
+// mcpServerName is the server name reported in MCP initialize responses.
+const mcpServerName = "convctl-mcp"
+
+// buildInitializeResult returns the result body of an MCP initialize response.
+// Shared by both transports — the stdio dispatcher in this file and the
+// Streamable HTTP dispatcher in mcp_http.go — so the advertised capabilities
+// cannot drift between them.
+func buildInitializeResult() map[string]interface{} {
+	return map[string]interface{}{
+		"protocolVersion": mcpProtocolVersion,
+		"capabilities": map[string]interface{}{
+			"tools":     map[string]interface{}{},
+			"resources": map[string]interface{}{},
+			"prompts":   map[string]interface{}{},
+		},
+		"serverInfo": map[string]interface{}{
+			"name":    mcpServerName,
+			"version": mcpServerVersion,
+		},
+	}
+}
+
 // oauthClientID is the OAuth2 client ID used for PKCE flow.
 // Resolved from COREZOID_OAUTH_CLIENT_ID env var, falling back to the built-in default.
 var oauthClientID string
@@ -303,18 +330,7 @@ func runMCPServer() {
 			serverSend(mcpResponse{
 				JSONRPC: "2.0",
 				ID:      req.ID,
-				Result: map[string]interface{}{
-					"protocolVersion": "2025-03-26",
-					"capabilities": map[string]interface{}{
-						"tools":     map[string]interface{}{},
-						"resources": map[string]interface{}{},
-						"prompts":   map[string]interface{}{},
-					},
-					"serverInfo": map[string]interface{}{
-						"name":    "convctl-mcp",
-						"version": mcpServerVersion,
-					},
-				},
+				Result:  buildInitializeResult(),
 			})
 
 		case "notifications/initialized":
@@ -326,7 +342,6 @@ func runMCPServer() {
 				ID:      req.ID,
 				Result: map[string]interface{}{
 					"tools": toolRegistry,
-
 				},
 			})
 

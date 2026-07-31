@@ -6,6 +6,39 @@ import (
 	"testing"
 )
 
+// ---- buildInitializeResult --------------------------------------------------
+
+// The initialize payload is shared by the stdio and HTTP dispatchers, so pin its
+// shape here — mcp_http_test.go asserts the HTTP path returns it verbatim.
+func TestBuildInitializeResult_Shape(t *testing.T) {
+	got := buildInitializeResult()
+
+	if got["protocolVersion"] != mcpProtocolVersion {
+		t.Errorf("protocolVersion = %v, want %q", got["protocolVersion"], mcpProtocolVersion)
+	}
+
+	caps, ok := got["capabilities"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("capabilities = %T, want map[string]interface{}", got["capabilities"])
+	}
+	for _, key := range []string{"tools", "resources", "prompts"} {
+		if _, present := caps[key]; !present {
+			t.Errorf("capabilities missing %q", key)
+		}
+	}
+
+	info, ok := got["serverInfo"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("serverInfo = %T, want map[string]interface{}", got["serverInfo"])
+	}
+	if info["name"] != mcpServerName {
+		t.Errorf("serverInfo.name = %v, want %q", info["name"], mcpServerName)
+	}
+	if info["version"] != mcpServerVersion {
+		t.Errorf("serverInfo.version = %v, want %q", info["version"], mcpServerVersion)
+	}
+}
+
 // ---- parseInitializeParams --------------------------------------------------
 
 func TestParseInitializeParams_SetsClientIdentityAndElicitation(t *testing.T) {

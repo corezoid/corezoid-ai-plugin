@@ -188,7 +188,7 @@ func httpInitializeAndCall(t *testing.T, client *http.Client, serverURL, clientL
 		ID:      json.RawMessage(`1`),
 		Method:  "initialize",
 		Params: mustMarshal(t, map[string]interface{}{
-			"protocolVersion": "2025-03-26",
+			"protocolVersion": mcpProtocolVersion,
 			"capabilities":    map[string]interface{}{},
 			"clientInfo":      map[string]interface{}{"name": clientLabel, "version": "v-" + clientLabel},
 		}),
@@ -379,7 +379,9 @@ func TestHTTPHandlePost_Initialize_ExemptFromSessionCheck(t *testing.T) {
 
 	// initialize always mints a fresh session regardless of what the client
 	// sends — even a stray/unrecognized Mcp-Session-Id header must not 404.
-	body := `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{}}}`
+	body := fmt.Sprintf(
+		`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":%q,"capabilities":{}}}`,
+		mcpProtocolVersion)
 	w := postMCP(t, body, "some-id-the-server-has-never-seen")
 
 	if w.Code != http.StatusOK {

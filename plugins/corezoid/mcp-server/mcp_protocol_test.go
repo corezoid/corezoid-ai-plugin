@@ -88,7 +88,7 @@ func TestMCPProtocol_Initialize(t *testing.T) {
 		"id":      1,
 		"method":  "initialize",
 		"params": map[string]interface{}{
-			"protocolVersion": "2025-03-26",
+			"protocolVersion": mcpProtocolVersion,
 			"capabilities":    map[string]interface{}{},
 			"clientInfo":      map[string]interface{}{"name": "test", "version": "0.0.1"},
 		},
@@ -119,7 +119,7 @@ func TestMCPProtocol_ToolsList(t *testing.T) {
 		"jsonrpc": "2.0",
 		"id":      1,
 		"method":  "initialize",
-		"params":  map[string]interface{}{"protocolVersion": "2025-03-26", "capabilities": map[string]interface{}{}, "clientInfo": map[string]interface{}{"name": "test", "version": "0"}},
+		"params":  map[string]interface{}{"protocolVersion": mcpProtocolVersion, "capabilities": map[string]interface{}{}, "clientInfo": map[string]interface{}{"name": "test", "version": "0"}},
 	})
 	sess.recv()
 
@@ -163,7 +163,7 @@ func TestMCPProtocol_LintProcess_ValidSample(t *testing.T) {
 		"jsonrpc": "2.0",
 		"id":      1,
 		"method":  "initialize",
-		"params":  map[string]interface{}{"protocolVersion": "2025-03-26", "capabilities": map[string]interface{}{}, "clientInfo": map[string]interface{}{"name": "test", "version": "0"}},
+		"params":  map[string]interface{}{"protocolVersion": mcpProtocolVersion, "capabilities": map[string]interface{}{}, "clientInfo": map[string]interface{}{"name": "test", "version": "0"}},
 	})
 	sess.recv()
 
@@ -208,7 +208,7 @@ func TestMCPProtocol_AuthRequired_NoCredentials(t *testing.T) {
 		"jsonrpc": "2.0",
 		"id":      1,
 		"method":  "initialize",
-		"params":  map[string]interface{}{"protocolVersion": "2025-03-26", "capabilities": map[string]interface{}{}, "clientInfo": map[string]interface{}{"name": "test", "version": "0"}},
+		"params":  map[string]interface{}{"protocolVersion": mcpProtocolVersion, "capabilities": map[string]interface{}{}, "clientInfo": map[string]interface{}{"name": "test", "version": "0"}},
 	})
 	sess.recv()
 

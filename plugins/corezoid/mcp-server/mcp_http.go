@@ -288,18 +288,7 @@ func httpDispatch(reqCtx context.Context, req mcpRequest) interface{} {
 		return mcpResponse{
 			JSONRPC: "2.0",
 			ID:      req.ID,
-			Result: map[string]interface{}{
-				"protocolVersion": "2025-03-26",
-				"capabilities": map[string]interface{}{
-					"tools":     map[string]interface{}{},
-					"resources": map[string]interface{}{},
-					"prompts":   map[string]interface{}{},
-				},
-				"serverInfo": map[string]interface{}{
-					"name":    "convctl-mcp",
-					"version": mcpServerVersion,
-				},
-			},
+			Result:  buildInitializeResult(),
 		}
 
 	case "notifications/initialized", "notifications/cancelled":
