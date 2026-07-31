@@ -1,5 +1,11 @@
 # Changelog
 
+## [2.11.0]
+
+- Feat(mcp): **legacy-compat shim for the MCP 2026-07-28 revision.** The bundled `convctl` server stays legacy-only (it implements the `initialize`-handshake revision `2025-03-26`), but a client from the new "modern" era can now classify it deterministically instead of hitting an opaque error. `server/discover` — 2026-07-28's era-detection probe — answers with the era (`legacy`), the protocol versions the server speaks, its capabilities and identity, and what to send instead. It stays a *non-modern* JSON-RPC error (`-32601`) on purpose: per the spec's stdio backward-compatibility rules a `DiscoverResult` means "this server is modern", and returning one would send a dual-era client hunting for a modern version this server does not have instead of falling back to `initialize`.
+- Feat(mcp): `initialize` returns the spec's `UnsupportedProtocolVersionError` (JSON-RPC `-32022`, with `data.supported` / `data.requested`) when the client declares a protocol version the server cannot serve — a modern revision (`2026-07-28` and later) or a non-version string — instead of silently proceeding. Every published handshake revision (`2024-10-07` … `2025-11-25`) is still negotiated down to `2025-03-26` exactly as before, as the lifecycle spec requires, so existing Claude Code / Codex sessions are unaffected. A client that omits `protocolVersion` is still tolerated.
+- Refactor(mcp): the `initialize` response payload is built in one place for both the stdio and HTTP transports (it was a duplicated literal in `mcp_server.go` and `mcp_http.go`), and `2025-03-26` now lives in a single `mcpProtocolVersion` constant instead of being hardcoded in nine places.
+
 ## [2.10.0]
 
 - Feat: a **from-scratch process now gets the full layout engine** on push (the same waterfall / layered+error-rail / regions strategies as the `layout-process` tool), instead of the lean grid — so a new process comes out cleanly arranged by default rather than cramped.
