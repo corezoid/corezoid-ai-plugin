@@ -166,6 +166,54 @@ func parseInitializeParams(raw json.RawMessage) (supportsElicitation bool, name,
 	return clientSupportsElicitation, clientName, clientVersion
 }
 
+// mcpProtocolVersion is the MCP protocol revision this server negotiates in the
+// legacy connection-scoped `initialize` handshake.
+const mcpProtocolVersion = "2025-03-26"
+
+// mcpSupportedProtocolVersions lists every protocol revision this server can
+// serve, newest first. It is reported by `server/discover` so a modern
+// (MCP 2026-07-28) client can pick a compatible version without probing, and it
+// is the same list a future UnsupportedProtocolVersionError would carry in
+// `data.supported` — keep the two in sync.
+//
+// Returns a fresh slice per call so a caller mutating the result can't corrupt
+// what the next caller sees.
+func mcpSupportedProtocolVersions() []string {
+	return []string{mcpProtocolVersion}
+}
+
+// buildInitializeResult returns the `initialize` result payload. Shared by the
+// stdio (runMCPServer) and HTTP (httpDispatch) dispatchers so the advertised
+// capabilities and serverInfo can never drift between transports.
+func buildInitializeResult() map[string]interface{} {
+	return map[string]interface{}{
+		"protocolVersion": mcpProtocolVersion,
+		"capabilities": map[string]interface{}{
+			"tools":     map[string]interface{}{},
+			"resources": map[string]interface{}{},
+			"prompts":   map[string]interface{}{},
+		},
+		"serverInfo": map[string]interface{}{
+			"name":    "convctl-mcp",
+			"version": mcpServerVersion,
+		},
+	}
+}
+
+// buildDiscoverResult returns the `server/discover` result: byte-identical to
+// buildInitializeResult plus the supportedProtocolVersions list.
+//
+// This server is legacy-only — `server/discover` exists purely so a modern
+// client's era-detection probe gets a definitive answer (a valid result naming
+// only 2025-03-26) instead of an ambiguous "method not found". No modern
+// per-request semantics are implemented, and capabilities.extensions is
+// deliberately absent: an empty extensions map would signal nothing.
+func buildDiscoverResult() map[string]interface{} {
+	result := buildInitializeResult()
+	result["supportedProtocolVersions"] = mcpSupportedProtocolVersions()
+	return result
+}
+
 // activeCancels maps in-progress tools/call request IDs to their cancel functions.
 var activeCancels sync.Map
 
@@ -303,18 +351,16 @@ func runMCPServer() {
 			serverSend(mcpResponse{
 				JSONRPC: "2.0",
 				ID:      req.ID,
-				Result: map[string]interface{}{
-					"protocolVersion": "2025-03-26",
-					"capabilities": map[string]interface{}{
-						"tools":     map[string]interface{}{},
-						"resources": map[string]interface{}{},
-						"prompts":   map[string]interface{}{},
-					},
-					"serverInfo": map[string]interface{}{
-						"name":    "convctl-mcp",
-						"version": mcpServerVersion,
-					},
-				},
+				Result:  buildInitializeResult(),
+			})
+
+		case "server/discover":
+			// MCP 2026-07-28 era-detection probe. Answered without requiring a
+			// prior initialize — a modern client sends this before any handshake.
+			serverSend(mcpResponse{
+				JSONRPC: "2.0",
+				ID:      req.ID,
+				Result:  buildDiscoverResult(),
 			})
 
 		case "notifications/initialized":
