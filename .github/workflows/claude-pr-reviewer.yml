@@ -45,7 +45,7 @@ on:
         type: string
 
 env:
-  AUTO_MERGE_MAX_SCORE: '5'
+  AUTO_MERGE_MAX_SCORE: '7'
   HUMAN_REVIEWER: 'salimovartem'
 
 jobs:

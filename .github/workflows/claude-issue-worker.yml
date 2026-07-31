@@ -146,8 +146,9 @@ jobs:
                  go build ./... && go vet ./... && go test -race ./...
             5. If adding/removing a skill: update CLAUDE.md and README.md and run
                `python3 scripts/check-skills-sync.py`.
-            6. Version bump: if the change is user-visible, bump the version in the
-               four manifests (they must all match — see CI check).
+            6. Do NOT bump the version in any manifest. Version bumps happen
+               only at release time via a separate tag/release workflow —
+               per-issue PRs must leave the four manifest versions unchanged.
             7. `git add <specific files>` and commit with a terse imperative message.
             8. `git push -u origin "$BRANCH"`.
             9. `gh pr create --base main --head "$BRANCH" --title <title> \
