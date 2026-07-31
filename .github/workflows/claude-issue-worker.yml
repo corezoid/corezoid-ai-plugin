@@ -39,6 +39,7 @@ jobs:
       pull-requests: write
       issues: write
       id-token: write
+      actions: write         # needed to dispatch claude-pr-reviewer.yml
     steps:
       - name: Resolve and validate issue number
         id: issue
