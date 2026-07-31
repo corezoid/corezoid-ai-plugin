@@ -9,6 +9,9 @@ maintainable.
 ## Node Dimensions
 
 Corezoid nodes have specific dimensions that should be considered when positioning them:
+The complete per-type matrix, measurement method, confidence level, and
+engine/UI differences are maintained in
+[Corezoid Node Size Reference](node-size-reference.md).
 
 1. **Start and End Nodes**
 
@@ -17,38 +20,45 @@ Corezoid nodes have specific dimensions that should be considered when positioni
    - Radius: 28px
    - Pivot Point: Center of the node
 
-2. **Standard Nodes (without escalation or error links)**
+2. **Collapsed Nodes**
 
-   - Width: 200px
-   - Minimum Height: 150px
-   - Actual height varies based on node content
+   - Any node (IF/Delay/API/etc.) with `extra.modeForm: "collapse"` renders as a
+     fixed **56px × 56px** icon+badge, regardless of title, branch count, or
+     condition-block count — all of that is hidden while collapsed.
    - Pivot Point: Top-left corner
 
-3. **Nodes with a Timer (Semaphor / Delay)**
+3. **Standard Nodes (expanded)**
 
-   - Width: 200px
-   - Height: approximately **2× the standard height** of the same node type
-   - A timer semaphor adds a visible timer block below the node body, roughly doubling the rendered height
-   - Account for this when calculating vertical spacing to the next node — increase the Y gap accordingly
+   - Width: 200px (never grows — extra content wraps or stacks vertically
+     instead, see below)
+   - Measured baseline without a visible error/semaphore row: 98px
+   - Measured height with one `Error` output row and a short title: 125px
    - Pivot Point: Top-left corner
 
-4. **Nodes with Escalation or Error Links**
+4. **Height grows with content — three independent, stackable reasons**
 
-   - Width: 200px
-   - Minimum Height: 125px
-   - Pivot Point: Top-left corner
+   Measured directly against the live Corezoid UI (v6.12) by reading the
+   unscaled SVG dimensions:
 
-5. **Condition Nodes**
-   - With single rule:
-     - Width: 200px
-     - Minimum Height: 110px
-   - With AND operator:
-     - Width: 200px
-     - Minimum Height: 140px
-   - With 2 OR rules:
-     - Width: 200px
-     - Minimum Height: 160px
-   - Pivot Point: Top-left corner
+   - **An `Error` output row** increases the outer node height by **27px**.
+     The inner row is 36px high but overlaps the surrounding padding. Time and
+     count semaphore rows still require a dedicated live measurement; the
+     engine currently reserves a conservative 56px for each.
+   - **Each additional `go_if_const` row in a Condition node** adds
+     **~28-29px**. Measured totals are 151px for 2 rows, 180px for 3, and
+     208px for 4.
+   - **A title that doesn't fit the ~200px-wide header** adds
+     **16px per additional wrapped line**. A long, verbose node title measurably
+     grows the node vertically — width never changes, only height.
+
+   These stack: a Condition node with several rules AND a long wrapped title
+   is taller than either factor alone would suggest. When budgeting vertical
+   spacing by hand, estimate the tallest node in a row from its actual
+   branch/rule/title-length content rather than assuming a flat 150px —
+   `layout-process` is the preferred way to place nodes. Its current
+   conservative estimates intentionally differ from some newly measured
+   values; see the reference table before changing its constants.
+   - Pivot Point: Top-left corner (all of the above)
 
 ## Pivot Points and Their Impact on Positioning
 
@@ -109,12 +119,15 @@ alignment:
    - Position error handling nodes to the right of the main flow
    - Connect error nodes with horizontal lines from the main flow
    - Maintain consistent horizontal spacing (recommended: 200px from main flow)
-   - **Dedicated error cluster per error-prone node:** each failing node gets its own collapsed
+   - **Dedicated error cluster per error-prone node:** each failing node can use its own collapsed
      **Reply to Process** node (`obj_type: 3`) leading to its own descriptively-named **Error**
      node, pinned tight to the right of the node it protects and stepping slightly down-right in a
      compact staircase — so it reads as attached, not drifting off with a large gap. Exact
      coordinates are produced by `layout-process`; author the wiring and collapse flags, not the
      positions. See [Dedicated Error Cluster Pattern](error-handling.md#dedicated-error-cluster-pattern-standard).
+   - **Shared error cluster:** when two or more business nodes intentionally target the same
+     handler, place that cluster on a common right-hand rail. Do not send single-owner clusters to
+     the rail merely because the process contains many error nodes.
 
 2. **Escalation Paths**
 
@@ -288,6 +301,21 @@ New nodes may be added with placeholder coordinates `x: 0, y: 0`. On
 coordinates are always kept, and only the new `(0,0)` nodes are positioned near
 their graph neighbours without overlapping placed nodes. A process where every
 node is new gets a full clean layered layout.
+
+For a full re-layout, Start and callback nodes are entrypoints. A component is
+treated as historical/contextual and placed below the business flow only when
+it has no attachment to the active graph in either direction; a fragment that
+returns into the active flow stays beside its return layer. An `err_node_id`
+branch containing compensating business actions (or rejoining the active flow)
+is a recovery lane, not a collapsed terminal error cluster. Compact two-way
+fork/rejoin shapes use a diamond: the primary branch remains on the vertical
+axis and the optional branch stays beside it.
+
+The engine never makes automatic `modeForm` decisions. Collapse/expand state is
+user-owned and must remain identical before and after layout. The report includes
+an engine revision and `mode-passes`; a normal run completes with
+`mode-passes=1` and `collapsed=0`, and applying the same full layout twice must
+produce identical coordinates.
 
 - Disable entirely with the environment variable `COREZOID_AUTOLAYOUT=off`
   (coordinates are then written through unchanged).

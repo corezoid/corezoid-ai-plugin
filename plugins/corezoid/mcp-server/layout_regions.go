@@ -12,7 +12,7 @@ import (
 )
 
 type regionBundle struct {
-	kind  string // "table" | "star"
+	kind  string // "table" | "star" | "diamond"
 	hub   string
 	merge string
 	cols  [][]string // table columns or star rays (rays depth-sorted desc)
@@ -294,6 +294,123 @@ func detectStarBundle(nodes []map[string]interface{}) *regionBundle {
 	return best
 }
 
+// detectDiamondBundle finds a compact two-way fork/rejoin: a pure router with
+// exactly two heads whose simple action chains reconverge within a few steps.
+// TABLE/STAR intentionally start at 3/4 branches, so without this region the
+// common "do work vs skip, then continue" shape gets stretched across the
+// generic waterfall and its side branch drifts into error-handling columns.
+func detectDiamondBundle(nodes []map[string]interface{}) *regionBundle {
+	const maxDepth = 6
+	g := buildLayoutGraph(nodes)
+
+	distances := func(head string) map[string]int {
+		out := map[string]int{head: 0}
+		queue := []string{head}
+		for len(queue) > 0 {
+			u := queue[0]
+			queue = queue[1:]
+			if out[u] >= maxDepth {
+				continue
+			}
+			for _, v := range g.succs(u) {
+				if old, seen := out[v]; seen && old <= out[u]+1 {
+					continue
+				}
+				out[v] = out[u] + 1
+				queue = append(queue, v)
+			}
+		}
+		return out
+	}
+
+	simpleChain := func(head, merge string) ([]string, bool) {
+		if head == merge {
+			return []string{}, true
+		}
+		var chain []string
+		seen := map[string]bool{}
+		u := head
+		for len(chain) <= maxDepth {
+			if u == merge {
+				return chain, true
+			}
+			if seen[u] {
+				return nil, false
+			}
+			seen[u] = true
+			chain = append(chain, u)
+			next := g.succs(u)
+			if len(next) != 1 {
+				return nil, false
+			}
+			u = next[0]
+		}
+		return nil, false
+	}
+
+	var best *regionBundle
+	bestSize := math.MaxInt
+	for _, hub := range g.ids {
+		if !isPureRouter(g.byID[hub]) {
+			continue
+		}
+		heads := hubHeads(g, hub) // primary first, side branch second
+		if len(heads) != 2 {
+			continue
+		}
+		d0, d1 := distances(heads[0]), distances(heads[1])
+		merge := ""
+		bestMax, bestSum := math.MaxInt, math.MaxInt
+		for _, candidate := range g.ids {
+			a, oka := d0[candidate]
+			b, okb := d1[candidate]
+			if !oka || !okb || candidate == hub {
+				continue
+			}
+			mx := a
+			if b > mx {
+				mx = b
+			}
+			sum := a + b
+			if mx < bestMax || (mx == bestMax && sum < bestSum) {
+				merge, bestMax, bestSum = candidate, mx, sum
+			}
+		}
+		if merge == "" {
+			continue
+		}
+		mainCol, ok0 := simpleChain(heads[0], merge)
+		sideCol, ok1 := simpleChain(heads[1], merge)
+		if !ok0 || !ok1 || len(mainCol)+len(sideCol) == 0 {
+			continue
+		}
+		// Keep DIAMOND local. A large pair of subgraphs that merely share a
+		// distant final is a tree/fractal, not a compact fork/rejoin region.
+		size := len(mainCol) + len(sideCol)
+		if size > maxDepth+1 || (len(mainCol) > 2 && len(sideCol) > 2) {
+			continue
+		}
+		if best == nil || size < bestSize {
+			best = &regionBundle{
+				kind: "diamond", hub: hub, merge: merge,
+				cols: [][]string{mainCol, sideCol},
+			}
+			bestSize = size
+		}
+	}
+	if best == nil {
+		return nil
+	}
+	colnodes := map[string]bool{}
+	for _, c := range best.cols {
+		for _, u := range c {
+			colnodes[u] = true
+		}
+	}
+	best.sinks = sideSinks(g, colnodes, best.merge)
+	return best
+}
+
 // deepCopyNodesJSON clones scheme.nodes through a JSON round trip (the
 // Python engine's json.loads(json.dumps(...)) — region detection rewires
 // edges and must not touch the caller's document).
@@ -309,9 +426,9 @@ func deepCopyNodesJSON(nodes []map[string]interface{}) []map[string]interface{} 
 	return out
 }
 
-// detectRegions repeatedly finds a table (preferred) or star bundle, collapses
-// it to a virtual segment, and repeats on the residue. Returns the bundles and
-// the reduced node list (a working copy).
+// detectRegions repeatedly finds a table (preferred), star or compact diamond
+// bundle, collapses it to a virtual segment, and repeats on the residue.
+// Returns the bundles and the reduced node list (a working copy).
 func detectRegions(nodes []map[string]interface{}) ([]regionBundle, []map[string]interface{}) {
 	work := deepCopyNodesJSON(nodes)
 	var bundles []regionBundle
@@ -319,6 +436,9 @@ func detectRegions(nodes []map[string]interface{}) ([]regionBundle, []map[string
 		b := detectTableBundle(work)
 		if b == nil {
 			b = detectStarBundle(work)
+		}
+		if b == nil {
+			b = detectDiamondBundle(work)
 		}
 		if b == nil {
 			break
@@ -376,21 +496,40 @@ type clusterPlacement struct {
 // hop. Returns the placements plus the strip extent.
 func nodeClusterStrip(g *layoutGraph, owner string, members map[string]bool) (out []clusterPlacement, w, h int) {
 	const (
-		stepX   = 150 // primary staircase advance (collapsed 48px nodes)
+		stepX   = 150 // primary staircase advance (sized for a collapsed icon)
 		stepY   = 30
 		entryDY = 60 // below the owner's row, off the row lane
 		loopDY  = -72
 	)
+	// Every vertical step below was written when layout collapsed cluster
+	// members itself, so each one was a 48px icon and 30px/110px advances were
+	// generous. Layout no longer changes modeForm: members now arrive at
+	// whatever size the author left them, commonly a full 200x98+ block. A 30px
+	// advance then buries the next node inside the previous one and leaves
+	// resolveOverlaps to tear the strip apart afterwards — the "compact
+	// staircase hugging its owner" is designed and then immediately destroyed.
+	// Take the larger of the historical step and what the node actually needs.
+	// The x steps are left alone: a 150px advance plus a cleared y is enough to
+	// keep 200px boxes apart.
+	advanceY := func(id string, want int) int {
+		_, h := nodeBoxSize(g.byID[id])
+		if need := h + 8; need > want { // 8 == resolveOverlaps' vgap
+			return need
+		}
+		return want
+	}
 	seen := map[string]bool{}
 	type item struct {
 		id     string
 		dx, dy int
 	}
 	var queue []item
+	entryOff := entryDY
 	for _, e := range g.errors[owner] {
 		if members[e] && !seen[e] {
 			seen[e] = true
-			queue = append(queue, item{e, layErrDX, entryDY})
+			queue = append(queue, item{e, layErrDX, entryOff})
+			entryOff += advanceY(e, 110)
 		}
 	}
 	exitsToFlow := func(id string) bool {
@@ -412,7 +551,7 @@ func nodeClusterStrip(g *layoutGraph, owner string, members map[string]bool) (ou
 		if b := it.dy + bh; b > h {
 			h = b
 		}
-		belowOff := 110
+		belowOff := advanceY(it.id, 110)
 		for _, v := range g.succs(it.id) {
 			if !members[v] || seen[v] {
 				continue
@@ -420,13 +559,13 @@ func nodeClusterStrip(g *layoutGraph, owner string, members map[string]bool) (ou
 			seen[v] = true
 			switch {
 			case v == g.primary[it.id]:
-				queue = append(queue, item{v, it.dx + stepX, it.dy + stepY})
+				queue = append(queue, item{v, it.dx + stepX, it.dy + advanceY(it.id, stepY)})
 			case exitsToFlow(v):
 				// the retry Delay: stacked above its Condition
-				queue = append(queue, item{v, it.dx, it.dy + loopDY})
+				queue = append(queue, item{v, it.dx, it.dy - advanceY(v, -loopDY)})
 			default:
 				queue = append(queue, item{v, it.dx, it.dy + belowOff})
-				belowOff += 110
+				belowOff += advanceY(v, 110)
 			}
 		}
 	}
@@ -499,12 +638,121 @@ func splitSinkOwnership(g *layoutGraph, cols [][]string, sinks []string) (map[st
 	return pinned, shared
 }
 
+// hybridScore is deliberately lexicographic: removing an edge crossing is
+// worth more than shaving pixels from otherwise readable links. Keeping mask
+// zero on an exact tie preserves the historical "alternative branch right"
+// layout and prevents gratuitous churn in existing processes.
+type hybridScore struct {
+	crossings int
+	upward    int
+	long      int
+	p95       int
+	max       int
+	dedicated int
+}
+
+func scoreHybrid(coords map[string]lpoint, nodes []map[string]interface{}) hybridScore {
+	r := measureLayoutReadability(coords, buildLayoutGraph(nodes))
+	return hybridScore{
+		crossings: r.EdgeCrossings,
+		upward:    r.UpwardEdges,
+		long:      r.LongEdges,
+		p95:       r.P95EdgeSpan,
+		max:       r.MaxEdgeSpan,
+		dedicated: r.MaxDedicatedSpan,
+	}
+}
+
+func betterHybridScore(a, b hybridScore) bool {
+	av := [...]int{a.crossings, a.upward, a.long, a.p95, a.max, a.dedicated}
+	bv := [...]int{b.crossings, b.upward, b.long, b.p95, b.max, b.dedicated}
+	for i := range av {
+		if av[i] != bv[i] {
+			return av[i] < bv[i]
+		}
+	}
+	return false
+}
+
+func safeHybridAlternative(candidate, baseline hybridScore) bool {
+	// A crossing reduction is not a win when it turns short local links into
+	// long diagonals. Use the historical right-side orientation as a safety
+	// baseline and admit only Pareto-safe alternatives.
+	return candidate.upward <= baseline.upward &&
+		candidate.long <= baseline.long &&
+		candidate.p95 <= baseline.p95 &&
+		candidate.max <= baseline.max &&
+		candidate.dedicated <= baseline.dedicated
+}
+
 // layoutHybrid is the region composition: lay the residual graph out with the
-// waterfall, then expand the bundles back as aligned grids.
+// waterfall, then expand the bundles back as aligned grids. Compact DIAMOND
+// regions may put their alternative chain on either side of the primary axis.
+// For the small number of detected regions (capped by detectRegions), evaluate
+// every orientation and keep the most readable deterministic result.
 func (e *layoutEngine) layoutHybrid(nodes []map[string]interface{}) map[string]lpoint {
+	bundles, _ := detectRegions(nodes)
+	diamondCount := 0
+	for _, b := range bundles {
+		if b.kind == "diamond" && len(b.cols) == 2 && len(b.cols[0]) > 0 && len(b.cols[1]) > 0 {
+			diamondCount++
+		}
+	}
+	if diamondCount == 0 {
+		return e.layoutHybridOriented(nodes, 0)
+	}
+
+	// The candidates are NOT cheap: each one is a full layout of the entire
+	// process on a deep copy. Measured on the fractal fixtures: 4 diamonds =
+	// 16 candidates = 227ms, but 8 diamonds = 256 candidates = 23 SECONDS.
+	// That size sits inside the automatic push path (maxEngineLayoutNodes is
+	// 250, and this strategy is gated to <=80 nodes), so a first push of such
+	// a process would stall for half a minute. Node count is the wrong thing
+	// to bound here — the exponent is.
+	//
+	// Enumerate orientations for at most maxSearchedDiamonds of them, in
+	// detectRegions order (deterministic). The remainder keep the baseline
+	// orientation, i.e. the historical alternative-branch-right layout, so the
+	// result degrades to "good default" instead of becoming invalid.
+	const maxSearchedDiamonds = 4
+	searched := diamondCount
+	if searched > maxSearchedDiamonds {
+		searched = maxSearchedDiamonds
+	}
+	var bestMask uint
+	var bestScore hybridScore
+	var baseline hybridScore
+	haveBest := false
+	for mask := uint(0); mask < uint(1)<<searched; mask++ {
+		candidateNodes := deepCopyNodesJSON(nodes)
+		candidate := e.layoutHybridOriented(candidateNodes, mask)
+		score := scoreHybrid(candidate, candidateNodes)
+		if mask == 0 {
+			baseline = score
+		} else if !safeHybridAlternative(score, baseline) {
+			continue
+		}
+		if !haveBest || betterHybridScore(score, bestScore) {
+			bestMask, bestScore, haveBest = mask, score, true
+		}
+	}
+	return e.layoutHybridOriented(nodes, bestMask)
+}
+
+func (e *layoutEngine) layoutHybridOriented(nodes []map[string]interface{}, diamondMask uint) map[string]lpoint {
 	bundles, work := detectRegions(nodes)
 	if len(bundles) == 0 {
 		return e.layout(nodes)
+	}
+	diamondOrdinal := make([]int, len(bundles))
+	nextDiamond := 0
+	for i := range diamondOrdinal {
+		diamondOrdinal[i] = -1
+		if bundles[i].kind == "diamond" && len(bundles[i].cols) == 2 &&
+			len(bundles[i].cols[0]) > 0 && len(bundles[i].cols[1]) > 0 {
+			diamondOrdinal[i] = nextDiamond
+			nextDiamond++
+		}
 	}
 
 	coords := e.layout(work)
@@ -626,29 +874,53 @@ func (e *layoutEngine) layoutHybrid(nodes []map[string]interface{}) map[string]l
 					gridH = h
 				}
 			}
-			// odd ray count: deepest on the axis, others alternating outward;
-			// even count: no centre slot — pure ±1, ±2 pairs
 			xOff = map[int]int{}
-			side, mag := 1, 0
-			startCi := 0
-			if len(b.cols)%2 == 1 {
-				xOff[0] = 0
-				startCi = 1
-			}
-			for ci := startCi; ci < len(b.cols); ci++ {
-				if side > 0 {
-					mag++
+			if b.kind == "diamond" {
+				if len(b.cols) == 2 && (len(b.cols[0]) == 0 || len(b.cols[1]) == 0) {
+					// "Do work or skip" needs no visual lane for the empty
+					// branch. Keeping the sole action chain on the hub axis
+					// avoids a gratuitous diagonal and, when several such
+					// diamonds share a merge, prevents cumulative widening.
+					xOff[0], xOff[1] = 0, 0
+					widthCols = 1
+				} else {
+					// Main/default chain stays on the hub axis; the alternative
+					// chain occupies an immediately adjacent column. The wrapper
+					// chooses left/right from whole-layout readability metrics.
+					xOff[0] = 0
+					side := 1
+					if ord := diamondOrdinal[bi]; ord >= 0 && diamondMask&(uint(1)<<ord) != 0 {
+						side = -1
+					}
+					xOff[1] = side
+					// A virtual empty left slot keeps axis arithmetic identical
+					// to STAR and leaves the hub/merge visually centred.
+					widthCols = 3
 				}
-				xOff[ci] = side * mag
-				side = -side
-			}
-			maxAbs := 0
-			for _, v := range xOff {
-				if abs(v) > maxAbs {
-					maxAbs = abs(v)
+			} else {
+				// odd ray count: deepest on the axis, others alternating
+				// outward; even count: no centre slot — pure ±1, ±2 pairs
+				side, mag := 1, 0
+				startCi := 0
+				if len(b.cols)%2 == 1 {
+					xOff[0] = 0
+					startCi = 1
 				}
+				for ci := startCi; ci < len(b.cols); ci++ {
+					if side > 0 {
+						mag++
+					}
+					xOff[ci] = side * mag
+					side = -side
+				}
+				maxAbs := 0
+				for _, v := range xOff {
+					if abs(v) > maxAbs {
+						maxAbs = abs(v)
+					}
+				}
+				widthCols = 2*maxAbs + 1
 			}
-			widthCols = 2*maxAbs + 1
 		}
 
 		ncols := widthCols
@@ -670,10 +942,8 @@ func (e *layoutEngine) layoutHybrid(nodes []map[string]interface{}) map[string]l
 		}
 
 		// horizontal room: parallel wings occupying the region band step aside
-		hubCx := hp.X
-		if !isCircle(g.byID[b.hub]) {
-			hubCx += 100
-		}
+		hx0, _, hx1, _ := nodeBox(g.byID[b.hub], hp.X, hp.Y)
+		hubCx := (hx0 + hx1) / 2
 		totalW := colPitch*ncols - gapH
 		left := float64(hubCx) - float64(colPitch*widthCols-gapH)/2.0
 		spanL, spanR := left-float64(gapH), left+float64(totalW)+float64(gapH)
@@ -744,12 +1014,13 @@ func (e *layoutEngine) layoutHybrid(nodes []map[string]interface{}) map[string]l
 				}
 			}
 		}
-		// keep the merge on the hub axis for the star silhouette
-		if b.kind == "star" {
+		// keep the merge on the hub axis for STAR and DIAMOND silhouettes
+		if b.kind == "star" || b.kind == "diamond" {
 			mNode := g.byID[b.merge]
 			mxNew := hubCx
 			if !isCircle(mNode) {
-				mxNew = hubCx - 100
+				mw, _ := nodeBoxSize(mNode)
+				mxNew = hubCx - mw/2
 			}
 			coords[b.merge] = lpoint{mxNew, coords[b.merge].Y}
 		}
