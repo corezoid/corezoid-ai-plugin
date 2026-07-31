@@ -113,6 +113,8 @@ For JSON examples of processes, see the individual process files below:
   for implementing algorithms as Corezoid processes
 - [Node Positioning Best Practices](node-positioning-best-practices.md) - Guidelines for positioning
   and arranging nodes in process diagrams
+- [Node Size Reference](node-size-reference.md) - Measured dimensions and sizing rules for every
+  Corezoid node renderer
 - [Error Handling Strategies](error-handling.md) - Comprehensive approaches to handling errors in
   processes
 

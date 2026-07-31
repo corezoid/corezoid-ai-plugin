@@ -1,6 +1,9 @@
 package main
 
-import "testing"
+import (
+	"encoding/json"
+	"testing"
+)
 
 func TestBuildLayoutGraph_EdgesAndOrder(t *testing.T) {
 	nodes := topoStar()
@@ -48,9 +51,13 @@ func TestNodeBoxSizeAndPivot(t *testing.T) {
 	if x0 != 472 || y0 != 72 || x1 != 528 || y1 != 128 {
 		t.Fatalf("circle pivot must be centre: got (%d,%d,%d,%d)", x0, y0, x1, y1)
 	}
+	// g.code("step", "x") with no err param has zero output branches (no
+	// err_node_id, no semaphors) and a 1-line title: just the LOGIC base
+	// height, not the old flat 150 every expanded node used to get regardless
+	// of content.
 	blk := g.code("step", "x")
-	if w, h := nodeBoxSize(blk); w != 200 || h != 150 {
-		t.Fatalf("block box: %dx%d, want 200x150", w, h)
+	if w, h := nodeBoxSize(blk); w != 200 || h != logicBaseH {
+		t.Fatalf("block box: %dx%d, want 200x%d", w, h, logicBaseH)
 	}
 	collapseNode(blk)
 	if w, h := nodeBoxSize(blk); w != 48 || h != 48 {
@@ -59,9 +66,57 @@ func TestNodeBoxSizeAndPivot(t *testing.T) {
 	if s, ok := blk["extra"].(string); !ok || s == "" {
 		t.Fatalf("collapseNode must keep extra as a JSON string, got %T", blk["extra"])
 	}
+	// g.delay has exactly one output row, a time semaphore and no err_node_id,
+	// so it pays the conservative semaphore increment rather than the measured
+	// Error-row one.
 	dl := g.delay("wait", "x")
-	if _, h := nodeBoxSize(dl); h != 270 {
-		t.Fatalf("timer block must be 270 tall")
+	wantDelayH := logicBaseH + perSemaphoreRowH
+	if _, h := nodeBoxSize(dl); h != wantDelayH {
+		t.Fatalf("timer block: got %dpx tall, want %dpx (base %d + %d per semaphore row)", h, wantDelayH, logicBaseH, perSemaphoreRowH)
+	}
+}
+
+func TestConditionSizingUsesWiringAndStacksBranches(t *testing.T) {
+	g := &fixGen{}
+	fin := g.final("done", true)
+	cond := g.cond("route?", []fixBranch{{"kind", "a", nodeStr(fin, "id")}}, nodeStr(fin, "id"))
+	// Real pulled files use json.Number because layout-process decodes with
+	// UseNumber; production Condition nodes themselves commonly use obj_type=0.
+	cond["obj_type"] = json.Number("0")
+	nodeLogics(cond)[0]["err_node_id"] = nodeStr(fin, "id")
+	cond["condition"].(map[string]interface{})["semaphors"] = []interface{}{
+		map[string]interface{}{"type": "time", "to_node_id": nodeStr(fin, "id")},
+	}
+
+	if !isConditionNode(cond) {
+		t.Fatal("go_if_const wiring must identify a Condition independently of obj_type")
+	}
+	want := condBaseH + perConditionRowH + perErrRowH + perSemaphoreRowH
+	if _, got := nodeBoxSize(cond); got != want {
+		t.Fatalf("condition height=%d, want %d (body + row + error row + timer row)", got, want)
+	}
+}
+
+func TestRoleOfAcceptsUseNumber(t *testing.T) {
+	if got := roleOf(map[string]interface{}{"obj_type": json.Number("3")}); got != "COND" {
+		t.Fatalf("roleOf(json.Number(3))=%q, want COND", got)
+	}
+}
+
+func TestTerminalErrorDefaultDoesNotDisplaceSuccessBranch(t *testing.T) {
+	g := &fixGen{}
+	success := g.final("success", true)
+	successStep := g.code("continue business flow", nodeStr(success, "id"))
+	errFinal := g.final("not found error", false)
+	router := g.cond("exists?", []fixBranch{{"exists", "yes", nodeStr(successStep, "id")}}, nodeStr(errFinal, "id"))
+	nodes := []map[string]interface{}{router, successStep, success, errFinal}
+
+	graph := buildLayoutGraph(nodes)
+	if got := graph.primary[nodeStr(router, "id")]; got != nodeStr(successStep, "id") {
+		t.Fatalf("primary=%s, want success continuation %s", got, nodeStr(successStep, "id"))
+	}
+	if got := graph.branches[nodeStr(router, "id")]; len(got) != 1 || got[0] != nodeStr(errFinal, "id") {
+		t.Fatalf("error default was not moved to the side branches: %v", got)
 	}
 }
 
@@ -111,7 +166,7 @@ func TestBuildLayoutGraph_CountSemaphorEscIsErrEdge(t *testing.T) {
 		return map[string]interface{}{
 			"id": id, "title": title, "obj_type": float64(objType),
 			"condition": map[string]interface{}{"logics": logics, "semaphors": sems},
-			"x": float64(0), "y": float64(0),
+			"x":         float64(0), "y": float64(0),
 		}
 	}
 	goTo := func(to string) interface{} { return map[string]interface{}{"type": "go", "to_node_id": to} }

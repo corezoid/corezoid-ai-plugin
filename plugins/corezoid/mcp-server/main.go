@@ -55,6 +55,7 @@ var debug = debugFromEnv()
 // debugFromEnv reports whether COREZOID_DEBUG requests the detailed trace.
 // Split out so tests can exercise the wiring with t.Setenv.
 func debugFromEnv() bool { return os.Getenv("COREZOID_DEBUG") != "" }
+
 var apigwURL string
 var stageID int
 var insecureTLS bool
@@ -237,7 +238,7 @@ func loadConfig() {
 		os.Unsetenv("COREZOID_PROJECT_ID")
 		os.Unsetenv("COREZOID_PROJECT_ID_STAGE_ID")
 		if envPath := findDotEnvPath(); envPath != "" {
-			removeEnvKey(envPath, "COREZOID_PROJECT_ID")           //nolint:errcheck
+			removeEnvKey(envPath, "COREZOID_PROJECT_ID")          //nolint:errcheck
 			removeEnvKey(envPath, "COREZOID_PROJECT_ID_STAGE_ID") //nolint:errcheck
 		}
 	}
@@ -384,6 +385,7 @@ var schemaDefinitions = []struct{ name, path string }{
 	{"process", "json-schema/process.json"},
 	{"node", "json-schema/node.json"},
 	{"condition", "json-schema/logics/condition.json"},
+	{"stub", "json-schema/logics/stub.json"},
 	{"logics", "json-schema/logics.json"},
 	{"semaphors", "json-schema/logics/semaphors.json"},
 	{"go", "json-schema/logics/go.json"},
@@ -545,6 +547,93 @@ func LoadBinFromFile(filePath string) (string, error) {
 	return string(fileContent), nil
 }
 
+func isProcessLogicObjType(objType int) bool {
+	return objType == 0 || objType == 4
+}
+
+func normalizeGoIfConstLogic(nodeID interface{}, logicMap map[string]interface{}, messages *[]string) {
+	funAliases := map[string]string{
+		"gte": "more_or_eq",
+		"lte": "less_or_eq",
+		"gt":  "more",
+		"lt":  "less",
+		"ne":  "not_eq",
+		"neq": "not_eq",
+	}
+	if conditions, ok := logicMap["conditions"].([]interface{}); ok {
+		for _, cond := range conditions {
+			if condMap, ok := cond.(map[string]interface{}); ok {
+				if fun, ok := condMap["fun"].(string); ok {
+					if replacement, found := funAliases[fun]; found {
+						condMap["fun"] = replacement
+						*messages = append(*messages,
+							fmt.Sprintf("go_if_const condition in node %v: \"fun\":\"%s\" replaced with \"fun\":\"%s\"", nodeID, fun, replacement))
+					}
+				}
+			}
+		}
+	}
+}
+
+func normalizeLogicForDeploy(nodeID interface{}, logicMap map[string]interface{}, messages *[]string) {
+	if convIDBin, ok := logicMap["conv_id"].(string); ok {
+		convID, err := strconv.Atoi(convIDBin)
+		if err == nil {
+			logicMap["conv_id"] = convID
+		}
+	}
+
+	logicType, _ := logicMap["type"].(string)
+	switch logicType {
+	case "go_if_const":
+		normalizeGoIfConstLogic(nodeID, logicMap, messages)
+	case "git_call", "api_git":
+		// git_call deploys via a separate container build (see BuildGitCallNodes).
+		// Mark the source valid so Commit accepts the node; the build runs
+		// between compile and commit.
+		if _, set := logicMap["code_error"]; !set {
+			logicMap["code_error"] = false
+		}
+	case "api":
+		if extra, ok := logicMap["extra"].(map[string]interface{}); ok {
+			if body, ok := extra["body"].(string); ok && len(extra) == 1 {
+				// then body to raw_body field and extra["body"] to delete
+				logicMap["raw_body"] = body
+				logicMap["format"] = "raw"
+				logicMap["extra"] = make(map[string]interface{})
+				logicMap["extra_type"] = make(map[string]interface{})
+				*messages = append(*messages,
+					fmt.Sprintf("Logic \"api\" in the node %v was fixed. If you need to pass a variable %s as the entire body part, Instead of \"extra\" and \"extra_type\" you need to use then fields: \"raw_body\":\"%s\", \"format\":\"raw\". I am already fixed it. You don't need to change anything anymore", nodeID, body, body))
+			}
+		} else {
+			logicMap["extra"] = make(map[string]interface{})
+			logicMap["extra_type"] = make(map[string]interface{})
+		}
+	}
+}
+
+func normalizeStubForDeploy(nodeID interface{}, condition map[string]interface{}, messages *[]string) {
+	stub, ok := condition["stub"].(map[string]interface{})
+	if !ok {
+		return
+	}
+	branches, ok := stub["logics"].([]interface{})
+	if !ok {
+		return
+	}
+	for _, branch := range branches {
+		branchItems, ok := branch.([]interface{})
+		if !ok {
+			continue
+		}
+		for _, item := range branchItems {
+			if logicMap, ok := item.(map[string]interface{}); ok {
+				normalizeLogicForDeploy(nodeID, logicMap, messages)
+			}
+		}
+	}
+}
+
 func fixStruct(dataBin string, inProcessID int) (string, []string) {
 	messages := make([]string, 0)
 	var data map[string]interface{}
@@ -564,7 +653,7 @@ func fixStruct(dataBin string, inProcessID int) (string, []string) {
 		for _, node := range nodes {
 			if nodeMap, ok := node.(map[string]interface{}); ok {
 				objTypeF, _ := nodeMap["obj_type"].(float64)
-				if int(objTypeF) == 0 {
+				if isProcessLogicObjType(int(objTypeF)) {
 					//	for by logics
 					condition, ok := nodeMap["condition"].(map[string]interface{})
 					if !ok {
@@ -575,62 +664,11 @@ func fixStruct(dataBin string, inProcessID int) (string, []string) {
 					if logics, ok := condition["logics"].([]interface{}); ok {
 						for _, logic := range logics {
 							if logicMap, ok := logic.(map[string]interface{}); ok {
-								if convIDBin, ok := logicMap["conv_id"].(string); ok {
-									convID, err := strconv.Atoi(convIDBin)
-									if err == nil {
-										logicMap["conv_id"] = convID
-									}
-								}
-								if logicMap["type"] == "go_if_const" {
-									funAliases := map[string]string{
-										"gte": "more_or_eq",
-										"lte": "less_or_eq",
-										"gt":  "more",
-										"lt":  "less",
-										"ne":  "not_eq",
-										"neq": "not_eq",
-									}
-									if conditions, ok := logicMap["conditions"].([]interface{}); ok {
-										for _, cond := range conditions {
-											if condMap, ok := cond.(map[string]interface{}); ok {
-												if fun, ok := condMap["fun"].(string); ok {
-													if replacement, found := funAliases[fun]; found {
-														condMap["fun"] = replacement
-														messages = append(messages,
-															fmt.Sprintf("go_if_const condition in node %s: \"fun\":\"%s\" replaced with \"fun\":\"%s\"", nodeMap["id"], fun, replacement))
-													}
-												}
-											}
-										}
-									}
-								}
-								if logicMap["type"] == "git_call" || logicMap["type"] == "api_git" {
-									// git_call deploys via a separate container build (see BuildGitCallNodes).
-									// Mark the source valid so Commit accepts the node; the build runs
-									// between compile and commit.
-									if _, set := logicMap["code_error"]; !set {
-										logicMap["code_error"] = false
-									}
-								}
-								if logicMap["type"] == "api" {
-									if extra, ok := logicMap["extra"].(map[string]interface{}); ok {
-										if body, ok := extra["body"].(string); ok && len(extra) == 1 {
-											//	then body to raw_body field and extra["body"] to delete
-											logicMap["raw_body"] = body
-											logicMap["format"] = "raw"
-											logicMap["extra"] = make(map[string]interface{})
-											logicMap["extra_type"] = make(map[string]interface{})
-											messages = append(messages,
-												fmt.Sprintf("Logic \"api\" in the node %s was fixed. If you need to pass a variable %s as the entire body part, Instead of \"extra\" and \"extra_type\" you need to use then fields: \"raw_body\":\"%s\", \"format\":\"raw\". I am already fixed it. You don't need to change anything anymore", nodeMap["id"], body, body))
-										}
-									} else {
-										logicMap["extra"] = make(map[string]interface{})
-										logicMap["extra_type"] = make(map[string]interface{})
-									}
-								}
+								normalizeLogicForDeploy(nodeMap["id"], logicMap, &messages)
 							}
 						}
 					}
+					normalizeStubForDeploy(nodeMap["id"], condition, &messages)
 				}
 				if options, ok := nodeMap["options"].(map[string]interface{}); ok {
 					optionsStr, err := json.Marshal(options)

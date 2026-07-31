@@ -6,6 +6,7 @@ package main
 import (
 	"math"
 	"sort"
+	"strings"
 )
 
 type edgePair struct{ from, to string }
@@ -16,13 +17,29 @@ type edgePair struct{ from, to string }
 // branches). The component's err tails are not included here — they are
 // placed by the global cluster pass.
 func placeComponent(comp map[string]bool, root string, g *layoutGraph) (map[string]bool, map[string]int, map[string]int, map[edgePair]bool) {
+	localPrimary := func(u string) (string, bool) {
+		if p, ok := g.primary[u]; ok && comp[p] {
+			return p, true
+		}
+		// In a restricted component the global primary may already belong to
+		// the active graph (typical for a returning/recovery side flow). Keep
+		// the first in-component branch on the local axis instead of pushing
+		// the entire remaining pipeline progressively sideways.
+		for _, b := range g.branches[u] {
+			if comp[b] {
+				return b, true
+			}
+		}
+		return "", false
+	}
 	succs := func(u string) []string {
 		var out []string
-		if p, ok := g.primary[u]; ok && comp[p] {
+		p, hasPrimary := localPrimary(u)
+		if hasPrimary {
 			out = append(out, p)
 		}
 		for _, b := range g.branches[u] {
-			if comp[b] {
+			if comp[b] && (!hasPrimary || b != p) {
 				out = append(out, b)
 			}
 		}
@@ -110,7 +127,7 @@ func placeComponent(comp map[string]bool, root string, g *layoutGraph) (map[stri
 			}
 			seen[u] = true
 			out = append(out, u)
-			nu, ok := g.primary[u]
+			nu, ok := localPrimary(u)
 			if !ok || seen[nu] {
 				break
 			}
@@ -149,8 +166,9 @@ func placeComponent(comp map[string]bool, root string, g *layoutGraph) (map[stri
 		queue = queue[1:]
 		pc := col[u]
 		var bs []string
+		lp, hasLP := localPrimary(u)
 		for _, b := range g.branches[u] {
-			if _, placed := col[b]; flow[b] && !placed {
+			if _, placed := col[b]; flow[b] && !placed && (!hasLP || b != lp) {
 				bs = append(bs, b)
 			}
 		}
@@ -188,7 +206,7 @@ func placeComponent(comp map[string]bool, root string, g *layoutGraph) (map[stri
 				}
 			}
 		}
-		if nxt, ok := g.primary[u]; ok {
+		if nxt, ok := localPrimary(u); ok {
 			if _, placed := col[nxt]; placed && !seenQ[nxt] {
 				queue = append(queue, nxt)
 				seenQ[nxt] = true
@@ -254,7 +272,7 @@ func placeComponent(comp map[string]bool, root string, g *layoutGraph) (map[stri
 			delete(cell, cellKey{col[u], layer[u]})
 			col[u] = best
 			cell[tgt] = u
-			nu, ok := g.primary[u]
+			nu, ok := localPrimary(u)
 			if !ok || !flow[nu] || len(preds[nu]) > 1 {
 				break
 			}
@@ -263,6 +281,122 @@ func placeComponent(comp map[string]bool, root string, g *layoutGraph) (map[stri
 				break
 			}
 			u = nu // NB: c deliberately keeps the ORIGINAL col[v] (1:1 port)
+		}
+	}
+
+	// --- loop bodies: pull a side excursion up onto its entry row ------------
+	// A back edge means the nodes between the loop head and that edge's source
+	// form a cycle. Placed as an ordinary branch, the body starts one row BELOW
+	// the condition that enters it, so the return edge has to climb that extra
+	// row and crosses back over the spine diagonally — which in turn makes the
+	// node/edge polish pass shove the condition off the axis (the spine visibly
+	// jogs). Aligning the body's first row with its entry row shortens the
+	// return, keeps it beside the body's own column and leaves the spine
+	// straight. The exit final follows for free: it is sunk relative to the
+	// deepest placed row, which the shift also raises.
+	var backEdges []edgePair
+	for e := range back {
+		if flow[e.from] && flow[e.to] {
+			backEdges = append(backEdges, e)
+		}
+	}
+	sort.SliceStable(backEdges, func(i, j int) bool {
+		if a, b := g.docIdx[backEdges[i].from], g.docIdx[backEdges[j].from]; a != b {
+			return a < b
+		}
+		return g.docIdx[backEdges[i].to] < g.docIdx[backEdges[j].to]
+	})
+	for _, be := range backEdges {
+		src, head := be.from, be.to
+		// Forward cone of the loop head, so the body cannot escape the cycle.
+		fwd := map[string]bool{}
+		stack := []string{head}
+		for len(stack) > 0 {
+			u := stack[len(stack)-1]
+			stack = stack[:len(stack)-1]
+			for _, v := range succs(u) {
+				if !flow[v] || v == head || fwd[v] || back[edgePair{u, v}] {
+					continue
+				}
+				fwd[v] = true
+				stack = append(stack, v)
+			}
+		}
+		if !fwd[src] {
+			continue
+		}
+		// The cycle is everything on a head→src path (src included, head not).
+		// Note this still contains the spine nodes the loop passes through —
+		// the branching condition itself is on the cycle.
+		cycle := map[string]bool{src: true}
+		stack = []string{src}
+		for len(stack) > 0 {
+			u := stack[len(stack)-1]
+			stack = stack[:len(stack)-1]
+			for _, w := range preds[u] {
+				if w == head || !fwd[w] || cycle[w] {
+					continue
+				}
+				cycle[w] = true
+				stack = append(stack, w)
+			}
+		}
+		// The cycle leaves the spine at its deepest node still in the head's
+		// column — that node is the entry (the condition). Only what the cycle
+		// owns OFF that column is the side excursion allowed to move; the spine
+		// part must stay where it is.
+		headCol := col[head]
+		entry := head
+		var ids []string
+		for _, u := range g.inDocOrder(cycle) {
+			if col[u] == headCol {
+				if layer[u] > layer[entry] {
+					entry = u
+				}
+				continue
+			}
+			ids = append(ids, u)
+		}
+		// Only a body with real depth benefits. A one-node excursion (the
+		// classic retry Delay hanging off a check) already returns within two
+		// rows, and the row it would move into is usually taken by the
+		// condition's own error cluster — which is placed later, in pixel
+		// space, so the cell check below cannot see it. Leave those alone.
+		if len(ids) < 2 {
+			continue
+		}
+		topLayer := layer[ids[0]]
+		for _, u := range ids {
+			if layer[u] < topLayer {
+				topLayer = layer[u]
+			}
+		}
+		delta := layer[entry] - topLayer
+		if delta >= 0 {
+			continue // already level with (or above) the entry row
+		}
+		moving := map[string]bool{}
+		for _, u := range ids {
+			moving[u] = true
+		}
+		occupied := map[cellKey]bool{}
+		for _, u := range g.inDocOrder(flow) {
+			if !moving[u] {
+				occupied[cellKey{col[u], layer[u]}] = true
+			}
+		}
+		blocked := false
+		for _, u := range ids {
+			if occupied[cellKey{col[u], layer[u] + delta}] {
+				blocked = true
+				break
+			}
+		}
+		if blocked {
+			continue
+		}
+		for _, u := range ids {
+			layer[u] += delta
 		}
 	}
 	return flow, layer, col, back
@@ -285,11 +419,15 @@ type subflow struct {
 	back  map[edgePair]bool
 }
 
-func (g *layoutGraph) errClosure() (map[string]bool, map[string]bool) {
+// errPartitions separates the active entry-reachable flow, compact terminal
+// error handling and substantial recovery branches entered through an error
+// edge. Recovery branches are business flow: they either rejoin the active
+// graph or contain real action nodes beyond the usual Reply/Error pair.
+func (g *layoutGraph) errPartitions() (map[string]bool, map[string]bool, map[string]bool) {
 	mainFlow := map[string]bool{}
 	var stack []string
 	for _, n := range g.nodes {
-		if nodeObjType(n) == 1 {
+		if nodeObjType(n) == 1 || hasLogicType(n, "api_callback") {
 			id := nodeStr(n, "id")
 			mainFlow[id] = true
 			stack = append(stack, id)
@@ -311,16 +449,59 @@ func (g *layoutGraph) errClosure() (map[string]bool, map[string]bool) {
 			errTargets[e] = true
 		}
 	}
+
+	recovery := map[string]bool{}
+	for _, root := range g.inDocOrder(errTargets) {
+		if mainFlow[root] {
+			continue
+		}
+		members := map[string]bool{}
+		rejoinsMain := false
+		substantial := 0
+		queue := []string{root}
+		for len(queue) > 0 {
+			u := queue[0]
+			queue = queue[1:]
+			if members[u] || mainFlow[u] {
+				continue
+			}
+			members[u] = true
+			n := g.byID[u]
+			if nodeObjType(n) != 2 && nodeObjType(n) != 3 && !isPureRouter(n) {
+				substantial++
+			}
+			for _, v := range g.succs(u) {
+				if mainFlow[v] {
+					rejoinsMain = true
+					continue
+				}
+				if !members[v] {
+					queue = append(queue, v)
+				}
+			}
+		}
+		// A normal terminal cluster is typically Reply -> Error Final. A
+		// longer branch with action nodes represents compensating/recovery
+		// business logic and must keep its expanded pipeline geometry.
+		rootLooksLikeRecovery := nodeObjType(g.byID[root]) == 3 &&
+			!strings.Contains(strings.ToLower(nodeStr(g.byID[root], "title")), "error")
+		if rejoinsMain || (rootLooksLikeRecovery && substantial > 0 && len(members) >= 3) {
+			for u := range members {
+				recovery[u] = true
+			}
+		}
+	}
+
 	errClosure := map[string]bool{}
 	for _, e := range g.inDocOrder(errTargets) {
-		if !mainFlow[e] {
+		if !mainFlow[e] && !recovery[e] {
 			stack = append(stack, e)
 		}
 	}
 	for len(stack) > 0 {
 		u := stack[len(stack)-1]
 		stack = stack[:len(stack)-1]
-		if errClosure[u] || mainFlow[u] {
+		if errClosure[u] || mainFlow[u] || recovery[u] {
 			continue
 		}
 		errClosure[u] = true
@@ -330,6 +511,11 @@ func (g *layoutGraph) errClosure() (map[string]bool, map[string]bool) {
 			}
 		}
 	}
+	return mainFlow, errClosure, recovery
+}
+
+func (g *layoutGraph) errClosure() (map[string]bool, map[string]bool) {
+	mainFlow, errClosure, _ := g.errPartitions()
 	return mainFlow, errClosure
 }
 
@@ -381,13 +567,13 @@ func (g *layoutGraph) pickRoot(remaining map[string]bool) string {
 }
 
 // layout is the "waterfall with wings" strategy. It returns coordinates for
-// every node and MUTATES nodes (extra.modeForm) for the collapse decisions.
+// every node while preserving the caller's existing extra.modeForm state.
 func (e *layoutEngine) layout(nodes []map[string]interface{}) map[string]lpoint {
 	if len(nodes) == 0 {
 		return map[string]lpoint{}
 	}
 	g := buildLayoutGraph(nodes)
-	_, errClosure := g.errClosure()
+	mainReach, errClosure := g.errClosure()
 
 	// 1) collect all forward flows in local frames (error clusters excluded)
 	var subflows []subflow
@@ -428,6 +614,14 @@ func (e *layoutEngine) layout(nodes []map[string]interface{}) map[string]lpoint 
 		}
 		return false
 	}
+	isMainReach := func(sf subflow) bool {
+		for u := range sf.flow {
+			if mainReach[u] {
+				return true
+			}
+		}
+		return false
+	}
 	sort.SliceStable(subflows, func(i, j int) bool {
 		si, sj := 0, 0
 		if !hasStart(subflows[i]) {
@@ -449,8 +643,43 @@ func (e *layoutEngine) layout(nodes []map[string]interface{}) map[string]lpoint 
 	back := map[edgePair]bool{}
 	const minorMax = 6
 	const gapCols = 2
-	var majors, minors []subflow
+	var majors, minors, anchored, detached []subflow
+	hasActiveAttachment := func(sf subflow) bool {
+		for u := range sf.flow {
+			for _, v := range g.succs(u) {
+				if mainReach[v] && !sf.flow[v] {
+					return true
+				}
+			}
+		}
+		for owner := range mainReach {
+			for _, root := range g.errors[owner] {
+				if sf.flow[root] {
+					return true
+				}
+			}
+		}
+		return false
+	}
 	for _, sf := range subflows {
+		// Secondary entrypoints (for example api_callback) may converge into
+		// the Start flow after it has already claimed the shared tail.
+		if !hasStart(sf) && isMainReach(sf) && hasActiveAttachment(sf) {
+			anchored = append(anchored, sf)
+			continue
+		}
+		// A non-entry component may still be a recovery pipeline entered by
+		// err_node_id, or a legacy fragment returning into the active flow.
+		// Those components belong beside their attachment layer; only a truly
+		// disconnected component belongs in the archive zone at the bottom.
+		if len(mainReach) > 0 && !hasStart(sf) && !isMainReach(sf) {
+			if hasActiveAttachment(sf) {
+				anchored = append(anchored, sf)
+			} else {
+				detached = append(detached, sf)
+			}
+			continue
+		}
 		if len(sf.flow) > minorMax || hasStart(sf) {
 			majors = append(majors, sf)
 		} else {
@@ -517,6 +746,137 @@ func (e *layoutEngine) layout(nodes []map[string]interface{}) map[string]lpoint 
 		}
 	}
 
+	// Recovery/returning components are vertically anchored to the owner or
+	// merge layer. Error-entered recovery goes to the right; an old fragment
+	// that only returns into the active graph goes to the left. This keeps
+	// both the entry and return edges local instead of stretching them through
+	// the archive zone.
+	if len(anchored) > 0 {
+		minCol := func() int {
+			m, any := 0, false
+			for _, c := range col {
+				if !any || c < m {
+					m, any = c, true
+				}
+			}
+			return m
+		}
+		leftNext := minCol() - gapCols
+		rightNext := maxCol() + 1 + gapCols
+		for _, sf := range anchored {
+			var shifts []int
+			var colShifts []int
+			errorEntered := false
+			secondaryEntry := false
+			for u := range sf.flow {
+				if mainReach[u] {
+					secondaryEntry = true
+					break
+				}
+			}
+			for owner := range mainReach {
+				ownerLayer, ok := layer[owner]
+				if !ok {
+					continue
+				}
+				for _, root := range g.errors[owner] {
+					if sf.flow[root] {
+						shifts = append(shifts, ownerLayer+1-sf.layer[root])
+						colShifts = append(colShifts, col[owner]+1-sf.col[root])
+						errorEntered = true
+					}
+				}
+			}
+			for u := range sf.flow {
+				for _, v := range g.succs(u) {
+					if targetLayer, ok := layer[v]; ok && mainReach[v] && !sf.flow[v] {
+						shifts = append(shifts, targetLayer-1-sf.layer[u])
+						colShifts = append(colShifts, col[v]-1-sf.col[u])
+					}
+				}
+			}
+			sort.Ints(shifts)
+			layerShift := 0
+			if len(shifts) > 0 {
+				layerShift = shifts[len(shifts)/2]
+				if layerShift < 0 {
+					layerShift = 0
+				}
+			}
+			width := 1
+			for _, c := range sf.col {
+				if c+1 > width {
+					width = c + 1
+				}
+			}
+			colShift := 0
+			if len(colShifts) > 0 {
+				sort.Ints(colShifts)
+				colShift = colShifts[len(colShifts)/2]
+			} else if errorEntered {
+				colShift = rightNext
+				rightNext += width + gapCols
+			} else {
+				colShift = leftNext - width
+				leftNext = colShift - gapCols
+			}
+			if secondaryEntry && len(colShifts) == 0 {
+				colShift = -1
+			}
+			for u := range sf.flow {
+				layer[u] = layerShift + sf.layer[u]
+				col[u] = colShift + sf.col[u]
+				flow[u] = true
+			}
+			for edge := range sf.back {
+				back[edge] = true
+			}
+		}
+	}
+
+	// Detached components form a clearly separated archive zone below the
+	// active flow. Reusing columns from zero keeps the total canvas width
+	// bounded while the layer offset prevents overlap with active components.
+	if len(detached) > 0 {
+		cellW, cellH := 0, 0
+		for _, sf := range detached {
+			for _, c := range sf.col {
+				if c+2 > cellW {
+					cellW = c + 2
+				}
+			}
+			for _, l := range sf.layer {
+				if l+2 > cellH {
+					cellH = l + 2
+				}
+			}
+		}
+		gridCols := int(math.Ceil(math.Sqrt(float64(len(detached)))))
+		if gridCols < 1 {
+			gridCols = 1
+		}
+		maxActiveLayer := 0
+		for _, l := range layer {
+			if l > maxActiveLayer {
+				maxActiveLayer = l
+			}
+		}
+		baseLayer := maxActiveLayer + 2
+		for i, sf := range detached {
+			r, c := i/gridCols, i%gridCols
+			cx := c * cellW
+			ly := baseLayer + r*cellH
+			for u := range sf.flow {
+				layer[u] = ly + sf.layer[u]
+				col[u] = cx + sf.col[u]
+				flow[u] = true
+			}
+			for edge := range sf.back {
+				back[edge] = true
+			}
+		}
+	}
+
 	// err clusters: err targets outside flow + their tails
 	errOnly := map[string]bool{}
 	var stack []string
@@ -541,11 +901,11 @@ func (e *layoutEngine) layout(nodes []map[string]interface{}) map[string]lpoint 
 		}
 	}
 
-	// nodes to be collapsed (needed before pixels — their x is optically
-	// centered on the column axis)
+	// Already-collapsed service nodes need an optical x-offset. Layout never
+	// changes an expanded router into a collapsed one.
 	collapseSet := map[string]bool{}
 	for _, u := range g.inDocOrder(flow) {
-		if isPureRouter(g.byID[u]) {
+		if isPureRouter(g.byID[u]) && isCollapsedNode(g.byID[u]) {
 			collapseSet[u] = true
 		}
 	}
@@ -601,6 +961,25 @@ func (e *layoutEngine) layout(nodes []map[string]interface{}) map[string]lpoint 
 
 	// --- 5. Err clusters ---
 	maxColV := maxCol()
+	spineBaseX := layColX0
+	spineCounts := map[int]int{}
+	for _, id := range g.inDocOrder(mainReach) {
+		p, ok := coords[id]
+		if !ok {
+			continue
+		}
+		base := p.X
+		switch {
+		case isCircle(g.byID[id]):
+			base -= layCircleXOffset
+		case isCollapsedNode(g.byID[id]):
+			base -= layCollapsedXOffset
+		}
+		spineCounts[base]++
+		if spineCounts[base] > spineCounts[spineBaseX] {
+			spineBaseX = base
+		}
+	}
 	errSources := map[string][]string{}
 	var errOrder []string
 	for _, u := range g.ids {
@@ -627,6 +1006,7 @@ func (e *layoutEngine) layout(nodes []map[string]interface{}) map[string]lpoint 
 			continue
 		}
 		var ex, ey int
+		direction := 1
 		switch {
 		case len(ps) == 1:
 			sp := coords[ps[0]]
@@ -634,7 +1014,10 @@ func (e *layoutEngine) layout(nodes []map[string]interface{}) map[string]lpoint 
 			if isCircle(g.byID[ps[0]]) {
 				baseX -= layCircleXOffset
 			}
-			ex, ey = baseX+layErrDX, sp.Y
+			if baseX < spineBaseX {
+				direction = -1
+			}
+			ex, ey = baseX+direction*layErrDX, sp.Y
 		case len(ps) <= 3:
 			// few sources: to the right at the median y — the edges fan in
 			var ys []int
@@ -701,12 +1084,16 @@ func (e *layoutEngine) layout(nodes []map[string]interface{}) map[string]lpoint 
 		strip, _, _ := nodeClusterStripFromEntry(g, eid, mset)
 		for _, cp := range strip {
 			cn := g.byID[cp.id]
-			off := layCollapsedXOffset
-			if isCircle(cn) {
+			off := 0
+			switch {
+			case isCircle(cn):
 				off = layCircleXOffset
+			case isCollapsedNode(cn):
+				off = layCollapsedXOffset
 			}
 			collapseNode(cn)
-			coords[cp.id] = lpoint{ex - layErrDX + cp.dx + off, ey + cp.dy - 60}
+			base := ex - direction*layErrDX
+			coords[cp.id] = lpoint{base + direction*cp.dx + off, ey + cp.dy - 60}
 		}
 	}
 
@@ -738,7 +1125,7 @@ func (e *layoutEngine) layout(nodes []map[string]interface{}) map[string]lpoint 
 	var sink []sinkEntry
 	for _, n := range nodes {
 		u := nodeStr(n, "id")
-		if nodeObjType(n) != 2 || errClosure[u] || errOnly[u] {
+		if nodeObjType(n) != 2 || !mainReach[u] || errClosure[u] || errOnly[u] {
 			continue
 		}
 		if _, ok := coords[u]; !ok {
@@ -766,13 +1153,37 @@ func (e *layoutEngine) layout(nodes []map[string]interface{}) map[string]lpoint 
 		}
 	}
 	if len(sink) > 0 {
+		// A process can have short-circuit success exits near the top. Moving
+		// every final to the canvas bottom turns those local edges into
+		// full-height lines. Only the terminal(s) reached from the deepest
+		// predecessor represent the canonical bottom of the active flow.
+		deepestY := 0
+		deepY := make(map[string]int, len(sink))
+		for _, s := range sink {
+			for _, w := range s.preds {
+				if coords[w].Y > deepY[s.id] {
+					deepY[s.id] = coords[w].Y
+				}
+			}
+			if deepY[s.id] > deepestY {
+				deepestY = deepY[s.id]
+			}
+		}
+		selected := sink[:0]
+		for _, s := range sink {
+			if deepY[s.id] == deepestY {
+				selected = append(selected, s)
+			}
+		}
+		sink = selected
+
 		sunk := map[string]bool{}
 		for _, s := range sink {
 			sunk[s.id] = true
 		}
 		bottom := 0
 		for _, id := range g.ids {
-			if p, ok := coords[id]; ok && !sunk[id] && p.Y > bottom {
+			if p, ok := coords[id]; ok && mainReach[id] && !sunk[id] && p.Y > bottom {
 				bottom = p.Y
 			}
 		}
@@ -791,23 +1202,18 @@ func (e *layoutEngine) layout(nodes []map[string]interface{}) map[string]lpoint 
 		}
 	}
 
-	// --- 6. Collisions (waterfall-local box model: collapse decisions are
-	// keyed by collapseSet/errOnly, matching the Python inline resolver) ---
+	// --- 6. Collisions: use each node's existing rendered mode. ---
 	const hgap, vgap = 30, 8
-	blockH := rowStep - vgap - 2
-	if blockH > 150 {
-		blockH = 150
-	}
 	box := func(id string) (int, int, int, int) {
 		p := coords[id]
 		n := g.byID[id]
 		if isCircle(n) {
 			return p.X - 28, p.Y - 28, p.X + 28, p.Y + 28
 		}
-		if collapseSet[id] || errOnly[id] {
+		if isCollapsedNode(n) {
 			return p.X, p.Y, p.X + 48, p.Y + 48
 		}
-		return p.X, p.Y, p.X + 200, p.Y + blockH
+		return p.X, p.Y, p.X + 200, p.Y + estimatedExpandedHeight(n)
 	}
 	order := append([]string{}, g.ids...)
 	sortYX := func() {
@@ -850,7 +1256,7 @@ func (e *layoutEngine) layout(nodes []map[string]interface{}) map[string]lpoint 
 	// --- 6b. Density pass ---
 	coords = e.compact(coords, g)
 
-	// --- 7. Platform canvas: ±10000, centre tall/wide layouts ---
+	// --- 7. Platform canvas: re-centre tall/wide layouts (no hard clamp) ---
 	maxYv, minYv := math.MinInt, math.MaxInt
 	for _, p := range coords {
 		if p.Y > maxYv {

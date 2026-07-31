@@ -89,6 +89,22 @@ func (e *layoutEngine) compact(coords map[string]lpoint, g *layoutGraph) map[str
 		}
 		ext := make([]int, len(clusters))
 		for i, c := range clusters {
+			if axis == "y" {
+				// cluster1D chains transitively, so a "row" can span far more
+				// than its tallest member: three 48px icons spaced 50px apart
+				// are one cluster spanning 148px. Reserving only the tallest
+				// member here would let the NEXT row be pulled up into this
+				// one's lower members — compact would create the very overlap
+				// the pipeline just resolved. Reserve the cluster's real extent.
+				bottom := c.lo
+				for _, it := range c.members {
+					if b := it.key + float64(it.size); b > bottom {
+						bottom = b
+					}
+				}
+				ext[i] = int(bottom - c.lo)
+				continue
+			}
 			m := 0
 			for _, it := range c.members {
 				if it.size > m {
@@ -139,25 +155,21 @@ func (e *layoutEngine) compact(coords map[string]lpoint, g *layoutGraph) map[str
 }
 
 // resolveOverlaps is the rectangular overlap resolver: an intersecting node
-// is pushed down cascadingly. Boxes: block 200×(≤150), circle 56, collapsed
-// 48. The horizontal gap is large (column readability), the vertical is small.
+// is pushed down cascadingly. Boxes come from nodeBox — the same
+// content-aware footprint (circle 56, collapsed 56, expanded 200×variable)
+// used everywhere else, so a tall expanded node (many branches, a wrapped
+// title, several Condition rows) reserves the room it actually needs instead
+// of the historical flat 150px guess. The horizontal gap is large (column
+// readability), the vertical is small. rowStep is unused now that box height
+// is content-derived rather than row-pitch-derived; kept for call-site
+// compatibility.
 func resolveOverlaps(coords map[string]lpoint, g *layoutGraph, rowStep int) {
 	const hgap, vgap = 30, 8
-	blockH := rowStep - vgap - 2
-	if blockH > 150 {
-		blockH = 150
-	}
+	_ = rowStep
 
 	box := func(id string) (int, int, int, int) {
 		p := coords[id]
-		n := g.byID[id]
-		if isCircle(n) {
-			return p.X - 28, p.Y - 28, p.X + 28, p.Y + 28
-		}
-		if isCollapsedNode(n) {
-			return p.X, p.Y, p.X + 48, p.Y + 48
-		}
-		return p.X, p.Y, p.X + 200, p.Y + blockH
+		return nodeBox(g.byID[id], p.X, p.Y)
 	}
 
 	var order []string
@@ -333,11 +345,55 @@ func resolveNodeEdgeOverlaps(coords map[string]lpoint, g *layoutGraph) int {
 		return false
 	}
 
-	candidates := [][2]int{{60, 0}, {-60, 0}, {120, 0}, {-120, 0}, {0, 70}, {0, 110}, {60, 70}, {-60, 70}}
+	// Prefer widening a local row over opening a new vertical hole in the
+	// business flow. The larger horizontal fallbacks matter for region
+	// layouts, where the first two offsets may still land inside a neighbour.
+	candidates := [][2]int{
+		{60, 0}, {-60, 0}, {120, 0}, {-120, 0}, {180, 0}, {-180, 0}, {240, 0}, {-240, 0},
+		{0, 70}, {0, 110}, {60, 70}, {-60, 70},
+	}
+	// A shared column is the strongest reading cue this layout has: the primary
+	// spine AND every side branch (a loop body, an error strip) are drawn as
+	// vertical columns. Nudging a node sideways to dodge a link line trades
+	// that cue for a much weaker one — a line passing under a box stays
+	// traceable, a column that jogs mid-flow does not. Loop returns are the
+	// worst case: they sweep back across the very column they belong to, so
+	// without this guard the return displaces either the condition that owns
+	// the loop or a node in the loop body.
+	//
+	// So a node already sharing its x with a neighbour on its primary chain is
+	// left where it is. Alignment is sampled from the incoming coordinates, the
+	// arrangement the strategy deliberately produced. Genuinely isolated nodes
+	// have no column to protect and are still free to move. This pass already
+	// treats "leave it where it is" as an acceptable outcome when no candidate
+	// is clean; column members simply always take that branch.
+	primaryPred := make(map[string]string, len(g.ids))
+	for _, u := range g.ids {
+		if v := g.primary[u]; v != "" {
+			primaryPred[v] = u
+		}
+	}
+	columnAligned := make(map[string]bool, len(g.ids))
+	for _, u := range g.ids {
+		pu, ok := coords[u]
+		if !ok {
+			continue
+		}
+		for _, v := range [2]string{g.primary[u], primaryPred[u]} {
+			if v == "" {
+				continue
+			}
+			if pv, ok := coords[v]; ok && pv.X == pu.X {
+				columnAligned[u] = true
+				break
+			}
+		}
+	}
+
 	moved := 0
 	for _, id := range g.ids {
 		p, ok := coords[id]
-		if !ok || !hitsAnyEdge(id, p) {
+		if !ok || columnAligned[id] || !hitsAnyEdge(id, p) {
 			continue
 		}
 		for _, c := range candidates {

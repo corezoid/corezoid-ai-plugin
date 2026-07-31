@@ -34,13 +34,10 @@ const (
 	maxEngineLayoutNodes = 250
 )
 
-// Fixed node footprints (px). Start/End render as a small circle with a CENTER
-// pivot; every other node is a 200x150 box with a TOP-LEFT pivot.
-const (
-	circleSize = 56.0
-	logicW     = 200.0
-	logicH     = 150.0
-)
+// circleSize is the fixed Start/End circle footprint (px, CENTER pivot). Every
+// other node's footprint comes from nodeBoxSize (layout_graph.go) — width is
+// fixed at 200 but height depends on content, see estimatedExpandedHeight.
+const circleSize = 56.0
 
 // edge is a directed connection between two nodes. kind is one of "primary"
 // (go / logic fall-through), "cond" (go_if_const), "error" (err_node_id),
@@ -62,7 +59,7 @@ func roleOf(n map[string]interface{}) string {
 	if n == nil {
 		return "LOGIC"
 	}
-	switch ot, _ := n["obj_type"].(float64); ot {
+	switch nodeObjType(n) {
 	case 1:
 		return "START"
 	case 2:
@@ -119,9 +116,11 @@ func snap(v float64, grid int) int {
 	return int(math.Round(v/float64(grid))) * grid
 }
 
-// rectOf returns the axis-aligned box (x, y, w, h) in top-left form for a node,
-// using FIXED footprints: Start/End are 56x56 circles (center pivot), all other
-// nodes are 200x150 boxes (top-left pivot).
+// rectOf returns the axis-aligned box (x, y, w, h) in top-left form for a
+// node: Start/End are 56x56 circles (center pivot); every other node uses its
+// real content-aware footprint (nodeBoxSize, top-left pivot) — collapsed,
+// expanded-with-branches, expanded-with-a-wrapped-title, etc. all get a
+// differently sized box instead of one fixed 200x150 guess.
 func rectOf(n map[string]interface{}) [4]float64 {
 	x, _ := n["x"].(float64)
 	y, _ := n["y"].(float64)
@@ -129,7 +128,8 @@ func rectOf(n map[string]interface{}) [4]float64 {
 	case "START", "END":
 		return [4]float64{x - circleSize/2, y - circleSize/2, circleSize, circleSize}
 	default:
-		return [4]float64{x, y, logicW, logicH}
+		w, h := nodeBoxSize(n)
+		return [4]float64{x, y, float64(w), float64(h)}
 	}
 }
 
@@ -464,13 +464,18 @@ func placeNewNodes(nodes []map[string]interface{}) []string {
 	type xy struct{ x, y int }
 	placed := map[string]xy{}
 	var placedRects [][4]float64
-	// rectAt builds nd's footprint at (x,y) preserving its role (obj_type).
+	// rectAt builds nd's footprint at (x,y): a shallow copy of nd with just the
+	// coordinate overridden, so rectOf sees the real condition/title/extra and
+	// returns the node's actual content-driven footprint (nodeBoxSize) — not
+	// just its obj_type at a minimal default size.
 	rectAt := func(nd map[string]interface{}, x, y int) [4]float64 {
-		return rectOf(map[string]interface{}{
-			"obj_type": nd["obj_type"],
-			"x":        float64(x),
-			"y":        float64(y),
-		})
+		cp := make(map[string]interface{}, len(nd)+2)
+		for k, v := range nd {
+			cp[k] = v
+		}
+		cp["x"] = float64(x)
+		cp["y"] = float64(y)
+		return rectOf(cp)
 	}
 
 	nodeByID := map[string]map[string]interface{}{}
@@ -531,19 +536,20 @@ func placeNewNodes(nodes []map[string]interface{}) []string {
 			placedRects = append(placedRects, rectAt(nodeByID[pid], p.x, p.y))
 		}
 	}
-	// shiftSubtreeDown opens a one-row gap at minY by pushing root and its
-	// forward-reachable placed descendants at/below minY down by vStep. This is
-	// the "smooth expansion" when a node is inserted into the middle of a chain:
-	// the downstream part slides down in-style instead of the new node being
-	// nudged far away. Uniform translate — relative arrangement is preserved.
-	shiftSubtreeDown := func(root string, minY int) {
+	// shiftSubtreeDown opens a gap of `shift` px at minY by pushing root and its
+	// forward-reachable placed descendants at/below minY down by that amount.
+	// This is the "smooth expansion" when a node is inserted into the middle of
+	// a chain: the downstream part slides down in-style instead of the new node
+	// being nudged far away. Uniform translate — relative arrangement is
+	// preserved.
+	shiftSubtreeDown := func(root string, minY, shift int) {
 		desc := descendantsOf(root)
 		for d := range desc {
 			p, ok := placed[d]
 			if !ok || p.y < minY {
 				continue
 			}
-			p.y += vStep
+			p.y += shift
 			placed[d] = p
 			if nd := nodeByID[d]; nd != nil {
 				nd["x"] = float64(p.x)
@@ -551,6 +557,23 @@ func placeNewNodes(nodes []map[string]interface{}) []string {
 			}
 		}
 		rebuildRects()
+	}
+
+	// insertionShift is how far shiftSubtreeDown must open the gap for nd: the
+	// platform's usual vStep row rhythm, or more if nd's own real
+	// content-driven height (many condition rows, several output branches, a
+	// wrapped title — see estimatedExpandedHeight) wouldn't fit in that rhythm.
+	// margin mirrors the breathing room a plain node already gets at vStep (a
+	// ~90px LOGIC-role box leaves 110px of air below it before the next row);
+	// without this, a tall inserted node would open only a flat 200px gap and
+	// overlap the very neighbour shiftSubtreeDown just moved.
+	insertionShift := func(nd map[string]interface{}) int {
+		const margin = 50
+		_, h := nodeBoxSize(nd)
+		if need := h + margin; need > vStep {
+			return snap(float64(need), gridSnap)
+		}
+		return vStep
 	}
 
 	var notes []string
@@ -590,21 +613,22 @@ func placeNewNodes(nodes []map[string]interface{}) []string {
 		}
 
 		target = xy{snap(float64(target.x), gridSnap), snap(float64(target.y), gridSnap)}
+		nd := nodeByID[id]
 
 		// Smooth expansion: when inserting a node directly above its own placed
 		// down-child (a real "add a step in the chain"), push that child and its
-		// downstream subtree down to open a gap, instead of nudging the new node
-		// far below. Only the new node's own descendants at/below the slot move,
-		// so unrelated/parallel nodes stay put (incidental overlaps still nudge).
+		// downstream subtree down to open a gap sized to the new node's real
+		// height, instead of nudging the new node far below. Only the new node's
+		// own descendants at/below the slot move, so unrelated/parallel nodes
+		// stay put (incidental overlaps still nudge).
 		if insertBelowParent {
 			if c := dt[id]; c != "" {
 				if cp, ok := placed[c]; ok && cp.y == target.y {
-					shiftSubtreeDown(c, target.y)
+					shiftSubtreeDown(c, target.y, insertionShift(nd))
 				}
 			}
 		}
 
-		nd := nodeByID[id]
 		intersectsPlaced := func(x, y int) bool {
 			cand := rectAt(nd, x, y)
 			for _, r := range placedRects {

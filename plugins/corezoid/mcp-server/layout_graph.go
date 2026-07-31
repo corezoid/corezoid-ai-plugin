@@ -9,13 +9,13 @@ package main
 //  1. waterfall (layoutWaterfall) — chain/wings for simple tree-like
 //     processes. The main flow is a vertical at x=500, y step 220; branches go
 //     in columns around the axis; err clusters are pressed to the right;
-//     IF/Delay get collapsed.
+//     existing collapse/expand state is preserved.
 //  2. layered+error-rail (layoutPartitioned) — for LARGE/mesh processes where
 //     1/2–2/3 of the nodes are error handling: business flow via Sugiyama-lite,
-//     error clusters collapsed on a right rail, orphans in a grid.
+//     error clusters on a right rail, orphans in a grid.
 //  3. waterfall+regions (layoutHybrid) — region composition: TABLE bundles of
-//     isomorphic sibling pipelines and STAR fans are laid out as dedicated
-//     aligned grids, the residual graph as a waterfall.
+//     isomorphic sibling pipelines, STAR fans and compact DIAMOND forks are
+//     laid out with dedicated geometry, the residual graph as a waterfall.
 //
 // Determinism: the engine never iterates a Go map where order affects
 // placement — every such loop walks ids in scheme.nodes document order (the
@@ -25,6 +25,8 @@ package main
 import (
 	"encoding/json"
 	"sort"
+	"strings"
+	"unicode/utf8"
 )
 
 const (
@@ -36,6 +38,11 @@ const (
 	layCircleXOffset    = 100
 	layCollapsedXOffset = 76 // a collapsed node is ~48px vs a 200px block → center on the axis
 	layErrDX            = 300
+	// layMaxRailGap bounds how far a single error cluster may pull the
+	// right-hand rail forward to stay aligned with a distant owner. Beyond
+	// this, the rail stays packed instead of opening a multi-thousand-pixel
+	// gap to chase an owner that sits far down the main flow.
+	layMaxRailGap = layRowStep * 3
 )
 
 // layDensityGaps maps a density mode to its (gapV, gapH) for the compaction
@@ -64,6 +71,12 @@ type layoutGraph struct {
 	primary  map[string]string                 // single forward "go" edge ("" = none)
 	branches map[string][]string               // go_if_const + extra semaphor targets
 	errors   map[string][]string               // err_node_id targets (logics order)
+}
+
+type errorTopology struct {
+	Roots     int
+	Dedicated int // roots referenced by exactly one business node
+	Shared    int // roots referenced by two or more business nodes
 }
 
 func nodeLogics(n map[string]interface{}) []map[string]interface{} {
@@ -121,6 +134,28 @@ func isCircle(n map[string]interface{}) bool {
 	return t == 1 || t == 2
 }
 
+// isConditionNode identifies a rendered Condition by its actual wiring, not
+// obj_type. Production Corezoid JSON uses obj_type=0 for go_if_const routers
+// and obj_type=3 for escalation/reply-style nodes, so obj_type alone labels
+// both families incorrectly for sizing purposes.
+func isConditionNode(n map[string]interface{}) bool {
+	for _, lg := range nodeLogics(n) {
+		if nodeStr(lg, "type") == "go_if_const" {
+			return true
+		}
+	}
+	return false
+}
+
+func hasLogicType(n map[string]interface{}, typ string) bool {
+	for _, lg := range nodeLogics(n) {
+		if nodeStr(lg, "type") == typ {
+			return true
+		}
+	}
+	return false
+}
+
 // nodeExtraMap parses the node's extra field. In the wild extra is a JSON
 // STRING ("{\"modeForm\":\"collapse\"}"), may be an object, null or absent;
 // malformed content is treated as empty (mirrors the Python `except` guard).
@@ -148,8 +183,21 @@ func isCollapsedNode(n map[string]interface{}) bool {
 // collapseNode sets extra.modeForm="collapse", preserving sibling extra keys
 // and writing the field back in the string shape the platform emits.
 func collapseNode(n map[string]interface{}) {
+	setNodeMode(n, "collapse")
+}
+
+func expandNode(n map[string]interface{}) {
+	setNodeMode(n, "expand")
+}
+
+const layoutPreserveModeKey = "__corezoid_layout_preserve_mode"
+
+func setNodeMode(n map[string]interface{}, mode string) {
+	if preserve, _ := n[layoutPreserveModeKey].(bool); preserve {
+		return
+	}
 	extra := nodeExtraMap(n)
-	extra["modeForm"] = "collapse"
+	extra["modeForm"] = mode
 	b, err := json.Marshal(extra)
 	if err != nil {
 		return
@@ -158,19 +206,111 @@ func collapseNode(n map[string]interface{}) {
 }
 
 // nodeBoxSize is the real visual size (w, h) of a node — the single source of
-// truth for spacing decisions. Blocks 200x150 (timer blocks are taller),
-// collapsed IF/Delay/err squares 48, Start/Final circles 56.
+// truth for spacing decisions. Collapsed IF/Delay/err squares and Start/Final
+// circles are a fixed 56x56 regardless of content; every other node is 200
+// wide with a height that grows with its content (see estimatedExpandedHeight)
+// — it never shrinks below, or overlaps past, what the platform actually
+// renders.
 func nodeBoxSize(n map[string]interface{}) (int, int) {
 	if isCircle(n) {
 		return 56, 56
 	}
 	if isCollapsedNode(n) {
+		// Measured against the live UI (Corezoid v6.12) as a fixed 56x56 icon,
+		// independent of title/branch/block count — all of that is hidden
+		// while collapsed. Kept at the pre-existing 48 here (spacing decisions
+		// only, not a rendering claim): several strategies key row pitch and
+		// x-centering off this exact figure, and reconciling those is a
+		// separate, purely-cosmetic change from the overlap fix this function
+		// exists for.
 		return 48, 48
 	}
-	if len(nodeSemaphors(n)) > 0 {
-		return 200, 270
+	return 200, estimatedExpandedHeight(n)
+}
+
+// estimatedExpandedHeight approximates the rendered height (px) of an
+// EXPANDED node. The width never varies (always 200); the height grows for
+// three independent, stackable reasons, each measured against the live
+// Corezoid UI (v6.12) by editing a real node and reading its rendered
+// getBoundingClientRect():
+//
+//   - Every extra output branch adds its own row, ~54-56px: an err_node_id on
+//     any logic entry, a count semaphore ("Alert if the number of tasks in
+//     the node queue reaches..."), or a time semaphore ("Maximum interval, for
+//     which the task stays in the node..."). Measured deltas: +54px for the
+//     first, +52px for the second, on top of a ~82px base for a LOGIC node
+//     with a single branch (136px total).
+//   - Every go_if_const row in a Condition node adds ~28-29px. Measured: 151px
+//     (2 rows) -> 180px (3 rows, +29) -> 208px (4 rows, +28).
+//   - A title that doesn't fit the ~200px-wide header on one line adds
+//     ~16px per wrapped line (measured: +80px for a title that wrapped from
+//     1 to 6 lines).
+//
+// The constants below now follow docs/process/node-size-reference.md, which
+// records the sizes read from the live SVG DOM on 2026-07-29. The earlier
+// values were deliberately conservative guesses, and that conservatism was not
+// free: it over-reserved 74-77px on EVERY Condition node and 29px on every
+// output row, which is a large part of the "too much air between nodes"
+// complaint. Over-estimating is still the safer direction than under-, so where
+// the reference gives a range these round up — but they no longer round up from
+// a guess.
+//
+// Deliberately NOT changed to the measured value:
+//   - the collapsed box stays 48 (see nodeBoxSize) because layCollapsedXOffset
+//     and several row pitches are derived from that exact figure;
+//   - semaphore output rows keep the conservative 56. The reference measured
+//     the increment for an Error row only and explicitly warns that time and
+//     count semaphore rows must be measured separately.
+const (
+	logicBaseH        = 98 // measured: expanded action baseline is 200x98
+	condBaseH         = 93 // so 2 go_if_const rows == 151, 3 == 180, 4 == 209 (measured 208)
+	perErrRowH        = 27 // measured: the outer rect grows 27px per Error row
+	perSemaphoreRowH  = 56 // NOT measured — conservative until a live sample exists
+	perConditionRowH  = 29 // measured: 151 -> 180 (+29) -> 208 (+28)
+	perTitleLineH     = 16 // measured: +16px per additional wrapped title line
+	titleCharsPerLine = 16 // conservative wrap width for the ~200px header
+)
+
+func estimatedExpandedHeight(n map[string]interface{}) int {
+	errRows := 0
+	for _, lg := range nodeLogics(n) {
+		if nodeStr(lg, "err_node_id") != "" {
+			errRows++
+		}
 	}
-	return 200, 150
+	semaphoreRows := len(nodeSemaphors(n))
+
+	base := logicBaseH
+	if isConditionNode(n) {
+		base = condBaseH
+		condRows := 0
+		for _, lg := range nodeLogics(n) {
+			if nodeStr(lg, "type") == "go_if_const" {
+				condRows++
+			}
+		}
+		base += condRows * perConditionRowH
+	}
+	// Output rows stack independently of the node body: a Condition with a
+	// timer/error output is taller than the same Condition without one.
+	base += errRows*perErrRowH + semaphoreRows*perSemaphoreRowH
+
+	if lines := titleWrapLines(nodeStr(n, "title")); lines > 1 {
+		base += (lines - 1) * perTitleLineH
+	}
+	return base
+}
+
+// titleWrapLines estimates how many lines a node's title wraps to inside the
+// fixed-width header (width never grows — the title wraps instead). Rune
+// count (not byte length) so Cyrillic/Ukrainian titles, common on this
+// platform, aren't over-counted.
+func titleWrapLines(title string) int {
+	n := utf8.RuneCountInString(title)
+	if n <= titleCharsPerLine {
+		return 1
+	}
+	return (n + titleCharsPerLine - 1) / titleCharsPerLine
 }
 
 // nodeBox is the canvas box (x0, y0, x1, y1) honouring pivots: circles are
@@ -255,7 +395,99 @@ func buildLayoutGraph(nodes []map[string]interface{}) *layoutGraph {
 		g.branches[id] = br
 		g.errors[id] = errs
 	}
+	g.promoteTerminalAwareBranches()
 	return g
+}
+
+func isErrorFinal(n map[string]interface{}) bool {
+	if nodeObjType(n) != 2 {
+		return false
+	}
+	if strings.EqualFold(nodeStr(nodeExtraMap(n), "icon"), "error") {
+		return true
+	}
+	title := strings.ToLower(nodeStr(n, "title"))
+	return strings.Contains(title, "error") || strings.Contains(title, "failed")
+}
+
+type branchProfile struct {
+	success    bool
+	errorFinal bool
+	business   int
+}
+
+func (g *layoutGraph) profileBranch(start string) branchProfile {
+	var out branchProfile
+	seen := map[string]bool{}
+	queue := []string{start}
+	for len(queue) > 0 && len(seen) <= len(g.ids) {
+		u := queue[0]
+		queue = queue[1:]
+		if seen[u] {
+			continue
+		}
+		seen[u] = true
+		n := g.byID[u]
+		if nodeObjType(n) == 2 {
+			if isErrorFinal(n) {
+				out.errorFinal = true
+			} else {
+				out.success = true
+			}
+			continue
+		}
+		if nodeObjType(n) != 3 && !isPureRouter(n) {
+			out.business++
+		}
+		for _, v := range g.succs(u) {
+			if !seen[v] {
+				queue = append(queue, v)
+			}
+		}
+	}
+	return out
+}
+
+// promoteTerminalAwareBranches keeps the conventional go-on-axis rule, with
+// one structural exception: a default go that only terminates in an error
+// final must not displace a conditional branch that reaches the real success
+// continuation.
+func (g *layoutGraph) promoteTerminalAwareBranches() {
+	for _, u := range g.ids {
+		n := g.byID[u]
+		if !isConditionNode(n) {
+			continue
+		}
+		old := g.primary[u]
+		if old == "" {
+			continue
+		}
+		oldProfile := g.profileBranch(old)
+		if oldProfile.success || !oldProfile.errorFinal {
+			continue
+		}
+		best, bestBusiness := "", oldProfile.business
+		for _, lg := range nodeLogics(n) {
+			if nodeStr(lg, "type") != "go_if_const" {
+				continue
+			}
+			candidate := nodeStr(lg, "to_node_id")
+			profile := g.profileBranch(candidate)
+			if profile.success && profile.business > bestBusiness {
+				best, bestBusiness = candidate, profile.business
+			}
+		}
+		if best == "" {
+			continue
+		}
+		g.primary[u] = best
+		for i, v := range g.branches[u] {
+			if v == best {
+				g.branches[u][i] = old
+				break
+			}
+		}
+	}
 }
 
 // succs is the forward successors: the primary go edge plus branches.
@@ -274,6 +506,41 @@ func (g *layoutGraph) allOut(u string) []string {
 	for _, e := range g.errors[u] {
 		if _, ok := g.byID[e]; ok {
 			out = append(out, e)
+		}
+	}
+	return out
+}
+
+// classifyErrors describes ownership at the error-cluster entry points. A
+// process with many dedicated one-owner clusters is still one readable
+// business flow and should not become a global error mesh merely because those
+// small clusters make up >30% of all nodes.
+func (g *layoutGraph) classifyErrors() errorTopology {
+	mainFlow, _ := g.errClosure()
+	sources := map[string]map[string]bool{}
+	var roots []string
+	for _, u := range g.ids {
+		for _, e := range g.errors[u] {
+			// An error/escalation path may deliberately rejoin the active
+			// business flow (for example, a non-blocking failure). That target
+			// is a merge point, not an error-cluster root.
+			if mainFlow[e] {
+				continue
+			}
+			if sources[e] == nil {
+				sources[e] = map[string]bool{}
+				roots = append(roots, e)
+			}
+			sources[e][u] = true
+		}
+	}
+	out := errorTopology{Roots: len(roots)}
+	for _, e := range roots {
+		switch len(sources[e]) {
+		case 1:
+			out.Dedicated++
+		default:
+			out.Shared++
 		}
 	}
 	return out

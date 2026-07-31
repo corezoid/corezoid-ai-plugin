@@ -223,6 +223,11 @@ func (v *Executor) ModifyNodes(nodes []any) error {
 		if options != nil {
 			op["options"] = options
 		}
+		if condition, ok := nodeMap["condition"].(map[string]interface{}); ok {
+			if stub, ok := condition["stub"].(map[string]interface{}); ok {
+				op["stub"] = stub
+			}
+		}
 
 		ops = append(ops, op)
 	}

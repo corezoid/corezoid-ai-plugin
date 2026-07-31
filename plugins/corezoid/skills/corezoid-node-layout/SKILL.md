@@ -12,8 +12,8 @@ description: >
   the diagram", "remove the overlaps" — or their equivalents in any language
   the user speaks. Do NOT silently
   re-arrange a process the user already positioned — see the "When you MAY
-  re-layout" rules in the body. It only changes x/y coordinates and collapses
-  IF/Delay/error nodes — never edges, logic, conv_id, aliases or node types.
+  re-layout" rules in the body. It changes x/y coordinates only — never
+  collapse/expand state, edges, logic, conv_id, aliases or node types.
 ---
 
 # Auto-Layout Corezoid Process Nodes
@@ -67,10 +67,10 @@ Run the layout **after** the process JSON is finalized and **before**
 2. call the **`layout-process`** MCP tool on the `.conv.json`,
 3. `lint-process`, then `push-process`.
 
-The tool rewrites the file in place, touching only `x`/`y` and the `extra`
-`modeForm` flag (collapsing pure IF / Delay / error nodes into small nodes).
-Edges, logic, `conv_id`, aliases and node types are left byte-for-byte intact,
-so the change is behaviour-safe (it only affects appearance).
+The tool rewrites the file in place, touching only `x`/`y`. The user's existing
+`extra.modeForm` state is immutable: expanded nodes stay expanded and collapsed
+nodes stay collapsed. `extra`, edges, logic, `conv_id`, aliases and node types
+are left intact.
 
 ## How to run
 
@@ -123,33 +123,56 @@ The engine picks a strategy automatically (the result reports which one and why)
   - **STAR / sun**: a hub fanning into 4+ chain-shaped rays of *varying*
     depth that reconverge → rays hang symmetrically around the hub→merge
     axis, deepest nearest the axis (a fir-tree silhouette);
+  - **DIAMOND**: a compact two-way fork/rejoin → the primary branch stays on
+    the hub axis, the short optional branch sits immediately to its right,
+    and the merge returns to the original axis;
   - several regions in sequence — two tables, a star followed by a table —
     compose cleanly (each expansion makes its own room).
 
 - **Large mesh processes** (many independent flows, lots of error handling)
   → the graph is split into (1) the **business flow**, laid out as a clean
-  layered top-to-bottom spine with edge-crossings minimised, (2) **error
-  clusters** (escalation → reply → error-final, reachable only via
-  `err_node_id`), collapsed and collected in a clean **right rail** aligned to
-  each source row, and (3) unreachable **orphans**, packed into a small grid at
-  the bottom.
+  layered top-to-bottom spine with edge-crossings minimised, (2) **dedicated
+  error clusters**, pinned locally beside their single owner, (3) genuinely
+  **shared error clusters**, placed on a clean right rail using their existing
+  collapse/expand state, and (4)
+  unreachable historical components, packed into a separate zone below the
+  active Start flow. A high error-node percentage alone does not select this
+  strategy; ownership topology does.
+
+- **Recovery lanes** — an `err_node_id` target is not automatically terminal
+  error handling. If it enters a substantial compensating pipeline or rejoins
+  the active flow, that pipeline is anchored beside its owner/merge as business
+  logic while retaining its current mode. Callback entrypoints are treated like Start
+  roots; a component goes to the archive zone only when it has no attachment
+  to the active graph in either direction.
 
 Both strategies guarantee: **no node overlaps**, top-to-bottom flow with
-Start at the top and success Finals sunk to the bottom of the diagram (even
-when a loop exits mid-flow), IF/Delay/error nodes collapsed for compactness,
-and every coordinate inside Corezoid's ±10000 canvas (the vertical step
-shrinks automatically for very deep processes).
+Start at the top and the deepest success Final sunk to the bottom of the active
+flow (early success exits remain local), every node's existing collapse/expand
+state preserved, and the diagram re-centred on the origin so it sits in the
+middle of the canvas instead of drifting off one edge.
+
+Note what that last point is *not*: there is no hard ±10000 clamp. The vertical
+step does shrink for deep processes, but it has a floor, so a very deep process
+(roughly 125+ layers) legitimately extends past ±10000. That is fine — the node
+schema allows ±100000 precisely because real processes reach about ±25500.
 
 **Example** — a typical result on a freshly built process:
 
 ```
-strategy: waterfall  (21 nodes, 4 flow(s), 5% error-handling nodes)  density=medium
-nodes=21 width=1000px height=4070px overlaps=0 collapsed=3
+strategy: waterfall  (21 nodes, 4 flow(s), 5% error-handling nodes)  density=medium  engine=recovery-v6-preserve-modes
+nodes=21 width=1000px height=4070px overlaps=0 collapsed=0
+readability: estimated-crossings=0 max-dedicated-error-span=376px long-dedicated-errors=0
+edges: max-span=420px p95-span=310px long=0 upward=0
 layout applied: 042_payment.conv.json (21 nodes, 21 moved)
 Next: lint-process, then push-process.
 ```
 
 `overlaps=0` is the number to check; anything else means a bug worth reporting.
+Full re-layout is idempotent: running it again over its own output must preserve
+the same coordinates. Every input `extra.modeForm` must be identical after the
+run; `collapsed=0` and `mode-passes=1` are mandatory. The engine revision makes
+stale runtime tests visible.
 
 ## Honest limits
 
@@ -172,5 +195,6 @@ cd "${CLAUDE_PLUGIN_ROOT}/mcp-server" && go test -run 'TestLayout' ./...
 It asserts the invariants that make a layout clean: all nodes placed, **zero
 overlaps**, deterministic output (so adding a node re-flows rather than piles
 up), coordinates within canvas, top-to-bottom flow, correct strategy routing,
-table/star region geometry, and golden coordinate files that freeze every
-fixture against unintended churn.
+table/star/diamond region geometry, dedicated-vs-shared error ownership,
+detached component zoning, local early exits, and golden coordinate files that
+freeze every fixture against unintended churn.
