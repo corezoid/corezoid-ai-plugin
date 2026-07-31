@@ -304,7 +304,11 @@ func TestGitPushContext_RevertsNonExtChangesBeforePull(t *testing.T) {
 		t.Errorf("expected non-_ext/ working-tree edit to be reverted to HEAD before pull, got %q", got)
 	}
 
-	pushed, err := runGit(ctx, bareDir, "show", "HEAD:_ext/docs/context.md")
+	// Reference the branch explicitly rather than HEAD — the bare repo's HEAD
+	// symref follows whatever init.defaultBranch the git installation defaults
+	// to (e.g. "master" on some runners), which was never pushed here; only
+	// "main" was.
+	pushed, err := runGit(ctx, bareDir, "show", "main:_ext/docs/context.md")
 	if err != nil {
 		t.Fatalf("could not read pushed content from origin: %v (%s)", err, pushed)
 	}
