@@ -246,6 +246,41 @@ func TestPreserveInsertShiftsSubtree(t *testing.T) {
 	}
 }
 
+func TestPreserveInsertTallNodeShiftsFarEnough(t *testing.T) {
+	t.Setenv("COREZOID_AUTOLAYOUT", "")
+	// Same P -> N -> C insertion as TestPreserveInsertShiftsSubtree, but N is a
+	// "tall" node: an err_node_id plus a time semaphore give it two extra
+	// output branches, so its real content-driven height (90 base + 2*56 =
+	// 202) plus a landing margin exceeds the flat vStep (200) the old code
+	// always used. If the gap isn't sized to N's real height, N's own box
+	// overlaps C right after the "smooth expansion" shift.
+	p := node("p", 0, 600, 200, goLogic("n"))
+	n := node("n", 0, 0, 0, goLogic("c"))
+	cond := n["condition"].(map[string]interface{})
+	cond["logics"].([]interface{})[0].(map[string]interface{})["err_node_id"] = "err_node"
+	cond["semaphors"] = []interface{}{
+		map[string]interface{}{"type": "time", "value": 30, "dimension": "sec", "to_node_id": "c"},
+	}
+	c := node("c", 2, 600, 400)
+	sc := scheme(p, n, c)
+	applyLayout(sc, "process")
+
+	if x, y := xy(p); x != 600 || y != 200 {
+		t.Errorf("parent p moved to (%v,%v)", x, y)
+	}
+	if x, y := xy(n); x != 600 || y != 400 {
+		t.Errorf("inserted n = (%v,%v), want (600,400)", x, y)
+	}
+	// The old flat-vStep behaviour would leave c at 600 — not enough room for
+	// n's real ~202px box plus a margin.
+	if _, y := xy(c); y <= 600 {
+		t.Errorf("tall node: child c only shifted to y=%v, want > 600 (flat vStep isn't enough)", y)
+	}
+	if anyIntersect(allRects(p, n, c)) {
+		t.Errorf("overlap after tall-node insert-shift")
+	}
+}
+
 func TestPreserveInsertLeavesParallelBranch(t *testing.T) {
 	t.Setenv("COREZOID_AUTOLAYOUT", "")
 	// P -> C -> D on the spine, plus a parallel branch B off P. Insert N above C:

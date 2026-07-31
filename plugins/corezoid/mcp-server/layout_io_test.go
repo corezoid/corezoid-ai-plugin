@@ -87,8 +87,8 @@ func TestLayoutProcess_WritesOnlyCoordinateAndExtraLines(t *testing.T) {
 			continue
 		}
 		trimmed := strings.TrimSpace(afterLines[i])
-		if !strings.HasPrefix(trimmed, `"x":`) && !strings.HasPrefix(trimmed, `"y":`) && !strings.HasPrefix(trimmed, `"extra":`) {
-			t.Errorf("line %d changed outside x/y/extra:\n  before: %s\n  after:  %s", i, beforeLines[i], afterLines[i])
+		if !strings.HasPrefix(trimmed, `"x":`) && !strings.HasPrefix(trimmed, `"y":`) {
+			t.Errorf("line %d changed outside x/y — layout must only move nodes:\n  before: %s\n  after:  %s", i, beforeLines[i], afterLines[i])
 		}
 	}
 

@@ -49,6 +49,29 @@ func loadLayoutDoc(path string) (*layoutDoc, error) {
 			nodes = append(nodes, m)
 		}
 	}
+	// Every layout structure is keyed by node id, so a duplicate id silently
+	// merges two nodes into one: the engine places fewer nodes than the file
+	// has, reports a phantom overlap between the survivor and itself, and
+	// applyCoords leaves the loser wherever it was. Refuse the file — this is a
+	// corrupt document, and quietly half-laying-it-out is the worst outcome.
+	idCount := make(map[string]int, len(nodes))
+	for _, n := range nodes {
+		id, _ := n["id"].(string)
+		idCount[id]++
+	}
+	var dups []string
+	for _, n := range nodes { // document order keeps the message deterministic
+		id, _ := n["id"].(string)
+		if idCount[id] > 1 {
+			dups = append(dups, fmt.Sprintf("%q ×%d", id, idCount[id]))
+			idCount[id] = 1 // report each id once
+		}
+	}
+	if len(dups) > 0 {
+		return nil, fmt.Errorf("%s has duplicate node id(s): %s — layout keys nodes by id, so laying this out would drop nodes; fix the file first",
+			path, strings.Join(dups, ", "))
+	}
+
 	indent := "  "
 	if m := layIndentRe.FindSubmatch(raw); m != nil {
 		indent = string(m[1])

@@ -169,7 +169,7 @@ var toolRegistry = []mcpTool{
 	},
 	{
 		Name:        "layout-process",
-		Description: "Auto-arrange a process's node coordinates into a clean, readable layout (waterfall for simple trees, layered+error-rail for meshes, aligned table/star grids for region bundles). Rewrites ONLY x/y and the extra.modeForm collapse flag in the file — edges, logic, conv_id and aliases stay intact, so a re-layout can never alter behaviour. Runs entirely on the local file (no API, no auth). The result always reports the chosen strategy, canvas size and overlap count; dry=true previews placements without writing.",
+		Description: "Auto-arrange a process's node coordinates into a clean, readable layout (waterfall for simple trees, layered+error-rail for meshes, aligned table/star grids for region bundles). Rewrites ONLY x/y; collapse/expand state, extra, edges, logic, conv_id and aliases stay intact. Runs entirely on the local file (no API, no auth). The result always reports the chosen strategy, canvas size and overlap count; dry=true previews placements without writing.",
 		InputSchema: map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
