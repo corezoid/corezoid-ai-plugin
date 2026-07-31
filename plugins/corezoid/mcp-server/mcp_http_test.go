@@ -126,7 +126,7 @@ func dispatchJSON(t *testing.T, method string, params interface{}) map[string]js
 
 func TestHTTPDispatch_Initialize(t *testing.T) {
 	out := dispatchJSON(t, "initialize", map[string]interface{}{
-		"protocolVersion": "2025-03-26",
+		"protocolVersion": mcpProtocolVersion,
 		"capabilities":    map[string]interface{}{},
 	})
 	if out["error"] != nil {

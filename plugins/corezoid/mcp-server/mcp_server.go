@@ -53,6 +53,12 @@ type mcpToolResult struct {
 // Keep this in sync with .claude-plugin/plugin.json.
 const mcpServerVersion = "2.3.5"
 
+// mcpProtocolVersion is the MCP spec revision this server implements. It is
+// distinct from mcpServerVersion (the plugin's own version) and changes on a
+// different cadence. The 2026-07-28 spec lists 2025-03-26 as a valid legacy
+// revision and expects legacy servers to echo it verbatim in initialize.
+const mcpProtocolVersion = "2025-03-26"
+
 // oauthClientID is the OAuth2 client ID used for PKCE flow.
 // Resolved from COREZOID_OAUTH_CLIENT_ID env var, falling back to the built-in default.
 var oauthClientID string
@@ -227,6 +233,24 @@ func elicitValues(message string, schema map[string]interface{}) (content map[st
 	}
 }
 
+// buildInitializeResult returns the result body of an MCP initialize response.
+// Shared by the stdio dispatcher (runMCPServer) and the Streamable HTTP one
+// (httpDispatch) so both transports advertise identical capabilities.
+func buildInitializeResult() map[string]interface{} {
+	return map[string]interface{}{
+		"protocolVersion": mcpProtocolVersion,
+		"capabilities": map[string]interface{}{
+			"tools":     map[string]interface{}{},
+			"resources": map[string]interface{}{},
+			"prompts":   map[string]interface{}{},
+		},
+		"serverInfo": map[string]interface{}{
+			"name":    "convctl-mcp",
+			"version": mcpServerVersion,
+		},
+	}
+}
+
 // runMCPServer starts an MCP server over stdin/stdout using newline-delimited JSON-RPC 2.0.
 func runMCPServer() {
 	oauthClientID = oauthDefaultClientID
@@ -303,18 +327,7 @@ func runMCPServer() {
 			serverSend(mcpResponse{
 				JSONRPC: "2.0",
 				ID:      req.ID,
-				Result: map[string]interface{}{
-					"protocolVersion": "2025-03-26",
-					"capabilities": map[string]interface{}{
-						"tools":     map[string]interface{}{},
-						"resources": map[string]interface{}{},
-						"prompts":   map[string]interface{}{},
-					},
-					"serverInfo": map[string]interface{}{
-						"name":    "convctl-mcp",
-						"version": mcpServerVersion,
-					},
-				},
+				Result:  buildInitializeResult(),
 			})
 
 		case "notifications/initialized":
