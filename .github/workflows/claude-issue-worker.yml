@@ -39,7 +39,6 @@ jobs:
       pull-requests: write
       issues: write
       id-token: write
-      actions: write         # needed to dispatch claude-pr-reviewer.yml
     steps:
       - name: Resolve and validate issue number
         id: issue
@@ -98,13 +97,8 @@ jobs:
           BRANCH: ${{ steps.issue.outputs.branch }}
         run: |
           set -euo pipefail
-          # Skip when an OPEN PR is in flight (avoid duplicate work) or a
-          # MERGED PR already shipped this fix. A CLOSED-unmerged PR is an
-          # explicit retry — allow the worker to run again.
-          open_count=$(gh pr list --state open   --head "$BRANCH" --json number --jq 'length')
-          merged_count=$(gh pr list --state merged --head "$BRANCH" --json number --jq 'length')
-          if [ "$open_count" != "0" ] || [ "$merged_count" != "0" ]; then
-            echo "PR for $BRANCH already exists (open=$open_count merged=$merged_count), skipping"
+          if gh pr list --state all --head "$BRANCH" --json number --jq '.[].number' | grep -q .; then
+            echo "PR for $BRANCH already exists, skipping"
             echo "skip=true" >> "$GITHUB_OUTPUT"
           fi
 

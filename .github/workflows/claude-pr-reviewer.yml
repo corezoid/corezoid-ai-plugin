@@ -4,12 +4,21 @@ name: Claude – PR reviewer (second line)
 # The issue-worker already runs a silent self-review inside itself; this
 # workflow is the independent reviewer that runs after the fact.
 #
+# Findings are tagged by severity: [CRITICAL] blocks merge, [WARNING] is
+# informational. Only critical findings — things that could break
+# functionality in production, security holes, broken contracts, data
+# loss risks — stop auto-merge. Non-critical remarks (doc inconsistency,
+# follow-up items, minor architecture nits) are posted as a comment but
+# do not block.
+#
 # In addition to findings, the reviewer produces a change-magnitude score
 # (0–10). Decision matrix:
-#   • findings != OK                                → comment + assign HUMAN_REVIEWER (never merge)
-#   • findings == OK, score <= AUTO_MERGE_MAX_SCORE → auto-merge (squash)
-#   • findings == OK, score >  AUTO_MERGE_MAX_SCORE → comment + assign HUMAN_REVIEWER
+#   • findings contain [CRITICAL]                     → comment + assign HUMAN_REVIEWER (never merge)
+#   • findings == OK OR only [WARNING], score <= MAX  → auto-merge (squash), post warnings if any
+#   • findings == OK OR only [WARNING], score >  MAX  → comment + assign HUMAN_REVIEWER
 # Fail-closed: missing/invalid score.json is treated as score=10.
+# Fail-closed: findings.md that is non-OK but contains no [CRITICAL] /
+# [WARNING] markers is treated as [CRITICAL] (format deviation → escalate).
 #
 # Triggers:
 #   • pull_request: labeled — a human admin adds the `ai` label to a PR.
@@ -158,15 +167,15 @@ jobs:
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
           github_token: ${{ secrets.GITHUB_TOKEN }}
-          # Reviewer is dispatched by the issue-worker via `gh workflow run`,
-          # which GitHub attributes to `github-actions[bot]`. Without this
-          # allowlist claude-code-action refuses to run for bot actors.
-          allowed_bots: "github-actions"
           prompt: |
             You are the second-line code reviewer for @corezoid/corezoid-ai-plugin.
             PR #$PR_NUMBER has already been implemented and passed a first
-            silent self-review. Your job is (a) to catch what that pass
-            missed and (b) to score the magnitude of the change.
+            silent self-review. Your job is to give a **critical second
+            opinion**: is this PR safe to merge, and if not, why. Report
+            only serious issues. Style bikeshedding wastes the author's
+            time; GitHub already flags merge conflicts. Focus on issues
+            that would cause a bug in production, a security incident, or
+            an architectural regret.
 
             ## Repo context
             Claude Code / Codex plugin: static skills, four plugin manifests,
@@ -180,21 +189,108 @@ jobs:
             - files renamed: ${{ steps.stats.outputs.FILES_RENAMED }}
             - shortstat: ${{ steps.stats.outputs.SHORTSTAT }}
 
-            ## Review
+            ## Step 1 — Gather context
             1. `git fetch origin main` and read `git diff origin/main...HEAD`.
             2. Read the PR title/body: `gh pr view $PR_NUMBER --json title,body`.
-            3. Evaluate against:
-                 - Does the change actually solve the stated issue?
-                 - CLAUDE.md rules — skills-list sync, manifest version sync
-                   (four files), MIT license everywhere, no doubled
-                   ${CLAUDE_PLUGIN_ROOT}/plugins/corezoid prefix, Corezoid
-                   process rules (24-char hex IDs, extra/extra_type pairs,
-                   err_node_id on fallible nodes, env_var not hardcoded).
-                 - MCP server tests: `cd plugins/corezoid/mcp-server &&
-                   go build ./... && go vet ./... && go test -race ./...`.
-                 - Subtle bugs, race conditions, edge cases, security holes.
-                 - Half-finished code, stray TODOs, dead debug statements.
-                 - Test coverage for new code.
+            3. For large diffs (>500 lines), fetch the file list first and
+               read only the interesting hunks per file.
+
+            ## Step 2 — Look for these categories only
+            Report a finding ONLY if it is actually present in the diff.
+            Do not invent problems to pad the list.
+
+            **Correctness**
+            - Logic errors, off-by-one, wrong operator, inverted conditions.
+            - Null/undefined dereferences on paths the diff introduces.
+            - Race conditions, concurrent mutation, missing locks.
+            - Error handling that swallows or misroutes errors.
+            - Wrong data type / wrong units / wrong comparison.
+            - Changes that break the contract of a function used elsewhere.
+
+            **Security**
+            - Injection risks (SQL, shell, HTML, template).
+            - Secrets, API keys, tokens hardcoded or logged.
+            - Authorization/authentication bypass, missing permission check.
+            - Unsafe deserialization, path handling, SSRF.
+            - Overly permissive CORS, cookies without secure/httponly.
+
+            **Architecture / API**
+            - Breaking public API changes without version bump or migration.
+            - Coupling introduced across layers that should stay separate.
+            - New abstraction duplicating existing infra.
+            - Feature added in the wrong module.
+            - Contract broken between components (MCP tool schemas,
+              manifest schemas, .conv.json process rules).
+
+            **Data / Operations**
+            - Non-idempotent operations that will double-execute on retry.
+            - Removed fields still read by other code or older clients.
+            - Changes to CI/workflows, install scripts, or `.mcp.json`
+              that could break contributors' local setup.
+
+            **Critical test gaps**
+            - No test at all for a code path with real branching logic.
+            - A regression test missing for a bug the PR claims to fix.
+            - Tests exist but don't exercise the actual condition
+              (mocks return only the happy path).
+
+            **Project-specific rules to enforce (CLAUDE.md)**
+            - Skills-list sync across CLAUDE.md, README.md and the actual
+              `plugins/corezoid/skills/*/` directories.
+            - Manifest version sync across the four manifest files.
+            - MIT license everywhere.
+            - No doubled `${CLAUDE_PLUGIN_ROOT}/plugins/corezoid` prefix.
+            - Corezoid process rules on any .conv.json in the diff:
+              24-char hex node IDs, matching `extra`/`extra_type` pairs,
+              `err_node_id` on fallible nodes, no hardcoded URLs/tokens
+              (must use `{{env_var[@name]}}`).
+            - For Go changes: `cd plugins/corezoid/mcp-server && go build
+              ./... && go vet ./... && go test -race ./...` must pass.
+
+            ## Step 3 — Do NOT report any of these, even if you notice them
+            - Merge conflicts, version conflicts, base branch drift.
+            - Code formatting, indentation, line length.
+            - Style choices that aren't objectively wrong (naming,
+              arrow-vs-function, etc.).
+            - Missing JSDoc/godoc unless the function is public API and
+              behavior is genuinely non-obvious.
+            - "Could be more idiomatic" without a real cost.
+            - Any nit that starts with "prefer".
+
+            The maintainer asked for **serious** issues only. Every
+            non-serious remark dilutes the ones that matter.
+
+            ## Step 4 — Rules for each finding
+            - **Tag severity in the heading with `[CRITICAL]` or
+              `[WARNING]`.** Definitions:
+                - `[CRITICAL]` — would break functionality in production,
+                  cause a security incident, corrupt or lose data, break
+                  a public contract, or introduce a regression that the
+                  diff itself causes. Anything that would make a human
+                  say "stop, do not merge". `[CRITICAL]` blocks
+                  auto-merge.
+                - `[WARNING]` — worth mentioning but does NOT break
+                  functionality: documentation inconsistencies, a
+                  follow-up item, a minor architecture concern that does
+                  not cause a bug, an edge case that is not on the
+                  diff's happy path. `[WARNING]` is posted as a comment
+                  but does NOT block auto-merge.
+              If you are torn between the two, choose `[CRITICAL]` —
+              round up on risk.
+            - **Cite `path/file.ext:LINE` in the heading.** If you cannot
+              cite a specific line, you do not understand the issue well
+              enough to report it — go look or leave it out.
+            - **Explain the "why" in production terms.** "Missing null
+              check" is not enough. "Missing null check on `user.session`
+              — if the caller from `login.go:88` hits the token-expired
+              path, this crashes the request" — that is a finding.
+            - **Rank by severity within the list.** All `[CRITICAL]`
+              first, then `[WARNING]`.
+            - **1–3 sentences per finding**, plus optionally one line of
+              suggested fix. If you need a paragraph, split or trim.
+            - **No hedging.** If you're not sure it's a real problem,
+              investigate until you are, or leave it out. "Might possibly
+              be an issue if…" is noise.
 
             ## Magnitude score (0–10)
             Score how large/risky the change is, using the diff stats above
@@ -225,23 +321,34 @@ jobs:
             When in doubt, round the score UP.
 
             ## Output — these are the ONLY things you produce
-            1. Write your verdict to `.review/findings.md`:
-               - If everything is fine: write exactly "OK" (nothing else).
-               - If issues found: write a short markdown report:
-                     ## Findings
-                     1. **<title>** — <what and why>
-                        Location: `<file:line>`
-                     2. ...
+            1. Write the review comment body to `.review/findings.md`.
+               This file is posted verbatim as a PR comment, so keep it
+               tight and English-only.
 
-                     ## Recommendation
-                     <one-line action for the human>
+               - If no serious issues: write exactly `OK` (nothing else).
+                 The workflow will still auto-merge/escalate based on
+                 magnitude score.
+               - If serious issues found: use this exact template. Every
+                 finding MUST start with `[CRITICAL]` or `[WARNING]` —
+                 the workflow greps for these tokens to decide whether
+                 to block auto-merge. No emojis. No verdict banner. No
+                 pleasantries. No restatement of the diff.
+
+                     Serious findings only — merge conflicts, style, and formatting intentionally skipped.
+
+                     1. **[CRITICAL]** **<Category>** — `path/to/file.ext:LINE` — <one-sentence issue statement and why it breaks functionality in prod>. <Optional one-line suggested fix.>
+
+                     2. **[WARNING]** **<Category>** — `path/to/file.ext:LINE` — <one-sentence non-blocking remark>. <Optional one-line suggested fix.>
+
+                 Categories are exactly one of: Correctness, Security,
+                 Architecture, Data, Test gap, Project rule.
 
             2. Write the score to `.review/score.json` as strict JSON,
                single line, no markdown fences:
                  {"score": <int 0-10>, "reasons": ["<short reason>", "..."]}
 
-            Do NOT push code. Do NOT comment on the PR. Do NOT approve,
-            merge, or request changes. Only the two files above.
+            Do NOT push code. Do NOT comment on the PR yourself. Do NOT
+            approve, merge, or request changes. Only the two files above.
           claude_args: |
             --allowedTools "Bash(git:*),Bash(gh:*),Bash(go:*),Bash(python3:*),Bash(cd:*),Bash(ls:*),Bash(cat:*),Bash(wc:*),Bash(jq:*),Read,Write,Glob,Grep"
 
@@ -269,9 +376,28 @@ jobs:
           fi
           echo "Magnitude score: $score (threshold: $AUTO_MERGE_MAX_SCORE)"
 
-          # --- Case 1: findings — always escalate, never merge -----------
+          # --- Classify findings by severity -----------------------------
+          # "" or "OK"           → no findings
+          # contains [CRITICAL]  → blocker
+          # only  [WARNING]      → non-blocking
+          # non-empty + no tags  → fail-closed: treat as blocker (format
+          #                        deviation shouldn't slip past review)
+          severity="none"
           if [ -n "$trimmed" ] && [ "$trimmed" != "OK" ]; then
-            echo "Findings detected — assigning @$HUMAN_REVIEWER"
+            if grep -Fq '[CRITICAL]' .review/findings.md; then
+              severity="critical"
+            elif grep -Fq '[WARNING]' .review/findings.md; then
+              severity="warning"
+            else
+              echo "::warning::Findings present but no [CRITICAL]/[WARNING] tag — failing closed to critical"
+              severity="critical"
+            fi
+          fi
+          echo "Findings severity: $severity"
+
+          # --- Case 1: critical findings — always escalate, never merge --
+          if [ "$severity" = "critical" ]; then
+            echo "Critical findings — assigning @$HUMAN_REVIEWER"
             {
               cat .review/findings.md
               printf '\n---\n**Change magnitude:** %s/10\n%s\n' "$score" "$reasons"
@@ -281,11 +407,15 @@ jobs:
             exit 0
           fi
 
-          # --- Case 2: clean, but big change — human approval -------------
+          # --- Case 2: no critical, but big change — human approval ------
           if [ "$score" -gt "$AUTO_MERGE_MAX_SCORE" ]; then
-            echo "Clean review but score $score > $AUTO_MERGE_MAX_SCORE — escalating"
+            echo "No critical findings but score $score > $AUTO_MERGE_MAX_SCORE — escalating"
             {
-              printf 'Second-line review passed clean, but the change is too large for auto-merge.\n\n'
+              if [ "$severity" = "warning" ]; then
+                cat .review/findings.md
+                printf '\n---\n'
+              fi
+              printf 'Second-line review found no blockers, but the change is too large for auto-merge.\n\n'
               printf '**Change magnitude:** %s/10 (auto-merge threshold: %s)\n\n%s\n\n' \
                 "$score" "$AUTO_MERGE_MAX_SCORE" "$reasons"
               printf 'Manual approval required — assigned to @%s.\n' "$HUMAN_REVIEWER"
@@ -295,10 +425,17 @@ jobs:
             exit 0
           fi
 
-          # --- Case 3: clean and small — auto-merge -----------------------
-          echo "Clean review, score $score <= $AUTO_MERGE_MAX_SCORE — auto-merging"
+          # --- Case 3: no critical, small change — auto-merge ------------
+          # If we have warnings, post them along with the auto-merge note.
+          echo "No blockers, score $score <= $AUTO_MERGE_MAX_SCORE — auto-merging"
           {
-            printf 'Second-line review passed clean.\n\n'
+            if [ "$severity" = "warning" ]; then
+              cat .review/findings.md
+              printf '\n---\n'
+              printf 'Non-blocking remarks above — auto-merging anyway.\n\n'
+            else
+              printf 'Second-line review passed clean.\n\n'
+            fi
             printf '**Change magnitude:** %s/10 (<= %s) — auto-merging.\n\n%s\n' \
               "$score" "$AUTO_MERGE_MAX_SCORE" "$reasons"
           } > .review/comment.md
