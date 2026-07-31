@@ -28,9 +28,14 @@ type mcpResponse struct {
 	Error   *mcpError   `json:"error,omitempty"`
 }
 
+// mcpError is a JSON-RPC 2.0 error object. Data carries the optional free-form
+// payload some MCP errors define (currently only UnsupportedProtocolVersionError,
+// which puts the supported-version list there); it is omitted when nil so every
+// pre-existing error site stays byte-identical on the wire.
 type mcpError struct {
-	Code    int    `json:"code"`
-	Message string `json:"message"`
+	Code    int         `json:"code"`
+	Message string      `json:"message"`
+	Data    interface{} `json:"data,omitempty"`
 }
 
 type mcpTool struct {
@@ -52,6 +57,98 @@ type mcpToolResult struct {
 // mcpServerVersion is the version reported in MCP initialize responses.
 // Keep this in sync with .claude-plugin/plugin.json.
 const mcpServerVersion = "2.3.5"
+
+// mcpProtocolVersion is the MCP specification revision this server implements.
+// This server is deliberately legacy-only: the MCP 2026-07-28 revision still
+// lists 2025-03-26 as a valid legacy version and expects legacy servers to echo
+// it back verbatim from initialize. Do not bump this until the modern stateless
+// (_meta-based) request path is actually implemented — it is the only thing
+// telling a modern client which era it is talking to. Distinct from
+// mcpServerVersion, which is the plugin's own version and moves on every release.
+const mcpProtocolVersion = "2025-03-26"
+
+// errCodeUnsupportedProtocolVersion is the JSON-RPC error code MCP 2026-07-28
+// assigns to UnsupportedProtocolVersionError. It sits in the JSON-RPC range
+// reserved for pre-defined server errors (-32000..-32099), claimed exclusively
+// by the MCP spec, so it cannot collide with anything else this server returns.
+const errCodeUnsupportedProtocolVersion = -32022
+
+// msgUnsupportedProtocolVersion is the message paired with
+// errCodeUnsupportedProtocolVersion, spelled as in the spec.
+const msgUnsupportedProtocolVersion = "Unsupported protocol version"
+
+// mcpSupportedProtocolVersions returns every protocol revision this server can
+// speak. It backs both server/discover's supportedProtocolVersions and the
+// data.supported list of UnsupportedProtocolVersionError, so the two can never
+// disagree. Returns a fresh slice per call — callers hand it straight to the
+// JSON encoder and must not be able to mutate a shared backing array.
+func mcpSupportedProtocolVersions() []string {
+	return []string{mcpProtocolVersion}
+}
+
+// buildInitializeResult returns the result body of an initialize response. Both
+// transports call it (stdio's runMCPServer loop and httpDispatch) so the
+// handshake they advertise cannot drift apart, and server/discover builds on it
+// so a modern client's probe reports exactly the capabilities initialize would.
+// A fresh map is returned per call — buildDiscoverResult adds a key to it.
+func buildInitializeResult() map[string]interface{} {
+	return map[string]interface{}{
+		"protocolVersion": mcpProtocolVersion,
+		"capabilities": map[string]interface{}{
+			"tools":     map[string]interface{}{},
+			"resources": map[string]interface{}{},
+			"prompts":   map[string]interface{}{},
+		},
+		"serverInfo": map[string]interface{}{
+			"name":    "convctl-mcp",
+			"version": mcpServerVersion,
+		},
+	}
+}
+
+// buildDiscoverResult returns the result body of a server/discover response:
+// the initialize payload plus the supported-version list. MCP 2026-07-28
+// requires every modern client to probe server/discover before anything else
+// and to classify the server from what comes back; answering it with a valid
+// result (rather than letting it fall through to -32601 method not found) turns
+// that classification from an ambiguous error into a deterministic reply that
+// also tells the client which protocol revision to fall back to.
+//
+// Deliberately no capabilities.extensions key: an empty extensions map signals
+// nothing, and this server supports no MCP extensions yet.
+func buildDiscoverResult() map[string]interface{} {
+	result := buildInitializeResult()
+	result["supportedProtocolVersions"] = mcpSupportedProtocolVersions()
+	return result
+}
+
+// protocolVersionSupported reports whether a client-declared protocolVersion is
+// one this server implements. An empty string means the client omitted the
+// field entirely, which plenty of older clients do and the legacy spec
+// tolerates — treat it as acceptable and answer with our own version.
+func protocolVersionSupported(version string) bool {
+	if version == "" {
+		return true
+	}
+	for _, supported := range mcpSupportedProtocolVersions() {
+		if version == supported {
+			return true
+		}
+	}
+	return false
+}
+
+// unsupportedProtocolVersionData builds the data payload of
+// UnsupportedProtocolVersionError, shaped as the MCP 2026-07-28 spec specifies:
+// the versions we do support plus the one the client asked for, so the client
+// can surface an actionable message instead of failing deeper into the
+// handshake.
+func unsupportedProtocolVersionData(requested string) map[string]interface{} {
+	return map[string]interface{}{
+		"supported": mcpSupportedProtocolVersions(),
+		"requested": requested,
+	}
+}
 
 // oauthClientID is the OAuth2 client ID used for PKCE flow.
 // Resolved from COREZOID_OAUTH_CLIENT_ID env var, falling back to the built-in default.
@@ -166,6 +263,24 @@ func parseInitializeParams(raw json.RawMessage) (supportsElicitation bool, name,
 	return clientSupportsElicitation, clientName, clientVersion
 }
 
+// parseRequestedProtocolVersion extracts the protocolVersion an initialize
+// request declared, or "" if the field was absent or the params don't parse
+// (both of which are the tolerant path — see protocolVersionSupported).
+//
+// A sibling of parseInitializeParams rather than an extra return value on it:
+// the version check has to run and reject *before* any client state is stored,
+// and the existing signature has several call sites. The cost is one extra
+// unmarshal of a handful of bytes, once per connection.
+func parseRequestedProtocolVersion(raw json.RawMessage) string {
+	var params struct {
+		ProtocolVersion string `json:"protocolVersion"`
+	}
+	if err := json.Unmarshal(raw, &params); err != nil {
+		return ""
+	}
+	return params.ProtocolVersion
+}
+
 // activeCancels maps in-progress tools/call request IDs to their cancel functions.
 var activeCancels sync.Map
 
@@ -254,12 +369,19 @@ func runMCPServer() {
 	scanner := bufio.NewScanner(os.Stdin)
 	scanner.Buffer(make([]byte, 10*1024*1024), 10*1024*1024)
 
-	sendError := func(id interface{}, code int, msg string) {
+	// sendErrorWithData is the general form; sendError is the (far more common)
+	// no-data case, kept with its original signature so none of the existing
+	// -32601/-32602/-32603 call sites below have to change.
+	sendErrorWithData := func(id interface{}, code int, msg string, data interface{}) {
 		serverSend(mcpResponse{
 			JSONRPC: "2.0",
 			ID:      id,
-			Error:   &mcpError{Code: code, Message: msg},
+			Error:   &mcpError{Code: code, Message: msg, Data: data},
 		})
+	}
+
+	sendError := func(id interface{}, code int, msg string) {
+		sendErrorWithData(id, code, msg, nil)
 	}
 
 	for scanner.Scan() {
@@ -296,6 +418,15 @@ func runMCPServer() {
 
 		switch req.Method {
 		case "initialize":
+			// Reject a version we can't speak before storing any client state,
+			// so a mismatched client can't leave its identity behind on a
+			// connection that never completed the handshake.
+			if requested := parseRequestedProtocolVersion(req.Params); !protocolVersionSupported(requested) {
+				logger.Info("initialize: rejecting unsupported protocolVersion %q (supported: %v)", requested, mcpSupportedProtocolVersions())
+				sendErrorWithData(req.ID, errCodeUnsupportedProtocolVersion, msgUnsupportedProtocolVersion, unsupportedProtocolVersionData(requested))
+				continue
+			}
+
 			// Read client capabilities and identity (elicitation support, name/version).
 			supportsElicitation, name, version := parseInitializeParams(req.Params)
 			logger.Info("initialize: clientSupportsElicitation=%v clientName=%q clientVersion=%q", supportsElicitation, name, version)
@@ -303,18 +434,17 @@ func runMCPServer() {
 			serverSend(mcpResponse{
 				JSONRPC: "2.0",
 				ID:      req.ID,
-				Result: map[string]interface{}{
-					"protocolVersion": "2025-03-26",
-					"capabilities": map[string]interface{}{
-						"tools":     map[string]interface{}{},
-						"resources": map[string]interface{}{},
-						"prompts":   map[string]interface{}{},
-					},
-					"serverInfo": map[string]interface{}{
-						"name":    "convctl-mcp",
-						"version": mcpServerVersion,
-					},
-				},
+				Result:  buildInitializeResult(),
+			})
+
+		case "server/discover":
+			// MCP 2026-07-28's era-detection probe. Stateless by design: no
+			// client state is read or stored, so it stays answerable before
+			// (and independently of) the initialize handshake.
+			serverSend(mcpResponse{
+				JSONRPC: "2.0",
+				ID:      req.ID,
+				Result:  buildDiscoverResult(),
 			})
 
 		case "notifications/initialized":
@@ -326,7 +456,6 @@ func runMCPServer() {
 				ID:      req.ID,
 				Result: map[string]interface{}{
 					"tools": toolRegistry,
-
 				},
 			})
 

@@ -88,7 +88,7 @@ func TestMCPProtocol_Initialize(t *testing.T) {
 		"id":      1,
 		"method":  "initialize",
 		"params": map[string]interface{}{
-			"protocolVersion": "2025-03-26",
+			"protocolVersion": mcpProtocolVersion,
 			"capabilities":    map[string]interface{}{},
 			"clientInfo":      map[string]interface{}{"name": "test", "version": "0.0.1"},
 		},
@@ -110,6 +110,136 @@ func TestMCPProtocol_Initialize(t *testing.T) {
 	}
 }
 
+// TestMCPProtocol_ServerDiscover covers MCP 2026-07-28's era-detection probe
+// over stdio: a modern client sends server/discover before anything else and
+// classifies the server from the reply. It must succeed without a prior
+// initialize and must report the protocol versions we can fall back to.
+func TestMCPProtocol_ServerDiscover(t *testing.T) {
+	bin := buildTestBinary(t)
+	sess := newMCPSession(t, bin)
+
+	// No initialize first — this is the whole point of the probe.
+	sess.send(map[string]interface{}{
+		"jsonrpc": "2.0",
+		"id":      1,
+		"method":  "server/discover",
+		"params":  map[string]interface{}{},
+	})
+
+	resp := sess.recv()
+	if resp["error"] != nil {
+		t.Fatalf("server/discover returned error: %s", resp["error"])
+	}
+	var result struct {
+		ProtocolVersion           string                 `json:"protocolVersion"`
+		SupportedProtocolVersions []string               `json:"supportedProtocolVersions"`
+		Capabilities              map[string]interface{} `json:"capabilities"`
+		ServerInfo                struct {
+			Name    string `json:"name"`
+			Version string `json:"version"`
+		} `json:"serverInfo"`
+	}
+	if err := json.Unmarshal(resp["result"], &result); err != nil {
+		t.Fatalf("result parse: %v", err)
+	}
+	if result.ProtocolVersion != mcpProtocolVersion {
+		t.Errorf("protocolVersion = %q, want %q", result.ProtocolVersion, mcpProtocolVersion)
+	}
+	if len(result.SupportedProtocolVersions) != 1 || result.SupportedProtocolVersions[0] != mcpProtocolVersion {
+		t.Errorf("supportedProtocolVersions = %v, want [%q]", result.SupportedProtocolVersions, mcpProtocolVersion)
+	}
+	for _, capability := range []string{"tools", "resources", "prompts"} {
+		if _, ok := result.Capabilities[capability]; !ok {
+			t.Errorf("expected capability %q in server/discover result", capability)
+		}
+	}
+	if result.ServerInfo.Name != "convctl-mcp" {
+		t.Errorf("serverInfo.name = %q, want %q", result.ServerInfo.Name, "convctl-mcp")
+	}
+	if result.ServerInfo.Version != mcpServerVersion {
+		t.Errorf("serverInfo.version = %q, want %q", result.ServerInfo.Version, mcpServerVersion)
+	}
+}
+
+// TestMCPProtocol_InitializeUnsupportedVersion asserts the
+// UnsupportedProtocolVersionError contract: a client asking for a revision we
+// don't speak gets -32022 with the supported list, not a silently-wrong success.
+func TestMCPProtocol_InitializeUnsupportedVersion(t *testing.T) {
+	bin := buildTestBinary(t)
+	sess := newMCPSession(t, bin)
+
+	sess.send(map[string]interface{}{
+		"jsonrpc": "2.0",
+		"id":      1,
+		"method":  "initialize",
+		"params": map[string]interface{}{
+			"protocolVersion": "1900-01-01",
+			"capabilities":    map[string]interface{}{},
+			"clientInfo":      map[string]interface{}{"name": "test", "version": "0"},
+		},
+	})
+
+	resp := sess.recv()
+	if resp["result"] != nil {
+		t.Fatalf("expected no result for an unsupported protocolVersion, got %s", resp["result"])
+	}
+	var rpcErr struct {
+		Code    int    `json:"code"`
+		Message string `json:"message"`
+		Data    struct {
+			Supported []string `json:"supported"`
+			Requested string   `json:"requested"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(resp["error"], &rpcErr); err != nil {
+		t.Fatalf("error parse: %v", err)
+	}
+	if rpcErr.Code != errCodeUnsupportedProtocolVersion {
+		t.Errorf("error.code = %d, want %d", rpcErr.Code, errCodeUnsupportedProtocolVersion)
+	}
+	if rpcErr.Message != msgUnsupportedProtocolVersion {
+		t.Errorf("error.message = %q, want %q", rpcErr.Message, msgUnsupportedProtocolVersion)
+	}
+	if len(rpcErr.Data.Supported) != 1 || rpcErr.Data.Supported[0] != mcpProtocolVersion {
+		t.Errorf("error.data.supported = %v, want [%q]", rpcErr.Data.Supported, mcpProtocolVersion)
+	}
+	if rpcErr.Data.Requested != "1900-01-01" {
+		t.Errorf("error.data.requested = %q, want %q", rpcErr.Data.Requested, "1900-01-01")
+	}
+}
+
+// TestMCPProtocol_InitializeMissingVersion pins the tolerant path: older clients
+// routinely omit protocolVersion, and that must still hand back a normal
+// handshake rather than the -32022 rejection.
+func TestMCPProtocol_InitializeMissingVersion(t *testing.T) {
+	bin := buildTestBinary(t)
+	sess := newMCPSession(t, bin)
+
+	sess.send(map[string]interface{}{
+		"jsonrpc": "2.0",
+		"id":      1,
+		"method":  "initialize",
+		"params": map[string]interface{}{
+			"capabilities": map[string]interface{}{},
+			"clientInfo":   map[string]interface{}{"name": "test", "version": "0"},
+		},
+	})
+
+	resp := sess.recv()
+	if resp["error"] != nil {
+		t.Fatalf("initialize without protocolVersion returned error: %s", resp["error"])
+	}
+	var result struct {
+		ProtocolVersion string `json:"protocolVersion"`
+	}
+	if err := json.Unmarshal(resp["result"], &result); err != nil {
+		t.Fatalf("result parse: %v", err)
+	}
+	if result.ProtocolVersion != mcpProtocolVersion {
+		t.Errorf("protocolVersion = %q, want %q", result.ProtocolVersion, mcpProtocolVersion)
+	}
+}
+
 func TestMCPProtocol_ToolsList(t *testing.T) {
 	bin := buildTestBinary(t)
 	sess := newMCPSession(t, bin)
@@ -119,7 +249,7 @@ func TestMCPProtocol_ToolsList(t *testing.T) {
 		"jsonrpc": "2.0",
 		"id":      1,
 		"method":  "initialize",
-		"params":  map[string]interface{}{"protocolVersion": "2025-03-26", "capabilities": map[string]interface{}{}, "clientInfo": map[string]interface{}{"name": "test", "version": "0"}},
+		"params":  map[string]interface{}{"protocolVersion": mcpProtocolVersion, "capabilities": map[string]interface{}{}, "clientInfo": map[string]interface{}{"name": "test", "version": "0"}},
 	})
 	sess.recv()
 
@@ -163,7 +293,7 @@ func TestMCPProtocol_LintProcess_ValidSample(t *testing.T) {
 		"jsonrpc": "2.0",
 		"id":      1,
 		"method":  "initialize",
-		"params":  map[string]interface{}{"protocolVersion": "2025-03-26", "capabilities": map[string]interface{}{}, "clientInfo": map[string]interface{}{"name": "test", "version": "0"}},
+		"params":  map[string]interface{}{"protocolVersion": mcpProtocolVersion, "capabilities": map[string]interface{}{}, "clientInfo": map[string]interface{}{"name": "test", "version": "0"}},
 	})
 	sess.recv()
 
@@ -208,7 +338,7 @@ func TestMCPProtocol_AuthRequired_NoCredentials(t *testing.T) {
 		"jsonrpc": "2.0",
 		"id":      1,
 		"method":  "initialize",
-		"params":  map[string]interface{}{"protocolVersion": "2025-03-26", "capabilities": map[string]interface{}{}, "clientInfo": map[string]interface{}{"name": "test", "version": "0"}},
+		"params":  map[string]interface{}{"protocolVersion": mcpProtocolVersion, "capabilities": map[string]interface{}{}, "clientInfo": map[string]interface{}{"name": "test", "version": "0"}},
 	})
 	sess.recv()
 

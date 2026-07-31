@@ -188,7 +188,7 @@ func httpInitializeAndCall(t *testing.T, client *http.Client, serverURL, clientL
 		ID:      json.RawMessage(`1`),
 		Method:  "initialize",
 		Params: mustMarshal(t, map[string]interface{}{
-			"protocolVersion": "2025-03-26",
+			"protocolVersion": mcpProtocolVersion,
 			"capabilities":    map[string]interface{}{},
 			"clientInfo":      map[string]interface{}{"name": clientLabel, "version": "v-" + clientLabel},
 		}),
@@ -379,7 +379,7 @@ func TestHTTPHandlePost_Initialize_ExemptFromSessionCheck(t *testing.T) {
 
 	// initialize always mints a fresh session regardless of what the client
 	// sends — even a stray/unrecognized Mcp-Session-Id header must not 404.
-	body := `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{}}}`
+	body := `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"` + mcpProtocolVersion + `","capabilities":{}}}`
 	w := postMCP(t, body, "some-id-the-server-has-never-seen")
 
 	if w.Code != http.StatusOK {
@@ -387,6 +387,99 @@ func TestHTTPHandlePost_Initialize_ExemptFromSessionCheck(t *testing.T) {
 	}
 	if w.Header().Get("Mcp-Session-Id") == "" {
 		t.Error("expected initialize to mint a fresh Mcp-Session-Id")
+	}
+}
+
+func TestHTTPHandlePost_ServerDiscover_ExemptFromSessionCheck(t *testing.T) {
+	withCleanHTTPSessions(t)
+
+	// A modern client probing for the first time has no session, and one
+	// holding a stale ID from a previous server process must still be able to
+	// learn which protocol versions we speak — neither may be 404'd.
+	body := `{"jsonrpc":"2.0","id":1,"method":"server/discover","params":{}}`
+
+	for _, tc := range []struct {
+		name      string
+		sessionID string
+	}{
+		{"no session header", ""},
+		{"stale session header", "some-id-the-server-has-never-seen"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			w := postMCP(t, body, tc.sessionID)
+
+			if w.Code != http.StatusOK {
+				t.Fatalf("expected 200 for server/discover, got %d", w.Code)
+			}
+			var resp struct {
+				Result struct {
+					SupportedProtocolVersions []string `json:"supportedProtocolVersions"`
+				} `json:"result"`
+				Error *json.RawMessage `json:"error"`
+			}
+			if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+				t.Fatalf("body parse: %v — %s", err, w.Body.String())
+			}
+			if resp.Error != nil {
+				t.Fatalf("server/discover returned error: %s", *resp.Error)
+			}
+			if len(resp.Result.SupportedProtocolVersions) != 1 ||
+				resp.Result.SupportedProtocolVersions[0] != mcpProtocolVersion {
+				t.Errorf("supportedProtocolVersions = %v, want [%q]",
+					resp.Result.SupportedProtocolVersions, mcpProtocolVersion)
+			}
+		})
+	}
+}
+
+// TestHTTPHandlePost_InitializeUnsupportedVersion_Returns200 pins that a
+// protocol-level version rejection travels as a JSON-RPC error inside a 200
+// response — it is not an HTTP-level failure.
+func TestHTTPHandlePost_InitializeUnsupportedVersion_Returns200(t *testing.T) {
+	withCleanHTTPSessions(t)
+
+	body := `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"1900-01-01","capabilities":{},"clientInfo":{"name":"modern","version":"9"}}}`
+	w := postMCP(t, body, "")
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200 with the JSON-RPC error in the body, got %d", w.Code)
+	}
+	var resp struct {
+		Result *json.RawMessage `json:"result"`
+		Error  *struct {
+			Code int `json:"code"`
+			Data struct {
+				Supported []string `json:"supported"`
+				Requested string   `json:"requested"`
+			} `json:"data"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("body parse: %v — %s", err, w.Body.String())
+	}
+	if resp.Result != nil {
+		t.Errorf("expected no result alongside the error, got %s", *resp.Result)
+	}
+	if resp.Error == nil {
+		t.Fatal("expected a JSON-RPC error in the body")
+	}
+	if resp.Error.Code != errCodeUnsupportedProtocolVersion {
+		t.Errorf("error.code = %d, want %d", resp.Error.Code, errCodeUnsupportedProtocolVersion)
+	}
+	if len(resp.Error.Data.Supported) != 1 || resp.Error.Data.Supported[0] != mcpProtocolVersion {
+		t.Errorf("error.data.supported = %v, want [%q]", resp.Error.Data.Supported, mcpProtocolVersion)
+	}
+	if resp.Error.Data.Requested != "1900-01-01" {
+		t.Errorf("error.data.requested = %q, want %q", resp.Error.Data.Requested, "1900-01-01")
+	}
+
+	// The rejected handshake must not have registered a session identity —
+	// httpHandlePost mints the ID before dispatch, so the guard has to be the
+	// early return in httpDispatch's initialize case.
+	if sid := w.Header().Get("Mcp-Session-Id"); sid != "" {
+		if _, found := httpSessionIdentity(sid); found {
+			t.Errorf("rejected initialize registered an identity for session %q", sid)
+		}
 	}
 }
 

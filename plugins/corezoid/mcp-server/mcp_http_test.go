@@ -126,7 +126,7 @@ func dispatchJSON(t *testing.T, method string, params interface{}) map[string]js
 
 func TestHTTPDispatch_Initialize(t *testing.T) {
 	out := dispatchJSON(t, "initialize", map[string]interface{}{
-		"protocolVersion": "2025-03-26",
+		"protocolVersion": mcpProtocolVersion,
 		"capabilities":    map[string]interface{}{},
 	})
 	if out["error"] != nil {
@@ -139,13 +139,119 @@ func TestHTTPDispatch_Initialize(t *testing.T) {
 	}
 }
 
+// TestHTTPDispatch_ServerDiscover mirrors TestMCPProtocol_ServerDiscover over
+// the HTTP transport, and additionally pins the byte-identical-capabilities
+// guarantee: whatever initialize advertises, the discover probe must advertise.
+func TestHTTPDispatch_ServerDiscover(t *testing.T) {
+	out := dispatchJSON(t, "server/discover", nil)
+	if out["error"] != nil {
+		t.Fatalf("unexpected error: %s", out["error"])
+	}
+	var discover map[string]json.RawMessage
+	json.Unmarshal(out["result"], &discover) //nolint:errcheck
+
+	var supported []string
+	json.Unmarshal(discover["supportedProtocolVersions"], &supported) //nolint:errcheck
+	if len(supported) != 1 || supported[0] != mcpProtocolVersion {
+		t.Errorf("supportedProtocolVersions = %v, want [%q]", supported, mcpProtocolVersion)
+	}
+
+	initOut := dispatchJSON(t, "initialize", map[string]interface{}{
+		"protocolVersion": mcpProtocolVersion,
+		"capabilities":    map[string]interface{}{},
+	})
+	var initialize map[string]json.RawMessage
+	json.Unmarshal(initOut["result"], &initialize) //nolint:errcheck
+
+	// Compare the raw encodings — Go maps marshal with sorted keys, so equal
+	// bytes here really does mean the two payloads are indistinguishable.
+	for _, field := range []string{"protocolVersion", "capabilities", "serverInfo"} {
+		if string(discover[field]) != string(initialize[field]) {
+			t.Errorf("server/discover %s = %s, want it identical to initialize's %s",
+				field, discover[field], initialize[field])
+		}
+	}
+}
+
+// TestHTTPDispatch_InitializeUnsupportedVersion asserts the -32022 contract on
+// the HTTP transport.
+func TestHTTPDispatch_InitializeUnsupportedVersion(t *testing.T) {
+	out := dispatchJSON(t, "initialize", map[string]interface{}{
+		"protocolVersion": "1900-01-01",
+		"capabilities":    map[string]interface{}{},
+	})
+	if out["result"] != nil {
+		t.Fatalf("expected no result for an unsupported protocolVersion, got %s", out["result"])
+	}
+	var rpcErr struct {
+		Code    int    `json:"code"`
+		Message string `json:"message"`
+		Data    struct {
+			Supported []string `json:"supported"`
+			Requested string   `json:"requested"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(out["error"], &rpcErr); err != nil {
+		t.Fatalf("error parse: %v", err)
+	}
+	if rpcErr.Code != errCodeUnsupportedProtocolVersion {
+		t.Errorf("error.code = %d, want %d", rpcErr.Code, errCodeUnsupportedProtocolVersion)
+	}
+	if rpcErr.Message != msgUnsupportedProtocolVersion {
+		t.Errorf("error.message = %q, want %q", rpcErr.Message, msgUnsupportedProtocolVersion)
+	}
+	if len(rpcErr.Data.Supported) != 1 || rpcErr.Data.Supported[0] != mcpProtocolVersion {
+		t.Errorf("error.data.supported = %v, want [%q]", rpcErr.Data.Supported, mcpProtocolVersion)
+	}
+	if rpcErr.Data.Requested != "1900-01-01" {
+		t.Errorf("error.data.requested = %q, want %q", rpcErr.Data.Requested, "1900-01-01")
+	}
+}
+
+// TestHTTPDispatch_InitializeMissingVersion pins the tolerant path over HTTP.
+func TestHTTPDispatch_InitializeMissingVersion(t *testing.T) {
+	out := dispatchJSON(t, "initialize", map[string]interface{}{
+		"capabilities": map[string]interface{}{},
+	})
+	if out["error"] != nil {
+		t.Fatalf("initialize without protocolVersion returned error: %s", out["error"])
+	}
+	var result map[string]interface{}
+	json.Unmarshal(out["result"], &result) //nolint:errcheck
+	if result["protocolVersion"] != mcpProtocolVersion {
+		t.Errorf("protocolVersion = %v, want %q", result["protocolVersion"], mcpProtocolVersion)
+	}
+}
+
+// TestHTTPDispatch_ExistingErrorsCarryNoDataField guards the mcpError.Data
+// addition: `data` is omitempty, so every pre-existing error site must still
+// serialise exactly as it did before the field existed.
+func TestHTTPDispatch_ExistingErrorsCarryNoDataField(t *testing.T) {
+	out := dispatchJSON(t, "no/such/method", nil)
+	if out["error"] == nil {
+		t.Fatal("expected an error for an unknown method")
+	}
+	var rpcErr map[string]json.RawMessage
+	json.Unmarshal(out["error"], &rpcErr) //nolint:errcheck
+	if _, present := rpcErr["data"]; present {
+		t.Errorf("expected no data field on a plain -32601 error, got %s", out["error"])
+	}
+	var code int
+	json.Unmarshal(rpcErr["code"], &code) //nolint:errcheck
+	if code != -32601 {
+		t.Errorf("error.code = %d, want -32601", code)
+	}
+}
+
 func TestHTTPDispatch_ToolsList(t *testing.T) {
 	out := dispatchJSON(t, "tools/list", nil)
 	if out["error"] != nil {
 		t.Fatalf("unexpected error: %s", out["error"])
 	}
 	var result struct {
-		Tools []struct{ Name string `json:"name"` } `json:"tools"`
+		Tools []struct {
+			Name string `json:"name"`
+		} `json:"tools"`
 	}
 	json.Unmarshal(out["result"], &result) //nolint:errcheck
 	if len(result.Tools) == 0 {
@@ -159,7 +265,9 @@ func TestHTTPDispatch_PromptsList(t *testing.T) {
 		t.Fatalf("unexpected error: %s", out["error"])
 	}
 	var result struct {
-		Prompts []struct{ Name string `json:"name"` } `json:"prompts"`
+		Prompts []struct {
+			Name string `json:"name"`
+		} `json:"prompts"`
 	}
 	json.Unmarshal(out["result"], &result) //nolint:errcheck
 	if len(result.Prompts) == 0 {
@@ -190,7 +298,7 @@ func TestHTTPDispatch_PromptsGet_Unknown(t *testing.T) {
 func TestHTTPDispatch_ResourcesList(t *testing.T) {
 	dir := t.TempDir()
 	orig, _ := os.Getwd()
-	os.Chdir(dir) //nolint:errcheck
+	os.Chdir(dir)                        //nolint:errcheck
 	t.Cleanup(func() { os.Chdir(orig) }) //nolint:errcheck
 
 	out := dispatchJSON(t, "resources/list", nil)
@@ -290,11 +398,11 @@ func TestHTTPMCPEndpoint_Post_Notification_Returns202(t *testing.T) {
 func TestHTTPDispatch_ResourcesRead_OK(t *testing.T) {
 	dir := t.TempDir()
 	orig, _ := os.Getwd()
-	os.Chdir(dir) //nolint:errcheck
+	os.Chdir(dir)                        //nolint:errcheck
 	t.Cleanup(func() { os.Chdir(orig) }) //nolint:errcheck
 
 	procDir := filepath.Join(dir, ".processes")
-	os.MkdirAll(procDir, 0755)                                                               //nolint:errcheck
+	os.MkdirAll(procDir, 0755)                                                            //nolint:errcheck
 	os.WriteFile(filepath.Join(procDir, "1_test.conv.json"), []byte(`{"ok":true}`), 0644) //nolint:errcheck
 
 	out := dispatchJSON(t, "resources/read", map[string]interface{}{
@@ -308,8 +416,8 @@ func TestHTTPDispatch_ResourcesRead_OK(t *testing.T) {
 func TestHTTPDispatch_ResourcesRead_NotFound(t *testing.T) {
 	dir := t.TempDir()
 	orig, _ := os.Getwd()
-	os.Chdir(dir) //nolint:errcheck
-	t.Cleanup(func() { os.Chdir(orig) }) //nolint:errcheck
+	os.Chdir(dir)                                       //nolint:errcheck
+	t.Cleanup(func() { os.Chdir(orig) })                //nolint:errcheck
 	os.MkdirAll(filepath.Join(dir, ".processes"), 0755) //nolint:errcheck
 
 	out := dispatchJSON(t, "resources/read", map[string]interface{}{

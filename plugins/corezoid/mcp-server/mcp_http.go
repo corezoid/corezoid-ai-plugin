@@ -210,7 +210,7 @@ func httpHandlePost(w http.ResponseWriter, r *http.Request) {
 	if req.Method == "initialize" {
 		sessionID = generateUUIDv4()
 		w.Header().Set("Mcp-Session-Id", sessionID)
-	} else if sessionID != "" && !strings.HasPrefix(req.Method, "notifications/") {
+	} else if sessionID != "" && req.Method != "server/discover" && !strings.HasPrefix(req.Method, "notifications/") {
 		// The client is asserting an existing session (evicted by idle
 		// eviction, orphaned by a server restart, or simply invented) that we
 		// don't recognize. Per the Streamable HTTP spec this must be a 404,
@@ -223,6 +223,11 @@ func httpHandlePost(w http.ResponseWriter, r *http.Request) {
 		// clientIdentityFor, same as before this check existed. Notifications
 		// are exempt: they get no JSON-RPC response to signal recovery on,
 		// and 202-with-empty-body is already the correct reply either way.
+		// server/discover is exempt for the opposite reason: it's the modern
+		// era-detection probe, sent before any handshake, and a client holding
+		// a stale ID from a previous process must still be able to learn which
+		// protocol versions we speak — 404ing that probe would leave it unable
+		// to classify us at all.
 		if _, found := httpSessionIdentity(sessionID); !found {
 			w.WriteHeader(http.StatusNotFound)
 			return
@@ -271,6 +276,14 @@ func httpHandleSSE(w http.ResponseWriter, r *http.Request) {
 func httpDispatch(reqCtx context.Context, req mcpRequest) interface{} {
 	switch req.Method {
 	case "initialize":
+		// Reject a version we can't speak before any session is registered: a
+		// client whose handshake we turn down must not leave an identity behind
+		// against the session ID httpHandlePost has already minted for it.
+		if requested := parseRequestedProtocolVersion(req.Params); !protocolVersionSupported(requested) {
+			logger.Info("initialize: rejecting unsupported protocolVersion %q (supported: %v)", requested, mcpSupportedProtocolVersions())
+			return httpJSONRPCErrorWithData(req.ID, errCodeUnsupportedProtocolVersion, msgUnsupportedProtocolVersion, unsupportedProtocolVersionData(requested))
+		}
+
 		// Read client identity for analytics attribution. Elicitation support
 		// is intentionally ignored here — the comment on httpHandleSSE explains
 		// why server-initiated elicitation isn't wired up over HTTP.
@@ -288,18 +301,18 @@ func httpDispatch(reqCtx context.Context, req mcpRequest) interface{} {
 		return mcpResponse{
 			JSONRPC: "2.0",
 			ID:      req.ID,
-			Result: map[string]interface{}{
-				"protocolVersion": "2025-03-26",
-				"capabilities": map[string]interface{}{
-					"tools":     map[string]interface{}{},
-					"resources": map[string]interface{}{},
-					"prompts":   map[string]interface{}{},
-				},
-				"serverInfo": map[string]interface{}{
-					"name":    "convctl-mcp",
-					"version": mcpServerVersion,
-				},
-			},
+			Result:  buildInitializeResult(),
+		}
+
+	case "server/discover":
+		// MCP 2026-07-28's era-detection probe. Stateless by design: it neither
+		// reads nor mints a session, which is what lets httpHandlePost exempt it
+		// from the session check — a modern client probing us for the first time
+		// has no session yet.
+		return mcpResponse{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Result:  buildDiscoverResult(),
 		}
 
 	case "notifications/initialized", "notifications/cancelled":
@@ -401,10 +414,17 @@ func httpDispatch(reqCtx context.Context, req mcpRequest) interface{} {
 }
 
 func httpJSONRPCError(id interface{}, code int, msg string) mcpResponse {
+	return httpJSONRPCErrorWithData(id, code, msg, nil)
+}
+
+// httpJSONRPCErrorWithData is httpJSONRPCError plus the JSON-RPC error `data`
+// field. Still a 200-with-error-in-body response like every other JSON-RPC
+// error here — a protocol-level error is not an HTTP-level one.
+func httpJSONRPCErrorWithData(id interface{}, code int, msg string, data interface{}) mcpResponse {
 	return mcpResponse{
 		JSONRPC: "2.0",
 		ID:      id,
-		Error:   &mcpError{Code: code, Message: msg},
+		Error:   &mcpError{Code: code, Message: msg, Data: data},
 	}
 }
 
