@@ -29,6 +29,24 @@ function. These libraries provide functionality for cryptography, date manipulat
 | RC4         | `require("libs/rc4.js")`         | Implements the RC4 stream cipher                         |
 | Base64      | `require("libs/base64.js")`      | Provides Base64 encoding and decoding functions          |
 
+> **Important — CryptoJS libraries use global side-effect injection, not CommonJS exports.**
+> These libraries do **not** return a value from `require()`. Instead, calling `require()` attaches
+> the `CryptoJS` object to the global scope as a side effect. Do **not** assign the result of
+> `require()` to a variable — doing so creates a local variable that shadows the global `CryptoJS`
+> with `undefined`, causing a `TypeError` on any subsequent method call.
+>
+> **Correct pattern:**
+> ```javascript
+> require("libs/aes.js");        // side-effect: sets global CryptoJS
+> var encrypted = CryptoJS.AES.encrypt(...);  // use global directly
+> ```
+>
+> **Incorrect pattern (breaks with TypeError):**
+> ```javascript
+> var CryptoJS = require("libs/aes.js");  // ← CryptoJS is undefined here
+> var encrypted = CryptoJS.AES.encrypt(...);  // TypeError: Cannot read property 'encrypt' of undefined
+> ```
+
 ### Date and Time Libraries
 
 | Library             | Import Statement                         | Description                                                                       |
@@ -53,7 +71,7 @@ function. These libraries provide functionality for cryptography, date manipulat
 
 ```javascript
 
-  var CryptoJS = require("libs/sha1.js");
+  require("libs/sha1.js");  // sets global CryptoJS — do not assign
 
   // Create a SHA-1 hash
   var hash = CryptoJS.SHA1("message to hash").toString();
@@ -66,7 +84,7 @@ function. These libraries provide functionality for cryptography, date manipulat
 
 ```javascript
 
-  var CryptoJS = require("libs/md5.js");
+  require("libs/md5.js");  // sets global CryptoJS — do not assign
 
   // Create an MD5 hash
   var hash = CryptoJS.MD5(data.password).toString();
@@ -79,7 +97,7 @@ function. These libraries provide functionality for cryptography, date manipulat
 
 ```javascript
 
-  var CryptoJS = require("libs/aes.js");
+  require("libs/aes.js");  // sets global CryptoJS — do not assign
 
   // Encrypt
   var encrypted = CryptoJS.AES.encrypt(data.plaintext, data.secret_key).toString();
@@ -318,7 +336,7 @@ Set an appropriate timeout value based on the complexity of your code:
   try {
     // Require necessary libraries
     var moment = require("libs/moment.js");
-    var CryptoJS = require("libs/sha256.js");
+    require("libs/sha256.js");  // sets global CryptoJS — do not assign
 
     // Process dates
     var now = moment();
