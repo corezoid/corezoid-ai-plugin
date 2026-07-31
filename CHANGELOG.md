@@ -1,5 +1,28 @@
 # Changelog
 
+## [2.11.0]
+
+- Feat: new `corezoid-git-context` skill + four MCP tools — `git-pull-context`, `git-push-context`, `read-context-file`, `update-context-file` — that sync a project's `.git-context/` with the Corezoid Gitea mirror (with a transparent local-only fallback when Gitea is unreachable), merge Developer Notes and a process index into `CLAUDE.md` via a marker block that leaves hand-authored content intact, and let Claude read/write `_ext/` documentation without touching the process JSON tree. `pull-folder` and `push-process` sync context and regenerate `CLAUDE.md` as part of their normal flow; per-invocation Basic auth goes via `GIT_CONFIG_*` env vars and is never persisted to `.git/config`.
+- Feat: **layout engine driven by measured node geometry and readability signals.** Placement now uses real rendered sizes read from the live SVG DOM (see `docs/process/node-size-reference.md`) instead of conservative estimates that over-reserved ~74–77px on every Condition and ~29px per output row — the biggest source of "too much air between nodes". Strategy routing is now by error *ownership* (shared vs dedicated roots) rather than raw error-node fraction, so a long spine with one small dedicated cluster per action stays a readable waterfall. Sugiyama gains a Fenwick-based crossing counter, weighted median and adjacent transpose (attribution added in `THIRD_PARTY_NOTICES.md`); a new DIAMOND region handles the do-work-vs-skip fork. `layoutReport` now carries readability numbers (crossings, edge spans, upward edges) and a CI quality ratchet runs over every fixture.
+- Feat: layout no longer changes `extra.modeForm`. Collapse/expand is the author's state; the engine only moves nodes. A sentinel blocks strategy-local mode changes and every `extra` is restored before the finishing geometry runs, so boxes are separated at their real rendered size.
+- Feat: `push-process` and `pull-folder` now regenerate the marker-based `corezoid-mirror` block in the project's `CLAUDE.md` and — when Gitea is reachable — pull/push the git-context mirror as part of their normal flow, so Claude sees the freshest project documentation without extra tool calls.
+- Feat: `.mcp.json` now includes an `mcpServers` wrapper for hosts that expect the wrapped shape, keeping compatibility with hosts that read the flat form.
+- Fix: **call-process stub mode** is preserved and gated correctly on push — new `stub.json` schema, executor gating, lint rules and tests, and a full `stubbed_api_rpc.json` sample. Previously stubs could be silently stripped or bypassed.
+- Fix: diamond orientation search was exponential in a way node count did not bound — 8 diamonds meant 256 full layouts (~23s inside the push path). Capped at 16 candidates (23s → 1.15s).
+- Fix: `compact()` could CREATE an overlap because `cluster1D` chains transitively, so a "row" can span more than its tallest member and the next row was pulled into it. Masked in the main path by a later `resolveOverlaps`, but not in strategies that end with `compact`.
+- Fix: a loop body was placed one row below the condition entering it, so the return edge climbed an extra row and cut across the spine; the polish pass then shoved the condition off the axis. Bodies now align to their entry row.
+- Fix: `resolveNodeEdgeOverlaps` used to break column alignment to dodge link lines. Nodes sharing a column with a primary-chain neighbour are now left in place: a line under a box stays traceable, a jogging column does not.
+- Fix: duplicate node ids were accepted silently, dropping nodes while reporting `overlaps=0`. `loadLayoutDoc` now refuses the file and names the offending ids.
+- Fix(mcp): `create-alias` now derives the stage from the process being aliased instead of a frozen env-var value, so an alias created after a stage switch targets the right stage (issue #26).
+- Fix(mcp): `create-folder` and `create-process` now send `project_id` in the create call, so the object lands in the intended project instead of the workspace default (issue #36).
+- Fix(auth): `cachedProjectID`, `gitURL` and `gitStagePath` are invalidated on stage switch, host switch, and logout (previously only on workspace switch); a failed `COREZOID_API_URL` discovery no longer silently falls back to the wrong host.
+- Docs: `code-node-libraries` — CryptoJS side-effect `require` examples corrected; the require pattern is `require('crypto-js/hmac-sha256')`, not the previous form which silently loaded the wrong module.
+- Docs: `README.md` License section links to the `LICENSE` file.
+- Docs: `SKILL.md` for `corezoid-node-layout` no longer claims a hard ±10000 clamp — `clampCoords` re-centres and cannot shrink a layout past the row-step floor, and the node schema allows ±100000 because real processes reach ~25500.
+- Docs: `README.md` — Architecture ASCII tree now includes the Snapshots and Git-context tool groups, and the Project-structure tree lists all 22 skill directories instead of the original 8.
+- CI: GitHub-native Claude Code automation — a set of workflows that run issue-worker → self-review → second-line PR review with severity-based auto-merge for low-risk PRs, retry when a previous PR was closed unmerged, and permission grants that let the issue-worker dispatch the PR reviewer and the `github-actions` bot invoke it.
+- CI: release workflow now builds Windows binaries for `convctl` alongside the existing platforms.
+
 ## [2.10.0]
 
 - Feat: a **from-scratch process now gets the full layout engine** on push (the same waterfall / layered+error-rail / regions strategies as the `layout-process` tool), instead of the lean grid — so a new process comes out cleanly arranged by default rather than cramped.

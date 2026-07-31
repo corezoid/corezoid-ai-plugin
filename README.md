@@ -311,12 +311,16 @@ Claude Code / Codex
   └── corezoid MCP server (prebuilt binary)
         ├── Auth          login, logout
         ├── Workspace     list-workspaces, list-stages, list-projects,
-        │                 create-project, modify-project, delete-project, show-project
+        │                 create-project, modify-project, delete-project, show-project,
+        │                 deploy-stage, set-stage-immutable
         ├── Processes     pull-process, pull-folder, push-process, lint-process, layout-process
-        │                 create-process, create-folder, create-alias, create-variable
+        │                 create-process, create-state-diagram, create-folder,
+        │                 create-alias, create-variable,
+        │                 list-variables, modify-variable, delete-variable,
         │                 show-folder, list-folders, modify-folder, delete-folder, delete-process
-        ├── Tasks         run-task, list-node-tasks, list-task-history
+        ├── Tasks         run-task, list-node-tasks, list-task-history, get-node-stat,
         │                 modify-task, delete-task
+        ├── Snapshots     create-snapshot, list-snapshots, delete-snapshot, get-snapshot
         ├── Dashboards    create-dashboard, get-dashboard, add-chart,
         │                 modify-chart, get-chart, set-dashboard-layout
         ├── Access        share-object, list-shares,
@@ -324,6 +328,8 @@ Claude Code / Codex
         │                 add-to-group, remove-from-group, list-groups,
         │                 create-api-key, modify-api-key, delete-api-key, list-api-keys,
         │                 find-principal, invite-user
+        ├── Git context   git-pull-context, git-push-context,
+        │                 read-context-file, update-context-file
         └── Feedback      send-feedback
 ```
 
@@ -344,14 +350,28 @@ corezoid-ai-plugin/
 │   ├── .mcp.json                # MCP server configuration
 │   ├── mcp-server/              # MCP server source
 │   ├── skills/
-│   │   ├── corezoid/                    # Universal assistant skill
-│   │   ├── corezoid-init/               # Environment setup skill
-│   │   ├── corezoid-create/             # Process creation skill
-│   │   ├── corezoid-edit/               # Process editing skill
-│   │   ├── corezoid-review/             # Process review skill
-│   │   ├── corezoid-project-review/     # Project audit skill
-│   │   ├── corezoid-dashboard-manager/  # Dashboard & chart management skill
-│   │   └── corezoid-process-tech-writer/ # Process documentation skill
+│   │   ├── corezoid/                       # Universal assistant skill
+│   │   ├── corezoid-init/                  # Environment setup skill
+│   │   ├── corezoid-create/                # Process creation skill
+│   │   ├── corezoid-edit/                  # Process editing skill
+│   │   ├── corezoid-state-diagram-create/  # State diagram creation skill
+│   │   ├── corezoid-state-diagram-edit/    # State diagram editing skill
+│   │   ├── corezoid-review/                # Process review skill
+│   │   ├── corezoid-project-review/        # Project audit skill
+│   │   ├── corezoid-node-layout/           # Node auto-layout skill
+│   │   ├── corezoid-dashboard-manager/     # Dashboard & chart management skill
+│   │   ├── corezoid-process-tech-writer/   # Process documentation skill
+│   │   ├── corezoid-process-optimizer/     # Process optimization skill
+│   │   ├── corezoid-describe/              # Object description skill
+│   │   ├── corezoid-alias-manager/         # Alias management skill
+│   │   ├── corezoid-variable-manager/      # Environment variable management skill
+│   │   ├── corezoid-api-connector/         # Corezoid public-API caller skill
+│   │   ├── corezoid-gitcall/               # git_call custom-code skill
+│   │   ├── corezoid-access/                # Sharing, groups, API keys skill
+│   │   ├── corezoid-retro/                 # End-of-session retrospective skill
+│   │   ├── corezoid-feedback/              # Bug / improvement reporting skill
+│   │   ├── corezoid-git-context/           # `.git-context/` mirror sync skill
+│   │   └── marketplace-publish-validation/ # Marketplace pre-publication checklist
 │   ├── docs/                    # Node and process documentation
 │   └── samples/                 # Example .conv.json processes
 ```
