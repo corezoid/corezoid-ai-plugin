@@ -94,18 +94,30 @@ var toolHandlers = map[string]toolHandler{
 	"list-snapshots":  handleListSnapshots,
 	"delete-snapshot": handleDeleteSnapshot,
 	"get-snapshot":    handleGetSnapshot,
+
+	// git mirror
+	"git-pull-context":    handleGitPullContext,
+	"git-push-context":    handleGitPushContext,
+	"read-context-file":   handleReadContextFile,
+	"update-context-file": handleUpdateContextFile,
 }
 
 // noAuthTools don't need any credentials. lint runs entirely on local files;
 // login/logout manage credentials themselves.
 // send-feedback must not require auth so users can report problems that
 // occurred before or during the login flow.
+// git tools use their own credential check (COREZOID_GIT_URL + API_LOGIN/SECRET)
+// rather than Corezoid API auth.
 var noAuthTools = map[string]struct{}{
-	"layout-process": {},
-	"lint-process":   {},
-	"login":          {},
-	"logout":         {},
-	"send-feedback":  {},
+	"layout-process":      {},
+	"lint-process":        {},
+	"login":               {},
+	"logout":              {},
+	"send-feedback":       {},
+	"git-pull-context":    {},
+	"git-push-context":    {},
+	"read-context-file":   {},
+	"update-context-file": {},
 }
 
 // tokenOnlyTools need an OAuth token but not a fully configured workspace or

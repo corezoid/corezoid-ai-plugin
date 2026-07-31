@@ -31,6 +31,7 @@ The plugin bundles a Go MCP server that exposes Corezoid operations as MCP tools
 | `corezoid-feedback`            | "report a bug", "this is broken", "send feedback" | Collect and submit bug reports / improvement requests |
 | `marketplace-publish-validation` | "publish to marketplace", "check before publish" | Pre-publication checklist for Corezoid marketplace |
 | `corezoid-gitcall`             | "git call", "gitcall", "run my code", "custom code node", "python/go/php in a process" | Custom code (Python/Go/Java/PHP/JS/…) as a git_call step — parsing, libraries, crypto, attachments; handles the container build on push |
+| `corezoid-git-context`         | after a substantial session, "update git context", "sync context" | Analyse session changes and update `_ext/docs/*.md` in the Corezoid git mirror |
 
 ## Design philosophy
 
@@ -277,6 +278,10 @@ validation errors, and summarize what each process does.
 | `list-snapshots`    | List all snapshots for a process with version, title, author and creation time |
 | `delete-snapshot`   | Delete a snapshot by its obj_id |
 | `get-snapshot`      | Get the node list of a specific snapshot for diff comparison |
+| `git-pull-context`  | Clone or pull the Corezoid git mirror into `.git-context/` |
+| `git-push-context`  | Commit and push `_ext/` changes to the git mirror  |
+| `read-context-file` | Read a file from `.git-context/`                   |
+| `update-context-file` | Write or append to a file inside `_ext/`         |
 
 ## Feedback
 

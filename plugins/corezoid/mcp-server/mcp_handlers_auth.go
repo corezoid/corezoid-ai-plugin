@@ -9,6 +9,32 @@ import (
 	"time"
 )
 
+// resolveAndSaveAPIURL discovers COREZOID_API_URL via fetchCorezoidAPIURL and
+// persists it (global, env, .env). Falls back to ACCOUNT_URL only when
+// discovery genuinely returns an empty result with no error — a real fetch
+// error (network failure, transient 5xx, permission issue) leaves apiURL
+// unset instead of silently pointing it at ACCOUNT_URL, since that host does
+// not always also serve /api/2/json; a wrong silent fallback there produces
+// confusing downstream 404s instead of a clear "API URL not resolved" signal.
+// logSuffix is appended to the success log line to distinguish call sites.
+func resolveAndSaveAPIURL(accountURL, token, envPath, logSuffix string) {
+	corezoidURL, fetchErr := fetchCorezoidAPIURL(accountURL, token)
+	if fetchErr != nil {
+		logger.Warn("login: fetchCorezoidAPIURL failed: %v — COREZOID_API_URL left unresolved, retry on next login", fetchErr)
+		return
+	}
+	if corezoidURL == "" {
+		corezoidURL = strings.TrimRight(accountURL, "/")
+		logger.Info("login: COREZOID_API_URL discovery returned empty — using ACCOUNT_URL %q", corezoidURL)
+	}
+	withAuthLock(func() { apiURL = corezoidURL })
+	os.Setenv("COREZOID_API_URL", corezoidURL)
+	if err := updateEnvFile(envPath, "COREZOID_API_URL", corezoidURL); err != nil {
+		logger.Warn("login: could not save COREZOID_API_URL: %v", err)
+	}
+	logger.Info("login: COREZOID_API_URL=%q%s", corezoidURL, logSuffix)
+}
+
 // handleLogin runs the OAuth2 PKCE flow. ACCOUNT_URL, WORKSPACE_ID, and
 // COREZOID_STAGE_ID are persisted to the project .env; ACCESS_TOKEN is saved
 // to ~/.corezoid/credentials via saveCredentials(). The handler is
@@ -53,11 +79,23 @@ func handleLogin(ctx context.Context, args map[string]interface{}) (string, bool
 		// Arguments override .env so users can switch environments explicitly.
 		if v := optStrArg(args, "account_url"); v != "" {
 			if v != accountURL {
-				// Account URL changed; the derived API URL is no longer valid for the new host.
+				// Account URL changed; the derived API URL and git mirror URL are
+				// no longer valid for the new host (gitURL is host-derived from
+				// ACCOUNT_URL exactly like apiURL — see deriveGitURL).
 				apiURL = ""
+				gitURL = ""
+				gitStagePath = ""
 				os.Setenv("COREZOID_API_URL", "")
+				os.Setenv("COREZOID_GIT_URL", "")
+				os.Setenv("COREZOID_GIT_STAGE_PATH", "")
 				if err := updateEnvFile(envPath, "COREZOID_API_URL", ""); err != nil {
 					logger.Warn("login: could not clear COREZOID_API_URL on host switch: %v", err)
+				}
+				if err := updateEnvFile(envPath, "COREZOID_GIT_URL", ""); err != nil {
+					logger.Warn("login: could not clear COREZOID_GIT_URL on host switch: %v", err)
+				}
+				if err := updateEnvFile(envPath, "COREZOID_GIT_STAGE_PATH", ""); err != nil {
+					logger.Warn("login: could not clear COREZOID_GIT_STAGE_PATH on host switch: %v", err)
 				}
 			}
 			accountURL = v
@@ -67,6 +105,14 @@ func handleLogin(ctx context.Context, args map[string]interface{}) (string, bool
 			}
 		}
 		if v := optStrArg(args, "workspace_id"); v != "" {
+			if v != workspaceID {
+				// Workspace changed — any previously resolved project ID is invalid.
+				cachedProjectID = 0
+				os.Unsetenv("COREZOID_PROJECT_ID")
+				if err := removeEnvKey(envPath, "COREZOID_PROJECT_ID"); err != nil {
+					logger.Warn("login: could not clear COREZOID_PROJECT_ID on workspace switch: %v", err)
+				}
+			}
 			workspaceID = v
 			os.Setenv("WORKSPACE_ID", v)
 			if err := updateEnvFile(envPath, "WORKSPACE_ID", v); err != nil {
@@ -75,6 +121,23 @@ func handleLogin(ctx context.Context, args map[string]interface{}) (string, bool
 		}
 		if v := optStrArg(args, "stage_id"); v != "" {
 			if id, err := strconv.Atoi(v); err == nil && id != 0 {
+				if id != stageID {
+					// cachedProjectID and the resolved git stage path are keyed by
+					// stage (resolveProjectID resolves from COREZOID_STAGE_ID), so
+					// they're invalid the moment the stage changes — not just on a
+					// workspace switch. Leaving them stale would silently mix the
+					// old stage's project/git-mirror context into the new stage.
+					cachedProjectID = 0
+					gitStagePath = ""
+					os.Unsetenv("COREZOID_PROJECT_ID")
+					os.Unsetenv("COREZOID_GIT_STAGE_PATH")
+					if err := removeEnvKey(envPath, "COREZOID_PROJECT_ID"); err != nil {
+						logger.Warn("login: could not clear COREZOID_PROJECT_ID on stage switch: %v", err)
+					}
+					if err := removeEnvKey(envPath, "COREZOID_GIT_STAGE_PATH"); err != nil {
+						logger.Warn("login: could not clear COREZOID_GIT_STAGE_PATH on stage switch: %v", err)
+					}
+				}
 				stageID = id
 				os.Setenv("COREZOID_STAGE_ID", v)
 				if err := updateEnvFile(envPath, "COREZOID_STAGE_ID", v); err != nil {
@@ -174,17 +237,7 @@ func handleLogin(ctx context.Context, args map[string]interface{}) (string, bool
 		apiURLEmpty := apiURL == ""
 		authStateMu.RUnlock()
 		if apiURLEmpty {
-			corezoidURL, fetchErr := fetchCorezoidAPIURL(snapAccountURL, res.AccessToken)
-			if fetchErr != nil {
-				logger.Warn("login: fetchCorezoidAPIURL failed: %v", fetchErr)
-			} else {
-				withAuthLock(func() { apiURL = corezoidURL })
-				os.Setenv("COREZOID_API_URL", corezoidURL)
-				if err := updateEnvFile(envPath, "COREZOID_API_URL", corezoidURL); err != nil {
-					logger.Warn("login: could not save COREZOID_API_URL: %v", err)
-				}
-				logger.Info("login: derived COREZOID_API_URL=%q from clients API", corezoidURL)
-			}
+			resolveAndSaveAPIURL(snapAccountURL, res.AccessToken, envPath, "")
 		}
 	} else if snapToken != "" {
 		// If we already have a token but no derived API URL (e.g. token came from
@@ -193,17 +246,7 @@ func handleLogin(ctx context.Context, args map[string]interface{}) (string, bool
 		apiURLEmpty := apiURL == ""
 		authStateMu.RUnlock()
 		if apiURLEmpty {
-			corezoidURL, fetchErr := fetchCorezoidAPIURL(snapAccountURL, snapToken)
-			if fetchErr != nil {
-				logger.Warn("login: fetchCorezoidAPIURL failed: %v", fetchErr)
-			} else {
-				withAuthLock(func() { apiURL = corezoidURL })
-				os.Setenv("COREZOID_API_URL", corezoidURL)
-				if err := updateEnvFile(envPath, "COREZOID_API_URL", corezoidURL); err != nil {
-					logger.Warn("login: could not save COREZOID_API_URL: %v", err)
-				}
-				logger.Info("login: derived COREZOID_API_URL=%q from clients API (pre-existing token)", corezoidURL)
-			}
+			resolveAndSaveAPIURL(snapAccountURL, snapToken, envPath, " (pre-existing token)")
 		}
 	} else {
 		// API key flow: COREZOID_API_URL cannot be derived via /face/api/1/clients
@@ -272,6 +315,14 @@ func handleLogin(ctx context.Context, args map[string]interface{}) (string, bool
 					id := selected
 					if raw, ok := wsIDByLabel[selected]; ok {
 						id = raw
+					}
+					// We're inside the snapWorkspaceID == "" branch, i.e. this always
+					// sets a workspace where none was configured before — clear any
+					// stale leftover COREZOID_PROJECT_ID defensively.
+					withAuthLock(func() { cachedProjectID = 0 })
+					os.Unsetenv("COREZOID_PROJECT_ID")
+					if err := removeEnvKey(envPath, "COREZOID_PROJECT_ID"); err != nil {
+						logger.Warn("login: could not clear COREZOID_PROJECT_ID on workspace switch: %v", err)
 					}
 					snapWorkspaceID = id
 					withAuthLock(func() { workspaceID = id })
@@ -526,8 +577,24 @@ func handleLogout(_ context.Context, _ map[string]interface{}) (string, bool) {
 	if err := removeEnvKey(envPath, "API_SECRET"); err != nil {
 		logger.Warn("logout: could not remove API_SECRET from .env: %v", err)
 	}
+	if err := removeEnvKey(envPath, "COREZOID_PROJECT_ID"); err != nil {
+		logger.Warn("logout: could not remove COREZOID_PROJECT_ID from .env: %v", err)
+	}
+	// gitURL/gitStagePath are host- and stage-derived exactly like apiURL and
+	// cachedProjectID — leaving them behind would make the next login into a
+	// different environment silently try to reach the old environment's git
+	// mirror (resolveGitURL short-circuits on any non-empty gitURL).
+	if err := removeEnvKey(envPath, "COREZOID_GIT_URL"); err != nil {
+		logger.Warn("logout: could not remove COREZOID_GIT_URL from .env: %v", err)
+	}
+	if err := removeEnvKey(envPath, "COREZOID_GIT_STAGE_PATH"); err != nil {
+		logger.Warn("logout: could not remove COREZOID_GIT_STAGE_PATH from .env: %v", err)
+	}
 	os.Unsetenv("API_LOGIN")
 	os.Unsetenv("API_SECRET")
+	os.Unsetenv("COREZOID_PROJECT_ID")
+	os.Unsetenv("COREZOID_GIT_URL")
+	os.Unsetenv("COREZOID_GIT_STAGE_PATH")
 	withAuthLock(func() {
 		apiToken = ""
 		accountURL = ""
@@ -536,6 +603,9 @@ func handleLogout(_ context.Context, _ map[string]interface{}) (string, bool) {
 		apiURL = ""
 		apiLogin = ""
 		apiSecret = ""
+		cachedProjectID = 0
+		gitURL = ""
+		gitStagePath = ""
 	})
 
 	browserHost := strings.TrimRight(snapAccountURL, "/")

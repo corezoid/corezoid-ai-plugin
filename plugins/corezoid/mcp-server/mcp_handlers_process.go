@@ -234,11 +234,18 @@ func handlePullProcess(ctx context.Context, args map[string]interface{}) (string
 
 // handlePullFolder recursively downloads a folder (stage) and all its
 // processes/subfolders into the current working directory.
+// Before downloading processes, it attempts to sync the git mirror context
+// into .git-context/ (non-blocking — a git failure does not abort the pull).
 func handlePullFolder(ctx context.Context, args map[string]interface{}) (string, bool) {
 	folderID, err := intArg(args, "folder_id")
 	if err != nil {
 		return "Error: " + err.Error(), true
 	}
+
+	// Sync git mirror context before downloading processes.
+	// ensureGitContext handles elicitation of COREZOID_GIT_URL if missing,
+	// and silently skips on any error so the main pull always proceeds.
+	ensureGitContext(ctx)
 
 	v := NewValidator(ctx, 0)
 
@@ -249,6 +256,11 @@ func handlePullFolder(ctx context.Context, args map[string]interface{}) (string,
 	if err := downloadStageRecursively(v, folderID, "."); err != nil {
 		return fmt.Sprintf("Error fetching folder: %v", err), true
 	}
+
+	// In local/offline mode: regenerate CLAUDE.md from the freshly-downloaded
+	// .conv.json files (online mode copies it from the Gitea mirror instead).
+	regenerateLocalCLAUDEMDIfNeeded(ctx)
+
 	return fmt.Sprintf("Folder %d saved to current directory", folderID), false
 }
 
@@ -406,6 +418,9 @@ func handlePushProcess(ctx context.Context, args map[string]interface{}) (string
 	if _, err := v.ProcessJSON(filePath, jsonContent); err != nil {
 		return fmt.Sprintf("Error deploying process: %v", err), true
 	}
+
+	// In local mode: regenerate CLAUDE.md so the process index stays current.
+	regenerateLocalCLAUDEMDIfNeeded(ctx)
 
 	result := fmt.Sprintf("Process deployed successfully, ProcessID: %d", procID)
 	if rehydrateNote != "" {

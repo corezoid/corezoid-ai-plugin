@@ -109,10 +109,13 @@ func TestResolveAndCacheProjectID_FromEnv(t *testing.T) {
 	defer func() { cachedProjectID = orig }()
 
 	os.Setenv("COREZOID_PROJECT_ID", "188280")
+	os.Setenv("COREZOID_PROJECT_ID_STAGE_ID", "4242")
 	defer os.Unsetenv("COREZOID_PROJECT_ID")
+	defer os.Unsetenv("COREZOID_PROJECT_ID_STAGE_ID")
 
-	// v with StageID=0 — API path must not be reached.
-	v := &Executor{}
+	// StageID matches COREZOID_PROJECT_ID_STAGE_ID, so the env fast path is
+	// trusted — API path must not be reached.
+	v := &Executor{StageID: 4242}
 	got, notice := resolveAndCacheProjectID(v)
 	if got != 188280 {
 		t.Errorf("expected 188280 from env, got %d", got)
@@ -137,5 +140,59 @@ func TestResolveAndCacheProjectID_FromCache(t *testing.T) {
 	}
 	if notice != "" {
 		t.Errorf("expected no notice from cache path, got %q", notice)
+	}
+}
+
+// TestResolveAndCacheProjectID_FromEnv_StageMismatch pins the fix for a bug
+// where a manually-edited .env (WORKSPACE_ID/COREZOID_STAGE_ID changed without
+// going through the login tool, which clears the cache on a real switch) would
+// silently reuse a COREZOID_PROJECT_ID resolved for a different stage — pointing
+// git-pull-context/git-push-context at the wrong project's mirror repo.
+func TestResolveAndCacheProjectID_FromEnv_StageMismatch(t *testing.T) {
+	orig := cachedProjectID
+	cachedProjectID = 0
+	defer func() { cachedProjectID = orig }()
+
+	// COREZOID_PROJECT_ID was resolved for stage 4242, but the executor (and,
+	// in the real bug, the freshly-loaded COREZOID_STAGE_ID) is now on a
+	// different stage.
+	os.Setenv("COREZOID_PROJECT_ID", "188280")
+	os.Setenv("COREZOID_PROJECT_ID_STAGE_ID", "4242")
+	defer os.Unsetenv("COREZOID_PROJECT_ID")
+	defer os.Unsetenv("COREZOID_PROJECT_ID_STAGE_ID")
+
+	// Empty APIUrl makes the fallback API call fail fast (no network I/O) —
+	// the assertion is that the stale env value is never returned/cached, not
+	// that resolution succeeds.
+	v := &Executor{StageID: 9999}
+	got, notice := resolveAndCacheProjectID(v)
+	if got != 0 {
+		t.Errorf("expected stale COREZOID_PROJECT_ID for a different stage to be rejected, got %d", got)
+	}
+	if notice != "" {
+		t.Errorf("expected no notice, got %q", notice)
+	}
+	if cachedProjectID != 0 {
+		t.Errorf("expected cachedProjectID to remain 0, got %d", cachedProjectID)
+	}
+}
+
+func TestProjectIDStageMatches(t *testing.T) {
+	defer os.Unsetenv("COREZOID_PROJECT_ID_STAGE_ID")
+
+	os.Unsetenv("COREZOID_PROJECT_ID_STAGE_ID")
+	if projectIDStageMatches(4242) {
+		t.Error("expected no match when COREZOID_PROJECT_ID_STAGE_ID is unset")
+	}
+
+	os.Setenv("COREZOID_PROJECT_ID_STAGE_ID", "4242")
+	if !projectIDStageMatches(4242) {
+		t.Error("expected match when stage IDs are equal")
+	}
+	if projectIDStageMatches(9999) {
+		t.Error("expected no match when stage IDs differ")
+	}
+	if projectIDStageMatches(0) {
+		t.Error("expected no match when stageID=0 (no real stage context)")
 	}
 }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 )
@@ -189,6 +190,70 @@ func TestLoadConfig_ReadsEnvVars(t *testing.T) {
 	}
 	if apigwURL != "https://gw.example" {
 		t.Errorf("apigwURL = %q", apigwURL)
+	}
+}
+
+// TestLoadConfig_TrustsMatchingProjectIDStage pins that a COREZOID_PROJECT_ID
+// resolved for the stage we're currently loading is kept across a restart —
+// the whole point of persisting it to .env in the first place.
+func TestLoadConfig_TrustsMatchingProjectIDStage(t *testing.T) {
+	snapshotConfigGlobals(t)
+	origPID := cachedProjectID
+	t.Cleanup(func() { cachedProjectID = origPID })
+
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	dir := t.TempDir()
+	chdirWithCleanup(t, dir)
+
+	t.Setenv("COREZOID_STAGE_ID", "4242")
+	t.Setenv("COREZOID_PROJECT_ID", "555")
+	t.Setenv("COREZOID_PROJECT_ID_STAGE_ID", "4242")
+
+	loadConfig()
+
+	if cachedProjectID != 555 {
+		t.Errorf("expected cachedProjectID=555 when stage matches, got %d", cachedProjectID)
+	}
+}
+
+// TestLoadConfig_ClearsStaleProjectIDOnStageMismatch pins the fix for a bug
+// where manually editing WORKSPACE_ID/COREZOID_STAGE_ID in .env (bypassing the
+// login tool, which clears the cache on a real switch) silently reused a
+// COREZOID_PROJECT_ID resolved for a different stage — pointing
+// git-pull-context/git-push-context at the wrong project's mirror repo.
+func TestLoadConfig_ClearsStaleProjectIDOnStageMismatch(t *testing.T) {
+	snapshotConfigGlobals(t)
+	origPID := cachedProjectID
+	t.Cleanup(func() { cachedProjectID = origPID })
+
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	dir := t.TempDir()
+	chdirWithCleanup(t, dir)
+
+	envPath := filepath.Join(dir, ".env")
+	if err := os.WriteFile(envPath, []byte("COREZOID_PROJECT_ID=555\nCOREZOID_PROJECT_ID_STAGE_ID=1111\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Simulate a manual .env edit that switched the stage without going
+	// through login — COREZOID_PROJECT_ID_STAGE_ID (1111) no longer matches.
+	t.Setenv("COREZOID_STAGE_ID", "9999")
+	t.Setenv("COREZOID_PROJECT_ID", "555")
+	t.Setenv("COREZOID_PROJECT_ID_STAGE_ID", "1111")
+
+	loadConfig()
+
+	if cachedProjectID != 0 {
+		t.Errorf("expected cachedProjectID=0 on stage mismatch, got %d", cachedProjectID)
+	}
+	if got := os.Getenv("COREZOID_PROJECT_ID"); got != "" {
+		t.Errorf("expected COREZOID_PROJECT_ID env var cleared, got %q", got)
+	}
+	data, _ := os.ReadFile(envPath)
+	if strings.Contains(string(data), "COREZOID_PROJECT_ID=555") {
+		t.Errorf("expected stale COREZOID_PROJECT_ID removed from .env, got:\n%s", data)
 	}
 }
 
