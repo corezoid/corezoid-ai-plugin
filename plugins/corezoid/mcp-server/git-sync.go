@@ -169,6 +169,31 @@ func runGit(ctx context.Context, dir string, args ...string) (string, error) {
 	return string(out), err
 }
 
+// stripEnvKeys returns env with any existing entries for the given keys
+// removed. Go's exec.Cmd (and the underlying getenv-style lookups many
+// programs, including git, perform) resolves duplicate keys to the *first*
+// match — so simply appending our own GIT_CONFIG_* entries after os.Environ()
+// is not enough if the invoking shell/IDE already sets one of them: git would
+// read that pre-existing entry and silently ignore our Basic-auth header,
+// failing with a confusing 401 instead of authenticating.
+func stripEnvKeys(env []string, keys ...string) []string {
+	out := env[:0:0] // fresh backing array — never mutate the caller's slice in place
+	for _, kv := range env {
+		key, _, _ := strings.Cut(kv, "=")
+		skip := false
+		for _, k := range keys {
+			if key == k {
+				skip = true
+				break
+			}
+		}
+		if !skip {
+			out = append(out, kv)
+		}
+	}
+	return out
+}
+
 // runGitAuthed runs a git command with per-invocation HTTP Basic auth for the
 // Corezoid git mirror, for network operations (clone/fetch/pull/push) against
 // a credential-free URL (see buildGitRepoURL).
@@ -184,6 +209,8 @@ func runGitAuthed(ctx context.Context, dir, login, secret string, args ...string
 	cmd.Dir = dir
 	env := append(os.Environ(), "GIT_TERMINAL_PROMPT=0")
 	if login != "" || secret != "" {
+		// Strip any pre-existing GIT_CONFIG_* entries first — see stripEnvKeys.
+		env = stripEnvKeys(env, "GIT_CONFIG_COUNT", "GIT_CONFIG_KEY_0", "GIT_CONFIG_VALUE_0")
 		encoded := base64.StdEncoding.EncodeToString([]byte(login + ":" + secret))
 		env = append(env,
 			"GIT_CONFIG_COUNT=1",
@@ -374,7 +401,27 @@ func gitPushContext(ctx context.Context, commitMsg string) (string, error) {
 	localOnly := isLocalOnlyContext(ctx, targetDir)
 
 	if !localOnly {
-		// Sync with remote first (--autostash handles local modifications).
+		// Defensive: revert any non-_ext/ working-tree modifications to HEAD
+		// before the pull. --autostash below stashes ALL uncommitted changes
+		// (index + worktree), not just _ext/ — if a non-_ext/ file were
+		// modified (nothing in normal operation should touch .git-context/
+		// outside _ext/, but this guards against it regardless), autostash
+		// would scoop it up too, and a stash-pop conflict after the rebase
+		// would leave the repo half-rebased *before* the non-_ext/
+		// safety-unstage step below ever gets a chance to run. Reverting
+		// first means autostash only ever has to carry _ext/ changes through
+		// the rebase, which is the one case it's meant to handle.
+		if out, err := runGit(ctx, targetDir, "diff", "HEAD", "--name-only"); err == nil {
+			for _, f := range strings.Split(strings.TrimSpace(out), "\n") {
+				if f == "" || strings.HasPrefix(filepath.ToSlash(f), "_ext/") {
+					continue
+				}
+				runGit(ctx, targetDir, "checkout", "HEAD", "--", f) //nolint:errcheck
+				logger.Warn("git-push-context: reverted unexpected non-_ext/ working-tree change to %q before pull", f)
+			}
+		}
+
+		// Sync with remote first (--autostash handles local _ext/ modifications).
 		if out, err := runGitAuthed(ctx, targetDir, gLogin, gSecret, "pull", "--rebase", "--autostash", "origin"); err != nil {
 			return "", fmt.Errorf("git pull before push failed: %s", maskSecret(out, gSecret))
 		}
