@@ -224,9 +224,23 @@ func loadConfig() {
 	stageID, _ = strconv.Atoi(os.Getenv("COREZOID_STAGE_ID"))
 	debug = debugFromEnv() // executor API trace; same switch as logger.IsDebug
 	insecureTLS = os.Getenv("COREZOID_INSECURE_TLS") != ""
-	// Loaded from .env — valid as long as WORKSPACE_ID/COREZOID_STAGE_ID in the
-	// same .env haven't changed since it was written (see cachedProjectID doc).
-	cachedProjectID, _ = strconv.Atoi(os.Getenv("COREZOID_PROJECT_ID"))
+	// Loaded from .env, but only trusted if COREZOID_PROJECT_ID_STAGE_ID (written
+	// alongside it by resolveAndCacheProjectID) matches the stage we just loaded.
+	// Without this check, manually editing WORKSPACE_ID/COREZOID_STAGE_ID in .env
+	// (bypassing the login tool, which clears the cache on a real switch) would
+	// silently reuse a project ID resolved for a different stage — pointing
+	// git-pull-context/git-push-context at the wrong project's mirror repo.
+	if pid, _ := strconv.Atoi(os.Getenv("COREZOID_PROJECT_ID")); pid != 0 && projectIDStageMatches(stageID) {
+		cachedProjectID = pid
+	} else {
+		cachedProjectID = 0
+		os.Unsetenv("COREZOID_PROJECT_ID")
+		os.Unsetenv("COREZOID_PROJECT_ID_STAGE_ID")
+		if envPath := findDotEnvPath(); envPath != "" {
+			removeEnvKey(envPath, "COREZOID_PROJECT_ID")           //nolint:errcheck
+			removeEnvKey(envPath, "COREZOID_PROJECT_ID_STAGE_ID") //nolint:errcheck
+		}
+	}
 	apiLogin = os.Getenv("API_LOGIN")
 	apiSecret = os.Getenv("API_SECRET")
 	gitURL = os.Getenv("COREZOID_GIT_URL")
@@ -647,7 +661,8 @@ func fixStruct(dataBin string, inProcessID int) (string, []string) {
 // resolveAndCacheProjectID returns the project ID for the current stage and an
 // optional user-visible notice when COREZOID_PROJECT_ID is written to .env for
 // the first time. The notice is non-empty only on the first API resolution.
-// Priority: in-memory cache → COREZOID_PROJECT_ID env var → API (ShowFolder).
+// Priority: in-memory cache → COREZOID_PROJECT_ID env var (only if recorded for
+// the current stage, see projectIDStageMatches) → API (ShowFolder).
 // Thread-safe: reads under RLock, writes under Lock.
 func resolveAndCacheProjectID(v *Executor) (int, string) {
 	// Fast path: cache hit (read lock only).
@@ -658,9 +673,11 @@ func resolveAndCacheProjectID(v *Executor) (int, string) {
 		return id, ""
 	}
 
-	// Try env var (no API call needed).
+	// Try env var (no API call needed) — only trust it if COREZOID_PROJECT_ID_STAGE_ID
+	// confirms it was resolved for this exact stage (see loadConfig for the
+	// equivalent startup-time check).
 	if s := os.Getenv("COREZOID_PROJECT_ID"); s != "" {
-		if parsed, err := strconv.Atoi(s); err == nil && parsed != 0 {
+		if parsed, err := strconv.Atoi(s); err == nil && parsed != 0 && projectIDStageMatches(v.StageID) {
 			withAuthLock(func() { cachedProjectID = parsed })
 			return parsed, ""
 		}
@@ -675,12 +692,35 @@ func resolveAndCacheProjectID(v *Executor) (int, string) {
 		return 0, ""
 	}
 	withAuthLock(func() { cachedProjectID = resolved })
+	wasEmpty := os.Getenv("COREZOID_PROJECT_ID") == ""
 	os.Setenv("COREZOID_PROJECT_ID", strconv.Itoa(resolved))
-	if written := appendToDotEnv("COREZOID_PROJECT_ID", strconv.Itoa(resolved)); written {
+	os.Setenv("COREZOID_PROJECT_ID_STAGE_ID", strconv.Itoa(v.StageID))
+	// Always (over)write both keys together — unlike the old append-only-if-absent
+	// behavior, a stale COREZOID_PROJECT_ID left over from a different stage must
+	// not survive in .env once we've resolved a fresh value for this one.
+	if envPath := findDotEnvPath(); envPath != "" {
+		withAuthLock(func() {
+			updateEnvFile(envPath, "COREZOID_PROJECT_ID", strconv.Itoa(resolved))          //nolint:errcheck
+			updateEnvFile(envPath, "COREZOID_PROJECT_ID_STAGE_ID", strconv.Itoa(v.StageID)) //nolint:errcheck
+		})
+	}
+	if wasEmpty {
 		notice := fmt.Sprintf("(COREZOID_PROJECT_ID=%d saved to .env for future use)", resolved)
 		return resolved, notice
 	}
 	return resolved, ""
+}
+
+// projectIDStageMatches reports whether COREZOID_PROJECT_ID_STAGE_ID in the
+// environment matches stageID — i.e. whether a cached COREZOID_PROJECT_ID was
+// actually resolved for the stage we're currently on, not left over from a
+// stage/workspace switch that bypassed the login tool's cache invalidation.
+func projectIDStageMatches(stageID int) bool {
+	if stageID == 0 {
+		return false
+	}
+	saved, err := strconv.Atoi(os.Getenv("COREZOID_PROJECT_ID_STAGE_ID"))
+	return err == nil && saved == stageID
 }
 
 // appendToDotEnv appends key=value to the nearest .env file if the key is absent.

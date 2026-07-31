@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -272,23 +273,31 @@ func getDefaultBranch(ctx context.Context, dir string) string {
 //     _ext/ edits straight to HEAD in local mode, so by the time we reconnect
 //     there is usually nothing left uncommitted for stash to catch.
 //  3. Reset hard to remote state
-//  4. Restore _ext/ from the on-disk snapshot (not stash pop)
+//  4. Merge the on-disk _ext/ snapshot into the freshly-reset tree (not stash
+//     pop, and not a blind overwrite either — see mergeExtSnapshot): files
+//     that only existed locally are restored, files identical on both sides
+//     are left alone, and files that genuinely conflict keep the remote
+//     version in place while the local version is saved alongside instead of
+//     being silently discarded.
 //  5. Push merged _ext/ to remote
 //
 // The backup branch is kept (not deleted) so a user can recover anything the
 // _ext/-only snapshot didn't cover (e.g. they'd committed outside _ext/ by hand).
-func reconnectToGitea(ctx context.Context, repoURL, gLogin, gSecret string) error {
+// Returns a human-readable summary (reconnect result + any conflicts found) so
+// callers can surface it all the way to the MCP tool response, not just the
+// server log.
+func reconnectToGitea(ctx context.Context, repoURL, gLogin, gSecret string) (string, error) {
 	targetDir := gitContextDir()
 
 	// Add remote (plain URL — no credentials embedded, see runGitAuthed).
 	if out, err := runGit(ctx, targetDir, "remote", "add", "origin", repoURL); err != nil {
-		return fmt.Errorf("remote add failed: %s", out)
+		return "", fmt.Errorf("remote add failed: %s", out)
 	}
 
 	// Fetch — proves Gitea is reachable.
 	if out, err := runGitAuthed(ctx, targetDir, gLogin, gSecret, "fetch", "origin"); err != nil {
 		runGit(ctx, targetDir, "remote", "remove", "origin") //nolint:errcheck (rollback)
-		return fmt.Errorf("fetch failed: %s", out)
+		return "", fmt.Errorf("fetch failed: %s", out)
 	}
 
 	branch := getDefaultBranch(ctx, targetDir)
@@ -323,16 +332,16 @@ func reconnectToGitea(ctx context.Context, repoURL, gLogin, gSecret string) erro
 
 	// Reset to remote — take authoritative mirror state.
 	if out, err := runGit(ctx, targetDir, "reset", "--hard", "origin/"+branch); err != nil {
-		return fmt.Errorf("reset to remote failed: %s", out)
+		return "", fmt.Errorf("reset to remote failed: %s", out)
 	}
 
-	// Restore the offline _ext/ snapshot over the freshly-reset tree.
+	// Merge the offline _ext/ snapshot into the freshly-reset (remote) tree.
+	var conflicts []string
 	if hasSnapshot {
-		if err := os.RemoveAll(extDir); err != nil && !os.IsNotExist(err) {
-			logger.Warn("git-pull-context: could not clear _ext/ before restore: %v", err)
-		}
-		if err := copyDirRecursive(snapshotDir, extDir); err != nil {
-			logger.Warn("git-pull-context: could not restore _ext/ snapshot after reconnect (offline history is still available on branch %s): %v", backupBranch, err)
+		var mergeErr error
+		conflicts, mergeErr = mergeExtSnapshot(snapshotDir, extDir)
+		if mergeErr != nil {
+			logger.Warn("git-pull-context: could not merge _ext/ snapshot after reconnect (offline history is still available on branch %s): %v", backupBranch, mergeErr)
 		}
 	}
 
@@ -347,8 +356,59 @@ func reconnectToGitea(ctx context.Context, repoURL, gLogin, gSecret string) erro
 		}
 	}
 
-	logger.Info("git-pull-context: reconnected to Gitea (branch=%s, offline history backed up to %s)", branch, backupBranch)
-	return nil
+	msg := fmt.Sprintf("reconnected to Gitea (branch=%s, offline history backed up to %s)", branch, backupBranch)
+	if len(conflicts) > 0 {
+		msg += fmt.Sprintf("\n%d file(s) in _ext/ changed on the remote while offline and conflict with your local edits — remote version kept, local version saved alongside as '<file>.local-conflict' (full offline history is on branch %s):\n  - %s",
+			len(conflicts), backupBranch, strings.Join(conflicts, "\n  - "))
+	}
+	logger.Info("git-pull-context: %s", msg)
+	return msg, nil
+}
+
+// mergeExtSnapshot restores snapshotDir (the pre-reconnect local _ext/ state)
+// into extDir (the just-reset, remote _ext/ state), file by file:
+//   - a file that only exists locally is restored as-is (pure local addition)
+//   - a file that exists in both and is byte-identical is left alone
+//   - a file that exists in both and differs is a genuine conflict: the remote
+//     version stays in place (consistent with "remote wins" everywhere else in
+//     the mirror), the local version is written alongside as
+//     "<file>.local-conflict" instead of being silently discarded, and its
+//     path is returned so the caller can surface it instead of only logging it.
+func mergeExtSnapshot(snapshotDir, extDir string) ([]string, error) {
+	var conflicts []string
+	err := filepath.WalkDir(snapshotDir, func(path string, d os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			return nil
+		}
+		rel, relErr := filepath.Rel(snapshotDir, path)
+		if relErr != nil {
+			return relErr
+		}
+		localData, readErr := os.ReadFile(path)
+		if readErr != nil {
+			return readErr
+		}
+		remotePath := filepath.Join(extDir, rel)
+		remoteData, remoteErr := os.ReadFile(remotePath)
+		switch {
+		case os.IsNotExist(remoteErr):
+			if err := os.MkdirAll(filepath.Dir(remotePath), 0755); err != nil {
+				return err
+			}
+			return os.WriteFile(remotePath, localData, 0644)
+		case remoteErr != nil:
+			return remoteErr
+		case bytes.Equal(localData, remoteData):
+			return nil
+		default:
+			conflicts = append(conflicts, filepath.ToSlash(rel))
+			return os.WriteFile(remotePath+".local-conflict", localData, 0644)
+		}
+	})
+	return conflicts, err
 }
 
 // headShortSHA returns the short SHA of HEAD, used to make backup branch
@@ -387,22 +447,4 @@ func copyDirRecursive(src, dst string) error {
 		}
 		return os.WriteFile(target, data, 0644)
 	})
-}
-
-// resolveExtConflicts auto-resolves merge conflicts in _ext/ by taking the
-// remote version for every conflicted file. The skill will reconcile any lost
-// local content on the next session run.
-func resolveExtConflicts(ctx context.Context, dir string) {
-	conflicted, err := runGit(ctx, dir, "diff", "--name-only", "--diff-filter=U")
-	if err != nil {
-		return
-	}
-	for _, f := range strings.Split(strings.TrimSpace(conflicted), "\n") {
-		if f == "" || !strings.HasPrefix(filepath.ToSlash(f), "_ext/") {
-			continue
-		}
-		runGit(ctx, dir, "checkout", "--theirs", "--", f) //nolint:errcheck
-		runGit(ctx, dir, "add", "--", f)                  //nolint:errcheck
-		logger.Warn("git-pull-context: conflict in %s auto-resolved (remote wins) — skill will reconcile next session", f)
-	}
 }

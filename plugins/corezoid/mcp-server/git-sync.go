@@ -221,11 +221,12 @@ func gitPullContext(ctx context.Context) (string, error) {
 				if projectID := resolveProjectID(ctx); projectID != 0 {
 					repoURL, buildErr := buildGitRepoURL(gURL, gCompany, strconv.Itoa(projectID))
 					if buildErr == nil {
-						if reconnErr := reconnectToGitea(ctx, repoURL, gLogin, gSecret); reconnErr != nil {
+						reconnMsg, reconnErr := reconnectToGitea(ctx, repoURL, gLogin, gSecret)
+						if reconnErr != nil {
 							logger.Warn("git-pull-context: reconnect attempt failed: %v — staying in local mode", reconnErr)
 							return "local mode (Gitea still unavailable)", nil
 						}
-						return "reconnected to Gitea and merged local context", nil
+						return reconnMsg, nil
 					}
 				}
 			}
