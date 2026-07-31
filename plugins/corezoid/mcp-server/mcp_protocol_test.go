@@ -111,9 +111,12 @@ func TestMCPProtocol_Initialize(t *testing.T) {
 }
 
 // TestMCPProtocol_ServerDiscover covers MCP 2026-07-28's era-detection probe
-// over stdio: a modern client sends server/discover before anything else and
-// classifies the server from the reply. It must succeed without a prior
-// initialize and must report the protocol versions we can fall back to.
+// over stdio. This server is legacy, so the probe MUST come back as a
+// non-modern error: that is the signal that makes a dual-era client fall back
+// to the initialize handshake. A DiscoverResult would classify us as modern and
+// send the client looking for a modern version we don't have. What the probe
+// does carry is the diagnostic — era, handshake versions, capabilities,
+// identity — that a bare -32601 lacked.
 func TestMCPProtocol_ServerDiscover(t *testing.T) {
 	bin := buildTestBinary(t)
 	sess := newMCPSession(t, bin)
@@ -127,37 +130,92 @@ func TestMCPProtocol_ServerDiscover(t *testing.T) {
 	})
 
 	resp := sess.recv()
-	if resp["error"] != nil {
-		t.Fatalf("server/discover returned error: %s", resp["error"])
+	if resp["result"] != nil {
+		t.Fatalf("server/discover must not return a DiscoverResult from a legacy-only server, got %s", resp["result"])
 	}
-	var result struct {
-		ProtocolVersion           string                 `json:"protocolVersion"`
-		SupportedProtocolVersions []string               `json:"supportedProtocolVersions"`
-		Capabilities              map[string]interface{} `json:"capabilities"`
-		ServerInfo                struct {
-			Name    string `json:"name"`
-			Version string `json:"version"`
-		} `json:"serverInfo"`
+	var rpcErr struct {
+		Code int `json:"code"`
+		Data struct {
+			Era               string                 `json:"era"`
+			SupportedVersions []string               `json:"supportedVersions"`
+			Capabilities      map[string]interface{} `json:"capabilities"`
+			ServerInfo        struct {
+				Name    string `json:"name"`
+				Version string `json:"version"`
+			} `json:"serverInfo"`
+			Hint string `json:"hint"`
+		} `json:"data"`
 	}
-	if err := json.Unmarshal(resp["result"], &result); err != nil {
-		t.Fatalf("result parse: %v", err)
+	if err := json.Unmarshal(resp["error"], &rpcErr); err != nil {
+		t.Fatalf("error parse: %v", err)
 	}
-	if result.ProtocolVersion != mcpProtocolVersion {
-		t.Errorf("protocolVersion = %q, want %q", result.ProtocolVersion, mcpProtocolVersion)
+	// Not -32022: UnsupportedProtocolVersionError is a *recognized modern*
+	// error, and the spec tells clients that see one not to fall back.
+	if rpcErr.Code == errCodeUnsupportedProtocolVersion {
+		t.Errorf("error.code = %d, a recognized modern error — a legacy server must answer the probe with a non-modern one", rpcErr.Code)
 	}
-	if len(result.SupportedProtocolVersions) != 1 || result.SupportedProtocolVersions[0] != mcpProtocolVersion {
-		t.Errorf("supportedProtocolVersions = %v, want [%q]", result.SupportedProtocolVersions, mcpProtocolVersion)
+	if rpcErr.Code != -32601 {
+		t.Errorf("error.code = %d, want -32601", rpcErr.Code)
+	}
+	if rpcErr.Data.Era != "legacy" {
+		t.Errorf("error.data.era = %q, want %q", rpcErr.Data.Era, "legacy")
+	}
+	if len(rpcErr.Data.SupportedVersions) != 1 || rpcErr.Data.SupportedVersions[0] != mcpProtocolVersion {
+		t.Errorf("error.data.supportedVersions = %v, want [%q]", rpcErr.Data.SupportedVersions, mcpProtocolVersion)
 	}
 	for _, capability := range []string{"tools", "resources", "prompts"} {
-		if _, ok := result.Capabilities[capability]; !ok {
-			t.Errorf("expected capability %q in server/discover result", capability)
+		if _, ok := rpcErr.Data.Capabilities[capability]; !ok {
+			t.Errorf("expected capability %q in the server/discover diagnostic", capability)
 		}
 	}
-	if result.ServerInfo.Name != "convctl-mcp" {
-		t.Errorf("serverInfo.name = %q, want %q", result.ServerInfo.Name, "convctl-mcp")
+	if rpcErr.Data.ServerInfo.Name != "convctl-mcp" {
+		t.Errorf("error.data.serverInfo.name = %q, want %q", rpcErr.Data.ServerInfo.Name, "convctl-mcp")
 	}
-	if result.ServerInfo.Version != mcpServerVersion {
-		t.Errorf("serverInfo.version = %q, want %q", result.ServerInfo.Version, mcpServerVersion)
+	if rpcErr.Data.ServerInfo.Version != mcpServerVersion {
+		t.Errorf("error.data.serverInfo.version = %q, want %q", rpcErr.Data.ServerInfo.Version, mcpServerVersion)
+	}
+	if rpcErr.Data.Hint == "" {
+		t.Error("expected a hint telling the client to use initialize")
+	}
+}
+
+// TestMCPProtocol_InitializeNegotiatesNewerHandshakeVersion is the regression
+// guard for the version check: in the handshake era a mismatch is a
+// negotiation, not an error. A client asking for a newer *handshake* revision
+// — which the lifecycle spec says clients SHOULD do — must get a normal
+// initialize result carrying our own version, never -32022. Rejecting these
+// would take the server offline for every host newer than 2025-03-26.
+func TestMCPProtocol_InitializeNegotiatesNewerHandshakeVersion(t *testing.T) {
+	bin := buildTestBinary(t)
+
+	for _, requested := range []string{"2024-11-05", "2025-06-18", "2025-11-25"} {
+		t.Run(requested, func(t *testing.T) {
+			sess := newMCPSession(t, bin)
+			sess.send(map[string]interface{}{
+				"jsonrpc": "2.0",
+				"id":      1,
+				"method":  "initialize",
+				"params": map[string]interface{}{
+					"protocolVersion": requested,
+					"capabilities":    map[string]interface{}{},
+					"clientInfo":      map[string]interface{}{"name": "test", "version": "0"},
+				},
+			})
+
+			resp := sess.recv()
+			if resp["error"] != nil {
+				t.Fatalf("initialize with handshake version %s returned error: %s", requested, resp["error"])
+			}
+			var result struct {
+				ProtocolVersion string `json:"protocolVersion"`
+			}
+			if err := json.Unmarshal(resp["result"], &result); err != nil {
+				t.Fatalf("result parse: %v", err)
+			}
+			if result.ProtocolVersion != mcpProtocolVersion {
+				t.Errorf("protocolVersion = %q, want %q (the version we implement)", result.ProtocolVersion, mcpProtocolVersion)
+			}
+		})
 	}
 }
 

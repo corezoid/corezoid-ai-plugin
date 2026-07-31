@@ -140,20 +140,31 @@ func TestHTTPDispatch_Initialize(t *testing.T) {
 }
 
 // TestHTTPDispatch_ServerDiscover mirrors TestMCPProtocol_ServerDiscover over
-// the HTTP transport, and additionally pins the byte-identical-capabilities
-// guarantee: whatever initialize advertises, the discover probe must advertise.
+// the HTTP transport: a legacy-only server answers the era-detection probe with
+// a non-modern error carrying the diagnostic, never a DiscoverResult. It also
+// pins the shared-capabilities guarantee — whatever initialize advertises, the
+// diagnostic reports.
 func TestHTTPDispatch_ServerDiscover(t *testing.T) {
 	out := dispatchJSON(t, "server/discover", nil)
-	if out["error"] != nil {
-		t.Fatalf("unexpected error: %s", out["error"])
+	if out["result"] != nil {
+		t.Fatalf("server/discover must not return a DiscoverResult from a legacy-only server, got %s", out["result"])
 	}
-	var discover map[string]json.RawMessage
-	json.Unmarshal(out["result"], &discover) //nolint:errcheck
-
+	var rpcErr struct {
+		Code int                        `json:"code"`
+		Data map[string]json.RawMessage `json:"data"`
+	}
+	if err := json.Unmarshal(out["error"], &rpcErr); err != nil {
+		t.Fatalf("error parse: %v", err)
+	}
+	// Not -32022: that is a recognized modern error, which tells a client the
+	// server is modern and that it must not fall back to initialize.
+	if rpcErr.Code != -32601 {
+		t.Errorf("error.code = %d, want -32601 (a non-modern error, so dual-era clients fall back)", rpcErr.Code)
+	}
 	var supported []string
-	json.Unmarshal(discover["supportedProtocolVersions"], &supported) //nolint:errcheck
+	json.Unmarshal(rpcErr.Data["supportedVersions"], &supported) //nolint:errcheck
 	if len(supported) != 1 || supported[0] != mcpProtocolVersion {
-		t.Errorf("supportedProtocolVersions = %v, want [%q]", supported, mcpProtocolVersion)
+		t.Errorf("error.data.supportedVersions = %v, want [%q]", supported, mcpProtocolVersion)
 	}
 
 	initOut := dispatchJSON(t, "initialize", map[string]interface{}{
@@ -165,46 +176,76 @@ func TestHTTPDispatch_ServerDiscover(t *testing.T) {
 
 	// Compare the raw encodings — Go maps marshal with sorted keys, so equal
 	// bytes here really does mean the two payloads are indistinguishable.
-	for _, field := range []string{"protocolVersion", "capabilities", "serverInfo"} {
-		if string(discover[field]) != string(initialize[field]) {
-			t.Errorf("server/discover %s = %s, want it identical to initialize's %s",
-				field, discover[field], initialize[field])
+	for _, field := range []string{"capabilities", "serverInfo"} {
+		if string(rpcErr.Data[field]) != string(initialize[field]) {
+			t.Errorf("server/discover diagnostic %s = %s, want it identical to initialize's %s",
+				field, rpcErr.Data[field], initialize[field])
 		}
 	}
 }
 
 // TestHTTPDispatch_InitializeUnsupportedVersion asserts the -32022 contract on
-// the HTTP transport.
+// the HTTP transport. "1900-01-01" is not a handshake revision at all, and
+// "2026-07-28" is a modern one whose stateless semantics this server does not
+// implement — both are genuinely unnegotiable, unlike a newer handshake
+// revision (see TestHTTPDispatch_InitializeNegotiatesNewerHandshakeVersion).
 func TestHTTPDispatch_InitializeUnsupportedVersion(t *testing.T) {
-	out := dispatchJSON(t, "initialize", map[string]interface{}{
-		"protocolVersion": "1900-01-01",
-		"capabilities":    map[string]interface{}{},
-	})
-	if out["result"] != nil {
-		t.Fatalf("expected no result for an unsupported protocolVersion, got %s", out["result"])
+	for _, requested := range []string{"1900-01-01", "1.0.0", "2026-07-28"} {
+		t.Run(requested, func(t *testing.T) {
+			out := dispatchJSON(t, "initialize", map[string]interface{}{
+				"protocolVersion": requested,
+				"capabilities":    map[string]interface{}{},
+			})
+			if out["result"] != nil {
+				t.Fatalf("expected no result for an unsupported protocolVersion, got %s", out["result"])
+			}
+			var rpcErr struct {
+				Code    int    `json:"code"`
+				Message string `json:"message"`
+				Data    struct {
+					Supported []string `json:"supported"`
+					Requested string   `json:"requested"`
+				} `json:"data"`
+			}
+			if err := json.Unmarshal(out["error"], &rpcErr); err != nil {
+				t.Fatalf("error parse: %v", err)
+			}
+			if rpcErr.Code != errCodeUnsupportedProtocolVersion {
+				t.Errorf("error.code = %d, want %d", rpcErr.Code, errCodeUnsupportedProtocolVersion)
+			}
+			if rpcErr.Message != msgUnsupportedProtocolVersion {
+				t.Errorf("error.message = %q, want %q", rpcErr.Message, msgUnsupportedProtocolVersion)
+			}
+			if len(rpcErr.Data.Supported) != 1 || rpcErr.Data.Supported[0] != mcpProtocolVersion {
+				t.Errorf("error.data.supported = %v, want [%q]", rpcErr.Data.Supported, mcpProtocolVersion)
+			}
+			if rpcErr.Data.Requested != requested {
+				t.Errorf("error.data.requested = %q, want %q", rpcErr.Data.Requested, requested)
+			}
+		})
 	}
-	var rpcErr struct {
-		Code    int    `json:"code"`
-		Message string `json:"message"`
-		Data    struct {
-			Supported []string `json:"supported"`
-			Requested string   `json:"requested"`
-		} `json:"data"`
-	}
-	if err := json.Unmarshal(out["error"], &rpcErr); err != nil {
-		t.Fatalf("error parse: %v", err)
-	}
-	if rpcErr.Code != errCodeUnsupportedProtocolVersion {
-		t.Errorf("error.code = %d, want %d", rpcErr.Code, errCodeUnsupportedProtocolVersion)
-	}
-	if rpcErr.Message != msgUnsupportedProtocolVersion {
-		t.Errorf("error.message = %q, want %q", rpcErr.Message, msgUnsupportedProtocolVersion)
-	}
-	if len(rpcErr.Data.Supported) != 1 || rpcErr.Data.Supported[0] != mcpProtocolVersion {
-		t.Errorf("error.data.supported = %v, want [%q]", rpcErr.Data.Supported, mcpProtocolVersion)
-	}
-	if rpcErr.Data.Requested != "1900-01-01" {
-		t.Errorf("error.data.requested = %q, want %q", rpcErr.Data.Requested, "1900-01-01")
+}
+
+// TestHTTPDispatch_InitializeNegotiatesNewerHandshakeVersion is the HTTP-side
+// regression guard for the version check: every published handshake revision
+// must still get a normal handshake answered with the version we implement,
+// because in that era a mismatch is a negotiation and not an error.
+func TestHTTPDispatch_InitializeNegotiatesNewerHandshakeVersion(t *testing.T) {
+	for _, requested := range mcpNegotiableProtocolVersions() {
+		t.Run(requested, func(t *testing.T) {
+			out := dispatchJSON(t, "initialize", map[string]interface{}{
+				"protocolVersion": requested,
+				"capabilities":    map[string]interface{}{},
+			})
+			if out["error"] != nil {
+				t.Fatalf("initialize with handshake version %s returned error: %s", requested, out["error"])
+			}
+			var result map[string]interface{}
+			json.Unmarshal(out["result"], &result) //nolint:errcheck
+			if result["protocolVersion"] != mcpProtocolVersion {
+				t.Errorf("protocolVersion = %v, want %q", result["protocolVersion"], mcpProtocolVersion)
+			}
+		})
 	}
 }
 

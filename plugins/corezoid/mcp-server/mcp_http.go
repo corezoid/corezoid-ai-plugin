@@ -276,10 +276,12 @@ func httpHandleSSE(w http.ResponseWriter, r *http.Request) {
 func httpDispatch(reqCtx context.Context, req mcpRequest) interface{} {
 	switch req.Method {
 	case "initialize":
-		// Reject a version we can't speak before any session is registered: a
-		// client whose handshake we turn down must not leave an identity behind
-		// against the session ID httpHandlePost has already minted for it.
-		if requested := parseRequestedProtocolVersion(req.Params); !protocolVersionSupported(requested) {
+		// Reject a version we can't negotiate before any session is registered:
+		// a client whose handshake we turn down must not leave an identity
+		// behind against the session ID httpHandlePost has already minted for
+		// it. A newer *handshake* revision is not a mismatch — see
+		// mcpNegotiableProtocolVersions.
+		if requested := parseRequestedProtocolVersion(req.Params); !protocolVersionNegotiable(requested) {
 			logger.Info("initialize: rejecting unsupported protocolVersion %q (supported: %v)", requested, mcpSupportedProtocolVersions())
 			return httpJSONRPCErrorWithData(req.ID, errCodeUnsupportedProtocolVersion, msgUnsupportedProtocolVersion, unsupportedProtocolVersionData(requested))
 		}
@@ -305,15 +307,14 @@ func httpDispatch(reqCtx context.Context, req mcpRequest) interface{} {
 		}
 
 	case "server/discover":
-		// MCP 2026-07-28's era-detection probe. Stateless by design: it neither
-		// reads nor mints a session, which is what lets httpHandlePost exempt it
-		// from the session check — a modern client probing us for the first time
-		// has no session yet.
-		return mcpResponse{
-			JSONRPC: "2.0",
-			ID:      req.ID,
-			Result:  buildDiscoverResult(),
-		}
+		// MCP 2026-07-28's era-detection probe. This server is legacy, so the
+		// probe must fail — answering it with a DiscoverResult would classify us
+		// as modern and break the fallback it exists to drive.
+		// discoverLegacyErrorData explains the rules and carries the diagnostic.
+		// Stateless either way: it neither reads nor mints a session, which is
+		// what lets httpHandlePost exempt it from the session check — a modern
+		// client probing us for the first time has no session yet.
+		return httpJSONRPCErrorWithData(req.ID, -32601, "method not found: "+req.Method, discoverLegacyErrorData())
 
 	case "notifications/initialized", "notifications/cancelled":
 		return nil

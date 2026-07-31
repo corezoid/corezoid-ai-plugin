@@ -408,25 +408,38 @@ func TestHTTPHandlePost_ServerDiscover_ExemptFromSessionCheck(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			w := postMCP(t, body, tc.sessionID)
 
+			// 200 with the era diagnostic in the JSON-RPC error body — the
+			// probe must not be turned into a transport-level 404, or the
+			// client learns nothing about which versions we speak.
 			if w.Code != http.StatusOK {
 				t.Fatalf("expected 200 for server/discover, got %d", w.Code)
 			}
 			var resp struct {
-				Result struct {
-					SupportedProtocolVersions []string `json:"supportedProtocolVersions"`
-				} `json:"result"`
-				Error *json.RawMessage `json:"error"`
+				Result *json.RawMessage `json:"result"`
+				Error  *struct {
+					Code int `json:"code"`
+					Data struct {
+						Era               string   `json:"era"`
+						SupportedVersions []string `json:"supportedVersions"`
+					} `json:"data"`
+				} `json:"error"`
 			}
 			if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
 				t.Fatalf("body parse: %v — %s", err, w.Body.String())
 			}
-			if resp.Error != nil {
-				t.Fatalf("server/discover returned error: %s", *resp.Error)
+			if resp.Result != nil {
+				t.Fatalf("server/discover must not return a DiscoverResult from a legacy-only server, got %s", *resp.Result)
 			}
-			if len(resp.Result.SupportedProtocolVersions) != 1 ||
-				resp.Result.SupportedProtocolVersions[0] != mcpProtocolVersion {
-				t.Errorf("supportedProtocolVersions = %v, want [%q]",
-					resp.Result.SupportedProtocolVersions, mcpProtocolVersion)
+			if resp.Error == nil {
+				t.Fatal("expected the legacy-era diagnostic error in the body")
+			}
+			if resp.Error.Data.Era != "legacy" {
+				t.Errorf("error.data.era = %q, want %q", resp.Error.Data.Era, "legacy")
+			}
+			if len(resp.Error.Data.SupportedVersions) != 1 ||
+				resp.Error.Data.SupportedVersions[0] != mcpProtocolVersion {
+				t.Errorf("error.data.supportedVersions = %v, want [%q]",
+					resp.Error.Data.SupportedVersions, mcpProtocolVersion)
 			}
 		})
 	}

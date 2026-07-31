@@ -58,12 +58,12 @@ type mcpToolResult struct {
 // Keep this in sync with .claude-plugin/plugin.json.
 const mcpServerVersion = "2.3.5"
 
-// mcpProtocolVersion is the MCP specification revision this server implements.
-// This server is deliberately legacy-only: the MCP 2026-07-28 revision still
-// lists 2025-03-26 as a valid legacy version and expects legacy servers to echo
-// it back verbatim from initialize. Do not bump this until the modern stateless
-// (_meta-based) request path is actually implemented — it is the only thing
-// telling a modern client which era it is talking to. Distinct from
+// mcpProtocolVersion is the MCP specification revision this server implements,
+// and the version it answers every initialize handshake with. This server is
+// deliberately legacy-only: MCP 2026-07-28 calls the handshake-based revisions
+// (2025-11-25 and earlier) "legacy" and specifies how a client falls back to
+// them, which is the mode we serve. Do not bump this until the modern stateless
+// (_meta-based) request path is actually implemented. Distinct from
 // mcpServerVersion, which is the plugin's own version and moves on every release.
 const mcpProtocolVersion = "2025-03-26"
 
@@ -77,61 +77,118 @@ const errCodeUnsupportedProtocolVersion = -32022
 // errCodeUnsupportedProtocolVersion, spelled as in the spec.
 const msgUnsupportedProtocolVersion = "Unsupported protocol version"
 
-// mcpSupportedProtocolVersions returns every protocol revision this server can
-// speak. It backs both server/discover's supportedProtocolVersions and the
-// data.supported list of UnsupportedProtocolVersionError, so the two can never
+// mcpSupportedProtocolVersions returns the protocol revision(s) this server
+// actually implements — what a client should put on the wire to talk to us. It
+// backs the data.supported list of UnsupportedProtocolVersionError and the
+// version list in the server/discover diagnostic, so the two can never
 // disagree. Returns a fresh slice per call — callers hand it straight to the
 // JSON encoder and must not be able to mutate a shared backing array.
 func mcpSupportedProtocolVersions() []string {
 	return []string{mcpProtocolVersion}
 }
 
+// mcpNegotiableProtocolVersions returns the published MCP revisions whose
+// initialize handshake this server will serve. Deliberately wider than
+// mcpSupportedProtocolVersions, because in the handshake-based ("legacy") era a
+// version mismatch is a negotiation, not an error. The 2025-03-26 lifecycle
+// spec:
+//
+//	"If the server supports the requested protocol version, it MUST respond
+//	 with the same version. Otherwise, the server MUST respond with another
+//	 protocol version it supports."
+//
+// and clients "SHOULD" ask for the latest revision they know. So any client
+// newer than 2025-03-26 asks for a version we do not implement and must still
+// get a normal handshake answered with mcpProtocolVersion — exactly what
+// happened before the version check existed. Rejecting those would take the
+// server offline for every up-to-date host.
+//
+// Only a version that is not a handshake revision at all earns
+// UnsupportedProtocolVersionError: the modern 2026-07-28 and later (whose
+// stateless semantics we genuinely cannot serve), or a nonsense string like the
+// "1.0.0" in the lifecycle spec's own version-mismatch example.
+//
+// Add to this list when the working group publishes another handshake-based
+// revision. Fresh slice per call, for the same reason as above.
+func mcpNegotiableProtocolVersions() []string {
+	return []string{"2024-10-07", "2024-11-05", "2025-03-26", "2025-06-18", "2025-11-25"}
+}
+
+// mcpCapabilities returns the capability set advertised in the handshake. Split
+// out of buildInitializeResult so the server/discover diagnostic can report the
+// same set without restating it.
+//
+// Deliberately no extensions key: an empty extensions map signals nothing, and
+// this server implements no MCP extensions yet.
+func mcpCapabilities() map[string]interface{} {
+	return map[string]interface{}{
+		"tools":     map[string]interface{}{},
+		"resources": map[string]interface{}{},
+		"prompts":   map[string]interface{}{},
+	}
+}
+
+// mcpServerInfo returns the server identity block advertised in the handshake.
+func mcpServerInfo() map[string]interface{} {
+	return map[string]interface{}{
+		"name":    "convctl-mcp",
+		"version": mcpServerVersion,
+	}
+}
+
 // buildInitializeResult returns the result body of an initialize response. Both
 // transports call it (stdio's runMCPServer loop and httpDispatch) so the
-// handshake they advertise cannot drift apart, and server/discover builds on it
-// so a modern client's probe reports exactly the capabilities initialize would.
-// A fresh map is returned per call — buildDiscoverResult adds a key to it.
+// handshake they advertise cannot drift apart. A fresh map per call.
 func buildInitializeResult() map[string]interface{} {
 	return map[string]interface{}{
 		"protocolVersion": mcpProtocolVersion,
-		"capabilities": map[string]interface{}{
-			"tools":     map[string]interface{}{},
-			"resources": map[string]interface{}{},
-			"prompts":   map[string]interface{}{},
-		},
-		"serverInfo": map[string]interface{}{
-			"name":    "convctl-mcp",
-			"version": mcpServerVersion,
-		},
+		"capabilities":    mcpCapabilities(),
+		"serverInfo":      mcpServerInfo(),
 	}
 }
 
-// buildDiscoverResult returns the result body of a server/discover response:
-// the initialize payload plus the supported-version list. MCP 2026-07-28
-// requires every modern client to probe server/discover before anything else
-// and to classify the server from what comes back; answering it with a valid
-// result (rather than letting it fall through to -32601 method not found) turns
-// that classification from an ambiguous error into a deterministic reply that
-// also tells the client which protocol revision to fall back to.
+// discoverLegacyErrorData is the JSON-RPC error `data` this server attaches to
+// server/discover, MCP 2026-07-28's era-detection probe.
 //
-// Deliberately no capabilities.extensions key: an empty extensions map signals
-// nothing, and this server supports no MCP extensions yet.
-func buildDiscoverResult() map[string]interface{} {
-	result := buildInitializeResult()
-	result["supportedProtocolVersions"] = mcpSupportedProtocolVersions()
-	return result
+// A legacy-only server must NOT answer that probe with a DiscoverResult. The
+// stdio backward-compatibility rules classify the server purely from the
+// probe's outcome: a DiscoverResult means "the server is modern. Select a
+// mutually supported version from supportedVersions and continue", while "any
+// other error, or does not respond within a reasonable timeout: the server is
+// legacy. Fall back to the initialize handshake." A DiscoverResult from us
+// would therefore label us modern and send the client hunting for a mutually
+// supported *modern* version that does not exist, turning the spec's
+// "dual-era client + legacy server → works" row into a hard failure. There is
+// no honest DiscoverResult a legacy-only server can return.
+//
+// The spec expects exactly what this server already did — "legacy servers
+// respond to unknown pre-initialize requests with implementation-defined errors
+// (commonly -32601 or -32602) or not at all", and clients "MUST NOT" key the
+// fallback to one specific code. So the era signal stays the -32601 that
+// server/discover has always produced; what this adds is the diagnostic that
+// bare error lacked: which era we are, which handshake revisions we speak, what
+// we can do, and what the client should send instead.
+func discoverLegacyErrorData() map[string]interface{} {
+	return map[string]interface{}{
+		"era":               "legacy",
+		"supportedVersions": mcpSupportedProtocolVersions(),
+		"capabilities":      mcpCapabilities(),
+		"serverInfo":        mcpServerInfo(),
+		"hint":              "this server implements the initialize-handshake (legacy) MCP revisions only; open the connection with an initialize request declaring one of supportedVersions",
+	}
 }
 
-// protocolVersionSupported reports whether a client-declared protocolVersion is
-// one this server implements. An empty string means the client omitted the
-// field entirely, which plenty of older clients do and the legacy spec
-// tolerates — treat it as acceptable and answer with our own version.
-func protocolVersionSupported(version string) bool {
+// protocolVersionNegotiable reports whether an initialize request declaring
+// this protocolVersion can be served. An empty string means the client omitted
+// the field, which plenty of older clients do and the legacy spec tolerates —
+// treat it as acceptable and answer with our own version, as with every other
+// negotiable revision.
+func protocolVersionNegotiable(version string) bool {
 	if version == "" {
 		return true
 	}
-	for _, supported := range mcpSupportedProtocolVersions() {
-		if version == supported {
+	for _, negotiable := range mcpNegotiableProtocolVersions() {
+		if version == negotiable {
 			return true
 		}
 	}
@@ -265,7 +322,7 @@ func parseInitializeParams(raw json.RawMessage) (supportsElicitation bool, name,
 
 // parseRequestedProtocolVersion extracts the protocolVersion an initialize
 // request declared, or "" if the field was absent or the params don't parse
-// (both of which are the tolerant path — see protocolVersionSupported).
+// (both of which are the tolerant path — see protocolVersionNegotiable).
 //
 // A sibling of parseInitializeParams rather than an extra return value on it:
 // the version check has to run and reject *before* any client state is stored,
@@ -418,10 +475,11 @@ func runMCPServer() {
 
 		switch req.Method {
 		case "initialize":
-			// Reject a version we can't speak before storing any client state,
-			// so a mismatched client can't leave its identity behind on a
-			// connection that never completed the handshake.
-			if requested := parseRequestedProtocolVersion(req.Params); !protocolVersionSupported(requested) {
+			// Reject a version we can't negotiate before storing any client
+			// state, so a mismatched client can't leave its identity behind on a
+			// connection that never completed the handshake. A newer *handshake*
+			// revision is not a mismatch — see mcpNegotiableProtocolVersions.
+			if requested := parseRequestedProtocolVersion(req.Params); !protocolVersionNegotiable(requested) {
 				logger.Info("initialize: rejecting unsupported protocolVersion %q (supported: %v)", requested, mcpSupportedProtocolVersions())
 				sendErrorWithData(req.ID, errCodeUnsupportedProtocolVersion, msgUnsupportedProtocolVersion, unsupportedProtocolVersionData(requested))
 				continue
@@ -438,14 +496,14 @@ func runMCPServer() {
 			})
 
 		case "server/discover":
-			// MCP 2026-07-28's era-detection probe. Stateless by design: no
-			// client state is read or stored, so it stays answerable before
-			// (and independently of) the initialize handshake.
-			serverSend(mcpResponse{
-				JSONRPC: "2.0",
-				ID:      req.ID,
-				Result:  buildDiscoverResult(),
-			})
+			// MCP 2026-07-28's era-detection probe. This server is legacy, so
+			// the probe must fail — answering it with a DiscoverResult would
+			// classify us as modern and break the fallback it exists to drive.
+			// discoverLegacyErrorData explains the rules and carries the
+			// diagnostic. Stateless either way: no client state is read or
+			// stored, so it stays answerable before (and independently of) the
+			// initialize handshake.
+			sendErrorWithData(req.ID, -32601, "method not found: "+req.Method, discoverLegacyErrorData())
 
 		case "notifications/initialized":
 			// no response needed for notifications
