@@ -94,6 +94,7 @@ plugins/corezoid/
     corezoid-access/                — Share processes/folders, manage groups/API keys
     corezoid-retro/                 — End-of-session retrospective: route learnings to CLAUDE.md, feedback, settings, or memory
     corezoid-feedback/              — Collect and submit bug reports / improvement requests to the Corezoid team
+    corezoid-git-context/           — Analyse session changes and update _ext/docs/*.md in the Corezoid git mirror
     marketplace-publish-validation/ — Pre-publication checklist for the Corezoid marketplace
   docs/
     nodes/                        — Per-node-type documentation (24 node types)

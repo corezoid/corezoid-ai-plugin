@@ -58,17 +58,34 @@ func debugFromEnv() bool { return os.Getenv("COREZOID_DEBUG") != "" }
 var apigwURL string
 var stageID int
 var insecureTLS bool
-// cachedProjectID is written once (protected by authStateMu) and then read-only.
-// Reset to 0 on every loadConfig so a workspace switch gets a fresh value.
+
+// cachedProjectID holds the project ID resolved by resolveProjectID (see
+// mcp_handlers_git.go), persisted to COREZOID_PROJECT_ID in the project .env
+// so it survives server restarts without a repeat API round-trip. It is keyed
+// by stage — resolveProjectID resolves it from COREZOID_STAGE_ID — so it is
+// explicitly cleared (in-memory and in .env) whenever WORKSPACE_ID or
+// COREZOID_STAGE_ID changes (handleLogin) or on logout — never silently reset
+// on every loadConfig.
 var cachedProjectID int
 
 // apiLogin and apiSecret are the Corezoid API key credentials (API_LOGIN /
 // API_SECRET). They provide an alternative to OAuth2 PKCE for environments
 // where browser-based authentication is not available. When both are set,
 // requests are signed using the Corezoid double-salted SHA1 pattern instead of using a Simulator bearer token.
-// These are distinct from gitLoginID / gitSecret which are used for git-sync.
+// The same credentials are reused for git mirror Basic auth (login_id:secret).
 var apiLogin string
 var apiSecret string
+
+// gitURL is the Corezoid git mirror base URL including org path
+// (e.g. https://git-dev.dev.corezoid.com/corezoid-dev). Set via COREZOID_GIT_URL.
+// apiLogin/apiSecret are reused for git Basic auth — no separate git credential needed.
+var gitURL string
+
+// gitStagePath is the relative path inside .git-context/ to the current stage
+// directory (e.g. "projects/123_Foo/stages/456_Bar"). Resolved once after
+// git-pull-context and saved to .env as COREZOID_GIT_STAGE_PATH so the agent
+// can reference it directly when reading CLAUDE.md or _ext/docs/*.
+var gitStagePath string
 
 // authSnapshot returns a coherent snapshot of the auth-state globals taken
 // under the read lock. Callers that subsequently need to mutate state must
@@ -85,6 +102,24 @@ func apiKeySnapshot() (login, secret string) {
 	authStateMu.RLock()
 	defer authStateMu.RUnlock()
 	return apiLogin, apiSecret
+}
+
+// gitConfigSnapshot returns a coherent snapshot of the git mirror config.
+// gitLogin/gitSecret reuse apiLogin/apiSecret (same Corezoid API key for both).
+// accountURLv is included so callers can derive COREZOID_GIT_URL when not set.
+// The project ID itself is not part of this snapshot — resolveProjectID
+// resolves/caches it via the shared resolveAndCacheProjectID (see main.go).
+func gitConfigSnapshot() (gitURLv, loginv, secretv, companyIDv, accountURLv string) {
+	authStateMu.RLock()
+	defer authStateMu.RUnlock()
+	return gitURL, apiLogin, apiSecret, workspaceID, accountURL
+}
+
+// gitStagePathSnapshot returns the resolved stage path inside .git-context/.
+func gitStagePathSnapshot() string {
+	authStateMu.RLock()
+	defer authStateMu.RUnlock()
+	return gitStagePath
 }
 
 // withAuthLock runs fn while holding the auth-state write lock. Use for
@@ -189,10 +224,13 @@ func loadConfig() {
 	stageID, _ = strconv.Atoi(os.Getenv("COREZOID_STAGE_ID"))
 	debug = debugFromEnv() // executor API trace; same switch as logger.IsDebug
 	insecureTLS = os.Getenv("COREZOID_INSECURE_TLS") != ""
-	cachedProjectID = 0              // reset on workspace switch so it is re-resolved
-	os.Unsetenv("COREZOID_PROJECT_ID") // prevent stale process env from short-circuiting resolution
+	// Loaded from .env — valid as long as WORKSPACE_ID/COREZOID_STAGE_ID in the
+	// same .env haven't changed since it was written (see cachedProjectID doc).
+	cachedProjectID, _ = strconv.Atoi(os.Getenv("COREZOID_PROJECT_ID"))
 	apiLogin = os.Getenv("API_LOGIN")
 	apiSecret = os.Getenv("API_SECRET")
+	gitURL = os.Getenv("COREZOID_GIT_URL")
+	gitStagePath = os.Getenv("COREZOID_GIT_STAGE_PATH")
 }
 
 // runCLI executes a single MCP tool from the command line and exits.

@@ -354,3 +354,26 @@ Use the `Read` tool to load these files when specific node or validation details
 | `${CLAUDE_PLUGIN_ROOT}/docs/nodes/api-call-node.md` | HTTP API call configuration |
 | `${CLAUDE_PLUGIN_ROOT}/docs/process/error-handling.md` | Error handling patterns |
 | `${CLAUDE_PLUGIN_ROOT}/docs/process/process-json-validation.md` | Validation rules and common errors |
+
+---
+
+## Final Step: Update Git Context
+
+> **Do NOT report the task as complete and do NOT stop until this step is evaluated.**
+> The main task being deployed does not mean the session is over — this step is next.
+
+Immediately after `push-process` or `create-process` succeeds, check whether
+**at least one** of the following is true:
+
+- `push-process` or `create-process` was actually called (not just previewed);
+- a new external host/API/service appeared that is not yet in `dependencies.md`;
+- an architectural decision was made (one approach chosen over another);
+- an issue was found or closed during this session.
+
+**If yes → activate `corezoid-git-context` skill right now.** Do not wait for the
+user to ask. Do not skip because the main task "looks done".
+
+**If none of the above → skip** and tell the user the session is complete.
+
+The skill handles everything autonomously: reads current `_ext/docs/`, proposes
+a unified diff, asks confirmation, writes files, and pushes — one invocation.
