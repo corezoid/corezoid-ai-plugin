@@ -158,6 +158,10 @@ jobs:
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
           github_token: ${{ secrets.GITHUB_TOKEN }}
+          # Reviewer is dispatched by the issue-worker via `gh workflow run`,
+          # which GitHub attributes to `github-actions[bot]`. Without this
+          # allowlist claude-code-action refuses to run for bot actors.
+          allowed_bots: "github-actions"
           prompt: |
             You are the second-line code reviewer for @corezoid/corezoid-ai-plugin.
             PR #$PR_NUMBER has already been implemented and passed a first
