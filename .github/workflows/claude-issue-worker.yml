@@ -39,6 +39,7 @@ jobs:
       pull-requests: write
       issues: write
       id-token: write
+      actions: write
     steps:
       - name: Resolve and validate issue number
         id: issue
