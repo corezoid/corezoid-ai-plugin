@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
 	"os"
 	"strings"
@@ -110,10 +111,88 @@ func pruneIdleHTTPSessions(cutoff time.Time) {
 	}
 }
 
+// The HTTP transport is a LOCAL, SINGLE-USER transport. It performs no
+// authentication of its own: there is no Bearer-token check, and every request
+// is served with the one process-global Corezoid token loaded at startup. On
+// loopback that is fine — the only callers are processes owned by the same
+// user. Exposed on a routable interface it is an unauthenticated proxy handing
+// full Corezoid API access to anyone who can reach the port.
+//
+// So the bind address is fail-closed: loopback by default, and a non-loopback
+// bind is refused unless the operator explicitly opts in. See HOSTED_TODO.md
+// for what a real hosted mode would need before this override stops being a
+// footgun.
+const (
+	// defaultHTTPBindHost is used when COREZOID_BIND_ADDR is unset.
+	defaultHTTPBindHost = "127.0.0.1"
+	// httpRemoteOptInEnv names the escape hatch for a non-loopback bind.
+	httpRemoteOptInEnv = "COREZOID_ALLOW_UNAUTHENTICATED_REMOTE"
+	// httpRemoteOptInValue is deliberately a sentence rather than "1": an
+	// operator has to state the risk to take it on, and it cannot be enabled
+	// by a stray truthy value in a deployment template.
+	httpRemoteOptInValue = "yes-i-know-there-is-no-auth"
+)
+
+// resolveHTTPBindAddr computes the listen address for the HTTP transport, or
+// refuses to produce one. host and optIn come from COREZOID_BIND_ADDR and
+// COREZOID_ALLOW_UNAUTHENTICATED_REMOTE; they are parameters rather than
+// direct os.Getenv reads so the guard is directly testable.
+//
+// The returned warning is non-empty exactly when a non-loopback bind was
+// permitted by the opt-in, and must be logged loudly.
+func resolveHTTPBindAddr(host, port, optIn string) (addr, warning string, err error) {
+	if strings.TrimSpace(port) == "" {
+		return "", "", fmt.Errorf("no HTTP port configured")
+	}
+	host = strings.TrimSpace(host)
+	if host == "" {
+		host = defaultHTTPBindHost
+	}
+	// net.JoinHostPort adds the brackets around an IPv6 literal itself, so a
+	// host the operator already bracketed ("[::1]") has to be unwrapped or it
+	// ends up doubled.
+	if strings.HasPrefix(host, "[") && strings.HasSuffix(host, "]") {
+		host = host[1 : len(host)-1]
+	}
+
+	if isLoopbackBindHost(host) {
+		return net.JoinHostPort(host, port), "", nil
+	}
+
+	if optIn != httpRemoteOptInValue {
+		return "", "", fmt.Errorf(
+			"refusing to bind the MCP HTTP transport to non-loopback address %q: this transport has NO authentication — "+
+				"every request is served with the server's single Corezoid token, so anyone who can reach the port gets full API access. "+
+				"Leave COREZOID_BIND_ADDR unset (binds %s) or, if you genuinely intend to expose an unauthenticated endpoint, "+
+				"set %s=%s. See plugins/corezoid/mcp-server/HOSTED_TODO.md",
+			host, defaultHTTPBindHost, httpRemoteOptInEnv, httpRemoteOptInValue)
+	}
+
+	return net.JoinHostPort(host, port), fmt.Sprintf(
+		"SECURITY: binding the MCP HTTP transport to non-loopback address %q with %s set. "+
+			"This endpoint is UNAUTHENTICATED and shares one Corezoid token across all callers — "+
+			"put it behind an authenticating proxy or take it down",
+		host, httpRemoteOptInEnv), nil
+}
+
+// isLoopbackBindHost reports whether binding to host keeps the listener
+// reachable only from this machine. The wildcards 0.0.0.0 and :: are
+// deliberately NOT loopback, and neither is any hostname other than
+// "localhost" — an unresolvable name must fail closed, not be probed via DNS
+// at startup.
+func isLoopbackBindHost(host string) bool {
+	if strings.EqualFold(host, "localhost") {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
+}
+
 // runHTTPServer starts the Streamable-HTTP MCP transport on addr.
-// Activate by setting COREZOID_HTTP_PORT (e.g. "8080").
-// In hosted environments credentials must be pre-configured via env vars;
-// the login tool (browser OAuth) is not usable from a remote server.
+// Activate by setting COREZOID_HTTP_PORT (e.g. "8080"); addr must come from
+// resolveHTTPBindAddr so the loopback guard above cannot be bypassed.
+// Credentials must be pre-configured via env vars — the login tool (browser
+// OAuth) is not usable from a server the user is not sitting in front of.
 func runHTTPServer(addr string) error {
 	go sweepIdleHTTPSessions()
 
@@ -288,18 +367,7 @@ func httpDispatch(reqCtx context.Context, req mcpRequest) interface{} {
 		return mcpResponse{
 			JSONRPC: "2.0",
 			ID:      req.ID,
-			Result: map[string]interface{}{
-				"protocolVersion": "2025-03-26",
-				"capabilities": map[string]interface{}{
-					"tools":     map[string]interface{}{},
-					"resources": map[string]interface{}{},
-					"prompts":   map[string]interface{}{},
-				},
-				"serverInfo": map[string]interface{}{
-					"name":    "convctl-mcp",
-					"version": mcpServerVersion,
-				},
-			},
+			Result:  buildInitializeResult(),
 		}
 
 	case "notifications/initialized", "notifications/cancelled":

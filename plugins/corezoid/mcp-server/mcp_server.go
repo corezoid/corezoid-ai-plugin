@@ -34,9 +34,35 @@ type mcpError struct {
 }
 
 type mcpTool struct {
-	Name        string      `json:"name"`
-	Description string      `json:"description"`
-	InputSchema interface{} `json:"inputSchema"`
+	Name        string             `json:"name"`
+	Description string             `json:"description"`
+	Annotations mcpToolAnnotations `json:"annotations"`
+	InputSchema interface{}        `json:"inputSchema"`
+}
+
+// mcpToolAnnotations carries the MCP "tool annotations" behaviour hints, so a
+// client can tell delete-process from list-folders without parsing prose and a
+// model can prefer the read-only tool when both would answer the question.
+//
+// All four hints are emitted on every tool rather than omitted-when-false,
+// because the spec's defaults are the *unsafe* ones: an absent destructiveHint
+// means true and an absent openWorldHint means true. Staying silent would
+// therefore label every read-only lookup as a destructive open-world call.
+// The presets in tools_annotations.go are the only intended way to fill this.
+type mcpToolAnnotations struct {
+	// ReadOnlyHint: the tool does not modify anything — not the Corezoid
+	// workspace, not the local working tree.
+	ReadOnlyHint bool `json:"readOnlyHint"`
+	// DestructiveHint: the tool may overwrite or remove existing state, as
+	// opposed to only adding new state. Meaningful only when ReadOnlyHint is
+	// false.
+	DestructiveHint bool `json:"destructiveHint"`
+	// IdempotentHint: repeating the call with the same arguments leaves the
+	// same end state, with no additional effect.
+	IdempotentHint bool `json:"idempotentHint"`
+	// OpenWorldHint: the tool talks to an external system (the Corezoid API,
+	// a git remote) rather than operating purely on local files.
+	OpenWorldHint bool `json:"openWorldHint"`
 }
 
 type mcpContent struct {
@@ -49,9 +75,28 @@ type mcpToolResult struct {
 	IsError bool         `json:"isError,omitempty"`
 }
 
-// mcpServerVersion is the version reported in MCP initialize responses.
-// Keep this in sync with .claude-plugin/plugin.json.
-const mcpServerVersion = "2.3.5"
+// mcpProtocolVersion is the MCP protocol revision this server implements.
+const mcpProtocolVersion = "2025-03-26"
+
+// buildInitializeResult produces the `result` payload for an MCP initialize
+// response. Shared by the stdio and HTTP transports so the two can't drift —
+// they previously each carried their own copy of this literal, and the
+// serverInfo.version inside them was a hand-maintained constant (see
+// serverVersion in mcp_version.go for why that broke).
+func buildInitializeResult() map[string]interface{} {
+	return map[string]interface{}{
+		"protocolVersion": mcpProtocolVersion,
+		"capabilities": map[string]interface{}{
+			"tools":     map[string]interface{}{},
+			"resources": map[string]interface{}{},
+			"prompts":   map[string]interface{}{},
+		},
+		"serverInfo": map[string]interface{}{
+			"name":    "convctl-mcp",
+			"version": serverVersion(),
+		},
+	}
+}
 
 // oauthClientID is the OAuth2 client ID used for PKCE flow.
 // Resolved from COREZOID_OAUTH_CLIENT_ID env var, falling back to the built-in default.
@@ -303,18 +348,7 @@ func runMCPServer() {
 			serverSend(mcpResponse{
 				JSONRPC: "2.0",
 				ID:      req.ID,
-				Result: map[string]interface{}{
-					"protocolVersion": "2025-03-26",
-					"capabilities": map[string]interface{}{
-						"tools":     map[string]interface{}{},
-						"resources": map[string]interface{}{},
-						"prompts":   map[string]interface{}{},
-					},
-					"serverInfo": map[string]interface{}{
-						"name":    "convctl-mcp",
-						"version": mcpServerVersion,
-					},
-				},
+				Result:  buildInitializeResult(),
 			})
 
 		case "notifications/initialized":

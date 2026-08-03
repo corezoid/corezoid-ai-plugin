@@ -357,9 +357,20 @@ func main() {
 	}
 
 	if port := os.Getenv("COREZOID_HTTP_PORT"); port != "" {
+		// Fail closed before anything is listening: an unauthenticated
+		// endpoint on a routable interface is worse than no server at all.
+		addr, warning, err := resolveHTTPBindAddr(
+			os.Getenv("COREZOID_BIND_ADDR"), port, os.Getenv(httpRemoteOptInEnv))
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "[corezoid-mcp] %v\n", err)
+			os.Exit(1)
+		}
 		analyticsTransport = "http"
 		initAnalytics()
-		addr := "127.0.0.1:" + port
+		if warning != "" {
+			fmt.Fprintf(os.Stderr, "[corezoid-mcp] %s\n", warning)
+			logger.Info("%s", warning)
+		}
 		if err := runHTTPServer(addr); err != nil {
 			fmt.Fprintf(os.Stderr, "[corezoid-mcp] HTTP server error: %v\n", err)
 			stopAnalytics()

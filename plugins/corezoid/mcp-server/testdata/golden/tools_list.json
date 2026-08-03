@@ -1,0 +1,1893 @@
+{
+  "tools": [
+    {
+      "name": "login",
+      "description": "Authenticate with Corezoid. Supports two auth methods: (1) OAuth2 browser flow — opens a browser window and saves the token so it persists across sessions; (2) API key — provide api_login and api_secret to skip the browser flow (credentials saved to project .env). Optionally accepts account_url, workspace_id, and stage_id to skip interactive prompts.",
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": true
+      },
+      "inputSchema": {
+        "properties": {
+          "account_url": {
+            "description": "Account API URL, e.g. https://account.corezoid.com",
+            "type": "string"
+          },
+          "api_login": {
+            "description": "API key login (alternative to OAuth2 browser flow). If both api_login and api_secret are provided, browser authentication is skipped.",
+            "type": "string"
+          },
+          "api_secret": {
+            "description": "API key secret (alternative to OAuth2 browser flow). Must be paired with api_login. Stored in project .env — ensure .env is in .gitignore.",
+            "type": "string"
+          },
+          "stage_id": {
+            "description": "Corezoid stage (root folder) ID",
+            "type": "string"
+          },
+          "workspace_id": {
+            "description": "Corezoid workspace (company) ID",
+            "type": "string"
+          }
+        },
+        "type": "object"
+      }
+    },
+    {
+      "name": "logout",
+      "description": "Remove saved Corezoid credentials from disk.",
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": true,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "inputSchema": {
+        "properties": {},
+        "type": "object"
+      }
+    },
+    {
+      "name": "pull-process",
+      "description": "Export a single Corezoid process definitions to a JSON file. The file is saved to the folder path matching its location in Corezoid (resolved from parent_id).",
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": true,
+        "idempotentHint": true,
+        "openWorldHint": true
+      },
+      "inputSchema": {
+        "properties": {
+          "process_id": {
+            "description": "Corezoid process ID to export",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "process_id"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "name": "pull-folder",
+      "description": "Recursively export all processes from a Corezoid folder/stage to a local directory.",
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": true,
+        "idempotentHint": true,
+        "openWorldHint": true
+      },
+      "inputSchema": {
+        "properties": {
+          "folder_id": {
+            "description": "Corezoid folder(stage) ID to export",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "folder_id"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "name": "push-process",
+      "description": "Validate and deploy a process file to Corezoid. Runs lint-process first and blocks the deploy on issues that would break it (broken node links, old-format nodes, RPC paths without reply, nodes missing a default go, sub-30s timers, literal reply values); advisory findings are shown but do not block. Active Call Process Stub Mode (obj_type:4) is allowed as a warning only when the target stage is resolved as mutable and non-production-like; immutable/prod/unknown stages are blocked because Stub Mode bypasses the real called process. Pass allow_active_stub_mode=true only after explicit confirmation that the temporary mock behavior is intentional. Pass force=true to deploy despite other blocking lint issues. Note: the server regenerates node IDs on every push and the local file is rewritten in place with the server's canonical scheme — reference nodes by title when iterating, and re-read the file after a push instead of reusing old node IDs.",
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": true,
+        "idempotentHint": true,
+        "openWorldHint": true
+      },
+      "inputSchema": {
+        "properties": {
+          "allow_active_stub_mode": {
+            "description": "Explicitly allow deploying active Call Process Stub Mode (obj_type:4) when the target stage is immutable, production-like, or cannot be resolved. Use only after confirming that temporary mock replies are intentionally being deployed.",
+            "type": "boolean"
+          },
+          "force": {
+            "description": "Deploy even if the pre-push lint finds generic blocking issues. Does not confirm active Stub Mode; use allow_active_stub_mode for that. Advisory findings never block. Default false.",
+            "type": "boolean"
+          },
+          "process_path": {
+            "description": "Path to the process JSON file, relative to the project root (absolute paths are accepted when they point inside the project).",
+            "type": "string"
+          }
+        },
+        "required": [
+          "process_path"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "name": "lint-process",
+      "description": "Validate process structure. Reports orphaned nodes, noop conditions, unused set_params, passthrough escalations, shared error clusters (an error node fed by several different failing nodes — each needs its own Reply/Error cluster), old-format nodes (obj_type:0 err_node_id targets, or action logic mixed with go_if_const — the UI would force-convert the process), finals reachable without api_rpc_reply in a process that replies elsewhere (an RPC caller would hang), nodes whose logics do not end with a default go and time semaphors under the 30s server minimum (both reject the deploy), literal non-string values in api_rpc_reply res_data (a scheme shape that hangs the server commit on push), and active Call Process Stub Mode nodes (obj_type:4) that bypass the real called process.",
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "inputSchema": {
+        "properties": {
+          "process_path": {
+            "description": "Relative path to the process JSON file.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "process_path"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "name": "run-task",
+      "description": "Run a task on an already-deployed Corezoid process (without re-deploying) and wait for it to reach a final node. Polls up to wait_sec (default 30), so tasks that cross async nodes (api, api_rpc, db_call, delay) still return their final result. On timeout reports the node the task is parked at, plus TaskRef/TaskID for follow-up via list-task-history.",
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": true
+      },
+      "inputSchema": {
+        "properties": {
+          "data": {
+            "description": "JSON string with task input parameters",
+            "type": "string"
+          },
+          "process_path": {
+            "description": "Relative path to the process JSON file.",
+            "type": "string"
+          },
+          "ref": {
+            "description": "Optional custom task ref (lookup key, not a guaranteed idempotency key — duplicate-ref behavior depends on the target process/state-diagram). Use this to create a task with a specific, lookup-able ref — e.g. matching an external ID a downstream process keys off of. If omitted, an auto-generated ref (\"\u003cunix_ts\u003e_\u003crand\u003e\") is used, same as before.",
+            "type": "string"
+          },
+          "wait_sec": {
+            "description": "How long to wait (seconds) for the task to reach a final node before reporting it as in progress. Default 30, max 600. Raise it for processes with slow external calls or delay nodes.",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "process_path",
+          "data"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "name": "create-process",
+      "description": "Create a new empty process (conv_type \"process\") inside a Corezoid folder.",
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": true
+      },
+      "inputSchema": {
+        "properties": {
+          "folder_id": {
+            "description": "Explicit Corezoid folder/stage ID to create in; overrides folder_path resolution",
+            "type": "integer"
+          },
+          "folder_path": {
+            "description": "Relative path to the folder directory. Omit to use the current directory.",
+            "type": "string"
+          },
+          "process_name": {
+            "description": "Name for the new process",
+            "type": "string"
+          }
+        },
+        "required": [
+          "process_name"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "name": "create-state-diagram",
+      "description": "Create a new empty state diagram (conv_type \"state\") inside a Corezoid folder. Use this for status / lifecycle storage instead of create-process.",
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": true
+      },
+      "inputSchema": {
+        "properties": {
+          "folder_id": {
+            "description": "Explicit Corezoid folder/stage ID to create in; overrides folder_path resolution",
+            "type": "integer"
+          },
+          "folder_path": {
+            "description": "Relative path to the folder directory. Omit to use the current directory.",
+            "type": "string"
+          },
+          "process_name": {
+            "description": "Name for the new state diagram",
+            "type": "string"
+          }
+        },
+        "required": [
+          "process_name"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "name": "create-folder",
+      "description": "Create a new folder inside a parent Corezoid folder.",
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": true
+      },
+      "inputSchema": {
+        "properties": {
+          "folder_id": {
+            "description": "Explicit Corezoid folder/stage ID to create the folder in; overrides parent_path resolution",
+            "type": "integer"
+          },
+          "folder_name": {
+            "description": "Name for the new folder",
+            "type": "string"
+          },
+          "parent_path": {
+            "description": "Relative path to the parent folder directory. Omit to use the current directory.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "folder_name"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "name": "show-folder",
+      "description": "Show metadata for a single Corezoid folder: title, obj_type (0 normal, 2 project, 3 stage), parent folder ID and parent type.",
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": true
+      },
+      "inputSchema": {
+        "properties": {
+          "folder_id": {
+            "description": "Corezoid folder ID to show",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "folder_id"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "name": "list-folders",
+      "description": "List the immediate children of a Corezoid folder (subfolders + processes + state diagrams). Lighter than pull-folder — does not write anything to disk.",
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": true
+      },
+      "inputSchema": {
+        "properties": {
+          "folder_id": {
+            "description": "Corezoid folder ID whose children to list",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "folder_id"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "name": "modify-folder",
+      "description": "Rename a Corezoid folder and/or update its description. At least one of title or description must be supplied.",
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": true,
+        "idempotentHint": true,
+        "openWorldHint": true
+      },
+      "inputSchema": {
+        "properties": {
+          "description": {
+            "description": "New folder description",
+            "type": "string"
+          },
+          "folder_id": {
+            "description": "Corezoid folder ID to modify",
+            "type": "integer"
+          },
+          "title": {
+            "description": "New folder title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "folder_id"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "name": "delete-folder",
+      "description": "Move a Corezoid folder to the recycle bin (Trash). Can be restored from the Corezoid UI.",
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": true,
+        "idempotentHint": true,
+        "openWorldHint": true
+      },
+      "inputSchema": {
+        "properties": {
+          "folder_id": {
+            "description": "Corezoid folder ID to delete",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "folder_id"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "name": "delete-process",
+      "description": "Move a Corezoid process (or state diagram) to the recycle bin (Trash). Can be restored from the Corezoid UI. Use pull-process first if you want a local backup before deleting.",
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": true,
+        "idempotentHint": true,
+        "openWorldHint": true
+      },
+      "inputSchema": {
+        "properties": {
+          "process_id": {
+            "description": "Corezoid process ID to delete",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "process_id"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "name": "create-alias",
+      "description": "Create a short alias for a Corezoid process. Aliases are stage-scoped; the stage is derived from the process file's parent_id (walking up folders until a stage is reached), so a stale COREZOID_STAGE_ID in .env no longer produces the cryptic \"Object is not in stage\" error. Pass stage_id explicitly to override.",
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": true
+      },
+      "inputSchema": {
+        "properties": {
+          "process_path": {
+            "description": "Relative path to the process JSON file.",
+            "type": "string"
+          },
+          "short_name": {
+            "description": "Short alias name for the process",
+            "type": "string"
+          },
+          "stage_id": {
+            "description": "Optional. Stage the alias should be created in. Defaults to the stage derived from the process file's parent_id, then to COREZOID_STAGE_ID from .env.",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "process_path",
+          "short_name"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "name": "create-variable",
+      "description": "Create an environment variable in a Corezoid folder.",
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": true
+      },
+      "inputSchema": {
+        "properties": {
+          "description": {
+            "description": "Variable description",
+            "type": "string"
+          },
+          "name": {
+            "description": "Variable name",
+            "type": "string"
+          },
+          "stage_id": {
+            "description": "Root folder ID where the variable will be created",
+            "type": "string"
+          },
+          "value": {
+            "description": "Variable value",
+            "type": "string"
+          }
+        },
+        "required": [
+          "stage_id",
+          "name",
+          "description",
+          "value"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "name": "list-variables",
+      "description": "List all environment variables (env_var) in a Corezoid stage: short_name, obj_id, data_type (raw/json), env_var_type (visible/secret), title, value and change time. Read-only. Secret variables are ALWAYS shown masked — their value is never retrievable after creation, only fingerprints. Returns the obj_id needed by modify-variable / delete-variable.",
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": true
+      },
+      "inputSchema": {
+        "properties": {
+          "stage_id": {
+            "description": "Stage (root folder) ID to list variables from. Defaults to COREZOID_STAGE_ID from .env.",
+            "type": "integer"
+          }
+        },
+        "required": [],
+        "type": "object"
+      }
+    },
+    {
+      "name": "modify-variable",
+      "description": "Modify a Corezoid environment variable: change its value, description (display title), data_type (raw/json), and/or rename it (new_name). CONSEQUENTIAL: renaming breaks every {{env_var[@old-name]}} reference in the stage's processes, and a value change takes effect immediately in running processes without redeploy. env_var_type (visible/secret) CANNOT be changed after creation — the server silently ignores such changes. Modify is partial: omitted fields keep their current value (a secret's value survives a modify that does not send value). SAFETY: apply=false (default) is a dry-run showing the current → new diff and, for renames, a local reference scan — nothing is changed. To apply you MUST show the diff to the user, get their explicit confirmation, then call with apply=true AND confirm=\"\u003cshort_name\u003e#\u003cobj_id\u003e\" (the CURRENT short_name, before any rename). Never modify a variable without the user confirming.",
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": true,
+        "idempotentHint": true,
+        "openWorldHint": true
+      },
+      "inputSchema": {
+        "properties": {
+          "apply": {
+            "description": "false (default) = dry-run: show the current → new diff only. true = perform the modification (also requires a matching confirm).",
+            "type": "boolean"
+          },
+          "confirm": {
+            "description": "Required when apply=true: must equal \"\u003cshort_name\u003e#\u003cobj_id\u003e\" of the CURRENT variable (e.g. \"payment-api-url#2192\"). Guards against accidental and wrong-variable modifications.",
+            "type": "string"
+          },
+          "data_type": {
+            "description": "New data type (raw or json).",
+            "enum": [
+              "raw",
+              "json"
+            ],
+            "type": "string"
+          },
+          "description": {
+            "description": "New human-readable label (stored as the variable's title, same as create-variable). An empty string is ignored — titles cannot be cleared.",
+            "type": "string"
+          },
+          "name": {
+            "description": "Current short_name of the variable (as used in {{env_var[@name]}}).",
+            "type": "string"
+          },
+          "new_name": {
+            "description": "New short_name (rename). WARNING: breaks all {{env_var[@old-name]}} references — the dry-run reports affected local .conv.json files.",
+            "type": "string"
+          },
+          "obj_id": {
+            "description": "Optional numeric variable ID (from list-variables). If given together with name, both must refer to the same variable.",
+            "type": "integer"
+          },
+          "stage_id": {
+            "description": "Stage the variable lives in. Defaults to COREZOID_STAGE_ID from .env.",
+            "type": "integer"
+          },
+          "value": {
+            "description": "New value. For data_type=json, a JSON-encoded string. Omit to keep the current value (secrets survive).",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "name": "delete-variable",
+      "description": "PERMANENTLY delete a Corezoid environment variable. DESTRUCTIVE AND IRREVERSIBLE: unlike processes/folders/projects there is NO recycle bin for variables — the value (secrets included) is gone immediately, and any process still referencing {{env_var[@name]}} will fail at runtime. SAFETY: apply=false (default) is a dry-run that shows the variable's full details plus a local reference scan — nothing is deleted. To delete you MUST show the user the dry-run warning block VERBATIM, get their explicit confirmation, then call with apply=true AND confirm=\"\u003cshort_name\u003e#\u003cobj_id\u003e\". Never delete a variable without the user confirming.",
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": true,
+        "idempotentHint": true,
+        "openWorldHint": true
+      },
+      "inputSchema": {
+        "properties": {
+          "apply": {
+            "description": "false (default) = dry-run preview only. true = perform the permanent deletion (also requires a matching confirm).",
+            "type": "boolean"
+          },
+          "confirm": {
+            "description": "Required when apply=true: must equal \"\u003cshort_name\u003e#\u003cobj_id\u003e\" (e.g. \"stripe-key#2192\"). Guards against accidental and wrong-variable deletion.",
+            "type": "string"
+          },
+          "name": {
+            "description": "short_name of the variable to delete.",
+            "type": "string"
+          },
+          "obj_id": {
+            "description": "Optional numeric variable ID (from list-variables). If given together with name, both must match.",
+            "type": "integer"
+          },
+          "stage_id": {
+            "description": "Stage the variable lives in. Defaults to COREZOID_STAGE_ID from .env.",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "name": "layout-process",
+      "description": "Auto-arrange a process's node coordinates into a clean, readable layout (waterfall for simple trees, layered+error-rail for meshes, aligned table/star grids for region bundles). Rewrites ONLY x/y; collapse/expand state, extra, edges, logic, conv_id and aliases stay intact. Runs entirely on the local file (no API, no auth). The result always reports the chosen strategy, canvas size and overlap count; dry=true previews placements without writing.",
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": true,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "inputSchema": {
+        "properties": {
+          "density": {
+            "description": "Spacing mode: compact | medium (default) | roomy (keeps the coarse block rhythm, skips compaction).",
+            "enum": [
+              "compact",
+              "medium",
+              "roomy"
+            ],
+            "type": "string"
+          },
+          "dry": {
+            "description": "Preview the planned coordinates without modifying the file.",
+            "type": "boolean"
+          },
+          "process_path": {
+            "description": "Relative path to the process JSON file. Optional when the working directory contains exactly one .conv.json.",
+            "type": "string"
+          }
+        },
+        "type": "object"
+      }
+    },
+    {
+      "name": "list-workspaces",
+      "description": "Return the list of Corezoid workspaces (companies) available to the authenticated user.",
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": true
+      },
+      "inputSchema": {
+        "properties": {},
+        "type": "object"
+      }
+    },
+    {
+      "name": "list-projects",
+      "description": "Return the list of projects inside a Corezoid workspace (company), sorted by title.",
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": true
+      },
+      "inputSchema": {
+        "properties": {
+          "company_id": {
+            "description": "Workspace (company) ID whose projects to list",
+            "type": "string"
+          }
+        },
+        "required": [
+          "company_id"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "name": "list-stages",
+      "description": "Return the list of stages (environments) inside a Corezoid project.",
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": true
+      },
+      "inputSchema": {
+        "properties": {
+          "company_id": {
+            "description": "Workspace (company) ID the project belongs to",
+            "type": "string"
+          },
+          "project_id": {
+            "description": "Project ID whose stages to list",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "project_id",
+          "company_id"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "name": "create-project",
+      "description": "Create a new Corezoid project (with optional stages) inside a workspace. Returns the new project_id and the stage IDs that were created.",
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": true
+      },
+      "inputSchema": {
+        "properties": {
+          "company_id": {
+            "description": "Workspace (company) ID where the project will be created",
+            "type": "string"
+          },
+          "description": {
+            "description": "Optional project description",
+            "type": "string"
+          },
+          "short_name": {
+            "description": "Project short name (alphanumeric, used in URLs). If omitted the server derives one from the title.",
+            "type": "string"
+          },
+          "stages": {
+            "description": "Optional JSON array of stages to create with the project: [{\"title\":\"production\",\"immutable\":true},{\"title\":\"develop\",\"immutable\":false}]",
+            "type": "string"
+          },
+          "title": {
+            "description": "Project title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "company_id",
+          "title"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "name": "modify-project",
+      "description": "Update a Corezoid project's title, short_name and/or description. At least one of title/short_name/description must be provided.",
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": true,
+        "idempotentHint": true,
+        "openWorldHint": true
+      },
+      "inputSchema": {
+        "properties": {
+          "company_id": {
+            "description": "Workspace (company) ID the project belongs to",
+            "type": "string"
+          },
+          "description": {
+            "description": "New project description",
+            "type": "string"
+          },
+          "project_id": {
+            "description": "Project ID (obj_id) to modify",
+            "type": "integer"
+          },
+          "short_name": {
+            "description": "New project short name",
+            "type": "string"
+          },
+          "title": {
+            "description": "New project title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "company_id",
+          "project_id"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "name": "delete-project",
+      "description": "Move a Corezoid project to the recycle bin (Trash). Use restore-project to undo. Use destroy via the Corezoid UI to permanently delete.",
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": true,
+        "idempotentHint": true,
+        "openWorldHint": true
+      },
+      "inputSchema": {
+        "properties": {
+          "company_id": {
+            "description": "Workspace (company) ID the project belongs to",
+            "type": "string"
+          },
+          "project_id": {
+            "description": "Project ID (obj_id) to delete",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "company_id",
+          "project_id"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "name": "show-project",
+      "description": "Show a Corezoid project's metadata and the stages available to the caller. Returns project obj_id, short_name, parent folder ID and the list of stage IDs/titles.",
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": true
+      },
+      "inputSchema": {
+        "properties": {
+          "company_id": {
+            "description": "Workspace (company) ID the project belongs to",
+            "type": "string"
+          },
+          "project_id": {
+            "description": "Project ID (obj_id) to show",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "company_id",
+          "project_id"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "name": "deploy-stage",
+      "description": "Deploy (promote) one stage's processes onto another within a Corezoid project — e.g. develop → production. Wraps the admin obj_scheme compare+merge that the UI \"Deploy\" button issues (on /api/2/compare and /api/2/merge). DESTRUCTIVE, and irreversible on an immutable target. SAFETY: apply=false (default) is a dry-run that only shows the diff and any conflicts — nothing is deployed. To actually deploy you MUST first get the user's explicit confirmation of the exact source→target, then call with apply=true AND confirm=\"\u003csource_stage_id\u003e-\u003e\u003ctarget_stage_id\u003e\". Never deploy without the user confirming. The merge is asynchronous; this tool waits for it to finish over the progress WebSocket.",
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": true,
+        "idempotentHint": true,
+        "openWorldHint": true
+      },
+      "inputSchema": {
+        "properties": {
+          "apply": {
+            "description": "false (default) = dry-run: show the diff/conflicts only. true = perform the deploy (also requires a matching confirm).",
+            "type": "boolean"
+          },
+          "company_id": {
+            "description": "Workspace (company) ID the project belongs to.",
+            "type": "string"
+          },
+          "confirm": {
+            "description": "Required when apply=true: must equal \"\u003csource_stage_id\u003e-\u003e\u003ctarget_stage_id\u003e\" (e.g. \"684083-\u003e684082\"). Guards against accidental and wrong-stage deploys.",
+            "type": "string"
+          },
+          "project_id": {
+            "description": "Project ID that both stages belong to.",
+            "type": "integer"
+          },
+          "source_stage_id": {
+            "description": "Stage to deploy FROM (the source of truth, e.g. develop).",
+            "type": "integer"
+          },
+          "target_stage_id": {
+            "description": "Stage to deploy INTO (e.g. production). Its scheme is overwritten with the source's.",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "project_id",
+          "source_stage_id",
+          "target_stage_id",
+          "company_id"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "name": "set-stage-immutable",
+      "description": "Set a stage's immutable (read-only) flag. Immutable stages are the ONLY valid deploy/merge targets (see deploy-stage); an immutable stage can no longer be edited directly — only changed via deploy. Consequential: making a stage editable removes that protection. Requires explicit user confirmation — call with confirm=\"\u003cstage_id\u003e:\u003ctrue|false\u003e\" (e.g. \"684082:true\"). Never change immutability without the user confirming.",
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": true,
+        "idempotentHint": true,
+        "openWorldHint": true
+      },
+      "inputSchema": {
+        "properties": {
+          "company_id": {
+            "description": "Workspace (company) ID the project belongs to.",
+            "type": "string"
+          },
+          "confirm": {
+            "description": "Required: must equal \"\u003cstage_id\u003e:\u003cimmutable\u003e\" (e.g. \"684082:true\"). Guards against accidental read-only changes.",
+            "type": "string"
+          },
+          "immutable": {
+            "description": "true = make read-only (a valid deploy target); false = make editable again.",
+            "type": "boolean"
+          },
+          "project_id": {
+            "description": "Project ID the stage belongs to.",
+            "type": "integer"
+          },
+          "stage_id": {
+            "description": "Stage ID whose immutable flag to set.",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "stage_id",
+          "project_id",
+          "company_id",
+          "immutable"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "name": "list-task-history",
+      "description": "Return the execution history (node path) for a task. Shows each node transition with node_id, node_prev_id, create_time_ms.",
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": true
+      },
+      "inputSchema": {
+        "properties": {
+          "process_id": {
+            "description": "Corezoid process (conv) ID",
+            "type": "integer"
+          },
+          "task_id": {
+            "description": "Task ID (obj_id) to retrieve history for",
+            "type": "string"
+          }
+        },
+        "required": [
+          "process_id",
+          "task_id"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "name": "list-node-tasks",
+      "description": "Return tasks currently sitting in a specific node of a process.",
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": true
+      },
+      "inputSchema": {
+        "properties": {
+          "limit": {
+            "description": "Maximum number of tasks to return (default 50)",
+            "type": "integer"
+          },
+          "node_id": {
+            "description": "24-character hex node ID",
+            "type": "string"
+          },
+          "offset": {
+            "description": "Pagination offset (default 0)",
+            "type": "integer"
+          },
+          "process_id": {
+            "description": "Corezoid process (conv) ID",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "process_id",
+          "node_id"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "name": "get-node-stat",
+      "description": "Return time-series statistics (in/out counts) for a node over a time range. node_id is the ID shown in the Corezoid UI archive URL (/diagram/{node_id}/archive). ops[0]['data'] contains [{\"date\":\"YYYY-MM-DD\",\"in\":N,\"out\":M}] for non-zero buckets. ops[0]['title'] is the node title.",
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": true
+      },
+      "inputSchema": {
+        "properties": {
+          "end": {
+            "description": "Unix timestamp — end of the period",
+            "type": "integer"
+          },
+          "interval": {
+            "description": "Aggregation bucket: 'day' or 'hour' (default: 'day')",
+            "type": "string"
+          },
+          "node_id": {
+            "description": "Node ID from the Corezoid UI archive URL",
+            "type": "string"
+          },
+          "process_id": {
+            "description": "Corezoid process (conv) ID",
+            "type": "integer"
+          },
+          "start": {
+            "description": "Unix timestamp — start of the period",
+            "type": "integer"
+          },
+          "timezone_offset": {
+            "description": "UTC offset in minutes, negative westward (e.g. -180 for UTC+3, default: 0)",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "process_id",
+          "node_id",
+          "start",
+          "end"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "name": "modify-task",
+      "description": "Modify an existing task's data. The task will continue from the node where it was paused with the updated data. At least one of task_id or ref must be provided.",
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": true,
+        "idempotentHint": true,
+        "openWorldHint": true
+      },
+      "inputSchema": {
+        "properties": {
+          "data": {
+            "description": "JSON string with fields to merge into the task",
+            "type": "string"
+          },
+          "process_id": {
+            "description": "Corezoid process (conv) ID",
+            "type": "integer"
+          },
+          "ref": {
+            "description": "Task reference string",
+            "type": "string"
+          },
+          "task_id": {
+            "description": "Task ID (obj_id)",
+            "type": "string"
+          }
+        },
+        "required": [
+          "process_id",
+          "data"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "name": "delete-task",
+      "description": "Delete a task from a process. At least one of task_id or ref must be provided. If only ref is given, the task_id and node_id are resolved automatically.",
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": true,
+        "idempotentHint": true,
+        "openWorldHint": true
+      },
+      "inputSchema": {
+        "properties": {
+          "process_id": {
+            "description": "Corezoid process (conv) ID",
+            "type": "integer"
+          },
+          "ref": {
+            "description": "Task reference string",
+            "type": "string"
+          },
+          "task_id": {
+            "description": "Task ID (obj_id)",
+            "type": "string"
+          }
+        },
+        "required": [
+          "process_id"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "name": "create-dashboard",
+      "description": "Create a new Corezoid dashboard for visualizing process node metrics. Returns dashboard_id needed for adding charts.",
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": true
+      },
+      "inputSchema": {
+        "properties": {
+          "description": {
+            "description": "Optional dashboard description",
+            "type": "string"
+          },
+          "folder_id": {
+            "description": "Folder (stage) ID where the dashboard will be created. Defaults to COREZOID_STAGE_ID from .env.",
+            "type": "integer"
+          },
+          "timezone_offset": {
+            "description": "UTC offset in minutes (e.g. -180 for UTC+3). Defaults to 0 (UTC).",
+            "type": "integer"
+          },
+          "title": {
+            "description": "Dashboard title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "title"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "name": "get-dashboard",
+      "description": "Get a Corezoid dashboard with its charts and series. Use after add-chart to verify series is populated.",
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": true
+      },
+      "inputSchema": {
+        "properties": {
+          "dashboard_id": {
+            "description": "Dashboard ID",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "dashboard_id"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "name": "add-chart",
+      "description": "Add a chart to a Corezoid dashboard. chart_type must be one of: column, pie, funnel, table. Use 'column' for bar/comparison charts — 'bar' is not a valid type.",
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": true
+      },
+      "inputSchema": {
+        "properties": {
+          "chart_type": {
+            "description": "Chart type: column, pie, funnel, or table",
+            "type": "string"
+          },
+          "dashboard_id": {
+            "description": "Dashboard ID to add the chart to",
+            "type": "integer"
+          },
+          "name": {
+            "description": "Chart name/title",
+            "type": "string"
+          },
+          "series": {
+            "description": "JSON array of series: [{\"conv_id\": 123, \"node_id\": \"\u003c24-char-hex\u003e\", \"title\": \"Label\"}]",
+            "type": "string"
+          }
+        },
+        "required": [
+          "dashboard_id",
+          "name",
+          "chart_type",
+          "series"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "name": "modify-chart",
+      "description": "Modify an existing Corezoid chart. Always provide the full series array — partial updates are not supported.",
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": true,
+        "idempotentHint": true,
+        "openWorldHint": true
+      },
+      "inputSchema": {
+        "properties": {
+          "chart_id": {
+            "description": "Chart obj_id (hex string returned by add-chart or get-dashboard)",
+            "type": "string"
+          },
+          "chart_type": {
+            "description": "Chart type: column, pie, funnel, or table",
+            "type": "string"
+          },
+          "dashboard_id": {
+            "description": "Dashboard ID that contains this chart",
+            "type": "integer"
+          },
+          "name": {
+            "description": "Chart name/title",
+            "type": "string"
+          },
+          "series": {
+            "description": "JSON array of series (full replacement): [{\"conv_id\": 123, \"node_id\": \"\u003cid\u003e\", \"title\": \"Label\"}]",
+            "type": "string"
+          }
+        },
+        "required": [
+          "chart_id",
+          "dashboard_id",
+          "name",
+          "chart_type",
+          "series"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "name": "get-chart",
+      "description": "Get a single chart with its series data.",
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": true
+      },
+      "inputSchema": {
+        "properties": {
+          "chart_id": {
+            "description": "Chart obj_id (hex string)",
+            "type": "string"
+          },
+          "dashboard_id": {
+            "description": "Dashboard ID that contains this chart",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "chart_id",
+          "dashboard_id"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "name": "set-dashboard-layout",
+      "description": "Save chart positions on a dashboard grid. Must be called after add-chart/modify-chart to make charts visible. Each grid entry positions one chart by its chart_id (hex string from add-chart).",
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": true,
+        "idempotentHint": true,
+        "openWorldHint": true
+      },
+      "inputSchema": {
+        "properties": {
+          "dashboard_id": {
+            "description": "Dashboard ID",
+            "type": "integer"
+          },
+          "grid": {
+            "description": "JSON array of chart positions: [{\"chart_id\":\"\u003chex\u003e\",\"x\":0,\"y\":0,\"width\":6,\"height\":4},...]. Standard width=6, height=4. Grid is 12 columns wide.",
+            "type": "string"
+          },
+          "timezone_offset": {
+            "description": "UTC offset in minutes (e.g. -180 for UTC+3). Defaults to 0.",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "dashboard_id",
+          "grid"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "name": "share-object",
+      "description": "Grant or revoke access to a Corezoid object (process/folder/stage/project) for a user, API key, or group. To revoke, pass privs=\"none\" — that's the same wire operation as a share with empty privs. API keys share as obj_to=\"user\" with the api key's obj_id.",
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": true,
+        "idempotentHint": true,
+        "openWorldHint": true
+      },
+      "inputSchema": {
+        "properties": {
+          "notify": {
+            "description": "Send notification to recipient (default true). Ignored when revoking.",
+            "type": "boolean"
+          },
+          "obj": {
+            "description": "Object kind: conv | folder | stage | project",
+            "type": "string"
+          },
+          "obj_id": {
+            "description": "Numeric ID of the object being shared",
+            "type": "integer"
+          },
+          "obj_to": {
+            "description": "Recipient kind: user (includes API keys) | group",
+            "type": "string"
+          },
+          "obj_to_id": {
+            "description": "Recipient obj_id (resolve via find-principal)",
+            "type": "integer"
+          },
+          "privs": {
+            "description": "Comma-separated list, JSON array, or keyword. Allowed values: view, create (task management), modify, delete, all (default), none (revoke all access).",
+            "type": "string"
+          }
+        },
+        "required": [
+          "obj",
+          "obj_id",
+          "obj_to",
+          "obj_to_id"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "name": "list-shares",
+      "description": "List users, API keys and groups that currently have access to a Corezoid object.",
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": true
+      },
+      "inputSchema": {
+        "properties": {
+          "obj": {
+            "description": "Object kind: conv | folder | stage | project",
+            "type": "string"
+          },
+          "obj_id": {
+            "description": "Object ID",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "obj",
+          "obj_id"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "name": "create-group",
+      "description": "Create a new user group in the current workspace. Returns the group's obj_id (use as obj_to_id when sharing).",
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": true
+      },
+      "inputSchema": {
+        "properties": {
+          "description": {
+            "description": "Optional group description",
+            "type": "string"
+          },
+          "title": {
+            "description": "Group title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "title"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "name": "modify-group",
+      "description": "Rename a user group and/or update its description. At least one of title or description must be supplied.",
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": true,
+        "idempotentHint": true,
+        "openWorldHint": true
+      },
+      "inputSchema": {
+        "properties": {
+          "description": {
+            "description": "New group description",
+            "type": "string"
+          },
+          "group_id": {
+            "description": "Group obj_id",
+            "type": "integer"
+          },
+          "title": {
+            "description": "New group title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "group_id"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "name": "list-group-objects",
+      "description": "List the processes (conv objects) currently shared with a group. Used to audit group impact before destructive operations. Note: folders/stages/projects shared to the group are not retrievable via this endpoint.",
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": true
+      },
+      "inputSchema": {
+        "properties": {
+          "group_id": {
+            "description": "Group obj_id",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "group_id"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "name": "delete-group",
+      "description": "Delete a user group. By default refuses to delete if the group still has active shares — pass force=true to override. Existing share links are revoked when the group is deleted.",
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": true,
+        "idempotentHint": true,
+        "openWorldHint": true
+      },
+      "inputSchema": {
+        "properties": {
+          "force": {
+            "description": "Delete even if the group still has active shares (default false).",
+            "type": "boolean"
+          },
+          "group_id": {
+            "description": "Group obj_id",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "group_id"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "name": "add-to-group",
+      "description": "Add a user (or API key user) to a group.",
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": true
+      },
+      "inputSchema": {
+        "properties": {
+          "group_id": {
+            "description": "Group obj_id",
+            "type": "integer"
+          },
+          "user_id": {
+            "description": "User or API-key user obj_id",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "group_id",
+          "user_id"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "name": "remove-from-group",
+      "description": "Remove a user from a group.",
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": true,
+        "idempotentHint": true,
+        "openWorldHint": true
+      },
+      "inputSchema": {
+        "properties": {
+          "group_id": {
+            "description": "Group obj_id",
+            "type": "integer"
+          },
+          "user_id": {
+            "description": "User or API-key user obj_id",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "group_id",
+          "user_id"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "name": "list-groups",
+      "description": "List user groups visible in the current workspace.",
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": true
+      },
+      "inputSchema": {
+        "properties": {
+          "name": {
+            "description": "Optional substring filter on group title",
+            "type": "string"
+          }
+        },
+        "type": "object"
+      }
+    },
+    {
+      "name": "create-api-key",
+      "description": "Create a new API key in the workspace. The secret is written to ~/.corezoid/api-keys/\u003cslug\u003e-\u003cobj_id\u003e.json (mode 0600) and the chat output reports only the file path — the secret is never printed in agent responses.",
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": true
+      },
+      "inputSchema": {
+        "properties": {
+          "description": {
+            "description": "Optional API key description",
+            "type": "string"
+          },
+          "title": {
+            "description": "API key title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "title"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "name": "modify-api-key",
+      "description": "Update title and/or description of an existing API key. Does not regenerate the secret.",
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": true,
+        "idempotentHint": true,
+        "openWorldHint": true
+      },
+      "inputSchema": {
+        "properties": {
+          "api_key_id": {
+            "description": "API key obj_id",
+            "type": "integer"
+          },
+          "description": {
+            "description": "New description",
+            "type": "string"
+          },
+          "title": {
+            "description": "New title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "api_key_id"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "name": "delete-api-key",
+      "description": "Delete an API key. The secret is invalidated immediately — subsequent requests return 401. Objects owned by the key are reassigned to the workspace owner.",
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": true,
+        "idempotentHint": true,
+        "openWorldHint": true
+      },
+      "inputSchema": {
+        "properties": {
+          "api_key_id": {
+            "description": "API-key user obj_id",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "api_key_id"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "name": "list-api-keys",
+      "description": "List API keys visible in the current workspace.",
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": true
+      },
+      "inputSchema": {
+        "properties": {
+          "name": {
+            "description": "Optional substring filter on key title",
+            "type": "string"
+          }
+        },
+        "type": "object"
+      }
+    },
+    {
+      "name": "find-principal",
+      "description": "Search users, groups or API keys in the workspace by substring. Returns obj_ids to pass as obj_to_id in share-object.",
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": true
+      },
+      "inputSchema": {
+        "properties": {
+          "kind": {
+            "description": "What to search: user | group | api_key | shared. Defaults to user.",
+            "type": "string"
+          },
+          "name": {
+            "description": "Substring to match against title (omit to list all)",
+            "type": "string"
+          }
+        },
+        "type": "object"
+      }
+    },
+    {
+      "name": "invite-user",
+      "description": "Invite an external email to the workspace AND share a process/folder/stage/project with them in one call. Returns the invite URL the recipient must open.",
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": true
+      },
+      "inputSchema": {
+        "properties": {
+          "email": {
+            "description": "Invitee email",
+            "type": "string"
+          },
+          "login_type": {
+            "description": "Login type: google | corezoid | phone (defaults to google)",
+            "type": "string"
+          },
+          "obj": {
+            "description": "Object to share: conv | folder | stage | project",
+            "type": "string"
+          },
+          "obj_id": {
+            "description": "Object ID",
+            "type": "integer"
+          },
+          "privs": {
+            "description": "Privs to grant (view, create, modify, delete, all). Defaults to view.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "email",
+          "obj",
+          "obj_id"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "name": "send-feedback",
+      "description": "Submit user feedback about plugin behavior to Corezoid. Use only after the user has explicitly confirmed sending. Returns a feedback ticket id.",
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": true
+      },
+      "inputSchema": {
+        "properties": {
+          "contact": {
+            "description": "Optional contact for follow-up.",
+            "type": "string"
+          },
+          "expected": {
+            "description": "What the user expected to happen.",
+            "type": "string"
+          },
+          "problem": {
+            "description": "What went wrong, in the user's words.",
+            "type": "string"
+          },
+          "proposed_solution": {
+            "description": "How the user thinks it should work.",
+            "type": "string"
+          },
+          "tool": {
+            "description": "Tool or skill involved, if known.",
+            "type": "string"
+          },
+          "transcript_excerpt": {
+            "description": "Short, already-redacted excerpt of the relevant dialog.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "problem"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "name": "create-snapshot",
+      "description": "Create a snapshot of the current server state of a process before making changes. Useful as a manual checkpoint before experiments. Auto-snapshot is also created automatically before every push-process on existing processes.",
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": true
+      },
+      "inputSchema": {
+        "properties": {
+          "process_path": {
+            "description": "Path to the .conv.json file.",
+            "type": "string"
+          },
+          "title": {
+            "description": "Optional snapshot title. Defaults to 'manual snapshot \u003cProcessName\u003e \u003cdatetime\u003e'.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "process_path"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "name": "list-snapshots",
+      "description": "List all snapshots for a process. Returns version, title, author and creation time for each snapshot.",
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": true
+      },
+      "inputSchema": {
+        "properties": {
+          "process_path": {
+            "description": "Path to the .conv.json file.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "process_path"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "name": "delete-snapshot",
+      "description": "Delete a snapshot by its obj_id. Use list-snapshots to find the snapshot_id.",
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": true,
+        "idempotentHint": true,
+        "openWorldHint": true
+      },
+      "inputSchema": {
+        "properties": {
+          "process_path": {
+            "description": "Path to the .conv.json file.",
+            "type": "string"
+          },
+          "snapshot_id": {
+            "description": "The obj_id of the snapshot to delete (from list-snapshots).",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "process_path",
+          "snapshot_id"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "name": "get-snapshot",
+      "description": "Get the node list of a specific snapshot for diff comparison against the current process state. Returns all nodes as they existed at snapshot time.",
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": true
+      },
+      "inputSchema": {
+        "properties": {
+          "process_path": {
+            "description": "Path to the .conv.json file.",
+            "type": "string"
+          },
+          "snapshot_id": {
+            "description": "The obj_id of the snapshot to retrieve (from list-snapshots).",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "process_path",
+          "snapshot_id"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "name": "git-pull-context",
+      "description": "Clone or pull the Corezoid git mirror for the current workspace into .git-context/. Requires COREZOID_GIT_URL, API_LOGIN, and API_SECRET. Silently skipped if not configured.",
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": true,
+        "idempotentHint": true,
+        "openWorldHint": true
+      },
+      "inputSchema": {
+        "properties": {},
+        "type": "object"
+      }
+    },
+    {
+      "name": "git-push-context",
+      "description": "Commit and push local _ext/ changes to the Corezoid git mirror. Requires API_LOGIN and API_SECRET. Returns a warning (not an error) if nothing changed.",
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": true
+      },
+      "inputSchema": {
+        "properties": {
+          "commit_message": {
+            "description": "Optional git commit message. Defaults to 'docs: update _ext/ after task session \u003ctimestamp\u003e'.",
+            "type": "string"
+          }
+        },
+        "type": "object"
+      }
+    },
+    {
+      "name": "read-context-file",
+      "description": "Read a file from .git-context/ of the current workspace (git mirror local copy). Returns content and a found flag.",
+      "annotations": {
+        "readOnlyHint": true,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "inputSchema": {
+        "properties": {
+          "path": {
+            "description": "Relative path inside .git-context/, e.g. projects/123_Name/stages/456_Stage/_ext/docs/context.md",
+            "type": "string"
+          }
+        },
+        "required": [
+          "path"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "name": "update-context-file",
+      "description": "Write or append to a file inside _ext/ of the git mirror local copy (.git-context/). Path must start with _ext/. Use git-push-context to publish the changes.",
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": true,
+        "idempotentHint": true,
+        "openWorldHint": false
+      },
+      "inputSchema": {
+        "properties": {
+          "content": {
+            "description": "Text content to write",
+            "type": "string"
+          },
+          "mode": {
+            "description": "Write mode: 'replace' (default) overwrites the file; 'append' adds to the end",
+            "type": "string"
+          },
+          "path": {
+            "description": "Relative path inside .git-context/, must start with _ext/ (e.g. _ext/docs/context.md or projects/123/stages/456/_ext/docs/context.md)",
+            "type": "string"
+          }
+        },
+        "required": [
+          "path",
+          "content"
+        ],
+        "type": "object"
+      }
+    }
+  ]
+}

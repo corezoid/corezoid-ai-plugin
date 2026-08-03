@@ -4,8 +4,14 @@
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
+# The plugin release version, read from the manifest. Injected into the binary
+# below so a compile-from-source run reports the same version in MCP
+# initialize.serverInfo as a downloaded release binary does.
+VERSION=$(grep '"version"' "$SCRIPT_DIR/../.claude-plugin/plugin.json" 2>/dev/null \
+  | sed 's/.*"version": *"\([^"]*\)".*/\1/' | head -1)
+
 if [ -n "$COREZOID_MCP_DEV" ]; then
-  cd "$SCRIPT_DIR" && exec go run . "$@"
+  cd "$SCRIPT_DIR" && exec go run -ldflags "-X main.Version=${VERSION}" . "$@"
 fi
 
 # Prefer a locally built binary (gitignored) — lets developers test source changes instantly.
@@ -19,9 +25,6 @@ case "$ARCH" in
   x86_64)        ARCH="amd64" ;;
   arm64|aarch64) ARCH="arm64" ;;
 esac
-
-VERSION=$(grep '"version"' "$SCRIPT_DIR/../.claude-plugin/plugin.json" 2>/dev/null \
-  | sed 's/.*"version": *"\([^"]*\)".*/\1/' | head -1)
 
 # download <url> <dest>
 download() {
@@ -87,4 +90,4 @@ if ! command -v go >/dev/null 2>&1; then
   echo "  → Or install Go to build from source: https://go.dev/dl/" >&2
   exit 1
 fi
-cd "$SCRIPT_DIR" && exec go run . "$@"
+cd "$SCRIPT_DIR" && exec go run -ldflags "-X main.Version=${VERSION}" . "$@"

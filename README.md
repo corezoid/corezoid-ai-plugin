@@ -151,8 +151,29 @@ export ACCESS_TOKEN=your_token_here
 | `COREZOID_STAGE_ID`        | No       | Default stage ID                                  |
 | `COREZOID_APIGW_URL`       | No       | Override the API Gateway URL                      |
 | `COREZOID_OAUTH_CLIENT_ID` | No       | OAuth2 client ID — on-prem deployments with a custom authorization server should set this to their own client ID; cloud (account.corezoid.com) users do not need it |
-| `COREZOID_HTTP_PORT`       | No       | Activate the Streamable HTTP transport on this port (e.g. `8080`). When set the server listens for MCP over HTTP instead of stdio — intended for hosted marketplace deployments. Credentials must be pre-configured via env vars; the browser OAuth login flow is not available in HTTP mode |
+| `COREZOID_HTTP_PORT`       | No       | Activate the **local-only** Streamable HTTP transport on this port (e.g. `8080`) instead of stdio. See [HTTP transport](#http-transport-local-only) — this endpoint has no authentication |
+| `COREZOID_BIND_ADDR`       | No       | Bind address for the HTTP transport (default `127.0.0.1`). A non-loopback value is refused unless `COREZOID_ALLOW_UNAUTHENTICATED_REMOTE` is set |
+| `COREZOID_ALLOW_UNAUTHENTICATED_REMOTE` | No | Must be exactly `yes-i-know-there-is-no-auth` to permit a non-loopback `COREZOID_BIND_ADDR`. Only meaningful with `COREZOID_HTTP_PORT` |
 | `COREZOID_AUTOLAYOUT`      | No       | Set to `off` to disable auto-placement of new `(0,0)` nodes on `push-process` (default: preserve) |
+
+### HTTP transport (local only)
+
+Setting `COREZOID_HTTP_PORT` switches the MCP server from stdio to the Streamable HTTP transport. This is a **local, single-user** transport, not a hosted deployment mode:
+
+- It performs **no authentication**. There is no Bearer-token check on `/mcp`.
+- Every request is served with the one Corezoid token the process loaded at startup, so any caller that can reach the port gets that token's full API access.
+- The browser OAuth `login` flow is unavailable; credentials must be pre-configured via env vars.
+
+Because of that, the bind address is fail-closed. The server binds `127.0.0.1` by default and **refuses to start** on a non-loopback address (`0.0.0.0`, a LAN IP, …) unless you explicitly opt in:
+
+```bash
+COREZOID_HTTP_PORT=8080 \
+COREZOID_BIND_ADDR=0.0.0.0 \
+COREZOID_ALLOW_UNAUTHENTICATED_REMOTE=yes-i-know-there-is-no-auth \
+  convctl mcp-server
+```
+
+Do not do that without an authenticating reverse proxy in front. What a genuine hosted mode would require is tracked in [`plugins/corezoid/mcp-server/HOSTED_TODO.md`](plugins/corezoid/mcp-server/HOSTED_TODO.md).
 
 ## Telemetry
 

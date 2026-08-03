@@ -18,6 +18,7 @@ Use this before tagging a public release.
 
 - [ ] `plugins/corezoid/.mcp.json` contains no credentials or private URLs.
 - [ ] Go source in `plugins/corezoid/mcp-server/` compiles without errors (`go build ./...`).
+- [ ] `fallbackServerVersion` in `plugins/corezoid/mcp-server/mcp_version.go` matches the manifest version — it is what `initialize.serverInfo.version` reports for a build without `-ldflags`. Verify all five places at once with `python3 scripts/check-version-sync.py`; `TestFallbackServerVersionMatchesManifest` fails the build if it drifts.
 
 ## Content
 
