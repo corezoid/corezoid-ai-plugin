@@ -1,0 +1,327 @@
+[
+  {
+    "tool": "pull-process",
+    "description": "Export a single Corezoid process definitions to a JSON file. The file is saved to the folder path matching its location in Corezoid (resolved from parent_id).",
+    "schema_sha256": "0041390a27efbe3777f7d74c5556eac5bee3e208fc99a8f357f59676adaefc52"
+  },
+  {
+    "tool": "pull-folder",
+    "description": "Recursively export all processes from a Corezoid folder/stage to a local directory.",
+    "schema_sha256": "fcb2a240c56dc7f265c8e9b52fad81ec45bea50fe99b8bd0cc63758ad23d82e2"
+  },
+  {
+    "tool": "create-variable",
+    "description": "Create an environment variable in a Corezoid folder.",
+    "schema_sha256": "92aed160fe21d378a45d5b9c87c51544d472fa2924e8fb95358607401e76e8dd"
+  },
+  {
+    "tool": "list-variables",
+    "description": "List all environment variables (env_var) in a Corezoid stage: short_name, obj_id, data_type (raw/json), env_var_type (visible/secret), title, value and change time. Read-only. Secret variables are ALWAYS shown masked — their value is never retrievable after creation, only fingerprints. Returns the obj_id needed by modify-variable / delete-variable.",
+    "schema_sha256": "1285f76fa604e1ffebba78ab4121c3efd409a1c8711f903a81f0975c72d791f5"
+  },
+  {
+    "tool": "modify-variable",
+    "description": "Modify a Corezoid environment variable: change its value, description (display title), data_type (raw/json), and/or rename it (new_name). CONSEQUENTIAL: renaming breaks every {{env_var[@old-name]}} reference in the stage's processes, and a value change takes effect immediately in running processes without redeploy. env_var_type (visible/secret) CANNOT be changed after creation — the server silently ignores such changes. Modify is partial: omitted fields keep their current value (a secret's value survives a modify that does not send value). SAFETY: apply=false (default) is a dry-run showing the current → new diff and, for renames, a local reference scan — nothing is changed. To apply you MUST show the diff to the user, get their explicit confirmation, then call with apply=true AND confirm=\"\u003cshort_name\u003e#\u003cobj_id\u003e\" (the CURRENT short_name, before any rename). Never modify a variable without the user confirming.",
+    "schema_sha256": "c92612e14ae48a0eadcd8943211d8839ef3820d40d882a7ddbee47348a357e75"
+  },
+  {
+    "tool": "delete-variable",
+    "description": "PERMANENTLY delete a Corezoid environment variable. DESTRUCTIVE AND IRREVERSIBLE: unlike processes/folders/projects there is NO recycle bin for variables — the value (secrets included) is gone immediately, and any process still referencing {{env_var[@name]}} will fail at runtime. SAFETY: apply=false (default) is a dry-run that shows the variable's full details plus a local reference scan — nothing is deleted. To delete you MUST show the user the dry-run warning block VERBATIM, get their explicit confirmation, then call with apply=true AND confirm=\"\u003cshort_name\u003e#\u003cobj_id\u003e\". Never delete a variable without the user confirming.",
+    "schema_sha256": "106ec899575adf31c0e8d78768a53f3dfef10524f65897f1db676b2c88e104b7"
+  },
+  {
+    "tool": "push-process",
+    "description": "Validate and deploy a process file to Corezoid. Runs lint-process first and blocks the deploy on issues that would break it (broken node links, old-format nodes, RPC paths without reply, nodes missing a default go, sub-30s timers, literal reply values); advisory findings are shown but do not block. Active Call Process Stub Mode (obj_type:4) is allowed as a warning only when the target stage is resolved as mutable and non-production-like; immutable/prod/unknown stages are blocked because Stub Mode bypasses the real called process. Pass allow_active_stub_mode=true only after explicit confirmation that the temporary mock behavior is intentional. Pass force=true to deploy despite other blocking lint issues. Note: the server regenerates node IDs on every push and the local file is rewritten in place with the server's canonical scheme — reference nodes by title when iterating, and re-read the file after a push instead of reusing old node IDs.",
+    "schema_sha256": "3b896e36ad90fc065125d2b2f5b036aeecf57260e7b2082144234b8f0d2791e9"
+  },
+  {
+    "tool": "layout-process",
+    "description": "Auto-arrange a process's node coordinates into a clean, readable layout (waterfall for simple trees, layered+error-rail for meshes, aligned table/star grids for region bundles). Rewrites ONLY x/y; collapse/expand state, extra, edges, logic, conv_id and aliases stay intact. Runs entirely on the local file (no API, no auth). The result always reports the chosen strategy, canvas size and overlap count; dry=true previews placements without writing.",
+    "schema_sha256": "f1bbee8724369b6f0577fd9ce7e2a60a8ca80fff456f2d4123a6239fd4055e70"
+  },
+  {
+    "tool": "lint-process",
+    "description": "Validate process structure. Reports orphaned nodes, noop conditions, unused set_params, passthrough escalations, shared error clusters (an error node fed by several different failing nodes — each needs its own Reply/Error cluster), old-format nodes (obj_type:0 err_node_id targets, or action logic mixed with go_if_const — the UI would force-convert the process), finals reachable without api_rpc_reply in a process that replies elsewhere (an RPC caller would hang), nodes whose logics do not end with a default go and time semaphors under the 30s server minimum (both reject the deploy), literal non-string values in api_rpc_reply res_data (a scheme shape that hangs the server commit on push), and active Call Process Stub Mode nodes (obj_type:4) that bypass the real called process.",
+    "schema_sha256": "d0638c07430e6763731ee649cc46ac98f559369fe67e3696a0d4d83c6b70219d"
+  },
+  {
+    "tool": "run-task",
+    "description": "Run a task on an already-deployed Corezoid process (without re-deploying) and wait for it to reach a final node. Polls up to wait_sec (default 30), so tasks that cross async nodes (api, api_rpc, db_call, delay) still return their final result. On timeout reports the node the task is parked at, plus TaskRef/TaskID for follow-up via list-task-history.",
+    "schema_sha256": "ca98b518aca7ed3035245d27b4f47472d7b808bf3f2914bcf4faca64fcf6e8bc"
+  },
+  {
+    "tool": "create-process",
+    "description": "Create a new empty process (conv_type \"process\") inside a Corezoid folder.",
+    "schema_sha256": "917251cc2927d2224953438c87c05cd01491325c2e737bf3ea78b2fe6a81deec"
+  },
+  {
+    "tool": "create-state-diagram",
+    "description": "Create a new empty state diagram (conv_type \"state\") inside a Corezoid folder. Use this for status / lifecycle storage instead of create-process.",
+    "schema_sha256": "9cdefba174cc05c1b7e1b3f069a1ea107f90717fd002005c0d8561a8af0f077d"
+  },
+  {
+    "tool": "create-folder",
+    "description": "Create a new folder inside a parent Corezoid folder.",
+    "schema_sha256": "b10b096167adb667ad21dcbb1a1e0588a2856a5d731021253c9543fa6840cca7"
+  },
+  {
+    "tool": "show-folder",
+    "description": "Show metadata for a single Corezoid folder: title, obj_type (0 normal, 2 project, 3 stage), parent folder ID and parent type.",
+    "schema_sha256": "6839f01b6b7605465accc833c5fcadd32a5502a301f91ff19df2f3e9145790fd"
+  },
+  {
+    "tool": "list-folders",
+    "description": "List the immediate children of a Corezoid folder (subfolders + processes + state diagrams). Lighter than pull-folder — does not write anything to disk.",
+    "schema_sha256": "876978bbb8920e0c0e1346bade766082690c38330429e7a9ddcbf2b503d1114d"
+  },
+  {
+    "tool": "modify-folder",
+    "description": "Rename a Corezoid folder and/or update its description. At least one of title or description must be supplied.",
+    "schema_sha256": "9381bb88cb75f915dbda185ea869320353927d9bb7497164440f40e60d4a3a11"
+  },
+  {
+    "tool": "delete-folder",
+    "description": "Move a Corezoid folder to the recycle bin (Trash). Can be restored from the Corezoid UI.",
+    "schema_sha256": "2fc2a703f3f8d1cff3b14c4b4304d3c70544e270532c6bff200bff9ae01cbe93"
+  },
+  {
+    "tool": "delete-process",
+    "description": "Move a Corezoid process (or state diagram) to the recycle bin (Trash). Can be restored from the Corezoid UI. Use pull-process first if you want a local backup before deleting.",
+    "schema_sha256": "39dd18d33f34b60eeef71ee9e96196badd16474232da3898bbb61db310c7b703"
+  },
+  {
+    "tool": "create-alias",
+    "description": "Create a short alias for a Corezoid process. Aliases are stage-scoped; the stage is derived from the process file's parent_id (walking up folders until a stage is reached), so a stale COREZOID_STAGE_ID in .env no longer produces the cryptic \"Object is not in stage\" error. Pass stage_id explicitly to override.",
+    "schema_sha256": "af22d2916815392001f01f9ced79a40b6532a3a38aa200ab61e23eece37022f0"
+  },
+  {
+    "tool": "list-workspaces",
+    "description": "Return the list of Corezoid workspaces (companies) available to the authenticated user.",
+    "schema_sha256": "efddc7bd8bbcef73a14eb1ace1ffdaec81e518ef1e13c1e9271d0b8acb694a49"
+  },
+  {
+    "tool": "list-projects",
+    "description": "Return the list of projects inside a Corezoid workspace (company), sorted by title.",
+    "schema_sha256": "43381e3dbe15e387ac4e23c225a450e942b0af3352e37786ed97283fff131245"
+  },
+  {
+    "tool": "list-stages",
+    "description": "Return the list of stages (environments) inside a Corezoid project.",
+    "schema_sha256": "705ee381a88cd3c7346cfcbbd0012543c6b1915a38c4bc7780a06f15ed8166d6"
+  },
+  {
+    "tool": "deploy-stage",
+    "description": "Deploy (promote) one stage's processes onto another within a Corezoid project — e.g. develop → production. Wraps the admin obj_scheme compare+merge that the UI \"Deploy\" button issues (on /api/2/compare and /api/2/merge). DESTRUCTIVE, and irreversible on an immutable target. SAFETY: apply=false (default) is a dry-run that only shows the diff and any conflicts — nothing is deployed. To actually deploy you MUST first get the user's explicit confirmation of the exact source→target, then call with apply=true AND confirm=\"\u003csource_stage_id\u003e-\u003e\u003ctarget_stage_id\u003e\". Never deploy without the user confirming. The merge is asynchronous; this tool waits for it to finish over the progress WebSocket.",
+    "schema_sha256": "60e2f92dfaf7e8fdda9e6ebf30db3e4e39e07f2c14f50ad93aefb539999e0a8a"
+  },
+  {
+    "tool": "set-stage-immutable",
+    "description": "Set a stage's immutable (read-only) flag. Immutable stages are the ONLY valid deploy/merge targets (see deploy-stage); an immutable stage can no longer be edited directly — only changed via deploy. Consequential: making a stage editable removes that protection. Requires explicit user confirmation — call with confirm=\"\u003cstage_id\u003e:\u003ctrue|false\u003e\" (e.g. \"684082:true\"). Never change immutability without the user confirming.",
+    "schema_sha256": "f9032c3695e59ae4a6b517da9a2318c54f7a35ba83e424812307079c6b54738c"
+  },
+  {
+    "tool": "create-project",
+    "description": "Create a new Corezoid project (with optional stages) inside a workspace. Returns the new project_id and the stage IDs that were created.",
+    "schema_sha256": "79288f98b152e2c68fed374eac493b7924028890c68274396737c8e7828f84ec"
+  },
+  {
+    "tool": "modify-project",
+    "description": "Update a Corezoid project's title, short_name and/or description. At least one of title/short_name/description must be provided.",
+    "schema_sha256": "ba3241ef8c536cb0bff22f48a62746af61778914e2d14fe5bddeca4a1977c623"
+  },
+  {
+    "tool": "delete-project",
+    "description": "Move a Corezoid project to the recycle bin (Trash). Use restore-project to undo. Use destroy via the Corezoid UI to permanently delete.",
+    "schema_sha256": "8c50dfa9264fbc862e0ac5a7f307e96005d0a842a6658d7e2809e3afed352543"
+  },
+  {
+    "tool": "show-project",
+    "description": "Show a Corezoid project's metadata and the stages available to the caller. Returns project obj_id, short_name, parent folder ID and the list of stage IDs/titles.",
+    "schema_sha256": "54de4a43430b8082e2d009bb772b1d389d56a96f022ae9ad0a7e99e97d576ab4"
+  },
+  {
+    "tool": "login",
+    "description": "Authenticate with Corezoid. Supports two auth methods: (1) OAuth2 browser flow — opens a browser window and saves the token so it persists across sessions; (2) API key — provide api_login and api_secret to skip the browser flow (credentials saved to project .env). Optionally accepts account_url, workspace_id, and stage_id to skip interactive prompts.",
+    "schema_sha256": "4eb87d49e0d10d8d98dc5f787f00ea23a1a5e0f3d9230977a3b966b605663447"
+  },
+  {
+    "tool": "create-dashboard",
+    "description": "Create a new Corezoid dashboard for visualizing process node metrics. Returns dashboard_id needed for adding charts.",
+    "schema_sha256": "8dfad6619aa14b4179ec425903617cdbfc89c539d9447e71d29fbc3bc39a2c5c"
+  },
+  {
+    "tool": "get-dashboard",
+    "description": "Get a Corezoid dashboard with its charts and series. Use after add-chart to verify series is populated.",
+    "schema_sha256": "d8156f8551830f0702a532284659e2e62df2db88f770fbe04c027a16f64488ae"
+  },
+  {
+    "tool": "add-chart",
+    "description": "Add a chart to a Corezoid dashboard. chart_type must be one of: column, pie, funnel, table. Use 'column' for bar/comparison charts — 'bar' is not a valid type.",
+    "schema_sha256": "5a144f7df0af66da480c86f530f6a321110c8a204d3816cc77fe6f571e06f39a"
+  },
+  {
+    "tool": "modify-chart",
+    "description": "Modify an existing Corezoid chart. Always provide the full series array — partial updates are not supported.",
+    "schema_sha256": "ba181af2591e938097f441dd113189231be415a145c4e8c5b8d8beb16f2cc2e6"
+  },
+  {
+    "tool": "get-chart",
+    "description": "Get a single chart with its series data.",
+    "schema_sha256": "40e3aaa206d161ff93f9d41a78bc288d371acf27ac311331fb846b991eb20dfb"
+  },
+  {
+    "tool": "set-dashboard-layout",
+    "description": "Save chart positions on a dashboard grid. Must be called after add-chart/modify-chart to make charts visible. Each grid entry positions one chart by its chart_id (hex string from add-chart).",
+    "schema_sha256": "ce011ce07ade4343cd07bd40e7081fe1274a7eea0ec9e3c76f4ef8678011d745"
+  },
+  {
+    "tool": "logout",
+    "description": "Remove saved Corezoid credentials from disk.",
+    "schema_sha256": "efddc7bd8bbcef73a14eb1ace1ffdaec81e518ef1e13c1e9271d0b8acb694a49"
+  },
+  {
+    "tool": "list-task-history",
+    "description": "Return the execution history (node path) for a task. Shows each node transition with node_id, node_prev_id, create_time_ms.",
+    "schema_sha256": "c711e15985c3059afa734c065c133190ee2439fa36f56fc631ac7f38965672e5"
+  },
+  {
+    "tool": "list-node-tasks",
+    "description": "Return tasks currently sitting in a specific node of a process.",
+    "schema_sha256": "84dfd3b2de38a1f8e7fc4a9e1a1e51df8df2b7764b4d80d3f1080096d79da4a7"
+  },
+  {
+    "tool": "get-node-stat",
+    "description": "Return time-series statistics (in/out counts) for a node over a time range. node_id is the ID shown in the Corezoid UI archive URL (/diagram/{node_id}/archive). ops[0]['data'] contains [{\"date\":\"YYYY-MM-DD\",\"in\":N,\"out\":M}] for non-zero buckets. ops[0]['title'] is the node title.",
+    "schema_sha256": "07013ea448e817943f5700bf87217fdf2c5a41beff4db184b6f392ed1cdf003c"
+  },
+  {
+    "tool": "modify-task",
+    "description": "Modify an existing task's data. The task will continue from the node where it was paused with the updated data. At least one of task_id or ref must be provided.",
+    "schema_sha256": "78e9d73f610f070ce5c2ecc27ebd72addbf13e0522ebd8e0808099de8cf66015"
+  },
+  {
+    "tool": "delete-task",
+    "description": "Delete a task from a process. At least one of task_id or ref must be provided. If only ref is given, the task_id and node_id are resolved automatically.",
+    "schema_sha256": "4d44b2865e47b38fcb9d6590cd9e9aa1d16cf1c2e47ee9b97ba5fb59d3987e8d"
+  },
+  {
+    "tool": "share-object",
+    "description": "Grant or revoke access to a Corezoid object (process/folder/stage/project) for a user, API key, or group. To revoke, pass privs=\"none\" — that's the same wire operation as a share with empty privs. API keys share as obj_to=\"user\" with the api key's obj_id.",
+    "schema_sha256": "228b81a43944e077a090109812695b1558e5afba1f77c3baa67d290cca9676f7"
+  },
+  {
+    "tool": "list-shares",
+    "description": "List users, API keys and groups that currently have access to a Corezoid object.",
+    "schema_sha256": "83253d9ac30df1dde02511091e47f92556ef4f7b6908a21955a77f10674f9844"
+  },
+  {
+    "tool": "create-group",
+    "description": "Create a new user group in the current workspace. Returns the group's obj_id (use as obj_to_id when sharing).",
+    "schema_sha256": "1df90accabdd9f076a1d2f05dcc469b4fe8ef31a809808bfb6bf49c83e7f2881"
+  },
+  {
+    "tool": "modify-group",
+    "description": "Rename a user group and/or update its description. At least one of title or description must be supplied.",
+    "schema_sha256": "bd1a35f8689b47c884dba0a0c300656c555efa4ea06ee092c934a22b54df859a"
+  },
+  {
+    "tool": "list-group-objects",
+    "description": "List the processes (conv objects) currently shared with a group. Used to audit group impact before destructive operations. Note: folders/stages/projects shared to the group are not retrievable via this endpoint.",
+    "schema_sha256": "3232ca0afda8c714ab219073691fc6df16db95d1761c6b8e69c9d2dc3c25fef1"
+  },
+  {
+    "tool": "delete-group",
+    "description": "Delete a user group. By default refuses to delete if the group still has active shares — pass force=true to override. Existing share links are revoked when the group is deleted.",
+    "schema_sha256": "021de7cde67f022e7dec1b7cf2c276f773cab2620589f0fbb0ccca502c3840ee"
+  },
+  {
+    "tool": "add-to-group",
+    "description": "Add a user (or API key user) to a group.",
+    "schema_sha256": "8f2109a71d3a787024693af5f03111791b684ddcfd1c3da393e51c1638105694"
+  },
+  {
+    "tool": "remove-from-group",
+    "description": "Remove a user from a group.",
+    "schema_sha256": "8f2109a71d3a787024693af5f03111791b684ddcfd1c3da393e51c1638105694"
+  },
+  {
+    "tool": "list-groups",
+    "description": "List user groups visible in the current workspace.",
+    "schema_sha256": "a49275f008ff2e705a129813b0cc81b26546603f2b5946355e28cca0cc966892"
+  },
+  {
+    "tool": "create-api-key",
+    "description": "Create a new API key in the workspace. The secret is written to ~/.corezoid/api-keys/\u003cslug\u003e-\u003cobj_id\u003e.json (mode 0600) and the chat output reports only the file path — the secret is never printed in agent responses.",
+    "schema_sha256": "2388ecfd67a9a80ed126956fbb7dc6f02057371faf029b578939fece7da0559a"
+  },
+  {
+    "tool": "modify-api-key",
+    "description": "Update title and/or description of an existing API key. Does not regenerate the secret.",
+    "schema_sha256": "d291454516d4de9da042eb1fd101163ebfd19560b279d3b925d4a6849387adac"
+  },
+  {
+    "tool": "delete-api-key",
+    "description": "Delete an API key. The secret is invalidated immediately — subsequent requests return 401. Objects owned by the key are reassigned to the workspace owner.",
+    "schema_sha256": "64d34fb5abd0bc1a7e0399c60f058f20447ec56eb9deb2d63899d014589c23a9"
+  },
+  {
+    "tool": "list-api-keys",
+    "description": "List API keys visible in the current workspace.",
+    "schema_sha256": "346407f821267f7835b9036e6e4ff8671f6809b0f49a82e47004460fad6dc283"
+  },
+  {
+    "tool": "find-principal",
+    "description": "Search users, groups or API keys in the workspace by substring. Returns obj_ids to pass as obj_to_id in share-object.",
+    "schema_sha256": "02c74b29ca8dd59dfbdd32a06cf22692739e7d9e600dbb513124b449e263953f"
+  },
+  {
+    "tool": "invite-user",
+    "description": "Invite an external email to the workspace AND share a process/folder/stage/project with them in one call. Returns the invite URL the recipient must open.",
+    "schema_sha256": "299e6230e388023783f8e59e776e9230529336db02159ef3e0465ebd64d35fc3"
+  },
+  {
+    "tool": "send-feedback",
+    "description": "Submit user feedback about plugin behavior to Corezoid. Use only after the user has explicitly confirmed sending. Returns a feedback ticket id.",
+    "schema_sha256": "0ddfe81d9a06661b6f05c3b19c7f532fd190d65884124c5ee6f806e14dc18697"
+  },
+  {
+    "tool": "create-snapshot",
+    "description": "Create a snapshot of the current server state of a process before making changes. Useful as a manual checkpoint before experiments. Auto-snapshot is also created automatically before every push-process on existing processes.",
+    "schema_sha256": "b6745dbf42415a574a22b950a480974621124704e77a0d55612ae55fd867b824"
+  },
+  {
+    "tool": "list-snapshots",
+    "description": "List all snapshots for a process. Returns version, title, author and creation time for each snapshot.",
+    "schema_sha256": "4a2b8063c0ede5c8e2b37153c6f0a44d8efd4f46b4bd92a8ac87dd382783f408"
+  },
+  {
+    "tool": "delete-snapshot",
+    "description": "Delete a snapshot by its obj_id. Use list-snapshots to find the snapshot_id.",
+    "schema_sha256": "e8f8bfa93c962d38a449e2f3e10219ac327b6815a307f230e0fb9065b7b5f9c9"
+  },
+  {
+    "tool": "get-snapshot",
+    "description": "Get the node list of a specific snapshot for diff comparison against the current process state. Returns all nodes as they existed at snapshot time.",
+    "schema_sha256": "6022801608d5a535eebad24f868bf32c75bf01b89baf36e9ca42c4bf58b83069"
+  },
+  {
+    "tool": "git-pull-context",
+    "description": "Clone or pull the Corezoid git mirror for the current workspace into .git-context/. Requires COREZOID_GIT_URL, API_LOGIN, and API_SECRET. Silently skipped if not configured.",
+    "schema_sha256": "efddc7bd8bbcef73a14eb1ace1ffdaec81e518ef1e13c1e9271d0b8acb694a49"
+  },
+  {
+    "tool": "git-push-context",
+    "description": "Commit and push local _ext/ changes to the Corezoid git mirror. Requires API_LOGIN and API_SECRET. Returns a warning (not an error) if nothing changed.",
+    "schema_sha256": "b361547671582984312700bdab3a271d49b55f291d0b1ac45d40f681a35edd7d"
+  },
+  {
+    "tool": "read-context-file",
+    "description": "Read a file from .git-context/ of the current workspace (git mirror local copy). Returns content and a found flag.",
+    "schema_sha256": "5eae798b87c1608634e054e778c47c23b0b83f300c5a7d1c48c4d6d89f4c152c"
+  },
+  {
+    "tool": "update-context-file",
+    "description": "Write or append to a file inside _ext/ of the git mirror local copy (.git-context/). Path must start with _ext/. Use git-push-context to publish the changes.",
+    "schema_sha256": "47dbc38481195e47e52b0f913889784665284d015b3ecb20ddedf7e354557a3a"
+  }
+]

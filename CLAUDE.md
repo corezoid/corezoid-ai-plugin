@@ -42,10 +42,36 @@ go test -race -coverprofile=coverage.out ./...    # tests with race detector
 go tool cover -func=coverage.out                  # coverage summary
 ```
 
-Golden tests (layout coordinates in `testdata/golden/layout_*.json`, lint output in `testdata/golden/lint_*.txt`) are regenerated with the `-update` flag after an intentional algorithm change:
+Golden tests (layout coordinates in `testdata/golden/layout_*.json`, lint output in `testdata/golden/lint_*.txt`, MCP tool surface in `testdata/golden/tools_list.json`) are regenerated with the `-update` flag after an intentional algorithm change:
 
 ```bash
 go test -run TestLayoutGolden -update ./...
+```
+
+### MCP tool definitions
+
+Tool definitions are split by domain, one file per `mcp_handlers_<domain>.go`:
+
+```
+tools_registry.go                  — spine: concatenates the domain groups into toolRegistry
+tools_registry_access.go           — sharing, groups, API keys
+tools_registry_alias.go            — process aliases
+tools_registry_auth.go             — login / logout
+tools_registry_dashboard.go        — dashboards and charts
+tools_registry_feedback.go         — send-feedback
+tools_registry_git.go              — git-mirror context tools
+tools_registry_process.go          — process/folder export, lint, layout, push, CRUD
+tools_registry_project.go          — workspaces, projects, stages, stage deploy
+tools_registry_snapshots.go        — process snapshots
+tools_registry_state_diagram.go    — state diagrams
+tools_registry_tasks.go            — task run, history, stats, modify/delete
+tools_registry_variables.go        — env_var CRUD
+```
+
+A new tool goes into its domain file's group slice; `tools_registry.go` is the only place that decides the order tools are exposed in. Hosts may enumerate `tools/list` positionally, so that order is frozen by `TestToolsList_Snapshot` against `testdata/golden/tools_list.json`. Adding, removing, reordering or rewording a tool means regenerating the golden explicitly — review the golden diff to confirm nothing else moved:
+
+```bash
+go test -run TestToolsList_Snapshot -update ./...
 ```
 
 ### Repo-level checks
@@ -71,6 +97,8 @@ python3 scripts/generate-discovery.py
 .claude-plugin/plugin.json        — Plugin manifest (name, version, description)
 plugins/corezoid/
   mcp-server/                     — Go MCP server source (starts automatically via .mcp.json)
+    tools_registry.go               — spine: order of the MCP tool list (frozen by a golden test)
+    tools_registry_<domain>.go      — tool definitions, one file per handler domain
   skills/
     corezoid/                       — Main skill: platform overview, MCP tools, routing
       SKILL.md
@@ -143,6 +171,7 @@ Changes to node structure or lint rules may require refreshing MCP-server golden
 
 - `plugins/corezoid/mcp-server/testdata/golden/layout_*.json` — layout coordinates. Regenerate with `go test -run TestLayoutGolden -update ./...`.
 - `plugins/corezoid/mcp-server/testdata/golden/lint_*.txt` — lint output. Regenerate with `go test -run TestFormatLintResult_Golden -update ./...`.
+- `plugins/corezoid/mcp-server/testdata/golden/tools_list.json` — the MCP `tools/list` surface (name, description, input-schema hash, in order). Regenerate with `go test -run TestToolsList_Snapshot -update ./...`.
 
 When adding a new skill, also update this file's Architecture section AND the skills table in `README.md`. CI (`scripts/check-skills-sync.py`) fails the build if the two lists diverge from the actual directory.
 
