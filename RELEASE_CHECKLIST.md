@@ -6,17 +6,20 @@ Use this before tagging a public release.
 
 - [ ] `plugins/corezoid/.claude-plugin/plugin.json` version is updated.
 - [ ] `plugins/corezoid/.codex-plugin/plugin.json` version matches Claude manifest.
-- [ ] `.claude-plugin/marketplace.json` `plugins[0].version` matches both manifests.
-- [ ] `.agents/plugins/marketplace.json` `plugins[0].version` matches all manifests.
+- [ ] `plugins/corezoid/.kiro-plugin/plugin.json` version matches Claude manifest.
+- [ ] `.claude-plugin/marketplace.json` `plugins[0].version` matches all plugin manifests.
+- [ ] `.agents/plugins/marketplace.json` `plugins[0].version` matches all plugin manifests.
+- [ ] `POWER.md` YAML frontmatter `version:` matches all plugin manifests.
 - [ ] `.agents/plugins/marketplace.json` `plugins[0].license` is `"MIT"`.
 - [ ] No TODO or placeholder values remain in any manifest.
 - [ ] Manifest asset and skill paths resolve under `plugins/corezoid/`.
-- [ ] All four manifests have `"license": "MIT"` (not ISC).
+- [ ] All plugin manifests have `"license": "MIT"` (not ISC).
 - [ ] All plugin `source` paths listed in marketplace manifests exist on disk.
 
 ## MCP Server
 
 - [ ] `plugins/corezoid/.mcp.json` contains no credentials or private URLs.
+- [ ] `plugins/corezoid/.mcp.kiro.json` parses and contains no credentials.
 - [ ] Go source in `plugins/corezoid/mcp-server/` compiles without errors (`go build ./...`).
 
 ## Content
@@ -34,7 +37,23 @@ python3 -m json.tool .claude-plugin/marketplace.json >/dev/null
 python3 -m json.tool .agents/plugins/marketplace.json >/dev/null
 python3 -m json.tool plugins/corezoid/.claude-plugin/plugin.json >/dev/null
 python3 -m json.tool plugins/corezoid/.codex-plugin/plugin.json >/dev/null
+python3 -m json.tool plugins/corezoid/.kiro-plugin/plugin.json >/dev/null
 python3 -m json.tool plugins/corezoid/.mcp.json >/dev/null
+python3 -m json.tool plugins/corezoid/.mcp.kiro.json >/dev/null
+```
+
+## Version sync
+
+All six release files should show the same version:
+
+```bash
+grep -nE '"version"|^version:' \
+  plugins/corezoid/.claude-plugin/plugin.json \
+  plugins/corezoid/.codex-plugin/plugin.json \
+  plugins/corezoid/.kiro-plugin/plugin.json \
+  .claude-plugin/marketplace.json \
+  .agents/plugins/marketplace.json \
+  POWER.md
 ```
 
 ## Testing

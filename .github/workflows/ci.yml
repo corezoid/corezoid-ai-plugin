@@ -20,7 +20,9 @@ jobs:
           python3 -m json.tool .agents/plugins/marketplace.json > /dev/null
           python3 -m json.tool plugins/corezoid/.claude-plugin/plugin.json > /dev/null
           python3 -m json.tool plugins/corezoid/.codex-plugin/plugin.json > /dev/null
+          python3 -m json.tool plugins/corezoid/.kiro-plugin/plugin.json > /dev/null
           python3 -m json.tool plugins/corezoid/.mcp.json > /dev/null
+          python3 -m json.tool plugins/corezoid/.mcp.kiro.json > /dev/null
 
       - name: No dead plugin paths in marketplace manifests
         run: |
@@ -56,27 +58,46 @@ jobs:
       - name: Version sync across manifests
         run: |
           python3 - <<'EOF'
-          import json, sys
+          import json, re, sys
+
+          def read_frontmatter_version(path):
+              with open(path) as f:
+                  text = f.read()
+              m = re.match(r"^---\n(.*?)\n---", text, re.DOTALL)
+              if not m:
+                  raise SystemExit(f"{path}: no YAML frontmatter")
+              for line in m.group(1).splitlines():
+                  mv = re.match(r"^version:\s*(.+?)\s*$", line)
+                  if mv:
+                      return mv.group(1).strip().strip('"').strip("'")
+              raise SystemExit(f"{path}: no version field in frontmatter")
 
           with open("plugins/corezoid/.claude-plugin/plugin.json") as f:
               claude_ver = json.load(f)["version"]
           with open("plugins/corezoid/.codex-plugin/plugin.json") as f:
               codex_ver = json.load(f)["version"]
+          with open("plugins/corezoid/.kiro-plugin/plugin.json") as f:
+              kiro_ver = json.load(f)["version"]
           with open(".claude-plugin/marketplace.json") as f:
               market_ver = json.load(f)["plugins"][0]["version"]
           with open(".agents/plugins/marketplace.json") as f:
               agents_ver = json.load(f)["plugins"][0]["version"]
+          power_ver = read_frontmatter_version("POWER.md")
 
           versions = {
               "claude plugin.json": claude_ver,
               "codex plugin.json": codex_ver,
+              "kiro plugin.json": kiro_ver,
               ".claude-plugin/marketplace.json": market_ver,
               ".agents/plugins/marketplace.json": agents_ver,
+              "POWER.md": power_ver,
           }
           print("Versions found:", versions)
 
           if len(set(versions.values())) > 1:
               print("ERROR: version mismatch across manifests")
+              for name, ver in versions.items():
+                  print(f"  {name}: {ver}")
               sys.exit(1)
 
           print("All versions match:", claude_ver)

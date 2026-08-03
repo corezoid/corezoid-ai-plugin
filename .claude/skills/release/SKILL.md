@@ -1,6 +1,6 @@
 ---
 name: release
-description: Project release helper for corezoid-ai-plugin. Prepares a new tagged release end-to-end. Use this skill whenever the user says "release", "релиз", "новый релиз", "сделай релиз", "выпусти версию", "bump version", "обновить версию", "tag a release", "/release", or anything that implies cutting a new version of this plugin. Walks the user through six explicit phases: (1) compare `main` with the latest git tag and summarise what changed, (2) ask which new version to publish, (3) draft a CHANGELOG.md entry in the existing format, (4) sync that version across all four manifest files (`.claude-plugin/marketplace.json`, `plugins/corezoid/.claude-plugin/plugin.json`, `plugins/corezoid/.codex-plugin/plugin.json`, `.agents/plugins/marketplace.json`), (5) show the user the full proposed change set and wait for explicit confirmation, (6) commit on the current branch and create the matching `vX.Y.Z` tag. Always use this skill instead of running release steps manually — it keeps the four manifests in lock-step, formats the changelog consistently, and prevents partial releases.
+description: Project release helper for corezoid-ai-plugin. Prepares a new tagged release end-to-end. Use this skill whenever the user says "release", "релиз", "новый релиз", "сделай релиз", "выпусти версию", "bump version", "обновить версию", "tag a release", "/release", or anything that implies cutting a new version of this plugin. Walks the user through six explicit phases: (1) compare `main` with the latest git tag and summarise what changed, (2) ask which new version to publish, (3) draft a CHANGELOG.md entry in the existing format, (4) sync that version across all six release files (`.claude-plugin/marketplace.json`, `plugins/corezoid/.claude-plugin/plugin.json`, `plugins/corezoid/.codex-plugin/plugin.json`, `plugins/corezoid/.kiro-plugin/plugin.json`, `.agents/plugins/marketplace.json`, `POWER.md`), (5) show the user the full proposed change set and wait for explicit confirmation, (6) commit on the current branch and create the matching `vX.Y.Z` tag. Always use this skill instead of running release steps manually — it keeps the six release files in lock-step, formats the changelog consistently, and prevents partial releases.
 ---
 
 # Release skill
@@ -9,7 +9,7 @@ This skill prepares a new tagged release of `corezoid-ai-plugin`. It runs throug
 
 ## Why a dedicated skill
 
-A release of this plugin touches four separate manifest files plus the changelog. Forgetting any one of them ships a broken or inconsistent release: marketplace listings disagree about the version, Codex installs the wrong build, or the changelog drifts from what was actually tagged. The single source of release truth for this repo is `RELEASE_CHECKLIST.md` — this skill executes that checklist programmatically so nothing is missed.
+A release of this plugin touches six separate manifest files (Claude, Codex, Kiro plugin manifests; two marketplace manifests; and `POWER.md` frontmatter) plus the changelog. Forgetting any one of them ships a broken or inconsistent release: marketplace listings disagree about the version, Codex/Kiro install the wrong build, or `POWER.md` — which is attached to the GitHub Release artifact set — advertises a stale version. The single source of release truth for this repo is `RELEASE_CHECKLIST.md` — this skill executes that checklist programmatically so nothing is missed.
 
 ## The six phases
 
@@ -76,9 +76,9 @@ Rules:
 
 Show the drafted entry to the user before writing it to disk. They will often want to reword a bullet or merge two of them — that's expected.
 
-### Phase 4 — Sync the version across all four manifests
+### Phase 4 — Sync the version across all six release files
 
-Goal: the new version appears in exactly four places, all in agreement.
+Goal: the new version appears in exactly six places, all in agreement.
 
 The files and the field to update:
 
@@ -86,22 +86,26 @@ The files and the field to update:
 | --- | --- |
 | `plugins/corezoid/.claude-plugin/plugin.json` | top-level `"version"` |
 | `plugins/corezoid/.codex-plugin/plugin.json` | top-level `"version"` |
+| `plugins/corezoid/.kiro-plugin/plugin.json` | top-level `"version"` |
 | `.claude-plugin/marketplace.json` | `plugins[0].version` |
 | `.agents/plugins/marketplace.json` | `plugins[0].version` |
+| `POWER.md` | YAML frontmatter `version:` |
 
-Use the `Edit` tool with `old_string` containing the full `"version": "..."` line so the replacement is unambiguous. Do not rewrite the whole file. Do not touch any other field — license, description, paths must stay as-is.
+Use the `Edit` tool with `old_string` containing the full `"version": "..."` (or `version: ...` for `POWER.md`) line so the replacement is unambiguous. Do not rewrite the whole file. Do not touch any other field — license, description, paths must stay as-is.
 
 After editing, verify with a single grep:
 
 ```bash
-grep -n '"version"' \
+grep -nE '"version"|^version:' \
   plugins/corezoid/.claude-plugin/plugin.json \
   plugins/corezoid/.codex-plugin/plugin.json \
+  plugins/corezoid/.kiro-plugin/plugin.json \
   .claude-plugin/marketplace.json \
-  .agents/plugins/marketplace.json
+  .agents/plugins/marketplace.json \
+  POWER.md
 ```
 
-All four lines must show the new version. If any one disagrees, fix it before moving on — never proceed to commit with mismatched manifests.
+All six lines must show the new version. If any one disagrees, fix it before moving on — never proceed to commit with mismatched manifests. CI's `Version sync across manifests` step and the release workflow's `guard` job both enforce this; a stale file will fail the release before any binary is built.
 
 Then validate that the JSON still parses:
 
@@ -110,6 +114,7 @@ python3 -m json.tool .claude-plugin/marketplace.json >/dev/null
 python3 -m json.tool .agents/plugins/marketplace.json >/dev/null
 python3 -m json.tool plugins/corezoid/.claude-plugin/plugin.json >/dev/null
 python3 -m json.tool plugins/corezoid/.codex-plugin/plugin.json >/dev/null
+python3 -m json.tool plugins/corezoid/.kiro-plugin/plugin.json >/dev/null
 ```
 
 ### Phase 5 — Confirm with the user
@@ -135,8 +140,10 @@ Stage only the files this skill touched plus any files the user confirmed should
 git add CHANGELOG.md \
         plugins/corezoid/.claude-plugin/plugin.json \
         plugins/corezoid/.codex-plugin/plugin.json \
+        plugins/corezoid/.kiro-plugin/plugin.json \
         .claude-plugin/marketplace.json \
-        .agents/plugins/marketplace.json
+        .agents/plugins/marketplace.json \
+        POWER.md
 # Plus any other files the user explicitly approved in Phase 1.
 ```
 
@@ -180,4 +187,4 @@ This deliberate pause is a safety net — pushing the tag triggers `release.yml`
 
 ## When the user wants a one-shot, no-questions release
 
-If the user explicitly says something like "just release a patch, no questions" or "автоматический релиз патча", you can fold Phase 2 (pick patch bump) and Phase 5 (confirmation) into a single approval at the end, but never skip showing the proposed changelog entry and the proposed version. The four-manifest sync is non-negotiable regardless of speed mode.
+If the user explicitly says something like "just release a patch, no questions" or "автоматический релиз патча", you can fold Phase 2 (pick patch bump) and Phase 5 (confirmation) into a single approval at the end, but never skip showing the proposed changelog entry and the proposed version. The six-file sync is non-negotiable regardless of speed mode.
