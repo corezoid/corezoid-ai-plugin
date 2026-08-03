@@ -153,6 +153,49 @@ func TestToolAnnotations_ReadOnlyIsIdempotent(t *testing.T) {
 	reportViolations(t, "read-only implies idempotent and non-destructive", violations)
 }
 
+// schemaHasProperty reports whether an InputSchema declares a top-level
+// property with the given name.
+func schemaHasProperty(schema interface{}, name string) bool {
+	obj, ok := schema.(map[string]interface{})
+	if !ok {
+		return false
+	}
+	props, ok := obj["properties"].(map[string]interface{})
+	if !ok {
+		return false
+	}
+	_, ok = props[name]
+	return ok
+}
+
+// TestToolAnnotations_ConfirmGatedIsDestructive ties the annotation to the
+// registry's own safety gate. A tool that demands an explicit confirm token is
+// by construction an operation the user must approve first, so it must not
+// ship destructiveHint: false — a client reads that as a positive claim of
+// safety and waves the call through without prompting. Name prefixes alone do
+// not catch these (set-stage-immutable is neither delete-* nor deploy-*).
+func TestToolAnnotations_ConfirmGatedIsDestructive(t *testing.T) {
+	var violations []string
+	gated := 0
+	for _, tool := range toolRegistry {
+		if !schemaHasProperty(tool.InputSchema, "confirm") {
+			continue
+		}
+		gated++
+		if tool.Annotations == nil || !isTrue(tool.Annotations.DestructiveHint) {
+			violations = append(violations,
+				tool.Name+": confirm-gated tool must declare destructiveHint: true")
+		}
+	}
+	reportViolations(t, "tools with a confirm token must be destructive", violations)
+
+	// Guard against a vacuous pass: if schemaHasProperty ever stops matching
+	// the schema shape, the loop above would silently check nothing.
+	if gated == 0 {
+		t.Error("found no confirm-gated tools — schemaHasProperty no longer matches the schema shape")
+	}
+}
+
 // TestToolAnnotations_UnsetHintsAreOmitted documents why the hints are
 // *bool: an absent hint must serialise as an absent key, not as false.
 // "unknown" and "definitely not" are different claims.

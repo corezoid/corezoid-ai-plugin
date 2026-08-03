@@ -543,7 +543,11 @@ var toolRegistry = []mcpTool{
 	{
 		Name:        "set-stage-immutable",
 		Description: "Set a stage's immutable (read-only) flag. Immutable stages are the ONLY valid deploy/merge targets (see deploy-stage); an immutable stage can no longer be edited directly — only changed via deploy. Consequential: making a stage editable removes that protection. Requires explicit user confirmation — call with confirm=\"<stage_id>:<true|false>\" (e.g. \"684082:true\"). Never change immutability without the user confirming.",
-		Annotations: toolHints(hintMutates, hintSafe, hintIdempotent, hintOpenWorld),
+		// Destructive in the immutable=false direction: it strips a stage's
+		// read-only protection, which is why the handler demands a confirm
+		// token. Reported as non-idempotent per the registry-wide rule, even
+		// though re-sending the same flag is a no-op.
+		Annotations: toolHints(hintMutates, hintDestructive, hintNonIdempotent, hintOpenWorld),
 		InputSchema: map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
