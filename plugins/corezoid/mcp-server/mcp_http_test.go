@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -330,5 +331,108 @@ func TestHTTPMCPEndpoint_Post_BadJSON(t *testing.T) {
 	body := w.Body.String()
 	if !strings.Contains(body, "parse error") {
 		t.Errorf("expected parse error in body, got %q", body)
+	}
+}
+
+// ---- bind guard ------------------------------------------------------------
+//
+// These exercise resolveHTTPBindAddr directly rather than starting a server:
+// the point of the guard is that a non-loopback bind never happens, so the
+// tests must not attempt one either.
+
+// freeLoopbackPort returns a port that was free on 127.0.0.1 a moment ago.
+func freeLoopbackPort(t *testing.T) string {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	defer ln.Close()
+	_, port, err := net.SplitHostPort(ln.Addr().String())
+	if err != nil {
+		t.Fatalf("split host port: %v", err)
+	}
+	return port
+}
+
+func TestHTTPBindGuard_Loopback(t *testing.T) {
+	port := freeLoopbackPort(t)
+	addr, err := resolveHTTPBindAddr("", port, "")
+	if err != nil {
+		t.Fatalf("unset COREZOID_BIND_ADDR must be allowed, got: %v", err)
+	}
+	if want := "127.0.0.1:" + port; addr != want {
+		t.Errorf("expected %q, got %q", want, addr)
+	}
+
+	// The resolved address must actually be bindable and reachable on loopback.
+	ln, err := net.Listen("tcp", addr)
+	if err != nil {
+		t.Fatalf("listen on %s: %v", addr, err)
+	}
+	defer ln.Close()
+	if host, _, _ := net.SplitHostPort(ln.Addr().String()); host != "127.0.0.1" {
+		t.Errorf("expected bind on 127.0.0.1, got %q", host)
+	}
+}
+
+func TestHTTPBindGuard_ExplicitLoopback(t *testing.T) {
+	cases := []struct{ bind, want string }{
+		{"127.0.0.1", "127.0.0.1:8080"},
+		{"::1", "[::1]:8080"},
+		{"[::1]", "[::1]:8080"},
+		{"localhost", "localhost:8080"},
+		{"  LocalHost  ", "localhost:8080"}, // trimmed and lowercased
+	}
+	for _, tc := range cases {
+		addr, err := resolveHTTPBindAddr(tc.bind, "8080", "")
+		if err != nil {
+			t.Errorf("%q must be allowed without opt-in, got: %v", tc.bind, err)
+			continue
+		}
+		if addr != tc.want {
+			t.Errorf("%q: expected %q, got %q", tc.bind, tc.want, addr)
+		}
+	}
+}
+
+func TestHTTPBindGuard_NonLoopbackRefuses(t *testing.T) {
+	for _, bind := range []string{"0.0.0.0", "::", "192.168.1.10", "example.com"} {
+		addr, err := resolveHTTPBindAddr(bind, "8080", "")
+		if err == nil {
+			t.Errorf("%q must be refused without opt-in, got addr %q", bind, addr)
+			continue
+		}
+		if addr != "" {
+			t.Errorf("%q: expected empty addr on refusal, got %q", bind, addr)
+		}
+		msg := err.Error()
+		if !strings.Contains(msg, "no built-in authentication") {
+			t.Errorf("%q: message must explain the risk, got %q", bind, msg)
+		}
+		if !strings.Contains(msg, envAllowUnauthenticatedRemote) {
+			t.Errorf("%q: message must name the opt-in env var, got %q", bind, msg)
+		}
+		if !strings.Contains(msg, allowUnauthenticatedRemoteOptInVal) {
+			t.Errorf("%q: message must name the opt-in value, got %q", bind, msg)
+		}
+	}
+}
+
+func TestHTTPBindGuard_NonLoopbackRefusesWrongOptInValue(t *testing.T) {
+	for _, optIn := range []string{"1", "true", "yes", "YES-I-KNOW-THERE-IS-NO-AUTH"} {
+		if _, err := resolveHTTPBindAddr("0.0.0.0", "8080", optIn); err == nil {
+			t.Errorf("opt-in value %q must not be accepted as an alias", optIn)
+		}
+	}
+}
+
+func TestHTTPBindGuard_NonLoopbackWithOptIn(t *testing.T) {
+	addr, err := resolveHTTPBindAddr("0.0.0.0", "8080", allowUnauthenticatedRemoteOptInVal)
+	if err != nil {
+		t.Fatalf("explicit opt-in must be honoured, got: %v", err)
+	}
+	if addr != "0.0.0.0:8080" {
+		t.Errorf("expected 0.0.0.0:8080, got %q", addr)
 	}
 }

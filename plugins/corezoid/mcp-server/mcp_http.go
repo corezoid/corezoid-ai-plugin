@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
 	"os"
 	"strings"
@@ -110,9 +111,58 @@ func pruneIdleHTTPSessions(cutoff time.Time) {
 	}
 }
 
+// Knobs governing where the HTTP transport listens.
+const (
+	envHTTPBindAddr = "COREZOID_BIND_ADDR"
+	// envAllowUnauthenticatedRemote is the opt-in required to bind anywhere
+	// other than loopback. Its accepted value is deliberately long and
+	// self-describing so it cannot be set by accident or cargo-culted from a
+	// tutorial without the operator reading what it says. No aliases.
+	envAllowUnauthenticatedRemote      = "COREZOID_ALLOW_UNAUTHENTICATED_REMOTE"
+	allowUnauthenticatedRemoteOptInVal = "yes-i-know-there-is-no-auth"
+	defaultHTTPBindAddr                = "127.0.0.1"
+)
+
+// loopbackBindHosts is the set of hosts the bind guard treats as local-only.
+// Matched against the trimmed, lowercased COREZOID_BIND_ADDR literal — there is
+// deliberately no DNS resolution, so a name that happens to point at 127.0.0.1
+// is still rejected, and "localhost" is trusted as a literal only.
+var loopbackBindHosts = map[string]bool{
+	"127.0.0.1": true,
+	"::1":       true,
+	"[::1]":     true,
+	"localhost": true,
+}
+
+// resolveHTTPBindAddr turns the requested bind host and port into a listen
+// address, failing closed on anything that is not loopback.
+//
+// The HTTP transport has no authentication: credentials are loaded once at
+// startup and shared by every request (see HOSTED_TODO.md). Binding it to a
+// routable interface therefore hands full Corezoid API access to anyone who can
+// reach the port, so it takes an explicit opt-in rather than one env var.
+func resolveHTTPBindAddr(bindAddr, port, optIn string) (string, error) {
+	host := strings.ToLower(strings.TrimSpace(bindAddr))
+	if host == "" {
+		host = defaultHTTPBindAddr
+	}
+	if !loopbackBindHosts[host] && optIn != allowUnauthenticatedRemoteOptInVal {
+		return "", fmt.Errorf("refusing to bind the MCP HTTP transport to non-loopback address %q: "+
+			"this endpoint has no built-in authentication, so anyone who can reach the port gets full access "+
+			"to your Corezoid credentials. Bind to %s (the default) and put a reverse proxy in front of it for "+
+			"TLS, authentication and rate limiting — or set %s=%s if you accept that risk",
+			host, defaultHTTPBindAddr, envAllowUnauthenticatedRemote, allowUnauthenticatedRemoteOptInVal)
+	}
+	// JoinHostPort adds the brackets for IPv6 itself, so strip any the operator
+	// wrote by hand rather than emitting "[[::1]]:8080".
+	host = strings.TrimSuffix(strings.TrimPrefix(host, "["), "]")
+	return net.JoinHostPort(host, port), nil
+}
+
 // runHTTPServer starts the Streamable-HTTP MCP transport on addr.
-// Activate by setting COREZOID_HTTP_PORT (e.g. "8080").
-// In hosted environments credentials must be pre-configured via env vars;
+// Activate by setting COREZOID_HTTP_PORT (e.g. "8080"); addr comes from
+// resolveHTTPBindAddr, which keeps it on loopback unless the operator opted out.
+// Credentials must be pre-configured (saved OAuth credentials or env vars);
 // the login tool (browser OAuth) is not usable from a remote server.
 func runHTTPServer(addr string) error {
 	go sweepIdleHTTPSessions()

@@ -359,7 +359,12 @@ func main() {
 	if port := os.Getenv("COREZOID_HTTP_PORT"); port != "" {
 		analyticsTransport = "http"
 		initAnalytics()
-		addr := "127.0.0.1:" + port
+		addr, err := resolveHTTPBindAddr(os.Getenv(envHTTPBindAddr), port, os.Getenv(envAllowUnauthenticatedRemote))
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "[corezoid-mcp] FATAL: %v\n", err)
+			stopAnalytics()
+			os.Exit(1)
+		}
 		if err := runHTTPServer(addr); err != nil {
 			fmt.Fprintf(os.Stderr, "[corezoid-mcp] HTTP server error: %v\n", err)
 			stopAnalytics()
