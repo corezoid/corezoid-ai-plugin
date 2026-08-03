@@ -135,7 +135,13 @@ func TestMCPProtocol_ToolsList(t *testing.T) {
 	}
 	var result struct {
 		Tools []struct {
-			Name string `json:"name"`
+			Name        string `json:"name"`
+			Annotations *struct {
+				ReadOnlyHint    *bool `json:"readOnlyHint"`
+				DestructiveHint *bool `json:"destructiveHint"`
+				IdempotentHint  *bool `json:"idempotentHint"`
+				OpenWorldHint   *bool `json:"openWorldHint"`
+			} `json:"annotations"`
 		} `json:"tools"`
 	}
 	if err := json.Unmarshal(resp["result"], &result); err != nil {
@@ -151,6 +157,40 @@ func TestMCPProtocol_ToolsList(t *testing.T) {
 	for _, required := range []string{"login", "logout", "lint-process", "pull-process", "push-process"} {
 		if !names[required] {
 			t.Errorf("expected tool %q in tools/list", required)
+		}
+	}
+
+	// Safety annotations must survive the JSON-RPC round trip — clients read
+	// them off the wire, not off the Go struct.
+	wantHints := map[string]struct{ readOnly, destructive bool }{
+		"delete-process": {readOnly: false, destructive: true},
+		"list-variables": {readOnly: true, destructive: false},
+	}
+	for _, tool := range result.Tools {
+		if tool.Annotations == nil {
+			t.Errorf("tool %q has no annotations in tools/list", tool.Name)
+			continue
+		}
+		want, ok := wantHints[tool.Name]
+		if !ok {
+			continue
+		}
+		if tool.Annotations.ReadOnlyHint == nil || *tool.Annotations.ReadOnlyHint != want.readOnly {
+			t.Errorf("%s: readOnlyHint = %v, want %v", tool.Name, tool.Annotations.ReadOnlyHint, want.readOnly)
+		}
+		if tool.Annotations.DestructiveHint == nil || *tool.Annotations.DestructiveHint != want.destructive {
+			t.Errorf("%s: destructiveHint = %v, want %v", tool.Name, tool.Annotations.DestructiveHint, want.destructive)
+		}
+		if tool.Annotations.OpenWorldHint == nil || !*tool.Annotations.OpenWorldHint {
+			t.Errorf("%s: openWorldHint should be true", tool.Name)
+		}
+		if tool.Annotations.IdempotentHint == nil {
+			t.Errorf("%s: idempotentHint missing", tool.Name)
+		}
+	}
+	for name := range wantHints {
+		if !names[name] {
+			t.Errorf("annotation probe expected tool %q in tools/list", name)
 		}
 	}
 }
