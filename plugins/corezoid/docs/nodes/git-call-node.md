@@ -6,6 +6,37 @@
 - Allows for version-controlled, reusable code components across processes.
 - Enables centralized code management with distributed execution.
 
+## Runtime limits and the selection rule
+
+Git Call is the most constrained node on the platform. Use it **only** when a step
+needs a capability that native nodes plus a Code (`api_code`) node cannot provide —
+a file to parse, an external library, cryptography, or a custom runtime — and the
+work finishes within the ~50 s budget. For everything else use the native node.
+"One code block is easier to write" is not one of those capabilities.
+
+Verified limits:
+
+- **~60 s hard execution timeout** (wall-clock from when the task enters the node;
+  ~50 s usable after container dispatch/warm-up). On overrun the task is killed and
+  routed to the error path (`git_call_executing_error`, `usercode: timeout`). For
+  inline code, cold and warm starts are equal (~60 s); a custom Docker image may add
+  cold-start overhead.
+- **50 MB RAM / 0.1 CPU, shared globally** across every Git Call node in the
+  workspace — it starves and becomes unreliable under concurrency.
+- **Stateless** — no local storage, nothing persists between runs. **Network
+  required.**
+
+Every other node can run for as long as it needs; only `api`/`api_rpc` share a
+per-call 60 s limit. **Never** put time-sensitive or long-running logic in a Git
+Call — loops/polling belong in `condition`+`delay` (unlimited), waits on external
+systems in `api_rpc`+callback, plain HTTP in `api`/`api_rpc`, and transforms/parsing
+in a Code (`api_code`) node.
+
+> Note: the `time` semaphor shown in the examples below (e.g. `600 min`) is a
+> process-level routing timeout **you** configure to send the task down your own
+> timeout path. It is independent of, and cannot extend, the ~60 s container hard
+> limit above — the container is killed at ~60 s regardless of the semaphor value.
+
 ## Parameters
 
 ### Required

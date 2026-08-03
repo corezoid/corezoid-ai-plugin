@@ -1,5 +1,9 @@
 # Changelog
 
+## [Unreleased]
+
+- Feat: **`git_call` selection guardrails.** `lint-process` now emits an advisory `GIT_CALL USAGE` finding for every `git_call`/`api_git` node (never blocks a push), and the `corezoid-create` and `corezoid-gitcall` skills plus `docs/nodes/git-call-node.md` state the verified hard limits and a concrete selection rule. `git_call` has a **~60 s hard execution timeout** (~50 s usable; cold == warm for inline code, measured live), 50 MB RAM / 0.1 CPU shared globally across all git_call nodes, is stateless and flaky under load. The rule: default to native nodes → a Code (`api_code`) node → `git_call` only when a step needs a file to parse, an external library, cryptography, or a custom runtime that the former cannot provide, and never for time-sensitive or long-running logic (loops/polling → `condition`+`delay`; waits → `api_rpc`+callback).
+
 ## [2.11.0]
 
 - Feat: new `corezoid-git-context` skill + four MCP tools — `git-pull-context`, `git-push-context`, `read-context-file`, `update-context-file` — that sync a project's `.git-context/` with the Corezoid Gitea mirror (with a transparent local-only fallback when Gitea is unreachable), merge Developer Notes and a process index into `CLAUDE.md` via a marker block that leaves hand-authored content intact, and let Claude read/write `_ext/` documentation without touching the process JSON tree. `pull-folder` and `push-process` sync context and regenerate `CLAUDE.md` as part of their normal flow; per-invocation Basic auth goes via `GIT_CONFIG_*` env vars and is never persisted to `.git/config`.

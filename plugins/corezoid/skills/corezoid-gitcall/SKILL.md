@@ -18,29 +18,74 @@ in an isolated container as one step of a process. Each task is delivered to a
 `handle` function over JSON-RPC 2.0; the value you return becomes the payload of
 the next node.
 
-Reach for Git Call only when the standard nodes cannot do the job. It is heavier
-than a Code (`api_code`) node — it needs a container build and a warm-up.
+## 1. When to use it — the selection rule
 
-## 1. When to use it
+Git Call is the most constrained node on the platform (hard limits below). Use it
+**only** when a step needs a capability that native nodes and a Code (`api_code`)
+node cannot provide — parsing a file, an external library, cryptography, or a custom
+runtime — **and** the work finishes within the ~50 s budget. For everything else use
+the native alternative. "One code block is easier to write" is not one of those
+capabilities.
 
-Use Git Call when you need something the platform's built-in nodes lack:
+### Hard limits (verified live — do not design around, design to avoid)
 
-- Parse files (download a URL and read a 1C `.1CD`, XML, PDF, QR, image, …).
-- Use external libraries (crypto, moment, pandas, okhttp, …).
-- Heavy/custom logic (matrices, cryptography, bespoke formats).
-- Build an email body with attachments, generate documents, etc.
+- **~60 s hard execution timeout**, wall-clock from the moment the task enters the
+  node. On overrun the task is killed and routed to the error path
+  (`__conveyor_git_call_return_type_tag__ = git_call_executing_error`, description
+  `usercode: timeout`). Usable handler time is only **~50 s** — container
+  dispatch/warm-up eats into the window. (For inline code, cold and warm starts are
+  the same, ~60 s; a custom Docker image can add more cold-start overhead.)
+- **50 MB RAM and 0.1 CPU, shared GLOBALLY across every Git Call node** in the
+  workspace. Under concurrency the pool saturates and nodes get starved — Git Call
+  is not just slow, it is **unreliable under load**.
+- **Stateless**: no local storage, nothing persists between runs.
+- **Network required**: fetches repo/dependencies; fails offline.
 
-| Aspect        | Code node (`api_code`) | Git Call            |
-|---------------|------------------------|---------------------|
-| Speed         | faster                 | slower              |
-| Warm-up       | none                   | required            |
-| Complexity    | simple                 | higher              |
-| Resources     | efficient              | heavier (container) |
-| External deps | no                     | yes                 |
-| Languages     | JS (+ limited)          | 9 languages + Docker |
+Contrast: every other node can run for as long as it needs — a `condition`+`delay`
+loop can poll for hours; only `api`/`api_rpc` share a per-call limit (60 s). Git
+Call is the one node that will kill your logic mid-run.
 
-Rule of thumb: simple and fast with no external deps → Code node. Files,
-libraries, or custom runtimes → Git Call.
+### Decision gate — before adding a Git Call, confirm ALL of these
+
+1. It genuinely cannot be done with native nodes (`set_param`, `condition`, `delay`,
+   `api`/`api_rpc`, `api_code`, `db_call`, `api_sum`, `api_copy`).
+2. It cannot be done in a **Code (`api_code`)** node (JS with the platform's
+   built-ins) — try this first for any transform/parse/compute.
+3. It is **not time-sensitive** and comfortably finishes in well under ~50 s.
+4. It is **not** a long-running loop, poll, or wait — those belong in
+   `condition`+`delay` (unlimited) or `api_rpc`+callback, never in Git Call.
+5. It does **not** need large memory or to hold state.
+
+If any answer is "no", do **not** use Git Call.
+
+### Use Git Call ONLY for (native nodes truly cannot):
+
+- Parse a file (download a URL and read a 1C `.1CD`, XML, PDF, QR, image, …).
+- Use an external library the platform lacks (crypto, moment, pandas, okhttp, …).
+- Cryptography / bespoke binary formats the platform can't express.
+- A custom runtime (custom Dockerfile) for something none of the above covers.
+
+### NEVER use Git Call for:
+
+- Anything **time-sensitive** or that might approach ~50 s.
+- **Long-running** work — loops, polling, ret/backoff, waiting on an external
+  system (→ `condition`+`delay`, or `api_rpc`+callback; both effectively unlimited).
+- Plain HTTP calls (→ `api`/`api_rpc`).
+- Simple transforms, JSON shaping, math, string work (→ `api_code`).
+- Large-data / high-memory processing (50 MB cap, shared).
+
+| Aspect        | Native nodes / `api_code`     | Git Call                          |
+|---------------|-------------------------------|-----------------------------------|
+| Time limit    | none (api/api_rpc: 60 s)      | **~60 s hard kill (~50 s usable)** |
+| Warm-up       | none                          | container build + dispatch        |
+| Memory        | platform-managed              | **50 MB, shared globally**        |
+| Reliability   | stable                        | **flaky under load**              |
+| State/storage | task payload                  | stateless, none                   |
+| External deps | no                            | yes                               |
+
+Selection rule: **default to native nodes + `api_code`. Use Git Call only when a
+file to parse, an external library, cryptography, or a custom runtime leaves no
+native way to do it — and never for anything long-running or time-sensitive.**
 
 ## 2. Supported languages and runtimes
 

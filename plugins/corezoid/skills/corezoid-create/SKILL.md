@@ -80,6 +80,18 @@ Every process follows this base structure:
 
 For complete JSON schemas see `${CLAUDE_PLUGIN_ROOT}/docs/node-structures.md`.
 
+> **Node choice — do NOT default to `git_call`.** `git_call` is deliberately absent
+> from the table above: it is the platform's most constrained node — a **~60 s hard
+> execution timeout** (~50 s usable), 50 MB RAM / 0.1 CPU shared globally, no
+> state/storage, and flaky under load. Writing one code block is often *easier* than
+> modelling the flow — that is not a reason to use it. Prefer, in order: native nodes
+> (`set_param`, `condition`, `delay`, `api`/`api_rpc`, `db_call`) → a **Code node
+> (`api_code`)** for transforms/parse/compute → `git_call` **only** when a file to
+> parse, an external library, or a custom runtime leaves no other option. **Never**
+> put time-sensitive or long-running work (loops, polling, waits) in `git_call` —
+> use `condition`+`delay` (unlimited) or `api_rpc`+callback. Full limits and the
+> decision gate: the `corezoid-gitcall` skill.
+
 ---
 
 ## Step 4: Generate the Process JSON

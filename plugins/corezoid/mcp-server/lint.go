@@ -26,6 +26,7 @@ type LintResult struct {
 	BrokenLinks            []BrokenLink
 	UnderspecifiedAPINodes []UnderspecifiedAPINode
 	StubModeNodes          []StubModeNode
+	GitCallUsages          []GitCallUsage
 	TotalNodes             int
 	ReachableCount         int
 	SchemaValid            bool
@@ -168,6 +169,20 @@ type StubModeNode struct {
 	Issue    string
 }
 
+// GitCallUsage flags a git_call (api_git) node. Git Call is the platform's most
+// constrained node — a ~60s hard execution timeout (~50s usable), 50 MB RAM /
+// 0.1 CPU shared globally, stateless, flaky under load — so it should be used
+// only when a step needs a capability native nodes plus a Code (api_code) node
+// cannot provide (file parsing, external library, cryptography, custom runtime).
+// This is ADVISORY (never blocks a push): a legitimate git_call is valid; the
+// finding is a nudge to confirm the node meets that rule and is not just the
+// easiest code to write.
+type GitCallUsage struct {
+	ID    string
+	Title string
+	Issue string
+}
+
 // processNode is the typed representation of a Corezoid node used throughout lint checks.
 type processNode struct {
 	id      string
@@ -239,6 +254,7 @@ func lintProcess(filePath string) (*LintResult, error) {
 	result.BrokenLinks = findBrokenLinks(typed)
 	result.UnderspecifiedAPINodes = findUnderspecifiedAPINodes(typed)
 	result.StubModeNodes = findStubModeNodes(typed)
+	result.GitCallUsages = findGitCallUsages(typed)
 
 	schemaErr := ValidateJSONSchema(filePath, debug)
 	if schemaErr != nil {
@@ -694,6 +710,36 @@ func findStubModeNodes(nodes []processNode) []StubModeNode {
 			Branches: branches,
 			Issue:    "Stub Mode is active (obj_type:4): the Call Process node bypasses the real called process and returns configured mock replies. Use this only as a temporary development/integration placeholder; before production, disable Stub Mode (obj_type:0) or deploy with allow_active_stub_mode=true after explicit confirmation.",
 		})
+	}
+	return result
+}
+
+// findGitCallUsages flags every git_call (api_git) node. Advisory only — a
+// legitimate git_call is valid, but the node has hard runtime limits (~60s
+// timeout, ~50s usable, 50 MB RAM / 0.1 CPU shared globally, stateless, flaky
+// under load), so each one is surfaced to confirm the step genuinely needs a
+// capability native nodes plus a Code (api_code) node cannot provide (file
+// parsing, external library, cryptography, custom runtime) and is not just the
+// easiest code to write. Never for time-sensitive or long-running logic.
+func findGitCallUsages(nodes []processNode) []GitCallUsage {
+	var result []GitCallUsage
+	for _, n := range nodes {
+		for _, lg := range n.logics {
+			t, _ := lg["type"].(string)
+			if t != "git_call" && t != "api_git" {
+				continue
+			}
+			title := n.title
+			if title == "" {
+				title = "(untitled)"
+			}
+			result = append(result, GitCallUsage{
+				ID:    n.id,
+				Title: title,
+				Issue: "git_call has a ~60s hard execution timeout (~50s usable), 50 MB RAM / 0.1 CPU shared across all git_call nodes, is stateless and flaky under load. Use it only when the step needs a capability native nodes + a Code (api_code) node cannot provide: file parsing, an external library, cryptography, or a custom runtime. Otherwise use the native node. NEVER put time-sensitive or long-running logic here (loops/polling → condition+delay; waiting on externals → api_rpc+callback; plain HTTP → api/api_rpc).",
+			})
+			break // one advisory per node, even if it carries several logics
+		}
 	}
 	return result
 }
@@ -1270,6 +1316,15 @@ func FormatLintResult(result *LintResult) string {
 		}
 	}
 
+	if len(result.GitCallUsages) > 0 {
+		hasIssues = true
+		sb.WriteString(fmt.Sprintf("\n=== GIT_CALL USAGE (%d) — advisory: constrained node, check the selection rule ===\n", len(result.GitCallUsages)))
+		for _, gc := range result.GitCallUsages {
+			sb.WriteString(fmt.Sprintf("  [%s] %s\n", gc.ID, gc.Title))
+			sb.WriteString(fmt.Sprintf("  Issue: %s\n", gc.Issue))
+		}
+	}
+
 	if !hasIssues {
 		sb.WriteString("\nNo issues found.")
 	} else {
@@ -1277,7 +1332,7 @@ func FormatLintResult(result *LintResult) string {
 		if !result.SchemaValid {
 			schemaIssues = 1
 		}
-		total := len(result.NoopConditions) + len(result.UnusedSetParams) + len(result.OrphanedNodes) + len(result.RpcReplyMismatches) + len(result.PassthroughEscalations) + len(result.LiteralReplyValues) + len(result.SharedErrorClusters) + len(result.OldFormatNodes) + len(result.UnrepliedTerminals) + len(result.MissingDefaultGo) + len(result.ShortTimers) + len(result.BrokenLinks) + len(result.UnderspecifiedAPINodes) + len(result.StubModeNodes) + schemaIssues
+		total := len(result.NoopConditions) + len(result.UnusedSetParams) + len(result.OrphanedNodes) + len(result.RpcReplyMismatches) + len(result.PassthroughEscalations) + len(result.LiteralReplyValues) + len(result.SharedErrorClusters) + len(result.OldFormatNodes) + len(result.UnrepliedTerminals) + len(result.MissingDefaultGo) + len(result.ShortTimers) + len(result.BrokenLinks) + len(result.UnderspecifiedAPINodes) + len(result.StubModeNodes) + len(result.GitCallUsages) + schemaIssues
 		sb.WriteString(fmt.Sprintf("\nTotal issues: %d\n", total))
 	}
 

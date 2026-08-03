@@ -377,7 +377,7 @@ func handlePushProcess(ctx context.Context, args map[string]interface{}) (string
 			len(lintRes.UnrepliedTerminals)
 		advisory := len(lintRes.NoopConditions) + len(lintRes.UnusedSetParams) +
 			len(lintRes.OrphanedNodes) + len(lintRes.PassthroughEscalations) +
-			len(lintRes.SharedErrorClusters)
+			len(lintRes.SharedErrorClusters) + len(lintRes.GitCallUsages)
 		if hard > 0 && !force {
 			return fmt.Sprintf("Push blocked: lint found %d issue(s) that would break the deploy or its callers. Fix them, or re-run with force=true to override.\n\n%s",
 				hard, FormatLintResult(lintRes)), true
