@@ -50,7 +50,7 @@ go test -run TestLayoutGolden -update ./...
 
 ### MCP tool definitions
 
-Tool definitions are split by domain, one file per `mcp_handlers_<domain>.go`:
+Tool definitions are split by domain, mirroring the `mcp_handlers_*.go` split so a tool's definition sits next to the code that implements it. The mapping is not strictly 1:1 — `tools_registry_process.go` covers handlers spread across `mcp_handlers_process.go`, `mcp_handlers_layout.go` and `mcp_handlers_deploy.go`, and some domains (aliases, projects, state diagrams) have no handler file of their own:
 
 ```
 tools_registry.go                  — spine: concatenates the domain groups into toolRegistry
