@@ -188,7 +188,7 @@ func handleToolCall(ctx context.Context, name string, args map[string]interface{
 			IsError:        isError,
 			APIURL:         hostnameOnly(apiURLv),
 			Transport:      analyticsTransport,
-			ServerVersion:  mcpServerVersion,
+			ServerVersion:  serverVersion(),
 			InstallationID: installationID,
 			UserEmail:      telemetryEmail,
 			ClientName:     clientNameV,
