@@ -67,6 +67,11 @@ Each output parameter has the following properties:
 6. **regex_error_text** (String, optional)
    - Custom error message for regex validation failures
 
+These optionality rules describe the Corezoid platform itself. Under strict `process_contracts` in
+the [opt-in project safety policy](project-safety-policy.md), every output must use the complete
+six-field parameter shape and a non-empty `descr`, and must stay synchronized with every reachable
+success Reply.
+
 ## Using Output Parameters with Reply to Process Nodes
 
 Output parameters are typically returned through Reply to Process nodes. The Reply to Process node

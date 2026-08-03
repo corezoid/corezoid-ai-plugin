@@ -170,6 +170,17 @@ They are saved to the current Folder in the same `~/.corezoid/config.json`.
 | `COREZOID_OAUTH_CLIENT_ID` | No       | OAuth2 client ID — on-prem deployments with a custom authorization server should set this to their own client ID; cloud (account.corezoid.com) users do not need it |
 | `COREZOID_HTTP_PORT`       | No       | Activate the Streamable HTTP transport on this port (e.g. `8080`). When set the server listens for MCP over HTTP instead of stdio — intended for hosted marketplace deployments. Credentials must be pre-configured in `~/.corezoid/config.json`; the browser OAuth login flow is not available in HTTP mode. |
 | `COREZOID_AUTOLAYOUT`      | No       | Set to `off` to disable auto-placement of new `(0,0)` nodes on `push-process` (default: preserve) |
+| `COREZOID_POLICY_FILE`     | No       | Read-only external project-safety policy used as a minimum floor |
+| `COREZOID_MIN_CYCLE_SAFETY_MODE` | No | Minimum cycle policy: `off`, `warn`, or `strict` |
+| `COREZOID_MIN_PROCESS_CONTRACTS_MODE` | No | Minimum process-contract policy: `off`, `warn`, or `strict` |
+
+### Opt-in project safety
+
+Cycle budget protection and strict process input/output contracts are disabled by default. Use
+`show-project-policy` to inspect the effective setting and `configure-project-policy` only after the
+user opts in. The generated `.corezoid/policy.json` is client-neutral and applies to Claude Code,
+Codex, Kiro, and other MCP clients. See
+[Opt-in Project Safety Policy](plugins/corezoid/docs/process/project-safety-policy.md).
 
 All auth-related values (`account_url`, `workspace_id`, `stage_id`, `access_token`, `api_login`, `api_secret`, `git_url`, ...) live in `~/.corezoid/config.json` — not in environment variables.
 
@@ -252,6 +263,8 @@ validation errors, and summarize what each process does.
 | `push-process`      | Validate and deploy a `.conv.json` to Corezoid     |
 | `layout-process`    | Auto-arrange node coordinates (waterfall / layered / table-star regions); local, changes only x/y and collapse flags |
 | `lint-process`      | Validate process structure locally (no API call)   |
+| `show-project-policy` | Show effective opt-in cycle/contract protections |
+| `configure-project-policy` | Enable or configure opt-in cycle safety and strict process contracts for a project |
 | `run-task`          | Send a task to a deployed process                  |
 | `list-node-tasks`   | List tasks currently sitting in a node             |
 | `list-task-history` | Show task execution history                        |
@@ -332,7 +345,8 @@ Claude Code / Codex
         ├── Workspace     list-workspaces, list-stages, list-projects,
         │                 create-project, modify-project, delete-project, show-project,
         │                 deploy-stage, set-stage-immutable
-        ├── Processes     pull-process, pull-folder, push-process, lint-process, layout-process
+        ├── Processes     pull-process, pull-folder, push-process, lint-process, layout-process,
+        │                 show-project-policy, configure-project-policy,
         │                 create-process, create-state-diagram, create-folder,
         │                 create-alias, create-variable,
         │                 list-variables, modify-variable, delete-variable,
@@ -425,6 +439,7 @@ See [docs/Troubleshooting.md](docs/Troubleshooting.md) for solutions to common p
 |-------------------|-------------------------------|-------|
 | Claude Code       | ≥ 1.x                         | MCP protocol 2025-03-26 |
 | Codex             | current stable                | Same MCP server, same skills |
+| Kiro / other MCP clients | MCP-compatible release | Same server-side policy and tool schemas |
 | macOS             | 13 Ventura and later          | Tested on arm64 and amd64 |
 | Linux             | Ubuntu 22.04+, Debian 12+     | amd64 tested in CI |
 | Windows           | not tested                    | Likely works; PRs welcome |

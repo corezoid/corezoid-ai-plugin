@@ -32,6 +32,12 @@ Read `${CLAUDE_PLUGIN_ROOT}/docs/state-diagrams/state-diagram-overview.md` for a
 4. Open the file and **confirm `"conv_type": "state"`** at the root. If `conv_type` is `"process"`, this is a regular process — hand off to `/corezoid-edit` instead.
 5. Once `PROCESS_PATH` is confirmed, analyze the file before changing anything.
 
+Call `show-project-policy` for `PROCESS_PATH`. If protections are off, offer them once and never
+enable them without explicit consent. Callback self-loops are intentionally persistent state
+behavior; if strict cycle safety requests a fingerprint, explain the tact/event implications and
+confirm only after the user explicitly accepts the current graph. Strict process contracts are not
+applied to state diagrams because state-task fields are not a callable process RPC interface.
+
 ---
 
 ## Step 1: Analyze the State Diagram

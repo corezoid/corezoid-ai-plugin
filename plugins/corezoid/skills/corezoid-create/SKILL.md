@@ -12,6 +12,26 @@ description: >
 
 You are a specialist in creating Corezoid BPM processes using the `corezoid` MCP server.
 
+## Step 0: Check Optional Project Policy
+
+Call `show-project-policy` for the target project before designing the process. If both protections
+are off, offer cycle safety and strict process contracts once, as specified in the universal
+`corezoid` skill. Do not call `configure-project-policy` without explicit user opt-in.
+
+When `cycle_safety` is strict, design every cycle with a provable counter or deadline inside the
+configured ceiling. External-call retries must cross a static Delay of at least 30 seconds.
+A deadline-bounded cycle must also cross that Delay on every iteration because a deadline alone
+does not bound tact count. An API response mapping, Call Process output, Code node, or other
+data-producing action on a cycle
+cannot be assumed to preserve the guard variable; keep the counter/deadline isolated from those
+writes. An intentional unbounded cycle remains allowed, but do not pass `confirm_cycle_risk` until the user has
+reviewed and accepted the tact/budget risk. Dynamic `conv_id`, aliases, and unavailable, unreadable,
+or ambiguous targets in the reachable local call graph use the separate
+`confirm_unresolved_call_risk` fingerprint shown by `push-process`.
+
+When `process_contracts` is strict, define the complete public contract during Step 1: every input
+and success output needs a type, non-empty description, and explicit required/optional decision.
+
 ## Step 1: Gather Requirements
 
 Ask the user for the following before proceeding:
@@ -124,11 +144,14 @@ Produce a valid `.conv.json` file.
 
 Fill in `description` based on the requirements gathered in Step 1 (see Description Update Rule in `corezoid/SKILL.md`): 1–2 sentences starting with a verb, under 200 characters, no *"This process…"* preamble.
 
-`params` — declare all input parameters the caller must pass. See `${CLAUDE_PLUGIN_ROOT}/docs/process/process-with-parameters.md`.
+`params` — declare all process inputs and success outputs. Every element uses all six fields
+(`name`, `type`, `descr`, `flags`, `regex`, `regex_error_text`). Mark inputs with `input`, outputs
+with `output`, and add `required` only when the field is mandatory. See
+`${CLAUDE_PLUGIN_ROOT}/docs/process/process-with-parameters.md`.
 
 ### Core rules
 
-- Node IDs must be unique 24-character hex strings: `^[0-9a-f]{24}$`. These are **temporary placeholders** for new nodes — on `push-process` Corezoid reassigns its own canonical IDs (and rewires references within the push). Run `pull-process` after pushing to get the canonical IDs before any further edits. See [Node ID Lifecycle](${CLAUDE_PLUGIN_ROOT}/docs/process/process-development-guide.md#node-id-lifecycle-server-assignment--stability-on-push).
+- Node IDs must be unique 24-character hex strings: `^[0-9a-f]{24}$`. These are **temporary placeholders** for new nodes — on `push-process` Corezoid reassigns its own canonical IDs (and rewires references within the push). Run `pull-process` after pushing to get the canonical IDs before any further edits. See [Node ID Lifecycle](../../docs/process/process-development-guide.md#node-id-lifecycle-server-assignment--stability-on-push).
 - Connect nodes only through the `go` field
 - **Dedicated error cluster per error-prone node.** Every node that can fail (`set_param`, `api`, `api_rpc`, `api_code`, `api_copy`, `db_call`, `git_call`, `api_sum`) gets its **own** error path — never funnel several failing nodes into one shared Reply/Error node. Each cluster is:
   1. A **Reply to Process** node (`api_rpc_reply`, `obj_type: 3` — it is an escalation, being an `err_node_id` target) that returns the error to the caller — set to **collapsed**: `"extra": "{\"modeForm\":\"collapse\",\"icon\":\"\"}"`.
@@ -143,6 +166,10 @@ Fill in `description` based on the requirements gathered in Step 1 (see Descript
   - Never create an Escalation node (`obj_type: 3`) that only contains a bare `go` — that is a passthrough anti-pattern flagged by `lint-process`.
 - **A process invoked via Call a Process (`api_rpc`) must execute `api_rpc_reply` on EVERY path — success included.** The caller's task waits in the Call node until the callee replies; a path that reaches a final without a Reply hangs the caller until its timeout semaphor. Put a collapsed success Reply right before the success final. `lint-process` flags finals reachable without a Reply in any process that replies elsewhere.
 - **Do not create active Stub Mode unless the user explicitly asks for a temporary mock.** Stub Mode is `obj_type: 4` plus `condition.stub`; it bypasses the called process and returns configured mock replies. Use it only while the target process is not ready or for controlled integration tests, and avoid production unless the user explicitly confirms `allow_active_stub_mode=true`.
+- **Bound every cycle when cycle safety is enabled.** Prefer a counter initialized before the loop,
+  incremented by a positive integer on every iteration, and checked on every loop path. A deadline
+  must be initialized before the loop from current time plus a bounded duration and rechecked with a
+  fresh current-time value. Never treat a dynamic delay or arbitrary Code as a proven budget bound.
 - All constants (URLs, tokens, IDs) must be Corezoid variables — never hardcoded:
   1. Check for existing variables: read `_ENV_VARS_.json` (from `pull-folder`) or `.processes/variables.json` (from this session)
   2. Create a new variable if needed: call MCP tool **`create-variable`** with `name`, `description`, `value`
@@ -178,7 +205,10 @@ errors railed to the right) and reports the strategy and canvas size. See the
 
 Call MCP tool **`lint-process`** with `process_path: "<PROCESS_PATH>"`.
 
-Fix all reported errors and re-run until the output is clean. Do not proceed with lint errors.
+Fix all reported errors and re-run until the output is clean. Under strict contracts, synchronize
+`params` with inferred inputs, every success Reply, and statically resolved callees. Under strict
+cycle safety, prefer a finite proof; request user confirmation only for deliberate residual risk.
+Do not proceed with unreviewed lint errors.
 
 ---
 

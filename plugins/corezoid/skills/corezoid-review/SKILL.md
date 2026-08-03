@@ -25,6 +25,9 @@ You are a specialist in auditing and analyzing Corezoid BPM processes using the 
 3. If the user gave a **name or ID** (not a file path), search the local working directory for the matching `.conv.json` file using the `find` or `grep` Bash tools (the project is already pulled locally).
 4. Once `PROCESS_PATH` is known, begin the audit below.
 
+Call `show-project-policy` for `PROCESS_PATH` before linting. If both protections are off, offer the
+optional cycle-safety and strict-contract modes once; do not enable them without explicit consent.
+
 ---
 
 ## Step 1: Structural Lint
@@ -37,6 +40,10 @@ This checks for:
 - **Orphaned nodes** — unreachable nodes not connected from Start
 - **No-op conditions** — all branches of a condition leading to the same node
 - **Unused set_param** — variables set but never referenced downstream
+- **Cycle safety** — finite counter/deadline proof, retry pacing, static recursion, and unresolved
+  dynamic/alias/unavailable process targets when the policy is enabled
+- **Process contracts** — typed/described inputs and outputs plus direct callee mappings when the
+  policy is enabled
 
 Record all findings. They will be included in the final report.
 
@@ -99,7 +106,15 @@ These are read-only platform metadata, not configuration that should be extracte
 ## Step 5: Cycle Verification
 
 - Detect nodes with `semaphors` of type `time` or `go_if_const` that create loops
-- Verify exit conditions exist and iteration limits are enforced
+- Verify every route around a cycle crosses a finite counter or deadline guard
+- Verify count ceilings include inclusive-comparator off-by-one behavior and counters cannot be
+  reset by assignments, API response mappings, Code, Call Process outputs, or opaque actions
+- Verify deadline duration is inside the project ceiling, current time refreshes on every route,
+  runtime output cannot overwrite the deadline, and a Delay paces every iteration
+- Require paced Delay coverage for external-call retries
+- Treat dynamic `conv_id`, aliases, and unavailable process targets as supported but statically
+  unresolved; report the recursive-call and extra-tact risk rather than recommending a prohibition
+- Treat an intentional eternal cycle as a confirmation-required risk, not an automatic defect
 
 ---
 
