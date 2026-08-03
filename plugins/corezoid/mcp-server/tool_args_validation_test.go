@@ -72,3 +72,19 @@ func TestSchemaRequiredList_BothShapes(t *testing.T) {
 		t.Errorf("nil: got %v", got)
 	}
 }
+
+func TestCoerceCLIArgs_IntegerPolicyLimits(t *testing.T) {
+	args := map[string]interface{}{
+		"max_cycle_iterations":       "10",
+		"max_cycle_duration_seconds": "3600",
+	}
+	if err := coerceCLIArgs("configure-project-policy", args); err != nil {
+		t.Fatal(err)
+	}
+	if args["max_cycle_iterations"] != 10 || args["max_cycle_duration_seconds"] != 3600 {
+		t.Fatalf("integer policy arguments were not coerced: %#v", args)
+	}
+	if err := coerceCLIArgs("configure-project-policy", map[string]interface{}{"max_cycle_iterations": "10.5"}); err == nil {
+		t.Fatal("fractional CLI integer must be rejected")
+	}
+}

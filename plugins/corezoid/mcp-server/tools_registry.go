@@ -151,7 +151,7 @@ var toolRegistry = []mcpTool{
 	},
 	{
 		Name:        "push-process",
-		Description: "Validate and deploy a process file to Corezoid. Runs lint-process first and blocks the deploy on issues that would break it (broken node links, old-format nodes, RPC paths without reply, nodes missing a default go, sub-30s timers, literal reply values); advisory findings are shown but do not block. Active Call Process Stub Mode (obj_type:4) is allowed as a warning only when the target stage is resolved as mutable and non-production-like; immutable/prod/unknown stages are blocked because Stub Mode bypasses the real called process. Pass allow_active_stub_mode=true only after explicit confirmation that the temporary mock behavior is intentional. Pass force=true to deploy despite other blocking lint issues. Note: the server regenerates node IDs on every push and the local file is rewritten in place with the server's canonical scheme — reference nodes by title when iterating, and re-read the file after a push instead of reusing old node IDs.",
+		Description: "Validate and deploy a process file to Corezoid. Runs lint-process first and blocks the deploy on issues that would break it (broken node links, old-format nodes, RPC paths without reply, nodes missing a default go, sub-30s timers, literal reply values); advisory findings are shown but do not block. Opt-in project policy can additionally enforce finite cycle bounds and strict process contracts. Dynamic/alias/unavailable process targets and intentionally unbounded cycles remain supported through graph-specific user confirmation fingerprints; force=true never bypasses opt-in policy gates. Active Call Process Stub Mode (obj_type:4) is allowed as a warning only when the target stage is resolved as mutable and non-production-like; immutable/prod/unknown stages are blocked because Stub Mode bypasses the real called process. Pass allow_active_stub_mode=true only after explicit confirmation that the temporary mock behavior is intentional. Pass force=true to deploy despite other generic blocking lint issues. Note: the server regenerates node IDs on every push and the local file is rewritten in place with the server's canonical scheme — reference nodes by title when iterating, and re-read the file after a push instead of reusing old node IDs.",
 		InputSchema: map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
@@ -161,11 +161,19 @@ var toolRegistry = []mcpTool{
 				},
 				"force": map[string]interface{}{
 					"type":        "boolean",
-					"description": "Deploy even if the pre-push lint finds generic blocking issues. Does not confirm active Stub Mode; use allow_active_stub_mode for that. Advisory findings never block. Default false.",
+					"description": "Deploy even if the pre-push lint finds generic blocking issues. Does not bypass opt-in cycle/contract policy gates and does not confirm active Stub Mode; use the dedicated confirmation fields for those risks. Advisory findings never block. Default false.",
 				},
 				"allow_active_stub_mode": map[string]interface{}{
 					"type":        "boolean",
 					"description": "Explicitly allow deploying active Call Process Stub Mode (obj_type:4) when the target stage is immutable, production-like, or cannot be resolved. Use only after confirming that temporary mock replies are intentionally being deployed.",
+				},
+				"confirm_cycle_risk": map[string]interface{}{
+					"type":        "string",
+					"description": "Graph-specific fingerprint returned by a blocked strict-policy push. Supply it only after the user explicitly accepts the extra-tact/budget risk of the listed intentionally unbounded cycle(s).",
+				},
+				"confirm_unresolved_call_risk": map[string]interface{}{
+					"type":        "string",
+					"description": "Graph-specific fingerprint returned by a blocked strict-policy push. Supply it only after the user explicitly accepts that dynamic conv_id, aliases, explicitly cross-project/stage calls, or unavailable/unreadable/ambiguous targets anywhere in the reachable local call graph cannot be checked fully for recursive process calls.",
 				},
 			},
 			"required": []string{"process_path"},
@@ -195,7 +203,7 @@ var toolRegistry = []mcpTool{
 	},
 	{
 		Name:        "lint-process",
-		Description: "Validate process structure. Reports orphaned nodes, noop conditions, unused set_params, passthrough escalations, shared error clusters (an error node fed by several different failing nodes — each needs its own Reply/Error cluster), old-format nodes (obj_type:0 err_node_id targets, or action logic mixed with go_if_const — the UI would force-convert the process), finals reachable without api_rpc_reply in a process that replies elsewhere (an RPC caller would hang), nodes whose logics do not end with a default go and time semaphors under the 30s server minimum (both reject the deploy), literal non-string values in api_rpc_reply res_data (a scheme shape that hangs the server commit on push), and active Call Process Stub Mode nodes (obj_type:4) that bypass the real called process.",
+		Description: "Validate process structure locally. Reports orphaned/no-op nodes, broken links, reply and old-format problems, timer/API shape issues, and active Stub Mode. When the opt-in project policy is enabled, it also proves reachable cycle bounds, reports static/unresolved process recursion risk, and validates typed/described process input/output contracts plus statically resolved callee mappings. Warn mode reports only; strict findings are enforced by push-process.",
 		InputSchema: map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
@@ -205,6 +213,61 @@ var toolRegistry = []mcpTool{
 				},
 			},
 			"required": []string{"process_path"},
+		},
+	},
+	{
+		Name:        "show-project-policy",
+		Description: "Show the effective opt-in Corezoid project policy used by lint-process and push-process, including project and external minimum-floor sources. When no policy is configured, cycle safety and strict process contracts remain off. Use this before creating or editing a process so the user can be offered the optional protections once per project.",
+		InputSchema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"project_path": map[string]interface{}{
+					"type":        "string",
+					"description": "Optional path to a process file or directory inside the project. Defaults to the current working directory.",
+				},
+			},
+		},
+	},
+	{
+		Name:        "configure-project-policy",
+		Description: "Create or update .corezoid/policy.json for this project. This is opt-in: call it only after the user explicitly chooses cycle safety and/or strict process contracts. Modes are off, warn, or strict. Weakening an enabled mode, increasing active cycle ceilings, or reducing contract scope requires confirm_policy_downgrade=true after separate user approval. It never changes a read-only external minimum policy floor.",
+		InputSchema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"project_path": map[string]interface{}{
+					"type":        "string",
+					"description": "Optional path to a process file or directory inside the project. Defaults to the current working directory.",
+				},
+				"cycle_safety": map[string]interface{}{
+					"type":        "string",
+					"enum":        []interface{}{"off", "warn", "strict"},
+					"description": "Cycle protection mode. strict requires a finite count/deadline guard or explicit risk confirmation; warn only reports; off disables the check.",
+				},
+				"process_contracts": map[string]interface{}{
+					"type":        "string",
+					"enum":        []interface{}{"off", "warn", "strict"},
+					"description": "Process input/output contract mode. strict blocks incomplete or inconsistent params; warn only reports; off disables the check.",
+				},
+				"contract_dependency_scope": map[string]interface{}{
+					"type":        "string",
+					"enum":        []interface{}{"self", "project"},
+					"description": "Contract analysis scope. project (default) also checks statically resolved Call Process and Copy Task create contracts in the pulled project; self validates only the current process.",
+				},
+				"max_cycle_iterations": map[string]interface{}{
+					"type":        "integer",
+					"minimum":     1,
+					"description": "Project ceiling for a count-bounded cycle. Defaults to 100.",
+				},
+				"max_cycle_duration_seconds": map[string]interface{}{
+					"type":        "integer",
+					"minimum":     1,
+					"description": "Project ceiling for a deadline-bounded cycle. Defaults to 86400 seconds (24 hours). Strict mode also requires a static Delay of at least 30 seconds on every deadline-loop iteration because duration alone does not bound tact count.",
+				},
+				"confirm_policy_downgrade": map[string]interface{}{
+					"type":        "boolean",
+					"description": "Required only when weakening an existing project policy. Pass true only after the user explicitly approves the exact downgrade reported by the first call.",
+				},
+			},
 		},
 	},
 	{

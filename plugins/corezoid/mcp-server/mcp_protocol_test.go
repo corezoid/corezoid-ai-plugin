@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"encoding/json"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
@@ -33,8 +34,15 @@ type mcpSession struct {
 }
 
 func newMCPSession(t *testing.T, bin string) *mcpSession {
+	return newMCPSessionInDir(t, bin, "")
+}
+
+func newMCPSessionInDir(t *testing.T, bin, dir string) *mcpSession {
 	t.Helper()
 	cmd := exec.Command(bin)
+	if dir != "" {
+		cmd.Dir = dir
+	}
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
 		t.Fatalf("stdin pipe: %v", err)
@@ -53,6 +61,31 @@ func newMCPSession(t *testing.T, bin string) *mcpSession {
 		enc:  json.NewEncoder(stdin),
 		scan: bufio.NewScanner(stdout),
 	}
+}
+
+func (s *mcpSession) callTool(id int, name string, arguments map[string]interface{}) (string, bool) {
+	s.t.Helper()
+	s.send(map[string]interface{}{
+		"jsonrpc": "2.0", "id": id, "method": "tools/call",
+		"params": map[string]interface{}{"name": name, "arguments": arguments},
+	})
+	resp := s.recv()
+	if resp["error"] != nil {
+		s.t.Fatalf("%s returned JSON-RPC error: %s", name, resp["error"])
+	}
+	var result struct {
+		Content []struct {
+			Text string `json:"text"`
+		} `json:"content"`
+		IsError bool `json:"isError"`
+	}
+	if err := json.Unmarshal(resp["result"], &result); err != nil {
+		s.t.Fatalf("%s result parse: %v", name, err)
+	}
+	if len(result.Content) != 1 {
+		s.t.Fatalf("%s returned %d content blocks", name, len(result.Content))
+	}
+	return result.Content[0].Text, result.IsError
 }
 
 func (s *mcpSession) send(msg interface{}) {
@@ -148,7 +181,10 @@ func TestMCPProtocol_ToolsList(t *testing.T) {
 	for _, tool := range result.Tools {
 		names[tool.Name] = true
 	}
-	for _, required := range []string{"login", "logout", "lint-process", "pull-process", "push-process"} {
+	for _, required := range []string{
+		"login", "logout", "lint-process", "pull-process", "push-process",
+		"show-project-policy", "configure-project-policy",
+	} {
 		if !names[required] {
 			t.Errorf("expected tool %q in tools/list", required)
 		}
@@ -239,4 +275,42 @@ func TestMCPProtocol_AuthRequired_NoCredentials(t *testing.T) {
 		}
 	}
 	// If there's a JSON-RPC error, that's also acceptable — the point is no silent success.
+}
+
+func TestMCPProtocol_ProjectPolicyLifecycle(t *testing.T) {
+	bin := buildTestBinary(t)
+	project := t.TempDir()
+	sess := newMCPSessionInDir(t, bin, project)
+	sess.send(map[string]interface{}{
+		"jsonrpc": "2.0", "id": 1, "method": "initialize",
+		"params": map[string]interface{}{"protocolVersion": "2025-03-26", "capabilities": map[string]interface{}{}, "clientInfo": map[string]interface{}{"name": "test", "version": "0"}},
+	})
+	sess.recv()
+
+	shown, isErr := sess.callTool(2, "show-project-policy", map[string]interface{}{})
+	if isErr || !strings.Contains(shown, "Cycle safety: off") || !strings.Contains(shown, "Process contracts: off") {
+		t.Fatalf("unexpected default policy over MCP: %s", shown)
+	}
+	configured, isErr := sess.callTool(3, "configure-project-policy", map[string]interface{}{
+		"cycle_safety": "strict", "process_contracts": "strict",
+		"contract_dependency_scope": "project", "max_cycle_iterations": 7,
+	})
+	if isErr || !strings.Contains(configured, "Cycle safety: strict (maximum 7 iterations") || !strings.Contains(configured, "Process contracts: strict") {
+		t.Fatalf("unexpected configured policy over MCP: %s", configured)
+	}
+	policyData, err := os.ReadFile(filepath.Join(project, ".corezoid", "policy.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !json.Valid(policyData) {
+		t.Fatalf("MCP wrote invalid policy JSON: %s", policyData)
+	}
+	paused, isErr := sess.callTool(4, "configure-project-policy", map[string]interface{}{"cycle_safety": "off"})
+	if !isErr || !strings.Contains(paused, "confirm_policy_downgrade=true") {
+		t.Fatalf("MCP downgrade was not paused: %s", paused)
+	}
+	shown, isErr = sess.callTool(5, "show-project-policy", map[string]interface{}{})
+	if isErr || !strings.Contains(shown, "Cycle safety: strict") {
+		t.Fatalf("paused MCP downgrade changed the policy: %s", shown)
+	}
 }
