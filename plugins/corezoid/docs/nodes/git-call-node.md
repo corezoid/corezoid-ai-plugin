@@ -8,34 +8,39 @@
 
 ## Runtime limits and the selection rule
 
-Git Call is the most constrained node on the platform. Use it **only** when a step
-needs a capability that native nodes plus a Code (`api_code`) node cannot provide —
-a file to parse, an external library, cryptography, or a custom runtime — and the
-work finishes within the ~50 s budget. For everything else use the native node.
+Git Call is one of the most constrained nodes on the platform. Use it **only**
+when a step needs a capability that native nodes plus a Code (`api_code`) node
+cannot provide — a file to parse, an external library, cryptography, or a custom
+runtime — and the work finishes comfortably within the observed runtime budget.
 "One code block is easier to write" is not one of those capabilities.
 
-Verified limits:
+Observed and configured constraints:
 
-- **~60 s hard execution timeout** (wall-clock from when the task enters the node;
-  ~50 s usable after container dispatch/warm-up). On overrun the task is killed and
-  routed to the error path (`git_call_executing_error`, `usercode: timeout`). For
-  inline code, cold and warm starts are equal (~60 s); a custom Docker image may add
-  cold-start overhead.
-- **50 MB RAM / 0.1 CPU, shared globally** across every Git Call node in the
-  workspace — it starves and becomes unreliable under concurrency.
-- **Stateless** — no local storage, nothing persists between runs. **Network
-  required.**
+- **Execution deadline observed in hosted tests:** approximately 60 s wall-clock
+  from when the task entered the node. Keep handlers comfortably below 50 s
+  instead of relying on that exact cutoff; it is observed behavior, not a
+  portable contract. Overruns produced `git_call_executing_error` /
+  `usercode: timeout`. Inline cold and warm probes ended at the same point;
+  custom images may have different startup overhead.
+- **Default resources:** 50 MB RAM / 0.1 CPU from a pool shared by Git Call
+  nodes. These values are super-admin-configurable. Shared capacity can cause
+  contention under concurrency; a live concurrent probe observed one starved
+  task.
+- **No persistent local storage:** writable runtime paths such as `/tmp` are
+  ephemeral. Git-repo mode and dependency installation need build-time network
+  access; runtime network access depends on the handler.
 
-Every other node can run for as long as it needs; only `api`/`api_rpc` share a
-per-call 60 s limit. **Never** put time-sensitive or long-running logic in a Git
-Call — loops/polling belong in `condition`+`delay` (unlimited), waits on external
-systems in `api_rpc`+callback, plain HTTP in `api`/`api_rpc`, and transforms/parsing
-in a Code (`api_code`) node.
+Do not keep a Git Call invocation open for long-running loops, polling, retries,
+or external waits. Represent those as process state transitions
+(`condition`+`delay`) or resume through a callback. These alternatives avoid
+the per-invocation Git Call deadline, while remaining subject to normal
+platform/process limits. Use `api`/`api_rpc` for plain HTTP and `api_code` for
+ordinary payload transforms.
 
-> Note: the `time` semaphor shown in the examples below (e.g. `600 min`) is a
-> process-level routing timeout **you** configure to send the task down your own
-> timeout path. It is independent of, and cannot extend, the ~60 s container hard
-> limit above — the container is killed at ~60 s regardless of the semaphor value.
+> Note: a `time` semaphor is a process-level routing deadline that sends a task
+> down the configured timeout path if the node remains active. It is independent
+> of the container execution deadline and cannot extend a Git Call handler's
+> runtime.
 
 ## Parameters
 
@@ -59,9 +64,10 @@ in a Code (`api_code`) node.
 2. **Version** (Number)
    - API version to use.
    - Example: `"version": 2`
-3. **Timeout** (Object)
-   - Maximum execution time using semaphors.
-   - Example: `{"type": "time", "value": 600, "dimension": "min", "to_node_id": "timeout_node_id"}`
+3. **Routing timeout** (Object)
+   - Process-level fallback using a time semaphor; it does not control or extend
+     the Git Call container deadline.
+   - Example: `{"type": "time", "value": 2, "dimension": "min", "to_node_id": "timeout_node_id"}`
 
 ## Error Handling
 
@@ -83,7 +89,8 @@ in a Code (`api_code`) node.
 - Use descriptive node titles that indicate the purpose of the Git call
 - Implement comprehensive error handling with specific conditions for different error types
 - Position error handling nodes to the right of the Git Call node
-- Configure appropriate timeouts based on expected execution time
+- Configure a routing timeout as a safety net, independently of the handler's
+  execution budget
 
 ## Node Naming Guidelines
 
@@ -147,7 +154,7 @@ timeout semaphore.
       // Semaphores for controlling execution
       {
         "type": "time", // Timeout semaphore
-        "value": 600, // Timeout value
+        "value": 2, // Routing timeout value
         "dimension": "min", // Timeout unit (minutes)
         "to_node_id": "timeout_error_node" // Node to go to on timeout (example uses "61d5467082ba963bce684b6f")
       }
@@ -171,8 +178,9 @@ timeout semaphore.
 - **`err_node_id`**: Points to the Condition node for handling errors during Git operations or code
   execution.
 - The `go` logic block defines the path after successful execution.
-- The `semaphors` array includes a timeout condition, routing the task to `timeout_error_node` if
-  execution exceeds 600 minutes.
+- The `semaphors` array includes a process-level fallback that routes the task
+  to `timeout_error_node` if the node remains active for 2 minutes. It does not
+  allow the handler to execute for 2 minutes.
 
 ## Default Configuration with Escalation Nodes
 

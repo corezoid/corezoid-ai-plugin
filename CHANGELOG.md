@@ -2,7 +2,7 @@
 
 ## [Unreleased]
 
-- Feat: **`git_call` selection guardrails.** `lint-process` now emits an advisory `GIT_CALL USAGE` finding for every `git_call`/`api_git` node (never blocks a push), and the `corezoid-create` and `corezoid-gitcall` skills plus `docs/nodes/git-call-node.md` state the verified hard limits and a concrete selection rule. `git_call` has a **~60 s hard execution timeout** (~50 s usable; cold == warm for inline code, measured live), 50 MB RAM / 0.1 CPU shared globally across all git_call nodes, is stateless and flaky under load. The rule: default to native nodes → a Code (`api_code`) node → `git_call` only when a step needs a file to parse, an external library, cryptography, or a custom runtime that the former cannot provide, and never for time-sensitive or long-running logic (loops/polling → `condition`+`delay`; waits → `api_rpc`+callback).
+- Feat: **`git_call` selection guardrails.** `lint-process` now emits an advisory `GIT_CALL USAGE` finding for every `git_call`/`api_git` node (never blocks a push), and the `corezoid-create` and `corezoid-gitcall` skills plus `docs/nodes/git-call-node.md` define a concrete selection rule. Hosted sandbox measurements show an approximately 60 s execution deadline, with handlers kept comfortably below 50 s. Default resources are 50 MB RAM / 0.1 CPU from a shared, super-admin-configurable pool, concurrent calls can contend for that pool, and local storage is ephemeral. The rule: default to native nodes → a Code (`api_code`) node → `git_call` only when a step needs file parsing, an external library, cryptography, or a custom runtime that the former cannot provide; model long-running loops/polling and external waits as process state/callbacks instead of holding a handler open.
 
 ## [2.11.0]
 

@@ -81,16 +81,20 @@ Every process follows this base structure:
 For complete JSON schemas see `${CLAUDE_PLUGIN_ROOT}/docs/node-structures.md`.
 
 > **Node choice — do NOT default to `git_call`.** `git_call` is deliberately absent
-> from the table above: it is the platform's most constrained node — a **~60 s hard
-> execution timeout** (~50 s usable), 50 MB RAM / 0.1 CPU shared globally, no
-> state/storage, and flaky under load. Writing one code block is often *easier* than
-> modelling the flow — that is not a reason to use it. Prefer, in order: native nodes
+> from the table above: hosted sandbox measurements show an approximately 60 s
+> execution deadline, so handlers need to finish comfortably below 50 s. Its default
+> 50 MB RAM / 0.1 CPU allocation comes from a shared, super-admin-configurable pool;
+> concurrent calls can contend for it, and local storage is ephemeral. Writing one
+> code block is often *easier* than modelling the flow — that is not a reason to use
+> it. Prefer, in order: native nodes
 > (`set_param`, `condition`, `delay`, `api`/`api_rpc`, `db_call`) → a **Code node
 > (`api_code`)** for transforms/parse/compute → `git_call` **only** when a file to
 > parse, an external library, or a custom runtime leaves no other option. **Never**
-> put time-sensitive or long-running work (loops, polling, waits) in `git_call` —
-> use `condition`+`delay` (unlimited) or `api_rpc`+callback. Full limits and the
-> decision gate: the `corezoid-gitcall` skill.
+> put long-running work or a latency-critical path that requires predictable
+> execution time in `git_call`. Model loops/polling as process state with
+> `condition`+`delay`, and external waits with a callback; those patterns avoid
+> holding one handler open and remain subject to normal platform/process limits.
+> Full guidance and the decision gate: the `corezoid-gitcall` skill.
 
 ---
 

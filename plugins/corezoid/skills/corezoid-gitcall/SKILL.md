@@ -20,30 +20,37 @@ the next node.
 
 ## 1. When to use it — the selection rule
 
-Git Call is the most constrained node on the platform (hard limits below). Use it
-**only** when a step needs a capability that native nodes and a Code (`api_code`)
-node cannot provide — parsing a file, an external library, cryptography, or a custom
-runtime — **and** the work finishes within the ~50 s budget. For everything else use
-the native alternative. "One code block is easier to write" is not one of those
-capabilities.
+Git Call is one of the most constrained nodes on the platform. Use it **only**
+when a step needs a capability that native nodes and a Code (`api_code`) node
+cannot provide — parsing a file, an external library, cryptography, or a custom
+runtime — **and** the work finishes comfortably within the observed runtime
+budget. For everything else use the native alternative. "One code block is
+easier to write" is not one of those capabilities.
 
-### Hard limits (verified live — do not design around, design to avoid)
+### Runtime and resource constraints
 
-- **~60 s hard execution timeout**, wall-clock from the moment the task enters the
-  node. On overrun the task is killed and routed to the error path
+- **Observed execution deadline:** hosted sandbox measurements terminated the
+  handler at approximately 60 s, wall-clock from the moment the task entered the
+  node. Keep handler work comfortably below 50 s rather than relying on the exact
+  cutoff, which is an observed platform behavior rather than a portable contract.
+  On overrun the task was killed and routed to the error path
   (`__conveyor_git_call_return_type_tag__ = git_call_executing_error`, description
-  `usercode: timeout`). Usable handler time is only **~50 s** — container
-  dispatch/warm-up eats into the window. (For inline code, cold and warm starts are
-  the same, ~60 s; a custom Docker image can add more cold-start overhead.)
-- **50 MB RAM and 0.1 CPU, shared GLOBALLY across every Git Call node** in the
-  workspace. Under concurrency the pool saturates and nodes get starved — Git Call
-  is not just slow, it is **unreliable under load**.
-- **Stateless**: no local storage, nothing persists between runs.
-- **Network required**: fetches repo/dependencies; fails offline.
+  `usercode: timeout`). In those measurements, inline cold and warm runs ended at
+  the same point; custom images may have different startup overhead.
+- **Default resource allocation:** 50 MB RAM and 0.1 CPU from a pool shared by
+  Git Call nodes. These are defaults, not immutable hard limits: a super-admin can
+  change the allocation. Shared capacity can still cause contention under
+  concurrency; one live concurrent probe observed a starved task.
+- **No persistent local storage:** runtime-local files, including writable
+  `/tmp`, are ephemeral and must not be used as state between runs.
+- **Build-time network dependency:** Git-repo mode and dependency installation
+  need network access. Runtime network access is required only when the handler
+  itself calls an external service.
 
-Contrast: every other node can run for as long as it needs — a `condition`+`delay`
-loop can poll for hours; only `api`/`api_rpc` share a per-call limit (60 s). Git
-Call is the one node that will kill your logic mid-run.
+For work that waits, polls, or retries over time, model progress as process state
+transitions (`condition`+`delay`) or resume through a callback. Those patterns do
+not hold one Git Call handler open, but they remain subject to normal
+platform/process limits.
 
 ### Decision gate — before adding a Git Call, confirm ALL of these
 
@@ -51,10 +58,13 @@ Call is the one node that will kill your logic mid-run.
    `api`/`api_rpc`, `api_code`, `db_call`, `api_sum`, `api_copy`).
 2. It cannot be done in a **Code (`api_code`)** node (JS with the platform's
    built-ins) — try this first for any transform/parse/compute.
-3. It is **not time-sensitive** and comfortably finishes in well under ~50 s.
+3. It comfortably finishes below the observed ~50 s working budget and the
+   surrounding flow does not require tighter, predictable latency under load.
 4. It is **not** a long-running loop, poll, or wait — those belong in
-   `condition`+`delay` (unlimited) or `api_rpc`+callback, never in Git Call.
-5. It does **not** need large memory or to hold state.
+   process state transitions (`condition`+`delay`) or a callback, never in one
+   Git Call invocation.
+5. It fits the configured resource allocation and does **not** need persistent
+   local state.
 
 If any answer is "no", do **not** use Git Call.
 
@@ -67,25 +77,28 @@ If any answer is "no", do **not** use Git Call.
 
 ### NEVER use Git Call for:
 
-- Anything **time-sensitive** or that might approach ~50 s.
+- Work that might approach the observed ~50 s budget, or a latency-critical path
+  that requires predictable execution time under concurrency.
 - **Long-running** work — loops, polling, ret/backoff, waiting on an external
-  system (→ `condition`+`delay`, or `api_rpc`+callback; both effectively unlimited).
+  system (→ process state with `condition`+`delay`, or a callback).
 - Plain HTTP calls (→ `api`/`api_rpc`).
 - Simple transforms, JSON shaping, math, string work (→ `api_code`).
-- Large-data / high-memory processing (50 MB cap, shared).
+- Large-data / high-memory processing that does not fit the configured shared
+  resource allocation.
 
-| Aspect        | Native nodes / `api_code`     | Git Call                          |
-|---------------|-------------------------------|-----------------------------------|
-| Time limit    | none (api/api_rpc: 60 s)      | **~60 s hard kill (~50 s usable)** |
-| Warm-up       | none                          | container build + dispatch        |
-| Memory        | platform-managed              | **50 MB, shared globally**        |
-| Reliability   | stable                        | **flaky under load**              |
-| State/storage | task payload                  | stateless, none                   |
-| External deps | no                            | yes                               |
+| Aspect        | Native nodes / `api_code` | Git Call |
+|---------------|---------------------------|----------|
+| Runtime model | Platform node execution | Container handler; ~60 s deadline observed in hosted tests |
+| Warm-up       | None for ordinary native nodes | Container build + dispatch |
+| Memory / CPU  | Platform-managed | 50 MB / 0.1 CPU defaults from a shared, configurable pool |
+| Concurrency   | Node-specific | Shared capacity can introduce contention |
+| State/storage | Task/process state | No persistent local storage; `/tmp` is ephemeral |
+| External deps | Built-in capabilities | External libraries and custom runtimes supported |
 
 Selection rule: **default to native nodes + `api_code`. Use Git Call only when a
 file to parse, an external library, cryptography, or a custom runtime leaves no
-native way to do it — and never for anything long-running or time-sensitive.**
+native way to do it, and keep each invocation short, bounded, and within the
+configured resource allocation.**
 
 ## 2. Supported languages and runtimes
 
@@ -245,9 +258,10 @@ Common issues:
 
 ## 9. Resources
 
-Each container defaults to 100 millicpu (0.1 CPU) and 50 MB RAM, allocated
-globally across all Git Call nodes. For heavy workloads (crypto, large datasets)
-ask a super-admin to raise the global limit.
+Each container defaults to 100 millicpu (0.1 CPU) and 50 MB RAM from a resource
+pool shared by Git Call nodes. The exact scope and allocation are
+deployment-specific; ask a super-admin to inspect or adjust them before relying
+on Git Call for heavier or highly concurrent workloads.
 
 ## Reference
 

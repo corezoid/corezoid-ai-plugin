@@ -169,14 +169,14 @@ type StubModeNode struct {
 	Issue    string
 }
 
-// GitCallUsage flags a git_call (api_git) node. Git Call is the platform's most
-// constrained node — a ~60s hard execution timeout (~50s usable), 50 MB RAM /
-// 0.1 CPU shared globally, stateless, flaky under load — so it should be used
-// only when a step needs a capability native nodes plus a Code (api_code) node
-// cannot provide (file parsing, external library, cryptography, custom runtime).
-// This is ADVISORY (never blocks a push): a legitimate git_call is valid; the
-// finding is a nudge to confirm the node meets that rule and is not just the
-// easiest code to write.
+// GitCallUsage flags a git_call (api_git) node. Hosted sandbox measurements show
+// an approximately 60s execution deadline (keep handlers comfortably below 50s).
+// Git Call also uses a shared, configurable resource pool and has no persistent
+// local storage, so it should be reserved for capabilities native nodes plus a
+// Code (api_code) node cannot provide (file parsing, an external library,
+// cryptography, or a custom runtime). This is ADVISORY (never blocks a push): a
+// legitimate git_call is valid; the finding asks the author to confirm the node
+// meets that rule and is not merely the easiest code to write.
 type GitCallUsage struct {
 	ID    string
 	Title string
@@ -715,12 +715,9 @@ func findStubModeNodes(nodes []processNode) []StubModeNode {
 }
 
 // findGitCallUsages flags every git_call (api_git) node. Advisory only — a
-// legitimate git_call is valid, but the node has hard runtime limits (~60s
-// timeout, ~50s usable, 50 MB RAM / 0.1 CPU shared globally, stateless, flaky
-// under load), so each one is surfaced to confirm the step genuinely needs a
-// capability native nodes plus a Code (api_code) node cannot provide (file
-// parsing, external library, cryptography, custom runtime) and is not just the
-// easiest code to write. Never for time-sensitive or long-running logic.
+// legitimate git_call is valid, but each one is surfaced to confirm the step
+// genuinely needs a capability native nodes plus a Code (api_code) node cannot
+// provide and fits within the observed runtime and configured resource budget.
 func findGitCallUsages(nodes []processNode) []GitCallUsage {
 	var result []GitCallUsage
 	for _, n := range nodes {
@@ -736,7 +733,7 @@ func findGitCallUsages(nodes []processNode) []GitCallUsage {
 			result = append(result, GitCallUsage{
 				ID:    n.id,
 				Title: title,
-				Issue: "git_call has a ~60s hard execution timeout (~50s usable), 50 MB RAM / 0.1 CPU shared across all git_call nodes, is stateless and flaky under load. Use it only when the step needs a capability native nodes + a Code (api_code) node cannot provide: file parsing, an external library, cryptography, or a custom runtime. Otherwise use the native node. NEVER put time-sensitive or long-running logic here (loops/polling → condition+delay; waiting on externals → api_rpc+callback; plain HTTP → api/api_rpc).",
+				Issue: "Hosted sandbox measurements show an approximately 60s git_call execution deadline; keep handlers comfortably below 50s. Default resources are 50 MB RAM / 0.1 CPU from a shared, super-admin-configurable pool, so concurrency can cause contention. Local storage is ephemeral, not persistent. Use git_call only when native nodes + a Code (api_code) node cannot provide the required capability: file parsing, an external library, cryptography, or a custom runtime. Do not use it for long-running work or latency-critical paths that require predictable execution time (loops/polling → process state with condition+delay; external waits → callback; plain HTTP → api/api_rpc).",
 			})
 			break // one advisory per node, even if it carries several logics
 		}
