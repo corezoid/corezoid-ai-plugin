@@ -17,22 +17,36 @@ https://account.corezoid.com/oauth2/authorize?...
 
 Copy that URL into a browser manually to complete the OAuth flow.
 
-**Headless / remote environments:** Write `ACCESS_TOKEN` to `~/.corezoid/credentials`:
+**Headless / remote environments:** Edit `~/.corezoid/config.json` and add or update the Folder for your working directory:
 
+```json
+{
+  "version": 1,
+  "folders": [
+    {
+      "root_path": "/absolute/path/to/your/workspace",
+      "account_url": "https://account.corezoid.com",
+      "corezoid_url": "https://admin.corezoid.com",
+      "workspace_id": "<id>",
+      "stage_id": <id>,
+      "access_token": "<your-token>"
+    }
+  ]
+}
 ```
-ACCESS_TOKEN=<your-token>
-```
+
+File mode must be `0600`; directory `0700`.
 
 ---
 
-### `ACCESS_TOKEN` expired
+### Access token expired
 
-The token's expiry is stored in `~/.corezoid/credentials` as `ACCESS_TOKEN_EXPIRES_AT`. If the server reports an expired token, run the `login` MCP tool again — it will overwrite the stale token automatically.
+The token's expiry is stored on the Folder as `expires_at` (RFC3339). If the server reports an expired token, run the `login` MCP tool again — it will overwrite the stale token automatically.
 
-To check expiry:
+To check expiry manually:
 
 ```bash
-grep ACCESS_TOKEN_EXPIRES_AT ~/.corezoid/credentials
+python3 -c 'import json; print([f["expires_at"] for f in json.load(open("$HOME/.corezoid/config.json"))["folders"]])'
 ```
 
 ---
@@ -45,23 +59,15 @@ The OAuth callback server picks a random free port automatically. If it still fa
 
 ### Credentials not loaded
 
-The MCP server loads credentials and config from two places:
+The MCP server loads all credentials and workspace config from a single file:
 
 | File | Contents |
 |------|----------|
-| `~/.corezoid/credentials` | `ACCESS_TOKEN`, `ACCESS_TOKEN_EXPIRES_AT` |
-| `<project>/.env` | `WORKSPACE_ID`, `COREZOID_STAGE_ID`, `COREZOID_API_URL`, etc. |
+| `~/.corezoid/config.json` | `folders[]` — one entry per working directory. Each has `account_url`, `corezoid_url`, `workspace_id`, `stage_id`, `access_token`, `expires_at`, `api_login`, `api_secret`, plus cached `project_id` / `git_url` / `git_stage_path`. |
 
-The project `.env` is found by walking up from `$COREZOID_WORK_DIR` (the directory where Claude Code was opened), stopping at the project root (directory containing a `*stage.json` file). Make sure you are running Claude Code from inside a pulled Corezoid workspace.
+The MCP server picks a Folder by matching the current working directory (or `$COREZOID_WORK_DIR`, set by Claude Code / Codex / Kiro) against each `root_path`; the longest-prefix match wins. Make sure your `root_path` is the absolute path where you are running the client.
 
-To set variables explicitly without a file:
-
-```bash
-export ACCESS_TOKEN=...
-export COREZOID_API_URL=...
-export WORKSPACE_ID=...
-export COREZOID_STAGE_ID=...
-```
+There is no environment-variable override for `access_token`, `workspace_id`, etc. — all state lives in `~/.corezoid/config.json`.
 
 ---
 
@@ -85,8 +91,8 @@ Run `lint-process` before pushing to catch most issues locally without an API ca
 
 ### `pull-process` / `pull-folder` returns 401 or 403
 
-- `ACCESS_TOKEN` is missing or expired → re-run `login`.
-- `WORKSPACE_ID` or `COREZOID_STAGE_ID` points to a workspace/stage you do not have access to.
+- `access_token` is missing or expired → re-run `login`.
+- `workspace_id` or `stage_id` in the current Folder points to a workspace/stage you do not have access to.
 
 ---
 
@@ -134,7 +140,7 @@ COREZOID_DEBUG=1 go run . pull-process process_id=123
 
 ### MCP tool returns "Not authenticated"
 
-Either `ACCESS_TOKEN` is absent from `~/.corezoid/credentials`, or the token was not loaded because the server started before the credentials file existed. Restart the MCP server or run the `login` tool to authenticate.
+Either no Folder in `~/.corezoid/config.json` matches your current working directory, or the current Folder has no `access_token` (nor `api_login` + `api_secret`). Run the `login` MCP tool to authenticate.
 
 ---
 
@@ -142,11 +148,11 @@ Either `ACCESS_TOKEN` is absent from `~/.corezoid/credentials`, or the token was
 
 ### `list-workspaces` returns empty list
 
-Personal accounts have no organization workspace. In this case `WORKSPACE_ID` should be left empty; the plugin uses the personal workspace automatically.
+Personal accounts have no organization workspace. In this case `workspace_id` on the current Folder should be left empty; the plugin uses the personal workspace automatically.
 
 ### No stages visible after login
 
-Stages are attached to a specific workspace. Confirm `WORKSPACE_ID` is set correctly, then run `list-stages` again.
+Stages are attached to a specific workspace. Confirm `workspace_id` on the current Folder is set correctly, then run `list-stages` again.
 
 ---
 
@@ -165,13 +171,14 @@ Stages are attached to a specific workspace. Confirm `WORKSPACE_ID` is set corre
 
 ## Where credentials are stored
 
-Credentials are split across two files:
+All credentials and per-workspace config live in a single user-level file:
 
 | File | Permissions | Contents |
 |------|-------------|----------|
-| `~/.corezoid/credentials` | `0600`, dir `0700` | `ACCESS_TOKEN`, `ACCESS_TOKEN_EXPIRES_AT` — shared across all projects |
-| `<project>/.env` | `0600` | `WORKSPACE_ID`, `COREZOID_STAGE_ID`, `COREZOID_API_URL` — project-specific |
+| `~/.corezoid/config.json` | `0600`, dir `0700` | `folders[]` — one entry per working directory. Each holds `account_url`, `corezoid_url`, `workspace_id`, `stage_id`, `access_token`, `expires_at`, `api_login`, `api_secret`, plus cached `project_id` / `git_url` / `git_stage_path`. |
 
-The token file lives outside the project tree so it can never be accidentally committed to git. The project `.env` contains no secrets and can be shared within a team.
+The file lives outside every project tree so nothing can accidentally be committed to git.
 
-To fully log out and remove the stored token, run the `logout` MCP tool. It removes `ACCESS_TOKEN` and `ACCESS_TOKEN_EXPIRES_AT` from `~/.corezoid/credentials`.
+Concurrent MCP-server processes (e.g. two IDE windows) serialise writes via `flock` on `~/.corezoid/config.json.lock` and atomic temp-file + rename — no lost updates.
+
+To fully log out for the current working directory, run the `logout` MCP tool. It removes the matching Folder entry from `folders[]` (leaves other workspaces untouched).

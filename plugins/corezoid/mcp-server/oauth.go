@@ -269,7 +269,7 @@ type accountClient struct {
 
 // fetchCorezoidAPIURL calls {accountURL}/face/api/1/clients and returns the homepage
 // of the Corezoid client entry (matched first by name=="corezoid", then by
-// full_name=="Corezoid"). This URL is used as COREZOID_API_URL.
+// full_name=="Corezoid"). This URL is stored as corezoid_url on the current Folder.
 func fetchCorezoidAPIURL(accountURL, token string) (string, error) {
 	clientsURL := strings.TrimRight(accountURL, "/") + "/face/api/1/clients"
 	req, err := http.NewRequest("GET", clientsURL, nil)

@@ -106,8 +106,8 @@ var toolHandlers = map[string]toolHandler{
 // login/logout manage credentials themselves.
 // send-feedback must not require auth so users can report problems that
 // occurred before or during the login flow.
-// git tools use their own credential check (COREZOID_GIT_URL + API_LOGIN/SECRET)
-// rather than Corezoid API auth.
+// git tools use their own credential check (git_url + api_login/api_secret in
+// the current Folder in ~/.corezoid/config.json) rather than Corezoid API auth.
 var noAuthTools = map[string]struct{}{
 	"layout-process":      {},
 	"lint-process":        {},

@@ -4,168 +4,149 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
 )
 
-// resolveAndSaveAPIURL discovers COREZOID_API_URL via fetchCorezoidAPIURL and
-// persists it (global, env, .env). Falls back to ACCOUNT_URL only when
-// discovery genuinely returns an empty result with no error — a real fetch
-// error (network failure, transient 5xx, permission issue) leaves apiURL
-// unset instead of silently pointing it at ACCOUNT_URL, since that host does
-// not always also serve /api/2/json; a wrong silent fallback there produces
-// confusing downstream 404s instead of a clear "API URL not resolved" signal.
-// logSuffix is appended to the success log line to distinguish call sites.
-func resolveAndSaveAPIURL(accountURL, token, envPath, logSuffix string) {
+// updateAndSync mutates the current Folder in ~/.corezoid/config.json and
+// then refreshes the in-memory auth-state globals. Convenience wrapper used
+// by handleLogin's many small state updates; warns on persistence failure so
+// the user-driven login flow does not abort mid-step.
+func updateAndSync(mutator func(*Folder), logCtx string) {
+	if err := UpdateCurrent(mutator); err != nil {
+		logger.Warn("%s: could not persist config: %v", logCtx, err)
+	}
+	syncGlobalsFromCurrent()
+}
+
+// removeStageMarkerInCWD deletes any <id>_<name>.stage.json file sitting in
+// the current Folder's RootPath so a subsequent pull can materialize a fresh
+// marker from the zip without leaving the previous stage's marker behind
+// (which would make resolveStageFromCWD refuse both as ambiguous). Silent on
+// missing files.
+func removeStageMarkerInCWD() {
+	f := Current()
+	if f == nil || f.RootPath == "" {
+		return
+	}
+	entries, err := os.ReadDir(f.RootPath)
+	if err != nil {
+		return
+	}
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		if reStageMarker.MatchString(e.Name()) {
+			_ = os.Remove(filepath.Join(f.RootPath, e.Name()))
+		}
+	}
+}
+
+// resolveAndSaveAPIURL discovers the Corezoid API URL via fetchCorezoidAPIURL
+// and persists it to the current Folder as CorezoidURL. Falls back to
+// account_url only when discovery genuinely returns an empty result with no
+// error — a real fetch failure (network, transient 5xx, permission) leaves
+// the URL unset so the next login retries, instead of silently pointing
+// requests at a host that may not serve /api/2/json.
+func resolveAndSaveAPIURL(accountURL, token, logSuffix string) {
 	corezoidURL, fetchErr := fetchCorezoidAPIURL(accountURL, token)
 	if fetchErr != nil {
-		logger.Warn("login: fetchCorezoidAPIURL failed: %v — COREZOID_API_URL left unresolved, retry on next login", fetchErr)
+		logger.Warn("login: fetchCorezoidAPIURL failed: %v — corezoid_url left unresolved, retry on next login", fetchErr)
 		return
 	}
 	if corezoidURL == "" {
 		corezoidURL = strings.TrimRight(accountURL, "/")
-		logger.Info("login: COREZOID_API_URL discovery returned empty — using ACCOUNT_URL %q", corezoidURL)
+		logger.Info("login: corezoid_url discovery returned empty — using account_url %q", corezoidURL)
 	}
-	withAuthLock(func() { apiURL = corezoidURL })
-	os.Setenv("COREZOID_API_URL", corezoidURL)
-	if err := updateEnvFile(envPath, "COREZOID_API_URL", corezoidURL); err != nil {
-		logger.Warn("login: could not save COREZOID_API_URL: %v", err)
-	}
-	logger.Info("login: COREZOID_API_URL=%q%s", corezoidURL, logSuffix)
+	updateAndSync(func(f *Folder) { f.CorezoidURL = corezoidURL }, "login")
+	logger.Info("login: corezoid_url=%q%s", corezoidURL, logSuffix)
 }
 
-// handleLogin runs the OAuth2 PKCE flow. ACCOUNT_URL, WORKSPACE_ID, and
-// COREZOID_STAGE_ID are persisted to the project .env; ACCESS_TOKEN is saved
-// to ~/.corezoid/credentials via saveCredentials(). The handler is
-// long-running and interactive (elicitation + browser OAuth), so it must NOT
-// hold the auth lock across user-facing waits; we snapshot the auth state,
-// drive the flow from locals, and re-acquire the lock only for the writes
-// that update globals after each step.
+// handleLogin runs the OAuth2 PKCE flow (or accepts pre-provided API-key
+// credentials). All persisted state lives in the current Folder in
+// ~/.corezoid/config.json. The handler is long-running and interactive
+// (elicitation + browser OAuth); we never hold authStateMu across user-facing
+// waits, and every mutation is serialised via UpdateCurrent's flock.
 func handleLogin(ctx context.Context, args map[string]interface{}) (string, bool) {
-	envPath := envFilePath()
+	// Refresh in case another process wrote to config since startup.
+	syncGlobalsFromCurrent()
 
-	// Re-read .env so that ACCESS_TOKEN (and other vars) added after server
-	// startup are honoured — prevents triggering OAuth when the token is
-	// already present in .env. The env-reload + arg-application block is a
-	// composite check-then-set on shared state, so do it under the auth
-	// write lock to keep concurrent readers consistent.
-	findAndLoadDotEnv()
-	var stageIDAtStart int
-	withAuthLock(func() {
-		if apiToken == "" {
-			apiToken = os.Getenv("ACCESS_TOKEN")
-		}
-		// Reload unconditionally so that values in a swapped .env override the
-		// in-memory state captured at startup — enables mid-session env switching.
-		accountURL = os.Getenv("ACCOUNT_URL")
-		workspaceID = os.Getenv("WORKSPACE_ID")
-		stageID, _ = strconv.Atoi(os.Getenv("COREZOID_STAGE_ID"))
-		apiURL = os.Getenv("COREZOID_API_URL")
+	// Capture state BEFORE args are applied — snapStageIDBefore is used at the
+	// end to decide whether to auto-run pull-folder (only if stage was
+	// unconfigured before this login call).
+	_, _, _, _, snapStageIDBefore := authSnapshot()
 
-		// Reload API key credentials if currently empty (e.g. added to .env
-		// after the server started).
-		if apiLogin == "" {
-			apiLogin = os.Getenv("API_LOGIN")
+	// Apply argument-provided values. Arguments always override current state
+	// so users can switch environments explicitly.
+	if v := optStrArg(args, "account_url"); v != "" {
+		_, _, _, current, _ := authSnapshot()
+		if v != current {
+			// Account URL changed — derived API URL and git mirror URL are no
+			// longer valid for the new host.
+			updateAndSync(func(f *Folder) {
+				f.AccountURL = v
+				f.CorezoidURL = ""
+				f.GitURL = ""
+				f.GitStagePath = ""
+			}, "login")
+		} else {
+			updateAndSync(func(f *Folder) { f.AccountURL = v }, "login")
 		}
-		if apiSecret == "" {
-			apiSecret = os.Getenv("API_SECRET")
+	}
+	if v := optStrArg(args, "workspace_id"); v != "" {
+		_, _, current, _, _ := authSnapshot()
+		if v != current {
+			// Workspace changed — invalidate cached stage marker, project ID,
+			// and git stage path (all keyed by workspace).
+			removeStageMarkerInCWD()
+			updateAndSync(func(f *Folder) {
+				f.WorkspaceID = v
+				f.ProjectID = 0
+				f.GitStagePath = ""
+			}, "login")
+		} else {
+			updateAndSync(func(f *Folder) { f.WorkspaceID = v }, "login")
 		}
+	}
+	// stage_id arg: nothing to persist here — the auto-pull below materializes
+	// the stage's zip into cwd, and that zip contains the authoritative
+	// <id>_<name>.stage.json marker. We only capture the value locally so the
+	// pull knows what to download.
+	var argStageID int
+	if v := optStrArg(args, "stage_id"); v != "" {
+		if id, err := strconv.Atoi(v); err == nil && id != 0 {
+			argStageID = id
+			_, _, _, _, current := authSnapshot()
+			if id != current {
+				// Stage will change — drop stale cached project_id, git_stage_path,
+				// and any existing marker so the incoming zip is not merged with
+				// the previous stage.
+				removeStageMarkerInCWD()
+				updateAndSync(func(f *Folder) {
+					f.ProjectID = 0
+					f.GitStagePath = ""
+				}, "login")
+			}
+		}
+	}
+	if v := optStrArg(args, "api_login"); v != "" {
+		updateAndSync(func(f *Folder) { f.APILogin = v }, "login")
+	}
+	if v := optStrArg(args, "api_secret"); v != "" {
+		updateAndSync(func(f *Folder) { f.APISecret = v }, "login")
+	}
 
-		// Record initial stageID to detect if it gets set during this call.
-		stageIDAtStart = stageID
-
-		// Apply any values passed directly as arguments (bypasses elicitation).
-		// Arguments override .env so users can switch environments explicitly.
-		if v := optStrArg(args, "account_url"); v != "" {
-			if v != accountURL {
-				// Account URL changed; the derived API URL and git mirror URL are
-				// no longer valid for the new host (gitURL is host-derived from
-				// ACCOUNT_URL exactly like apiURL — see deriveGitURL).
-				apiURL = ""
-				gitURL = ""
-				gitStagePath = ""
-				os.Setenv("COREZOID_API_URL", "")
-				os.Setenv("COREZOID_GIT_URL", "")
-				os.Setenv("COREZOID_GIT_STAGE_PATH", "")
-				if err := updateEnvFile(envPath, "COREZOID_API_URL", ""); err != nil {
-					logger.Warn("login: could not clear COREZOID_API_URL on host switch: %v", err)
-				}
-				if err := updateEnvFile(envPath, "COREZOID_GIT_URL", ""); err != nil {
-					logger.Warn("login: could not clear COREZOID_GIT_URL on host switch: %v", err)
-				}
-				if err := updateEnvFile(envPath, "COREZOID_GIT_STAGE_PATH", ""); err != nil {
-					logger.Warn("login: could not clear COREZOID_GIT_STAGE_PATH on host switch: %v", err)
-				}
-			}
-			accountURL = v
-			os.Setenv("ACCOUNT_URL", v)
-			if err := updateEnvFile(envPath, "ACCOUNT_URL", v); err != nil {
-				logger.Warn("login: could not save ACCOUNT_URL from arg: %v", err)
-			}
-		}
-		if v := optStrArg(args, "workspace_id"); v != "" {
-			if v != workspaceID {
-				// Workspace changed — any previously resolved project ID is invalid.
-				cachedProjectID = 0
-				os.Unsetenv("COREZOID_PROJECT_ID")
-				if err := removeEnvKey(envPath, "COREZOID_PROJECT_ID"); err != nil {
-					logger.Warn("login: could not clear COREZOID_PROJECT_ID on workspace switch: %v", err)
-				}
-			}
-			workspaceID = v
-			os.Setenv("WORKSPACE_ID", v)
-			if err := updateEnvFile(envPath, "WORKSPACE_ID", v); err != nil {
-				logger.Warn("login: could not save WORKSPACE_ID from arg: %v", err)
-			}
-		}
-		if v := optStrArg(args, "stage_id"); v != "" {
-			if id, err := strconv.Atoi(v); err == nil && id != 0 {
-				if id != stageID {
-					// cachedProjectID and the resolved git stage path are keyed by
-					// stage (resolveProjectID resolves from COREZOID_STAGE_ID), so
-					// they're invalid the moment the stage changes — not just on a
-					// workspace switch. Leaving them stale would silently mix the
-					// old stage's project/git-mirror context into the new stage.
-					cachedProjectID = 0
-					gitStagePath = ""
-					os.Unsetenv("COREZOID_PROJECT_ID")
-					os.Unsetenv("COREZOID_GIT_STAGE_PATH")
-					if err := removeEnvKey(envPath, "COREZOID_PROJECT_ID"); err != nil {
-						logger.Warn("login: could not clear COREZOID_PROJECT_ID on stage switch: %v", err)
-					}
-					if err := removeEnvKey(envPath, "COREZOID_GIT_STAGE_PATH"); err != nil {
-						logger.Warn("login: could not clear COREZOID_GIT_STAGE_PATH on stage switch: %v", err)
-					}
-				}
-				stageID = id
-				os.Setenv("COREZOID_STAGE_ID", v)
-				if err := updateEnvFile(envPath, "COREZOID_STAGE_ID", v); err != nil {
-					logger.Warn("login: could not save COREZOID_STAGE_ID from arg: %v", err)
-				}
-			}
-		}
-		// Handle api_login and api_secret arguments.
-		if v := optStrArg(args, "api_login"); v != "" {
-			apiLogin = v
-			os.Setenv("API_LOGIN", v)
-			if err := updateEnvFile(envPath, "API_LOGIN", v); err != nil {
-				logger.Warn("login: could not save API_LOGIN from arg: %v", err)
-			}
-		}
-		if v := optStrArg(args, "api_secret"); v != "" {
-			apiSecret = v
-			os.Setenv("API_SECRET", v)
-			if err := updateEnvFile(envPath, "API_SECRET", v); err != nil {
-				logger.Warn("login: could not save API_SECRET from arg: %v", err)
-			}
-		}
-	})
-
-	// Snapshot the post-reload state for use in this handler — long-running
-	// OAuth / elicitation must not hold the auth lock, so we drive most
-	// logic from these locals and only re-acquire the lock for writes.
+	// Snapshot post-arg-application state for the rest of this handler.
+	// stage_id is NOT read from the global — the arg only affects the auto-pull
+	// below, which materializes the marker; only after that will the global
+	// mirror the on-disk state.
 	_, snapToken, snapWorkspaceID, snapAccountURL, snapStageID := authSnapshot()
+	if argStageID != 0 {
+		snapStageID = argStageID
+	}
 	snapAPILogin, snapAPISecret := apiKeySnapshot()
 	logger.Info("login: accountURL=%q workspaceID=%q stageID=%d hasAPIKey=%v", snapAccountURL, snapWorkspaceID, snapStageID, snapAPILogin != "" && snapAPISecret != "")
 
@@ -189,10 +170,10 @@ func handleLogin(ctx context.Context, args map[string]interface{}) (string, bool
 				},
 			)
 			if err != nil {
-				logger.Warn("login: elicitation error for ACCOUNT_URL: %v — using default", err)
+				logger.Warn("login: elicitation error for account_url: %v — using default", err)
 				resolved = "https://account.corezoid.com"
 			} else if action != "accept" {
-				logger.Info("login: user cancelled ACCOUNT_URL elicitation (action=%q)", action)
+				logger.Info("login: user cancelled account_url elicitation (action=%q)", action)
 				return "Please ask the user for their Corezoid Account URL (e.g. https://account.corezoid.com), then call the login tool again with account_url=<value>.", false
 			} else {
 				if v, _ := content["account_url"].(string); v != "" {
@@ -205,65 +186,52 @@ func handleLogin(ctx context.Context, args map[string]interface{}) (string, bool
 			return "Please ask the user for their Corezoid Account URL (e.g. https://account.corezoid.com), then call the login tool again with account_url=<value>.", false
 		}
 		snapAccountURL = resolved
-		withAuthLock(func() { accountURL = resolved })
-		os.Setenv("ACCOUNT_URL", resolved)
-		if err := updateEnvFile(envPath, "ACCOUNT_URL", resolved); err != nil {
-			logger.Warn("login: could not save ACCOUNT_URL: %v", err)
-		}
+		updateAndSync(func(f *Folder) { f.AccountURL = resolved }, "login")
 	}
 
 	// Step 2: OAuth2 PKCE browser flow (skipped if already authenticated or if
-	// API key credentials are present — API key auth doesn't require a browser flow).
+	// API key credentials are present — API key auth does not require a
+	// browser flow).
 	var tokenExpiry time.Time
 	if snapToken == "" && !(snapAPILogin != "" && snapAPISecret != "") {
 		res, err := oauthPKCEFlow(snapAccountURL, oauthClientID)
 		if err != nil {
 			return fmt.Sprintf("Authentication failed: %v", err), true
 		}
-		creds := &Credentials{
-			AccessToken: res.AccessToken,
-			ExpiresAt:   res.ExpiresAt,
-			TokenType:   "Simulator",
-		}
-		if saveErr := saveCredentials(creds); saveErr != nil {
-			logger.Warn("login: failed to save credentials: %v", saveErr)
-		}
+		updateAndSync(func(f *Folder) {
+			f.AccessToken = res.AccessToken
+			f.ExpiresAt = res.ExpiresAt
+		}, "login")
 		snapToken = res.AccessToken
 		tokenExpiry = res.ExpiresAt
-		withAuthLock(func() { apiToken = res.AccessToken })
 
-		// Step 2.5: derive COREZOID_API_URL from the account clients endpoint.
+		// Step 2.5: derive the working API URL from the account clients endpoint.
 		authStateMu.RLock()
 		apiURLEmpty := apiURL == ""
 		authStateMu.RUnlock()
 		if apiURLEmpty {
-			resolveAndSaveAPIURL(snapAccountURL, res.AccessToken, envPath, "")
+			resolveAndSaveAPIURL(snapAccountURL, res.AccessToken, "")
 		}
 	} else if snapToken != "" {
-		// If we already have a token but no derived API URL (e.g. token came from
-		// .env directly without completing OAuth), fetch the URL now.
+		// Token pre-existing but no derived API URL — fetch now.
 		authStateMu.RLock()
 		apiURLEmpty := apiURL == ""
 		authStateMu.RUnlock()
 		if apiURLEmpty {
-			resolveAndSaveAPIURL(snapAccountURL, snapToken, envPath, " (pre-existing token)")
+			resolveAndSaveAPIURL(snapAccountURL, snapToken, " (pre-existing token)")
 		}
 	} else {
-		// API key flow: COREZOID_API_URL cannot be derived via /face/api/1/clients
-		// (that endpoint requires a Bearer/Simulator token). Fall back to ACCOUNT_URL —
-		// in most Corezoid deployments the API is served from the same host as the
-		// admin UI. Users who need a different API host can set COREZOID_API_URL in .env.
+		// API key flow: /face/api/1/clients requires a bearer token — fall back
+		// to account_url. In most deployments the API is served from the same
+		// host as the admin UI. Users needing a different API host can edit
+		// corezoid_url in ~/.corezoid/config.json directly.
 		authStateMu.RLock()
 		apiURLEmpty := apiURL == ""
 		authStateMu.RUnlock()
 		if apiURLEmpty && snapAccountURL != "" {
 			fallback := strings.TrimRight(snapAccountURL, "/")
-			withAuthLock(func() { apiURL = fallback })
-			os.Setenv("COREZOID_API_URL", fallback)
-			if err := updateEnvFile(envPath, "COREZOID_API_URL", fallback); err != nil {
-				logger.Warn("login: could not save COREZOID_API_URL fallback: %v", err)
-			}
-			logger.Info("login: COREZOID_API_URL not set — defaulting to ACCOUNT_URL %q", fallback)
+			updateAndSync(func(f *Folder) { f.CorezoidURL = fallback }, "login")
+			logger.Info("login: corezoid_url not set — defaulting to account_url %q", fallback)
 		}
 	}
 
@@ -316,24 +284,18 @@ func handleLogin(ctx context.Context, args map[string]interface{}) (string, bool
 					if raw, ok := wsIDByLabel[selected]; ok {
 						id = raw
 					}
-					// We're inside the snapWorkspaceID == "" branch, i.e. this always
-					// sets a workspace where none was configured before — clear any
-					// stale leftover COREZOID_PROJECT_ID defensively.
-					withAuthLock(func() { cachedProjectID = 0 })
-					os.Unsetenv("COREZOID_PROJECT_ID")
-					if err := removeEnvKey(envPath, "COREZOID_PROJECT_ID"); err != nil {
-						logger.Warn("login: could not clear COREZOID_PROJECT_ID on workspace switch: %v", err)
-					}
+					// Workspace being set from empty — drop any stale marker
+					// and cached project_id so subsequent stage selection
+					// starts clean.
+					removeStageMarkerInCWD()
+					updateAndSync(func(f *Folder) {
+						f.WorkspaceID = id
+						f.ProjectID = 0
+					}, "login")
 					snapWorkspaceID = id
-					withAuthLock(func() { workspaceID = id })
-					os.Setenv("WORKSPACE_ID", id)
-					if err := updateEnvFile(envPath, "WORKSPACE_ID", id); err != nil {
-						logger.Warn("login: could not save WORKSPACE_ID: %v", err)
-					}
 				}
 			}
 		} else {
-			// No elicitation — fetch workspace list and return it to the LLM.
 			workspaces, fetchErr := fetchWorkspaceList(ctx)
 			var sb strings.Builder
 			sb.WriteString("Authenticated successfully.\n\nAvailable workspaces:\n")
@@ -438,12 +400,6 @@ func handleLogin(ctx context.Context, args map[string]interface{}) (string, bool
 						if selected, _ := content["stage"].(string); selected != "" {
 							if id, ok := stageIDByLabel[selected]; ok && id != 0 {
 								snapStageID = int(id)
-								withAuthLock(func() { stageID = int(id) })
-								vstr := strconv.FormatInt(id, 10)
-								os.Setenv("COREZOID_STAGE_ID", vstr)
-								if err := updateEnvFile(envPath, "COREZOID_STAGE_ID", vstr); err != nil {
-									logger.Warn("login: could not save COREZOID_STAGE_ID: %v", err)
-								}
 							}
 						}
 					}
@@ -470,11 +426,6 @@ func handleLogin(ctx context.Context, args map[string]interface{}) (string, bool
 					if v, _ := content["stage_id"].(string); v != "" {
 						if id, err := strconv.Atoi(v); err == nil && id != 0 {
 							snapStageID = id
-							withAuthLock(func() { stageID = id })
-							os.Setenv("COREZOID_STAGE_ID", v)
-							if err := updateEnvFile(envPath, "COREZOID_STAGE_ID", v); err != nil {
-								logger.Warn("login: could not save COREZOID_STAGE_ID: %v", err)
-							}
 						}
 					}
 				}
@@ -490,7 +441,7 @@ func handleLogin(ctx context.Context, args map[string]interface{}) (string, bool
 				} else {
 					sb.WriteString("No projects found.\n")
 				}
-				sb.WriteString(fmt.Sprintf("Please ask the user for their COREZOID_STAGE_ID (root folder ID), then call login(workspace_id=%s, stage_id=<stage_id>).", snapWorkspaceID))
+				sb.WriteString(fmt.Sprintf("Please ask the user for their stage ID (root folder ID), then call login(workspace_id=%s, stage_id=<stage_id>).", snapWorkspaceID))
 			} else {
 				sb.WriteString("Available projects:\n")
 				for _, p := range projects {
@@ -506,21 +457,35 @@ func handleLogin(ctx context.Context, args map[string]interface{}) (string, bool
 		}
 	}
 
-	// Auto pull-folder if stageID was set during this login call.
-	if snapStageID != 0 && stageIDAtStart == 0 {
+	// Auto pull-folder whenever a stage is (re)selected. The zip contains the
+	// <id>_<name>.stage.json marker at its root — that IS the persistence
+	// mechanism for stage_id/project_id, so without the pull there is no
+	// marker and subsequent tool calls would see stage_id=0. Covers both
+	// first-time setup (snapStageIDBefore == 0) and stage switching
+	// (snapStageIDBefore != 0 && snapStageID differs).
+	if snapStageID != 0 && snapStageID != snapStageIDBefore {
+		// Remove any existing marker so two markers do not end up side-by-side
+		// after unzip (resolveStageFromCWD refuses ambiguity).
+		removeStageMarkerInCWD()
 		pv := NewValidator(ctx, 0)
 		if pullErr := downloadStageRecursively(pv, snapStageID, "."); pullErr != nil {
 			logger.Warn("login: auto pull-folder failed: %v", pullErr)
 		}
+		// Refresh globals so the new marker becomes the source of stage state
+		// for the rest of this handler and any concurrent goroutines.
+		syncGlobalsFromCurrent()
 	}
 
-	msg := fmt.Sprintf("Setup complete! Configuration saved to %s.", envPath)
+	cfgPath, _ := configFilePath()
+	if cfgPath == "" {
+		cfgPath = "~/.corezoid/config.json"
+	}
+	msg := fmt.Sprintf("Setup complete! Configuration saved to %s.", cfgPath)
 	if !tokenExpiry.IsZero() {
 		msg += fmt.Sprintf(" Token expires: %s.", tokenExpiry.Format("2006-01-02 15:04"))
 	}
 
 	// One-time opt-in: ask for email to include in telemetry.
-	// Only shown once per installation; skipping is always valid.
 	if clientElicitationSupported() {
 		prefs := loadUserPreferences()
 		if !prefs.TelemetryEmailAsked {
@@ -553,60 +518,21 @@ func handleLogin(ctx context.Context, args map[string]interface{}) (string, bool
 	return msg, false
 }
 
-// handleLogout deletes the saved credentials from ~/.corezoid/credentials and
-// clears the cached access token. API key credentials are also removed from the
-// project .env. The writes are under the auth lock so a concurrent in-flight
-// request can't briefly use the cleared credentials.
+// handleLogout removes the current Folder from ~/.corezoid/config.json and
+// resets the in-memory auth-state globals. The removal is atomic + serialised
+// across processes via RemoveCurrent's flock.
 func handleLogout(_ context.Context, _ map[string]interface{}) (string, bool) {
-	credPath, err := credentialsFilePath()
-	if err != nil {
-		credPath = "~/.corezoid/credentials"
-	}
-
-	// Snapshot accountURL before clearing so we can include the browser-logout hint.
 	_, _, _, snapAccountURL, _ := authSnapshot()
 
-	if err := deleteCredentials(); err != nil {
-		return fmt.Sprintf("Failed to remove credentials: %v", err), true
+	if err := RemoveCurrent(); err != nil {
+		return fmt.Sprintf("Failed to remove folder entry from config: %v", err), true
 	}
-	// Remove API key credentials from the project .env.
-	envPath := envFilePath()
-	if err := removeEnvKey(envPath, "API_LOGIN"); err != nil {
-		logger.Warn("logout: could not remove API_LOGIN from .env: %v", err)
+	syncGlobalsFromCurrent()
+
+	cfgPath, _ := configFilePath()
+	if cfgPath == "" {
+		cfgPath = "~/.corezoid/config.json"
 	}
-	if err := removeEnvKey(envPath, "API_SECRET"); err != nil {
-		logger.Warn("logout: could not remove API_SECRET from .env: %v", err)
-	}
-	if err := removeEnvKey(envPath, "COREZOID_PROJECT_ID"); err != nil {
-		logger.Warn("logout: could not remove COREZOID_PROJECT_ID from .env: %v", err)
-	}
-	// gitURL/gitStagePath are host- and stage-derived exactly like apiURL and
-	// cachedProjectID — leaving them behind would make the next login into a
-	// different environment silently try to reach the old environment's git
-	// mirror (resolveGitURL short-circuits on any non-empty gitURL).
-	if err := removeEnvKey(envPath, "COREZOID_GIT_URL"); err != nil {
-		logger.Warn("logout: could not remove COREZOID_GIT_URL from .env: %v", err)
-	}
-	if err := removeEnvKey(envPath, "COREZOID_GIT_STAGE_PATH"); err != nil {
-		logger.Warn("logout: could not remove COREZOID_GIT_STAGE_PATH from .env: %v", err)
-	}
-	os.Unsetenv("API_LOGIN")
-	os.Unsetenv("API_SECRET")
-	os.Unsetenv("COREZOID_PROJECT_ID")
-	os.Unsetenv("COREZOID_GIT_URL")
-	os.Unsetenv("COREZOID_GIT_STAGE_PATH")
-	withAuthLock(func() {
-		apiToken = ""
-		accountURL = ""
-		workspaceID = ""
-		stageID = 0
-		apiURL = ""
-		apiLogin = ""
-		apiSecret = ""
-		cachedProjectID = 0
-		gitURL = ""
-		gitStagePath = ""
-	})
 
 	browserHost := strings.TrimRight(snapAccountURL, "/")
 	if browserHost == "" {
@@ -614,9 +540,9 @@ func handleLogout(_ context.Context, _ map[string]interface{}) (string, bool) {
 	}
 
 	return fmt.Sprintf(
-		"Logged out. ACCESS_TOKEN removed from %s.\n\n"+
+		"Logged out. Folder entry removed from %s.\n\n"+
 			"Important: your browser may still have an active SSO session at %s. "+
 			"If a subsequent login produces an already-expired token (\"exp\" in the past), "+
 			"you must also log out of that site in your browser before calling login again.",
-		credPath, browserHost), false
+		cfgPath, browserHost), false
 }

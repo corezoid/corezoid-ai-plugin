@@ -242,9 +242,9 @@ author: "Corezoid"
 
 Call the MCP tool \`login\` with no arguments. It walks through, in sequence:
 1. Corezoid account URL
-2. OAuth2 browser login (token saved to \`~/.corezoid/credentials\`)
-3. Workspace selection (saved to \`.env\` as \`WORKSPACE_ID\`)
-4. Project / stage selection (saved to \`.env\` as \`COREZOID_STAGE_ID\`)
+2. OAuth2 browser login (token saved to \`~/.corezoid/config.json\`)
+3. Workspace selection (saved as \`workspace_id\` in the current Folder in \`~/.corezoid/config.json\`)
+4. Project / stage selection (saved as \`stage_id\` in the same Folder)
 
 If the client doesn't support MCP elicitation, drive the same sequence
 manually with \`list-workspaces\` → \`list-projects\` → stage selection —

@@ -62,7 +62,7 @@ func initLocalGitContext(ctx context.Context) (string, error) {
 		return stageID
 	}()
 	if sid == 0 {
-		return "", fmt.Errorf("COREZOID_STAGE_ID not set")
+		return "", fmt.Errorf("stage_id not set on current Folder")
 	}
 
 	workDir, _ := os.Getwd()

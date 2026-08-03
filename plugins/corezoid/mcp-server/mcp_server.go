@@ -235,17 +235,19 @@ func runMCPServer() {
 	}
 	serverWriter = bufio.NewWriter(os.Stdout)
 
-	// Auto-load saved credentials if no token is configured via env.
-	// loadCredentials reads from env vars already populated by findAndLoadDotEnv().
-	// Startup is single-goroutine, but we still take the lock so the race
-	// detector sees a consistent ordering with later concurrent reads.
+	// Refresh in-memory auth state from ~/.corezoid/config.json in case another
+	// process wrote credentials since startup's loadConfig. Startup is
+	// single-goroutine, but we still take the lock so the race detector sees
+	// a consistent ordering with later concurrent reads.
 	_, snapToken, _, _, _ := authSnapshot()
 	if snapToken == "" {
-		if creds, err := loadCredentials(); err == nil && creds != nil && !isCredentialsExpired(creds) {
-			withAuthLock(func() { apiToken = creds.AccessToken })
+		syncGlobalsFromCurrent()
+		_, snapToken, _, _, _ = authSnapshot()
+		if snapToken != "" {
+			f := Current()
 			expiry := ""
-			if !creds.ExpiresAt.IsZero() {
-				expiry = ", expires " + creds.ExpiresAt.Format("2006-01-02 15:04")
+			if f != nil && !f.ExpiresAt.IsZero() {
+				expiry = ", expires " + f.ExpiresAt.Format("2006-01-02 15:04")
 			}
 			logger.Info("startup: loaded saved credentials%s", expiry)
 		}

@@ -596,7 +596,7 @@ func TestHandleToolCall_CreateAlias_BadFilename(t *testing.T) {
 // TestHandleToolCall_CreateAlias_StageMismatchHint verifies that when the
 // server returns "Object is not in stage" (the exact failure mode from
 // issue #26), the tool surfaces a hint that explains stage_id derivation and
-// mentions the configured COREZOID_STAGE_ID when it was NOT used.
+// mentions the current folder's configured stage_id when it was NOT used.
 func TestHandleToolCall_CreateAlias_StageMismatchHint(t *testing.T) {
 	resetGlobals(t)
 
@@ -641,8 +641,8 @@ func TestHandleToolCall_CreateAlias_StageMismatchHint(t *testing.T) {
 	if !strings.Contains(result, "Object is not in stage") {
 		t.Errorf("expected server error to be surfaced, got %q", result)
 	}
-	if !strings.Contains(result, "COREZOID_STAGE_ID is set to 9026") {
-		t.Errorf("expected hint mentioning frozen env stage, got %q", result)
+	if !strings.Contains(result, "current folder's stage_id is 9026") {
+		t.Errorf("expected hint mentioning frozen folder stage, got %q", result)
 	}
 	if !strings.Contains(result, "stage 10605") {
 		t.Errorf("expected hint mentioning attempted stage, got %q", result)

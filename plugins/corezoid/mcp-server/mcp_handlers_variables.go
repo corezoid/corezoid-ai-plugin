@@ -28,10 +28,11 @@ import (
 //   - delete requires obj_id + company_id + project_id + stage_id and is
 //     PERMANENT: there is no recycle bin for env vars.
 
-// resolveEnvVarTarget resolves the stage (arg or COREZOID_STAGE_ID) and the
-// target variable by name and/or obj_id against the live server list. It
-// returns the full stage listing too, so callers can reuse it (rename
-// collision check) without a second API call.
+// resolveEnvVarTarget resolves the stage (from the tool argument or
+// stage_id on the current Folder) and the target variable by name and/or
+// obj_id against the live server list. It returns the full stage listing
+// too, so callers can reuse it (rename collision check) without a second
+// API call.
 func resolveEnvVarTarget(v *Executor, args map[string]interface{}) (stage int, target EnvVar, all []EnvVar, errMsg string) {
 	stage = v.StageID
 	if _, ok := args["stage_id"]; ok {
@@ -42,7 +43,7 @@ func resolveEnvVarTarget(v *Executor, args map[string]interface{}) (stage int, t
 		stage = s
 	}
 	if stage == 0 {
-		return 0, EnvVar{}, nil, "Error: stage_id not provided and COREZOID_STAGE_ID environment variable is not set or invalid"
+		return 0, EnvVar{}, nil, "Error: stage_id not provided and no stage_id is configured for this working directory (run the 'login' tool)"
 	}
 	name, err := strArg(args, "name")
 	if err != nil {
@@ -213,7 +214,7 @@ func handleListVariables(ctx context.Context, args map[string]interface{}) (stri
 		stage = s
 	}
 	if stage == 0 {
-		return "Error: stage_id not provided and COREZOID_STAGE_ID environment variable is not set or invalid", true
+		return "Error: stage_id not provided and no stage_id is configured for this working directory (run the 'login' tool)", true
 	}
 	vars, err := v.ListEnvVars(stage)
 	if err != nil {

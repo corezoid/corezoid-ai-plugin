@@ -140,24 +140,15 @@ func fetchStageList(ctx context.Context, companyID string, projectID int64) ([]s
 }
 
 // ensureTokenAuth checks that a valid API token or API key credentials are
-// present. If apiToken is empty it attempts to load saved OAuth credentials;
-// if those are also absent, API key credentials (apiLogin + apiSecret) are
-// checked as a fallback. The check-then-load-then-set runs under the auth
-// write lock so concurrent requests can't double-load or race the read against
-// the write.
+// present. If the in-memory token is empty it re-reads ~/.corezoid/config.json
+// in case another process (or a login flow in this process) wrote fresh
+// credentials since startup; if it's still empty, API key credentials
+// (api_login + api_secret) are checked as a fallback.
 func ensureTokenAuth() error {
 	_, snapToken, _, _, _ := authSnapshot()
 	if snapToken == "" {
-		creds, err := loadCredentials()
-		if err == nil && creds != nil && !isCredentialsExpired(creds) {
-			loaded := creds.AccessToken
-			withAuthLock(func() {
-				if apiToken == "" {
-					apiToken = loaded
-				}
-			})
-			snapToken = loaded
-		}
+		syncGlobalsFromCurrent()
+		_, snapToken, _, _, _ = authSnapshot()
 	}
 	if snapToken == "" {
 		// Fall back to API key authentication if both login and secret are set.
@@ -165,7 +156,7 @@ func ensureTokenAuth() error {
 		if snapAPILogin != "" && snapAPISecret != "" {
 			return nil
 		}
-		return fmt.Errorf("[Error] Not authenticated: missing [ACCESS_TOKEN] or [API_LOGIN + API_SECRET]. Invoke the 'corezoid-init' skill to set up credentials (use the Skill tool with skill=\"corezoid-init\").")
+		return fmt.Errorf("[Error] Not authenticated: missing access_token or api_login+api_secret. Invoke the 'corezoid-init' skill to set up credentials (use the Skill tool with skill=\"corezoid-init\").")
 	}
 	return nil
 }
@@ -180,12 +171,12 @@ func ensureAuth() error {
 	_, _, _, snapAccountURL, snapStageID := authSnapshot()
 	var missing []string
 	if snapAccountURL == "" {
-		missing = append(missing, "ACCOUNT_URL")
+		missing = append(missing, "account_url")
 	}
-	// WORKSPACE_ID is optional: personal-workspace accounts have no companyID.
+	// workspace_id is optional: personal-workspace accounts have no companyID.
 	// `Executor.req` strips the empty placeholder from outbound ops in that case.
 	if snapStageID == 0 {
-		missing = append(missing, "COREZOID_STAGE_ID")
+		missing = append(missing, "stage_id")
 	}
 
 	if len(missing) > 0 {

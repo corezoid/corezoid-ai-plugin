@@ -116,7 +116,7 @@ create-alias(
 ```
 
 The tool creates the alias, links it to the process, and returns the `alias_id`.
-Requires `COREZOID_STAGE_ID` to be set in `.env`.
+Requires a `<id>_<name>.stage.json` marker at the workspace root (run `corezoid-init` if missing).
 
 ### Step 5 — Update and redeploy referencing processes
 
@@ -138,15 +138,17 @@ Then for each modified file, run **`lint-process`** and on success **`push-proce
 
 The MCP server does not yet expose a `list-aliases` tool. Use the Corezoid API directly.
 
-**Required fields:**
-- `company_id` — workspace ID (from `.env` `WORKSPACE_ID`)
-- `project_id` — project ID (from the `*.stage.json` file in the project root)
-- `stage_id` — stage ID (from `.env` `COREZOID_STAGE_ID`)
+**Required fields for direct API calls:**
+- `company_id` — `workspace_id` field in the current Folder (`~/.corezoid/config.json`)
+- `project_id` — `parent_id` in the `<id>_<name>.stage.json` marker at the workspace root
+- `stage_id` — `obj_id` in the same `<id>_<name>.stage.json`
+
+MCP tools (`create-alias`, `list-aliases`, etc.) resolve these automatically — pass explicit values only when overriding.
 
 **API call:**
 ```
-POST {COREZOID_API_URL}/api/2/json
-Authorization: Simulator {ACCESS_TOKEN}
+POST {corezoid_url}/api/2/json
+Authorization: Simulator {access_token}
 Content-Type: application/json
 
 {
@@ -185,8 +187,8 @@ points to — use unlink + link for that).
 
 **API call:**
 ```
-POST {COREZOID_API_URL}/api/2/json
-Authorization: Simulator {ACCESS_TOKEN}
+POST {corezoid_url}/api/2/json
+Authorization: Simulator {access_token}
 Content-Type: application/json
 
 {
@@ -216,7 +218,7 @@ Use two API calls: unlink from the current process, then link to the new one.
 
 ### Step 1 — Unlink from current process
 ```
-POST {COREZOID_API_URL}/api/2/json
+POST {corezoid_url}/api/2/json
 
 {
   "ops": [{
@@ -233,7 +235,7 @@ POST {COREZOID_API_URL}/api/2/json
 
 ### Step 2 — Link to new process
 ```
-POST {COREZOID_API_URL}/api/2/json
+POST {corezoid_url}/api/2/json
 
 {
   "ops": [{
@@ -257,8 +259,8 @@ POST {COREZOID_API_URL}/api/2/json
 
 **API call:**
 ```
-POST {COREZOID_API_URL}/api/2/json
-Authorization: Simulator {ACCESS_TOKEN}
+POST {corezoid_url}/api/2/json
+Authorization: Simulator {access_token}
 Content-Type: application/json
 
 {
@@ -284,8 +286,8 @@ have **independent** hashes; rotating or deleting one does not affect the others
 
 **Get the hash — by process (`conv_id`):**
 ```
-POST {COREZOID_API_URL}/api/2/json
-Authorization: Simulator {ACCESS_TOKEN}
+POST {corezoid_url}/api/2/json
+Authorization: Simulator {access_token}
 Content-Type: application/json
 
 {
@@ -300,8 +302,8 @@ Content-Type: application/json
 
 **Get the hash — by alias (`alias_id`):**
 ```
-POST {COREZOID_API_URL}/api/2/json
-Authorization: Simulator {ACCESS_TOKEN}
+POST {corezoid_url}/api/2/json
+Authorization: Simulator {access_token}
 Content-Type: application/json
 
 {
@@ -350,7 +352,7 @@ Two formats have been observed:
   By conv_id:  https://<host>/api/2/json/public/<conv_id>/<callback_hash>
   By alias:    https://<host>/api/2/json/public/@<alias_short_name>/<project_short_name>/<stage_short_name>/<company_id>/<callback_hash>
   ```
-  `<host>` is the same host as `COREZOID_API_URL`. Some installations serve this under
+  `<host>` is the same host as `corezoid_url` on the current Folder. Some installations serve this under
   `/api/1/json/public/...` instead of `/api/2/` — don't assume without confirming once
   per installation.
 
@@ -362,17 +364,17 @@ re-pointed at a new process without invalidating URLs already handed out.
 
 ## Resolving environment values
 
-All API calls above require `company_id`, `project_id`, `stage_id`. Find them:
+MCP alias tools resolve `stage_id`/`project_id` automatically from the workspace marker. For **direct** `/api/2/json` calls (the raw workflows above) collect the values from:
 
 | Value | Where to find it |
-|-------|-----------------|
-| `WORKSPACE_ID` (company_id) | `.env` file — `WORKSPACE_ID=...` |
-| `COREZOID_STAGE_ID` (stage_id) | `.env` file — `COREZOID_STAGE_ID=...` |
-| `project_id` | Read the `*.stage.json` file in the project root; field `project_id` |
-| `COREZOID_API_URL` | `.env` file — `COREZOID_API_URL=...` |
-| `ACCESS_TOKEN` | `~/.corezoid/credentials` or `.env` |
+|-------|------------------|
+| `company_id` | `workspace_id` field in current Folder (`~/.corezoid/config.json`) |
+| `stage_id` | `obj_id` in `<id>_<name>.stage.json` at the workspace root |
+| `project_id` | `parent_id` in the same `<id>_<name>.stage.json` |
+| API URL | `corezoid_url` field in current Folder |
+| Access token | `access_token` field in current Folder |
 
-If `.env` is missing, run the `corezoid-init` skill to set up the environment.
+If the marker file is missing, run the `corezoid-init` skill.
 
 ---
 
@@ -424,7 +426,7 @@ Response: `{ "obj_id": <ALIAS_ID>, "proc": "ok" }`
 | Renaming `short_name` without updating process JSON | Same — grep, replace, push each changed process |
 | Creating an alias with `short_name` that already exists | Use `list aliases` API call first to check |
 | Forgetting to push processes after replacing numeric IDs with aliases | Always `lint-process` then `push-process` for every modified file |
-| Using alias without `COREZOID_STAGE_ID` set | Run `corezoid-init` or set `COREZOID_STAGE_ID` in `.env` |
+| Using alias without `stage_id` set in the current Folder | Run `corezoid-init` |
 
 ---
 

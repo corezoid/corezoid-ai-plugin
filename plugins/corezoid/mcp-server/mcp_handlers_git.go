@@ -9,9 +9,10 @@ import (
 )
 
 // resolveAndSaveStagePath finds the stage directory inside .git-context/ that
-// matches the current COREZOID_STAGE_ID, saves the relative path to the global
-// gitStagePath and to COREZOID_GIT_STAGE_PATH in the project .env file.
-// Returns the path (empty string if not found or stage ID not set).
+// matches the current Folder's stage_id, saves the relative path to the
+// global gitStagePath and persists it to the current Folder in
+// ~/.corezoid/config.json. Returns the path (empty string if not found or
+// stage ID not set).
 func resolveAndSaveStagePath() string {
 	sid := func() int {
 		authStateMu.RLock()
@@ -20,7 +21,7 @@ func resolveAndSaveStagePath() string {
 	}()
 
 	if sid == 0 {
-		logger.Warn("git-pull-context: COREZOID_STAGE_ID not set — cannot resolve stage path")
+		logger.Warn("git-pull-context: stage_id not set — cannot resolve stage path")
 		return ""
 	}
 
@@ -34,11 +35,10 @@ func resolveAndSaveStagePath() string {
 		return ""
 	}
 
-	withAuthLock(func() { gitStagePath = stagePath })
-	os.Setenv("COREZOID_GIT_STAGE_PATH", stagePath)
-	if err := updateEnvFile(envFilePath(), "COREZOID_GIT_STAGE_PATH", stagePath); err != nil {
-		logger.Warn("git-pull-context: could not save COREZOID_GIT_STAGE_PATH to .env: %v", err)
+	if err := UpdateCurrent(func(f *Folder) { f.GitStagePath = stagePath }); err != nil {
+		logger.Warn("git-pull-context: could not persist git_stage_path to config: %v", err)
 	}
+	syncGlobalsFromCurrent()
 	logger.Info("git-pull-context: stage path resolved → %s", stagePath)
 
 	copyStageCLAUDEMD(gitContextDir(), stagePath)
@@ -79,9 +79,10 @@ func copyStageCLAUDEMD(contextDir, stagePath string) {
 	logger.Info("git-pull-context: CLAUDE.md copied to project root (%d bytes)", len(merged))
 }
 
-// resolveGitURL returns COREZOID_GIT_URL, deriving it from ACCOUNT_URL if not
-// already set. Saves the derived URL to the global and to .env so it persists
-// across server restarts. Returns ("", false) on any failure — caller silently skips.
+// resolveGitURL returns the current Folder's git_url, deriving it from
+// account_url if not already set. Persists the derived URL to
+// ~/.corezoid/config.json so it survives across server restarts. Returns
+// ("", false) on any failure — caller silently skips.
 func resolveGitURL() (string, bool) {
 	gURL, _, _, _, acctURL := gitConfigSnapshot()
 	if gURL != "" {
@@ -90,34 +91,33 @@ func resolveGitURL() (string, bool) {
 
 	derived, err := deriveGitURL(acctURL)
 	if err != nil {
-		logger.Warn("git-pull-context: cannot derive COREZOID_GIT_URL from ACCOUNT_URL %q: %v", acctURL, err)
+		logger.Warn("git-pull-context: cannot derive git_url from account_url %q: %v", acctURL, err)
 		return "", false
 	}
 
-	withAuthLock(func() { gitURL = derived })
-	os.Setenv("COREZOID_GIT_URL", derived)
-	if err := updateEnvFile(envFilePath(), "COREZOID_GIT_URL", derived); err != nil {
-		logger.Warn("git-pull-context: could not save COREZOID_GIT_URL to .env: %v", err)
+	if err := UpdateCurrent(func(f *Folder) { f.GitURL = derived }); err != nil {
+		logger.Warn("git-pull-context: could not persist git_url to config: %v", err)
 	}
-	logger.Info("git-pull-context: derived COREZOID_GIT_URL=%s", derived)
+	syncGlobalsFromCurrent()
+	logger.Info("git-pull-context: derived git_url=%s", derived)
 	return derived, true
 }
 
 // resolveProjectID returns the numeric project ID that owns the current
 // stage, needed to build the project-level git mirror clone URL
 // (c-<companyID>-p-<projectID>). Delegates to resolveAndCacheProjectID (see
-// main.go) — the same in-memory/.env cache used by push-process's
+// main.go) — the same in-memory cache used by push-process's
 // auto-snapshot and pull-folder's pre-warm, so the git-context and process
-// paths never resolve or persist COREZOID_PROJECT_ID independently.
-// Returns 0 if COREZOID_STAGE_ID is unset or resolution fails — callers treat
-// 0 as "cannot build the project-level mirror repo URL yet" and fall back to
-// local mode.
+// paths never resolve or persist project_id independently.
+// Returns 0 if stage_id is unset on the current Folder or resolution fails —
+// callers treat 0 as "cannot build the project-level mirror repo URL yet"
+// and fall back to local mode.
 func resolveProjectID(ctx context.Context) int {
 	pid, _ := resolveAndCacheProjectID(NewValidator(ctx, 0))
 	return pid
 }
 
-// syncGitContext derives COREZOID_GIT_URL (best-effort), pulls/clones/reconnects
+// syncGitContext derives git_url (best-effort), pulls/clones/reconnects
 // .git-context/ via gitPullContext, and resolves+saves the current stage path.
 // It's the single sequence shared by ensureGitContext (pull-folder's best-effort
 // caller) and handleGitPullContext (the explicit MCP tool) — a fix to this
@@ -144,7 +144,7 @@ func ensureGitContext(ctx context.Context) bool {
 	_, _, _, gCompany, _ := gitConfigSnapshot()
 
 	if gCompany == "" {
-		logger.Warn("git-pull-context: WORKSPACE_ID not set — skipping git context entirely")
+		logger.Warn("git-pull-context: workspace_id not set on current Folder — skipping git context entirely")
 		return false
 	}
 
@@ -178,12 +178,12 @@ func regenerateLocalCLAUDEMDIfNeeded(ctx context.Context) {
 }
 
 // handleGitPullContext is the MCP tool handler for "git-pull-context".
-// Surfaces errors to the caller; derives COREZOID_GIT_URL automatically.
+// Surfaces errors to the caller; derives git_url automatically.
 func handleGitPullContext(ctx context.Context, args map[string]interface{}) (string, bool) {
 	_, _, _, gCompany, _ := gitConfigSnapshot()
 
 	if gCompany == "" {
-		return "Error: WORKSPACE_ID not set. Run the 'login' tool first to select a workspace.", true
+		return "Error: workspace_id not set on the current Folder. Run the 'login' tool first to select a workspace.", true
 	}
 
 	msg, stagePath, err := syncGitContext(ctx)

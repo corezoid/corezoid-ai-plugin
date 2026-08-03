@@ -26,14 +26,15 @@ You use four MCP tools: `read-context-file`, `update-context-file`,
 Before doing anything, verify all of the following. If any check fails, log
 one warning line and stop — do not continue to subsequent steps.
 
-1. **Stage path known** — read `.env` in the current working directory and
-   extract `COREZOID_GIT_STAGE_PATH`.
-   - If the key is absent → "Git context not configured for this stage (COREZOID_GIT_STAGE_PATH missing). Skipping context update."
+1. **Stage path known** — check whether the current Folder in
+   `~/.corezoid/config.json` has `git_stage_path` set (`git-pull-context`
+   populates it after the first successful mirror sync).
+   - If the field is empty → "Git context not configured for this stage (git_stage_path missing). Skipping context update."
 2. **Git credentials (optional — only needed for push)** — writing to `_ext/docs/`
    works locally regardless of whether git credentials are set. The `git-push-context`
-   step at the end will silently skip if `API_LOGIN`, `API_SECRET`, or
-   `COREZOID_GIT_URL` are missing — local commits are preserved and will be
-   pushed when credentials become available.
+   step at the end will silently skip if `api_login`, `api_secret`, or
+   `git_url` are missing from the current Folder — local commits are
+   preserved and will be pushed when credentials become available.
    - Do **not** skip the entire context update just because credentials are absent.
 3. **Session was substantial** — at least one of:
    - `create-process` or `push-process` was actually called (not just previewed);
@@ -54,7 +55,7 @@ stop and report: "Could not sync git context: {error}. Skipping update."
 
 ## Step 2 — Read current state of all 5 files
 
-Using `STAGE_PATH` = value of `COREZOID_GIT_STAGE_PATH` from `.env`:
+Using `STAGE_PATH` = value of `git_stage_path` from the current Folder in `~/.corezoid/config.json`:
 
 Call `read-context-file` for each path below. A "not found" result is normal
 — treat missing files as empty (no current content).

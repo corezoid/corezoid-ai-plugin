@@ -122,7 +122,7 @@ func stubModeStagePolicyForPush(v *Executor, jsonContent string) stubModeStagePo
 	if v.StageID == 0 {
 		return stubModeStagePolicy{
 			requiresConfirmation: true,
-			reason:               "target stage is unknown because process parent_id could not be resolved and COREZOID_STAGE_ID is not configured",
+			reason:               "target stage is unknown because process parent_id could not be resolved and stage_id is not configured for this folder",
 		}
 	}
 
@@ -214,7 +214,20 @@ func handlePullProcess(ctx context.Context, args map[string]interface{}) (string
 			if resolveErr != nil {
 				logger.Warn("pull-process: could not resolve folder path for parent_id %d: %v", parentID, resolveErr)
 			} else {
-				dir = resolved
+				// resolved is relative to the stage root. Anchor it at the
+				// local stage-root directory (found by walking up from CWD
+				// to a *.stage.json marker) so a re-pull from a subfolder
+				// still writes the file to the same location it lives at
+				// inside Corezoid — not into whatever the current CWD is.
+				// When the process sits at the stage root (resolved == ""),
+				// filepath.Join(stageRoot, "") == stageRoot, which is what
+				// we want. If no stage marker is found (user is outside a
+				// workspace), fall back to the old CWD-relative behaviour.
+				if stageRoot := findStageRootFromCWD(v.StageID); stageRoot != "" {
+					dir = filepath.Join(stageRoot, resolved)
+				} else {
+					dir = resolved
+				}
 			}
 		}
 	}
@@ -243,7 +256,7 @@ func handlePullFolder(ctx context.Context, args map[string]interface{}) (string,
 	}
 
 	// Sync git mirror context before downloading processes.
-	// ensureGitContext handles elicitation of COREZOID_GIT_URL if missing,
+	// ensureGitContext handles derivation of git_url if missing,
 	// and silently skips on any error so the main pull always proceeds.
 	ensureGitContext(ctx)
 
@@ -899,10 +912,11 @@ func handleDeleteFolder(ctx context.Context, args map[string]interface{}) (strin
 //  1. explicit stage_id argument (belt-and-braces override for scripts);
 //  2. stage derived from the process file's parent_id (walk up folders until
 //     obj_type==3) — this is the correct answer for the target process and
-//     avoids the frozen-env failure mode where COREZOID_STAGE_ID pointed at a
-//     different project's stage and the server rejected with the cryptic
+//     avoids the frozen-config failure mode where a stale stage_id pointed at
+//     a different project's stage and the server rejected with the cryptic
 //     "Object is not in stage";
-//  3. COREZOID_STAGE_ID from .env (legacy fallback for pre-parent_id files).
+//  3. stage_id from the current Folder in ~/.corezoid/config.json (legacy
+//     fallback for pre-parent_id files).
 func handleCreateAlias(ctx context.Context, args map[string]interface{}) (string, bool) {
 	filePath, err := resolveProcessPath(args, "process_path")
 	if err != nil {
@@ -931,7 +945,7 @@ func handleCreateAlias(ctx context.Context, args map[string]interface{}) (string
 		if strings.Contains(strings.ToLower(msg), "object is not in stage") {
 			hint := fmt.Sprintf(" — the process (obj_id %d) does not live in stage %d (%s).", procID, stageID, stageSrc)
 			if v.StageID != 0 && v.StageID != stageID {
-				hint += fmt.Sprintf(" COREZOID_STAGE_ID is set to %d; that value was NOT used here.", v.StageID)
+				hint += fmt.Sprintf(" The current folder's stage_id is %d; that value was NOT used here.", v.StageID)
 			}
 			hint += " Pass an explicit stage_id, or pull-process this file again so its parent_id points at the current stage."
 			return fmt.Sprintf("Error creating alias: %s%s", msg, hint), true
@@ -962,7 +976,7 @@ func resolveAliasStageID(v *Executor, args map[string]interface{}, filePath stri
 		if err == nil && stage != 0 {
 			label := "derived from process parent_id"
 			if v.StageID != 0 && v.StageID != stage {
-				label = fmt.Sprintf("derived from process parent_id — overrides COREZOID_STAGE_ID=%d", v.StageID)
+				label = fmt.Sprintf("derived from process parent_id — overrides current folder stage_id=%d", v.StageID)
 			}
 			return stage, label, nil
 		}
@@ -972,9 +986,9 @@ func resolveAliasStageID(v *Executor, args map[string]interface{}, filePath stri
 	}
 
 	if v.StageID != 0 {
-		return v.StageID, "from COREZOID_STAGE_ID (fallback — process file had no parent_id)", nil
+		return v.StageID, "from current folder stage_id (fallback — process file had no parent_id)", nil
 	}
-	return 0, "", fmt.Errorf("could not resolve stage_id: process file has no parent_id, no stage_id argument was passed, and COREZOID_STAGE_ID is not set. Re-pull the process (so parent_id is written), pass stage_id explicitly, or set COREZOID_STAGE_ID.")
+	return 0, "", fmt.Errorf("could not resolve stage_id: process file has no parent_id, no stage_id argument was passed, and stage_id is not set on the current Folder. Re-pull the process (so parent_id is written), pass stage_id explicitly, or run 'login' to set stage_id.")
 }
 
 // readParentIDFromFile reads a .conv.json file just far enough to extract its

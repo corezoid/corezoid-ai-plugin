@@ -332,3 +332,116 @@ func TestResolveProcessPath_AutoDiscoverNone(t *testing.T) {
 		t.Error("expected error when no .conv.json present, got nil")
 	}
 }
+
+// ---- findStageRootFromCWD --------------------------------------------------
+
+// chdirTemp switches CWD to dir for the duration of the test.
+func chdirTemp(t *testing.T, dir string) {
+	t.Helper()
+	orig, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	if err := os.Chdir(dir); err != nil {
+		t.Fatalf("chdir %q: %v", dir, err)
+	}
+	t.Cleanup(func() { os.Chdir(orig) }) //nolint:errcheck
+}
+
+func TestFindStageRootFromCWD_FromSubfolder(t *testing.T) {
+	root := t.TempDir()
+	// Layout:
+	//   <root>/671255_develop.stage.json
+	//   <root>/671259_Business_Process/  <- CWD
+	os.WriteFile(filepath.Join(root, "671255_develop.stage.json"), []byte("{}"), 0644) //nolint:errcheck
+	sub := filepath.Join(root, "671259_Business_Process")
+	os.MkdirAll(sub, 0755) //nolint:errcheck
+	chdirTemp(t, sub)
+
+	// EvalSymlinks on macOS: /var → /private/var. Normalise both sides.
+	got := findStageRootFromCWD(671255)
+	gotReal, _ := filepath.EvalSymlinks(got)
+	rootReal, _ := filepath.EvalSymlinks(root)
+	if gotReal != rootReal {
+		t.Errorf("findStageRootFromCWD(671255) = %q, want %q", gotReal, rootReal)
+	}
+}
+
+func TestFindStageRootFromCWD_MismatchedStageIDIgnored(t *testing.T) {
+	root := t.TempDir()
+	os.WriteFile(filepath.Join(root, "999999_other.stage.json"), []byte("{}"), 0644) //nolint:errcheck
+	chdirTemp(t, root)
+
+	if got := findStageRootFromCWD(671255); got != "" {
+		t.Errorf("expected empty when stage id mismatches, got %q", got)
+	}
+}
+
+func TestFindStageRootFromCWD_MatchesWithZeroStageID(t *testing.T) {
+	root := t.TempDir()
+	os.WriteFile(filepath.Join(root, "42_anything.stage.json"), []byte("{}"), 0644) //nolint:errcheck
+	chdirTemp(t, root)
+
+	got := findStageRootFromCWD(0)
+	gotReal, _ := filepath.EvalSymlinks(got)
+	rootReal, _ := filepath.EvalSymlinks(root)
+	if gotReal != rootReal {
+		t.Errorf("expected match when expectedStageID=0, got %q want %q", gotReal, rootReal)
+	}
+}
+
+func TestFindStageRootFromCWD_NoMarker(t *testing.T) {
+	root := t.TempDir()
+	chdirTemp(t, root)
+	if got := findStageRootFromCWD(0); got != "" {
+		t.Errorf("expected empty when no stage marker in ancestry, got %q", got)
+	}
+}
+
+func TestFindStageRootFromCWD_IgnoresFolderMarkers(t *testing.T) {
+	root := t.TempDir()
+	// A .folder.json marker should NOT match — only .stage.json does.
+	os.WriteFile(filepath.Join(root, "671259_bp.folder.json"), []byte("{}"), 0644) //nolint:errcheck
+	chdirTemp(t, root)
+	if got := findStageRootFromCWD(0); got != "" {
+		t.Errorf("folder marker must not be treated as stage root, got %q", got)
+	}
+}
+
+// TestPullProcess_TargetDirComposition documents the invariant that
+// handlePullProcess relies on: resolveFolderPathFromAPI returns a path
+// RELATIVE to the stage root, and filepath.Join(stageRoot, resolved) yields
+// the correct on-disk location for any depth of nesting — including the
+// stage-root case where resolved == "".
+func TestPullProcess_TargetDirComposition(t *testing.T) {
+	root := t.TempDir()
+	os.WriteFile(filepath.Join(root, "671255_develop.stage.json"), []byte("{}"), 0644) //nolint:errcheck
+	sub := filepath.Join(root, "671259_Business_Process")
+	os.MkdirAll(sub, 0755) //nolint:errcheck
+	chdirTemp(t, sub)
+
+	stageRoot := findStageRootFromCWD(671255)
+	if stageRoot == "" {
+		t.Fatal("stage root not found from subfolder")
+	}
+	stageRootReal, _ := filepath.EvalSymlinks(stageRoot)
+	rootReal, _ := filepath.EvalSymlinks(root)
+
+	cases := []struct {
+		name     string
+		resolved string // what resolveFolderPathFromAPI would return
+		want     string
+	}{
+		{"process at stage root", "", rootReal},
+		{"one-level nesting", "671257_API", filepath.Join(rootReal, "671257_API")},
+		{"deep nesting", filepath.Join("671257_API", "671262_GPT"), filepath.Join(rootReal, "671257_API", "671262_GPT")},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got := filepath.Join(stageRootReal, c.resolved)
+			if got != c.want {
+				t.Errorf("resolved=%q: got %q, want %q", c.resolved, got, c.want)
+			}
+		})
+	}
+}

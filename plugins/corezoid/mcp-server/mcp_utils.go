@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -8,6 +9,102 @@ import (
 	"strconv"
 	"strings"
 )
+
+// StageMarker holds the parsed contents of a <id>_<name>.stage.json file
+// sitting at the root of a workspace. It is the on-disk source of truth for
+// stage_id (obj_id) and project_id (parent_id) — those values are NOT stored
+// in ~/.corezoid/config.json.
+type StageMarker struct {
+	StageID   int
+	ProjectID int
+	Name      string
+	RootPath  string // absolute path of the directory containing the marker file
+	File      string // marker file name, e.g. "671255_develop.stage.json"
+}
+
+// reStageMarker matches "<digits>_<name>.stage.json".
+var reStageMarker = regexp.MustCompile(`^(\d+)_.*\.stage\.json$`)
+
+// resolveStageFromCWD walks up from the current working directory looking for
+// the nearest <id>_<name>.stage.json marker and parses obj_id (stage_id) and
+// parent_id (project_id) from it. Returns nil if no marker is found within
+// maxDepth levels, or if the marker cannot be parsed.
+//
+// The marker file is the sole on-disk source of stage/project identity — a
+// consequence of dropping StageID/ProjectID from ~/.corezoid/config.json.
+// handleLogin writes it after stage selection so subsequent tool calls can
+// derive both IDs by walking the filesystem instead of touching config.
+func resolveStageFromCWD() *StageMarker {
+	cwd := resolveWorkDir()
+	if cwd == "" {
+		return nil
+	}
+	dir := cwd
+	for i := 0; i < 30; i++ {
+		if m := readStageMarkerInDir(dir); m != nil {
+			return m
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			return nil
+		}
+		dir = parent
+	}
+	return nil
+}
+
+// readStageMarkerInDir returns the parsed StageMarker for the single stage
+// marker file in dir, or nil if none exists. When more than one marker sits in
+// the same directory the result is nil — ambiguity has to be resolved by the
+// caller, silently picking one has historically pointed operations at the
+// wrong stage (production vs. develop).
+func readStageMarkerInDir(dir string) *StageMarker {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil
+	}
+	var found []string
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		if reStageMarker.MatchString(e.Name()) {
+			found = append(found, e.Name())
+		}
+	}
+	if len(found) != 1 {
+		return nil
+	}
+	path := filepath.Join(dir, found[0])
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil
+	}
+	var meta struct {
+		ObjID     int    `json:"obj_id"`
+		ParentID  int    `json:"parent_id"`
+		ShortName string `json:"short_name"`
+		Title     string `json:"title"`
+	}
+	if err := json.Unmarshal(data, &meta); err != nil {
+		return nil
+	}
+	if meta.ObjID == 0 {
+		return nil
+	}
+	name := meta.ShortName
+	if name == "" {
+		name = meta.Title
+	}
+	return &StageMarker{
+		StageID:   meta.ObjID,
+		ProjectID: meta.ParentID,
+		Name:      name,
+		RootPath:  dir,
+		File:      found[0],
+	}
+}
+
 
 // confineToWorkdir is a guard against path-traversal in LLM-supplied path
 // arguments. Relative paths are checked lexically (the cleaned form must not
@@ -122,6 +219,49 @@ func resolveFolderIDFromDir(dir string) (int, string, error) {
 		}
 		return 0, "", fmt.Errorf("ambiguous target: directory '%s' contains %d folder/stage markers (%s) — pass folder_id explicitly or run from the specific folder's directory", dir, len(found), strings.Join(names, ", "))
 	}
+}
+
+// findStageRootFromCWD walks up from the current working directory looking
+// for a directory that contains a "<id>_<name>.stage.json" marker. Returns
+// the absolute path to that directory (the local stage root), or "" if none
+// is found.
+//
+// When expectedStageID is non-zero, the numeric ID in the marker filename
+// must match — this prevents anchoring into a sibling stage that happens to
+// sit further up the tree (e.g. develop vs. production checkouts).
+//
+// Used by pull-process so a re-pull from a subfolder still writes the file
+// to the location it lives at inside Corezoid, not to the CWD.
+func findStageRootFromCWD(expectedStageID int) string {
+	cwd, err := os.Getwd()
+	if err != nil {
+		return ""
+	}
+	dir := cwd
+	for i := 0; i < 30; i++ {
+		entries, err := os.ReadDir(dir)
+		if err == nil {
+			for _, e := range entries {
+				if e.IsDir() {
+					continue
+				}
+				m := reStageMarker.FindStringSubmatch(e.Name())
+				if m == nil {
+					continue
+				}
+				id, _ := strconv.Atoi(m[1])
+				if expectedStageID == 0 || id == expectedStageID {
+					return dir
+				}
+			}
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			return ""
+		}
+		dir = parent
+	}
+	return ""
 }
 
 // intArg extracts an integer argument from args map.

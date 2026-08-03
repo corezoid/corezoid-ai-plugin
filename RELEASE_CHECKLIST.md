@@ -23,7 +23,7 @@ Use this before tagging a public release.
 
 - [ ] `CHANGELOG.md` has an entry for the new version.
 - [ ] `README.md` install commands reference `corezoid/corezoid-ai-plugin`.
-- [ ] No local test processes (`*.conv.json`) or `.env` files are tracked in git.
+- [ ] No local test processes (`*.conv.json`) are tracked in git.
 
 ## JSON Validation
 

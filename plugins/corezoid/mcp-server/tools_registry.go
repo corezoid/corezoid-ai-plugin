@@ -66,7 +66,7 @@ var toolRegistry = []mcpTool{
 			"properties": map[string]interface{}{
 				"stage_id": map[string]interface{}{
 					"type":        "integer",
-					"description": "Stage (root folder) ID to list variables from. Defaults to COREZOID_STAGE_ID from .env.",
+					"description": "Stage (root folder) ID to list variables from. Defaults to stage_id from the current Folder in ~/.corezoid/config.json.",
 				},
 			},
 			"required": []string{},
@@ -88,7 +88,7 @@ var toolRegistry = []mcpTool{
 				},
 				"stage_id": map[string]interface{}{
 					"type":        "integer",
-					"description": "Stage the variable lives in. Defaults to COREZOID_STAGE_ID from .env.",
+					"description": "Stage the variable lives in. Defaults to stage_id from the current Folder in ~/.corezoid/config.json.",
 				},
 				"new_name": map[string]interface{}{
 					"type":        "string",
@@ -135,7 +135,7 @@ var toolRegistry = []mcpTool{
 				},
 				"stage_id": map[string]interface{}{
 					"type":        "integer",
-					"description": "Stage the variable lives in. Defaults to COREZOID_STAGE_ID from .env.",
+					"description": "Stage the variable lives in. Defaults to stage_id from the current Folder in ~/.corezoid/config.json.",
 				},
 				"apply": map[string]interface{}{
 					"type":        "boolean",
@@ -379,7 +379,7 @@ var toolRegistry = []mcpTool{
 	},
 	{
 		Name:        "create-alias",
-		Description: "Create a short alias for a Corezoid process. Aliases are stage-scoped; the stage is derived from the process file's parent_id (walking up folders until a stage is reached), so a stale COREZOID_STAGE_ID in .env no longer produces the cryptic \"Object is not in stage\" error. Pass stage_id explicitly to override.",
+		Description: "Create a short alias for a Corezoid process. Aliases are stage-scoped; the stage is derived from the process file's parent_id (walking up folders until a stage is reached), so a stale stage_id in the current Folder no longer produces the cryptic \"Object is not in stage\" error. Pass stage_id explicitly to override.",
 		InputSchema: map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
@@ -393,7 +393,7 @@ var toolRegistry = []mcpTool{
 				},
 				"stage_id": map[string]interface{}{
 					"type":        "integer",
-					"description": "Optional. Stage the alias should be created in. Defaults to the stage derived from the process file's parent_id, then to COREZOID_STAGE_ID from .env.",
+					"description": "Optional. Stage the alias should be created in. Defaults to the stage derived from the process file's parent_id, then to stage_id from the current Folder in ~/.corezoid/config.json.",
 				},
 			},
 			"required": []string{"process_path", "short_name"},
@@ -601,7 +601,7 @@ var toolRegistry = []mcpTool{
 	},
 	{
 		Name:        "login",
-		Description: "Authenticate with Corezoid. Supports two auth methods: (1) OAuth2 browser flow — opens a browser window and saves the token so it persists across sessions; (2) API key — provide api_login and api_secret to skip the browser flow (credentials saved to project .env). Optionally accepts account_url, workspace_id, and stage_id to skip interactive prompts.",
+		Description: "Authenticate with Corezoid. Supports two auth methods: (1) OAuth2 browser flow — opens a browser window and saves the token so it persists across sessions; (2) API key — provide api_login and api_secret to skip the browser flow. All credentials are saved per-folder to ~/.corezoid/config.json (file mode 0600, keyed by the working directory). Optionally accepts account_url, workspace_id, and stage_id to skip interactive prompts.",
 		InputSchema: map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
@@ -623,7 +623,7 @@ var toolRegistry = []mcpTool{
 				},
 				"api_secret": map[string]interface{}{
 					"type":        "string",
-					"description": "API key secret (alternative to OAuth2 browser flow). Must be paired with api_login. Stored in project .env — ensure .env is in .gitignore.",
+					"description": "API key secret (alternative to OAuth2 browser flow). Must be paired with api_login. Stored per-folder in ~/.corezoid/config.json (file mode 0600).",
 				},
 			},
 		},
@@ -648,7 +648,7 @@ var toolRegistry = []mcpTool{
 				},
 				"folder_id": map[string]interface{}{
 					"type":        "integer",
-					"description": "Folder (stage) ID where the dashboard will be created. Defaults to COREZOID_STAGE_ID from .env.",
+					"description": "Folder (stage) ID where the dashboard will be created. Defaults to stage_id from the current Folder in ~/.corezoid/config.json.",
 				},
 			},
 			"required": []string{"title"},
@@ -1291,7 +1291,7 @@ var toolRegistry = []mcpTool{
 	// git mirror
 	{
 		Name:        "git-pull-context",
-		Description: "Clone or pull the Corezoid git mirror for the current workspace into .git-context/. Requires COREZOID_GIT_URL, API_LOGIN, and API_SECRET. Silently skipped if not configured.",
+		Description: "Clone or pull the Corezoid git mirror for the current workspace into .git-context/. Requires git_url, api_login, and api_secret to be set in the current Folder in ~/.corezoid/config.json. Silently skipped if not configured.",
 		InputSchema: map[string]interface{}{
 			"type":       "object",
 			"properties": map[string]interface{}{},
@@ -1299,7 +1299,7 @@ var toolRegistry = []mcpTool{
 	},
 	{
 		Name:        "git-push-context",
-		Description: "Commit and push local _ext/ changes to the Corezoid git mirror. Requires API_LOGIN and API_SECRET. Returns a warning (not an error) if nothing changed.",
+		Description: "Commit and push local _ext/ changes to the Corezoid git mirror. Requires api_login and api_secret in the current Folder in ~/.corezoid/config.json. Returns a warning (not an error) if nothing changed.",
 		InputSchema: map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
