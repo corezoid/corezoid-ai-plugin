@@ -59,7 +59,7 @@ CI (`.github/workflows/ci.yml`) also runs:
 - Markdown link check.
 - Skills-list sync (`scripts/check-skills-sync.py`): the skill directories under `plugins/corezoid/skills/` must match the lists in `CLAUDE.md` and `README.md`.
 
-The MCP server's `fallbackServerVersion` (`plugins/corezoid/mcp-server/mcp_version.go`) is a fifth version-sync point — it is what `initialize.serverInfo.version` reports for a build without `-ldflags`. `python3 scripts/check-version-sync.py` checks all five at once, and `TestFallbackServerVersionMatchesManifest` fails the MCP-server test job on drift.
+The MCP server's `fallbackServerVersion` (`plugins/corezoid/mcp-server/mcp_version.go`) is a fifth version-sync point — it is what `initialize.serverInfo.version` reports for a build without `-ldflags`. The CI step listed above covers only the four manifests; in CI the fifth is guarded solely by `TestFallbackServerVersionMatchesManifest` in the MCP-server test job. Run `python3 scripts/check-version-sync.py` by hand to compare all five at once before tagging — **a release that bumps the four manifests must bump `fallbackServerVersion` in the same commit**, or the MCP-server job goes red.
 
 To regenerate the machine-readable discovery files (`public/llms.txt`, `public/.well-known/skills/index.json`) locally — normally the release workflow does this automatically:
 
