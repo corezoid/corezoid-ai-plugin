@@ -34,6 +34,13 @@ var reStageMarker = regexp.MustCompile(`^(\d+)_.*\.stage\.json$`)
 // consequence of dropping StageID/ProjectID from ~/.corezoid/config.json.
 // handleLogin writes it after stage selection so subsequent tool calls can
 // derive both IDs by walking the filesystem instead of touching config.
+//
+// After the upward walk fails, one downward pass into the immediate children
+// of the starting cwd is attempted — pull-folder keeps the stage as a nested
+// subfolder (<cwd>/<id>_<name>/…) so the workspace root can host multiple
+// stages side by side, and calls issued from the workspace root would
+// otherwise see stage_id=0. The downward pass only accepts an unambiguous
+// single-subfolder result to avoid silently picking one of several stages.
 func resolveStageFromCWD() *StageMarker {
 	cwd := resolveWorkDir()
 	if cwd == "" {
@@ -46,11 +53,65 @@ func resolveStageFromCWD() *StageMarker {
 		}
 		parent := filepath.Dir(dir)
 		if parent == dir {
-			return nil
+			break
 		}
 		dir = parent
 	}
+	return findStageMarkerInImmediateChildren(cwd)
+}
+
+// findStageMarkerInImmediateChildren scans one level of subdirectories of dir
+// for a <id>_<name>.stage.json marker. When exactly one subdirectory contains
+// one, returns it. When multiple do, breaks the tie using the active-stage
+// hint stored on the current Folder (Folder.StageID) — the tool that most
+// recently ran `login` sets this hint, so subsequent stage pulls can coexist
+// with older stage folders without ambiguity. Returns nil only when no marker
+// is found or when the hint does not disambiguate (unset, or no match).
+func findStageMarkerInImmediateChildren(dir string) *StageMarker {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil
+	}
+	var candidates []*StageMarker
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+		if strings.HasPrefix(e.Name(), ".") {
+			continue
+		}
+		if m := readStageMarkerInDir(filepath.Join(dir, e.Name())); m != nil {
+			candidates = append(candidates, m)
+		}
+	}
+	switch len(candidates) {
+	case 0:
+		return nil
+	case 1:
+		return candidates[0]
+	}
+	// Ambiguous — use the active-stage hint from the current Folder.
+	hint := currentFolderStageIDHint()
+	if hint == 0 {
+		return nil
+	}
+	for _, m := range candidates {
+		if m.StageID == hint {
+			return m
+		}
+	}
 	return nil
+}
+
+// currentFolderStageIDHint reads Folder.StageID for the current working
+// directory. Defined as a package-level var so tests can stub it without
+// touching ~/.corezoid/config.json.
+var currentFolderStageIDHint = func() int {
+	f := Current()
+	if f == nil {
+		return 0
+	}
+	return f.StageID
 }
 
 // readStageMarkerInDir returns the parsed StageMarker for the single stage
@@ -239,29 +300,54 @@ func findStageRootFromCWD(expectedStageID int) string {
 	}
 	dir := cwd
 	for i := 0; i < 30; i++ {
-		entries, err := os.ReadDir(dir)
-		if err == nil {
-			for _, e := range entries {
-				if e.IsDir() {
-					continue
-				}
-				m := reStageMarker.FindStringSubmatch(e.Name())
-				if m == nil {
-					continue
-				}
-				id, _ := strconv.Atoi(m[1])
-				if expectedStageID == 0 || id == expectedStageID {
-					return dir
-				}
-			}
+		if dirContainsStageMarker(dir, expectedStageID) {
+			return dir
 		}
 		parent := filepath.Dir(dir)
 		if parent == dir {
-			return ""
+			break
 		}
 		dir = parent
 	}
+	// pull-folder now keeps the stage as a nested subfolder of the workspace
+	// root, so when we start from that root the marker sits one level down.
+	entries, err := os.ReadDir(cwd)
+	if err != nil {
+		return ""
+	}
+	for _, e := range entries {
+		if !e.IsDir() || strings.HasPrefix(e.Name(), ".") {
+			continue
+		}
+		child := filepath.Join(cwd, e.Name())
+		if dirContainsStageMarker(child, expectedStageID) {
+			return child
+		}
+	}
 	return ""
+}
+
+// dirContainsStageMarker reports whether dir has a <id>_<name>.stage.json
+// file; when expectedStageID is non-zero the numeric prefix must match.
+func dirContainsStageMarker(dir string, expectedStageID int) bool {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return false
+	}
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		m := reStageMarker.FindStringSubmatch(e.Name())
+		if m == nil {
+			continue
+		}
+		id, _ := strconv.Atoi(m[1])
+		if expectedStageID == 0 || id == expectedStageID {
+			return true
+		}
+	}
+	return false
 }
 
 // intArg extracts an integer argument from args map.

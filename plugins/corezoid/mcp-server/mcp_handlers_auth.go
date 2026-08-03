@@ -21,17 +21,30 @@ func updateAndSync(mutator func(*Folder), logCtx string) {
 	syncGlobalsFromCurrent()
 }
 
-// removeStageMarkerInCWD deletes any <id>_<name>.stage.json file sitting in
-// the current Folder's RootPath so a subsequent pull can materialize a fresh
-// marker from the zip without leaving the previous stage's marker behind
-// (which would make resolveStageFromCWD refuse both as ambiguous). Silent on
-// missing files.
+// removeStageMarkerInCWD removes any leftover <id>_<name>.stage.json marker
+// files that sit directly in the current Folder's RootPath — legacy layouts
+// where the marker was written next to the extracted stage directory rather
+// than inside it. Silent on missing files.
+//
+// Previously this also deleted every immediate subdirectory that contained a
+// stage marker (to keep resolveStageFromCWD unambiguous when switching stages).
+// That behaviour destroyed the user's other stage checkouts on every stage
+// switch — so we now leave nested stage directories in place and rely on the
+// Folder.StageID hint (populated by handleLogin) to disambiguate. Multiple
+// stages can coexist side-by-side under the same workspace.
 func removeStageMarkerInCWD() {
 	f := Current()
 	if f == nil || f.RootPath == "" {
 		return
 	}
-	entries, err := os.ReadDir(f.RootPath)
+	removeStageMarkersInDir(f.RootPath)
+}
+
+// removeStageMarkersInDir deletes any <id>_<name>.stage.json files directly
+// inside dir. Silent on I/O errors — this is best-effort cleanup ahead of a
+// pull that will overwrite whatever survives anyway.
+func removeStageMarkersInDir(dir string) {
+	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return
 	}
@@ -40,7 +53,7 @@ func removeStageMarkerInCWD() {
 			continue
 		}
 		if reStageMarker.MatchString(e.Name()) {
-			_ = os.Remove(filepath.Join(f.RootPath, e.Name()))
+			_ = os.Remove(filepath.Join(dir, e.Name()))
 		}
 	}
 }
@@ -100,11 +113,12 @@ func handleLogin(ctx context.Context, args map[string]interface{}) (string, bool
 		_, _, current, _, _ := authSnapshot()
 		if v != current {
 			// Workspace changed — invalidate cached stage marker, project ID,
-			// and git stage path (all keyed by workspace).
+			// stage ID hint, and git stage path (all keyed by workspace).
 			removeStageMarkerInCWD()
 			updateAndSync(func(f *Folder) {
 				f.WorkspaceID = v
 				f.ProjectID = 0
+				f.StageID = 0
 				f.GitStagePath = ""
 			}, "login")
 		} else {
@@ -463,24 +477,61 @@ func handleLogin(ctx context.Context, args map[string]interface{}) (string, bool
 	// marker and subsequent tool calls would see stage_id=0. Covers both
 	// first-time setup (snapStageIDBefore == 0) and stage switching
 	// (snapStageIDBefore != 0 && snapStageID differs).
+	var autoPullErr error
 	if snapStageID != 0 && snapStageID != snapStageIDBefore {
-		// Remove any existing marker so two markers do not end up side-by-side
-		// after unzip (resolveStageFromCWD refuses ambiguity).
+		// Clear any stray root-level marker so the new pull's marker (inside
+		// the extracted stage directory) is the single unambiguous source.
+		// Existing sibling stage directories are preserved — see
+		// removeStageMarkerInCWD.
 		removeStageMarkerInCWD()
+		// Persist the active-stage hint so resolveStageFromCWD can break the
+		// tie when multiple sibling stage directories coexist in RootPath.
+		// The marker file inside the extracted stage stays authoritative.
+		selectedStageID := snapStageID
+		updateAndSync(func(f *Folder) { f.StageID = selectedStageID }, "login")
 		pv := NewValidator(ctx, 0)
 		if pullErr := downloadStageRecursively(pv, snapStageID, "."); pullErr != nil {
 			logger.Warn("login: auto pull-folder failed: %v", pullErr)
+			autoPullErr = pullErr
 		}
 		// Refresh globals so the new marker becomes the source of stage state
 		// for the rest of this handler and any concurrent goroutines.
 		syncGlobalsFromCurrent()
 	}
 
+	// Re-snapshot after auto-pull so the response reflects the on-disk truth
+	// (stage_id lives in the marker file, not in config.json — callers that
+	// grep config.json for stage_id will not find it there and will otherwise
+	// wrongly conclude that stage selection did not happen).
+	_, _, _, _, finalStageID := authSnapshot()
+
 	cfgPath, _ := configFilePath()
 	if cfgPath == "" {
 		cfgPath = "~/.corezoid/config.json"
 	}
-	msg := fmt.Sprintf("Setup complete! Configuration saved to %s.", cfgPath)
+
+	// When stage selection did not land (elicitation cancelled, unsupported, or
+	// user typed a blank stage_id), return a clearly-actionable message instead
+	// of the generic "Setup complete". The init skill and the LLM both key off
+	// this string to decide whether to proceed to pull-folder or drive stage
+	// selection themselves.
+	if finalStageID == 0 {
+		msg := "Setup incomplete: stage not selected. "
+		msg += fmt.Sprintf("Call list-stages(project_id=<id>, company_id=%s) to see available stages, ", snapWorkspaceID)
+		msg += fmt.Sprintf("then call login(workspace_id=%s, stage_id=<stage_id>).", snapWorkspaceID)
+		if !tokenExpiry.IsZero() {
+			msg += fmt.Sprintf(" (Token saved to %s, expires %s.)", cfgPath, tokenExpiry.Format("2006-01-02 15:04"))
+		}
+		return msg, false
+	}
+
+	msg := fmt.Sprintf("Setup complete! Configuration saved to %s. Stage %d selected", cfgPath, finalStageID)
+	if autoPullErr != nil {
+		// Pull failed but stage_id is set (e.g. previous marker still on disk).
+		// Callers should retry pull-folder — the marker is authoritative.
+		msg += fmt.Sprintf(" (auto-pull failed: %v; call pull-folder to retry)", autoPullErr)
+	}
+	msg += "."
 	if !tokenExpiry.IsZero() {
 		msg += fmt.Sprintf(" Token expires: %s.", tokenExpiry.Format("2006-01-02 15:04"))
 	}

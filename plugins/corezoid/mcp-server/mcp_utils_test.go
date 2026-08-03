@@ -408,6 +408,152 @@ func TestFindStageRootFromCWD_IgnoresFolderMarkers(t *testing.T) {
 	}
 }
 
+// TestFindStageRootFromCWD_FindsNestedStageDir verifies the downward fallback:
+// pull-folder now keeps the stage as a nested subfolder of the workspace root,
+// so a call issued from that root must still locate the stage root one level
+// down.
+func TestFindStageRootFromCWD_FindsNestedStageDir(t *testing.T) {
+	root := t.TempDir()
+	stage := filepath.Join(root, "671255_develop")
+	if err := os.MkdirAll(stage, 0755); err != nil {
+		t.Fatal(err)
+	}
+	os.WriteFile(filepath.Join(stage, "671255_develop.stage.json"), []byte("{}"), 0644) //nolint:errcheck
+	chdirTemp(t, root)
+
+	got := findStageRootFromCWD(671255)
+	gotReal, _ := filepath.EvalSymlinks(got)
+	stageReal, _ := filepath.EvalSymlinks(stage)
+	if gotReal != stageReal {
+		t.Errorf("findStageRootFromCWD(671255) = %q, want nested %q", gotReal, stageReal)
+	}
+}
+
+// TestResolveStageFromCWD_FindsNestedMarker verifies that resolveStageFromCWD
+// also looks one level down for pull-folder's nested layout.
+func TestResolveStageFromCWD_FindsNestedMarker(t *testing.T) {
+	root := t.TempDir()
+	stage := filepath.Join(root, "671255_develop")
+	if err := os.MkdirAll(stage, 0755); err != nil {
+		t.Fatal(err)
+	}
+	os.WriteFile(
+		filepath.Join(stage, "671255_develop.stage.json"),
+		[]byte(`{"obj_id":671255,"parent_id":42,"title":"develop"}`),
+		0644,
+	) //nolint:errcheck
+	chdirTemp(t, root)
+	t.Setenv("COREZOID_WORK_DIR", root)
+
+	m := resolveStageFromCWD()
+	if m == nil {
+		t.Fatal("resolveStageFromCWD returned nil for nested marker")
+	}
+	if m.StageID != 671255 || m.ProjectID != 42 {
+		t.Errorf("marker = %+v, want stage=671255 project=42", m)
+	}
+}
+
+// TestResolveStageFromCWD_AmbiguousNestedMarkersReturnNil guarantees that
+// multiple candidate subfolders at the same depth are refused when no
+// active-stage hint is set — silently picking one has historically pointed
+// operations at the wrong stage (develop vs. production).
+func TestResolveStageFromCWD_AmbiguousNestedMarkersReturnNil(t *testing.T) {
+	root := t.TempDir()
+	for _, s := range []struct{ dir, id string }{
+		{"111_develop", "111"},
+		{"222_production", "222"},
+	} {
+		d := filepath.Join(root, s.dir)
+		if err := os.MkdirAll(d, 0755); err != nil {
+			t.Fatal(err)
+		}
+		os.WriteFile(
+			filepath.Join(d, s.dir+".stage.json"),
+			[]byte(`{"obj_id":`+s.id+`,"parent_id":1}`),
+			0644,
+		) //nolint:errcheck
+	}
+	chdirTemp(t, root)
+	t.Setenv("COREZOID_WORK_DIR", root)
+
+	prev := currentFolderStageIDHint
+	currentFolderStageIDHint = func() int { return 0 }
+	defer func() { currentFolderStageIDHint = prev }()
+
+	if m := resolveStageFromCWD(); m != nil {
+		t.Errorf("expected nil for two nested markers with no hint, got %+v", m)
+	}
+}
+
+// TestResolveStageFromCWD_AmbiguousNestedMarkersUseHint verifies that when
+// multiple stage subdirectories coexist in RootPath (the "switch stages while
+// keeping the previous checkout" case), Folder.StageID is honoured as the
+// tiebreaker so tools running from the workspace root still pick the right
+// stage.
+func TestResolveStageFromCWD_AmbiguousNestedMarkersUseHint(t *testing.T) {
+	root := t.TempDir()
+	for _, s := range []struct{ dir, id string }{
+		{"111_develop", "111"},
+		{"222_production", "222"},
+	} {
+		d := filepath.Join(root, s.dir)
+		if err := os.MkdirAll(d, 0755); err != nil {
+			t.Fatal(err)
+		}
+		os.WriteFile(
+			filepath.Join(d, s.dir+".stage.json"),
+			[]byte(`{"obj_id":`+s.id+`,"parent_id":1}`),
+			0644,
+		) //nolint:errcheck
+	}
+	chdirTemp(t, root)
+	t.Setenv("COREZOID_WORK_DIR", root)
+
+	prev := currentFolderStageIDHint
+	currentFolderStageIDHint = func() int { return 222 }
+	defer func() { currentFolderStageIDHint = prev }()
+
+	m := resolveStageFromCWD()
+	if m == nil {
+		t.Fatal("resolveStageFromCWD returned nil despite active-stage hint")
+	}
+	if m.StageID != 222 {
+		t.Errorf("hint=222 but resolved stage_id=%d", m.StageID)
+	}
+}
+
+// TestResolveStageFromCWD_AmbiguousNestedMarkersHintMiss covers the case where
+// the hint is set but none of the on-disk markers match it — resolution must
+// stay nil rather than silently fall back to an arbitrary candidate.
+func TestResolveStageFromCWD_AmbiguousNestedMarkersHintMiss(t *testing.T) {
+	root := t.TempDir()
+	for _, s := range []struct{ dir, id string }{
+		{"111_develop", "111"},
+		{"222_production", "222"},
+	} {
+		d := filepath.Join(root, s.dir)
+		if err := os.MkdirAll(d, 0755); err != nil {
+			t.Fatal(err)
+		}
+		os.WriteFile(
+			filepath.Join(d, s.dir+".stage.json"),
+			[]byte(`{"obj_id":`+s.id+`,"parent_id":1}`),
+			0644,
+		) //nolint:errcheck
+	}
+	chdirTemp(t, root)
+	t.Setenv("COREZOID_WORK_DIR", root)
+
+	prev := currentFolderStageIDHint
+	currentFolderStageIDHint = func() int { return 999 }
+	defer func() { currentFolderStageIDHint = prev }()
+
+	if m := resolveStageFromCWD(); m != nil {
+		t.Errorf("expected nil when hint (999) matches no on-disk marker, got %+v", m)
+	}
+}
+
 // TestPullProcess_TargetDirComposition documents the invariant that
 // handlePullProcess relies on: resolveFolderPathFromAPI returns a path
 // RELATIVE to the stage root, and filepath.Join(stageRoot, resolved) yields

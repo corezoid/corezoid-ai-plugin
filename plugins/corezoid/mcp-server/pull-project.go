@@ -150,6 +150,46 @@ func moveContents(src, dst string) error {
 	return nil
 }
 
+var stageWrapperDirRe = regexp.MustCompile(`^stage_\d+_\d+\.zip$`)
+
+// hoistZipWrapperDirs unwraps any top-level directory in root whose name
+// matches "stage_<id>_<ts>.zip" — Corezoid's exporter emits a wrapper directory
+// (yes, a directory, despite the ".zip" suffix) that shields the real stage.
+// Each wrapper's contents are moved up to root; existing entries at the
+// destination are removed first so a fresh pull always wins over stale data.
+func hoistZipWrapperDirs(root string) error {
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		return err
+	}
+	for _, e := range entries {
+		if !e.IsDir() || !stageWrapperDirRe.MatchString(e.Name()) {
+			continue
+		}
+		wrapper := filepath.Join(root, e.Name())
+		inner, err := os.ReadDir(wrapper)
+		if err != nil {
+			return fmt.Errorf("read wrapper %s: %w", wrapper, err)
+		}
+		for _, ie := range inner {
+			src := filepath.Join(wrapper, ie.Name())
+			dst := filepath.Join(root, ie.Name())
+			if _, statErr := os.Lstat(dst); statErr == nil {
+				if err := os.RemoveAll(dst); err != nil {
+					return fmt.Errorf("clear stale %s: %w", dst, err)
+				}
+			}
+			if err := os.Rename(src, dst); err != nil {
+				return fmt.Errorf("hoist %s -> %s: %w", src, dst, err)
+			}
+		}
+		if err := os.RemoveAll(wrapper); err != nil {
+			return fmt.Errorf("remove wrapper %s: %w", wrapper, err)
+		}
+	}
+	return nil
+}
+
 func downloadStageRecursively(e *Executor, folderID int, filePath string) error {
 	if err := e.checkCancel(); err != nil {
 		return err
@@ -208,6 +248,18 @@ func downloadStageRecursively(e *Executor, folderID int, filePath string) error 
 		}
 	}
 
+	// Hoist contents out of any wrapper *directory* that Corezoid exports
+	// wrap around the real stage (e.g. "stage_671255_1785764880374.zip/" —
+	// note it is a directory, not a file, because Corezoid's exporter names
+	// the top-level entry after the download filename). Left in place, these
+	// wrappers accumulate on every re-pull because findStageDir/hoist below
+	// prefer the stale .stage that lives directly at filePath and skip the
+	// wrapper next to it. Doing this before findStageDir guarantees the
+	// freshly-extracted stage lands at filePath, overwriting any prior copy.
+	if err := hoistZipWrapperDirs(filePath); err != nil {
+		return fmt.Errorf("failed to unwrap stage archive: %w", err)
+	}
+
 	// Find .stage directory anywhere up to depth 2: <id>_<name>.stage
 	stageDir, err := findStageDir(filePath, 2)
 	if err != nil {
@@ -219,26 +271,29 @@ func downloadStageRecursively(e *Executor, folderID int, filePath string) error 
 			"or another large directory, set it to a dedicated project folder and " +
 			"restart Claude Code / the MCP server")
 	}
-	// stagesDir is the parent of stageDir (needed for cleanup)
+	// The stage folder (e.g. "671255_develop.stage") must live as a direct child
+	// of filePath — the whole point of keeping it nested is that filePath can
+	// host multiple stages side-by-side without their contents colliding.
+	// When the zip nests the stage inside a wrapper directory, hoist the stage
+	// folder up and drop the wrapper.
 	stagesDir := filepath.Dir(stageDir)
-	if stagesDir == filePath {
-		stagesDir = ""
-	}
-	// Move all contents of stageDir into filePath
-	if err = moveContents(stageDir, filePath); err != nil {
-		return fmt.Errorf("failed to move files: %v", err)
-	}
-	// удалить stagesDir (родитель stageDir, если он не сам filePath)
-	if stagesDir != "" {
-		if err = os.RemoveAll(stagesDir); err != nil {
-			return fmt.Errorf("failed to remove stages directory: %v", err)
+	if stagesDir != filePath {
+		newStageDir := filepath.Join(filePath, filepath.Base(stageDir))
+		if _, err := os.Stat(newStageDir); err == nil {
+			if err := os.RemoveAll(newStageDir); err != nil {
+				return fmt.Errorf("failed to clear existing stage directory: %v", err)
+			}
 		}
-	} else {
-		if err = os.RemoveAll(stageDir); err != nil {
-			return fmt.Errorf("failed to remove stage directory: %v", err)
+		if err := os.Rename(stageDir, newStageDir); err != nil {
+			return fmt.Errorf("failed to hoist stage directory: %v", err)
+		}
+		if err := os.RemoveAll(stagesDir); err != nil {
+			return fmt.Errorf("failed to remove stages wrapper: %v", err)
 		}
 	}
-	// теперь везде где json файлы форматировать их через MarshalIndent
+	// renameFiles2Folders strips the .folder/.project suffix from nested
+	// directories. The top-level stage keeps its ".stage" suffix so it is
+	// visually distinguishable at the workspace root (e.g. "671255_develop.stage").
 	err = renameFiles2Folders(filePath)
 	if err != nil {
 		return fmt.Errorf("failed to rename files: %v", err)
@@ -261,8 +316,10 @@ func renameFiles2Folders(filePath string) error {
 	for _, f := range files {
 		if f.IsDir() {
 			dirName := f.Name()
-			newName := strings.TrimSuffix(dirName, ".stage")
-			newName = strings.TrimSuffix(newName, ".folder")
+			// ".stage" is preserved so the top-level stage directory keeps a
+			// distinctive name (e.g. "671255_develop.stage") at the workspace
+			// root. Only nested .folder/.project suffixes are stripped.
+			newName := strings.TrimSuffix(dirName, ".folder")
 			newName = strings.TrimSuffix(newName, ".project")
 			newPath := filepath.Join(filePath, newName)
 			if newName != dirName {

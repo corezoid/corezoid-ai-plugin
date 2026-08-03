@@ -210,6 +210,63 @@ func TestWalkDepth_SkipsPermissionDenied(t *testing.T) {
 	// but no error should propagate from trying to descend into it.
 }
 
+// ---- hoistZipWrapperDirs ---------------------------------------------------
+
+// A fresh Corezoid export always lands as filePath/stage_<id>_<ts>.zip/<id>_<name>.stage/…
+// (the ".zip" here is a directory suffix, not a file). If a stale <id>_<name>.stage
+// from an earlier pull already exists at root, findStageDir/hoist below prefer the
+// stale one and leave the wrapper behind — so re-pulls quietly grow a pile of
+// stage_*.zip wrapper directories at root. hoistZipWrapperDirs must unwrap it and
+// overwrite the stale stage with the fresh content.
+func TestHoistZipWrapperDirs_ReplacesStaleStage(t *testing.T) {
+	root := t.TempDir()
+
+	staleStage := filepath.Join(root, "42_demo.stage")
+	if err := os.MkdirAll(staleStage, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(staleStage, "old.marker"), []byte("stale"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	wrapper := filepath.Join(root, "stage_42_1700000000000.zip")
+	freshStage := filepath.Join(wrapper, "42_demo.stage")
+	if err := os.MkdirAll(freshStage, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(freshStage, "new.marker"), []byte("fresh"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := hoistZipWrapperDirs(root); err != nil {
+		t.Fatalf("hoistZipWrapperDirs error: %v", err)
+	}
+
+	if _, err := os.Stat(wrapper); !os.IsNotExist(err) {
+		t.Errorf("wrapper %s should be gone, stat err=%v", wrapper, err)
+	}
+	if _, err := os.Stat(filepath.Join(root, "42_demo.stage", "new.marker")); err != nil {
+		t.Errorf("fresh marker should have replaced the stale stage: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(root, "42_demo.stage", "old.marker")); !os.IsNotExist(err) {
+		t.Errorf("stale marker should have been overwritten, stat err=%v", err)
+	}
+}
+
+func TestHoistZipWrapperDirs_NoWrapperNoop(t *testing.T) {
+	root := t.TempDir()
+	stage := filepath.Join(root, "7_x.stage")
+	if err := os.MkdirAll(stage, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := hoistZipWrapperDirs(root); err != nil {
+		t.Fatalf("hoistZipWrapperDirs error: %v", err)
+	}
+	if _, err := os.Stat(stage); err != nil {
+		t.Errorf("stage should be untouched, got: %v", err)
+	}
+}
+
 // ---- moveContents ----------------------------------------------------------
 
 func TestMoveContents(t *testing.T) {
@@ -294,5 +351,37 @@ func TestRenameFiles2Folders_RenamesFolderDir(t *testing.T) {
 	}
 	if _, err := os.Stat(oldDir); err == nil {
 		t.Errorf("expected old dir %q to be gone", oldDir)
+	}
+}
+
+// TestRenameFiles2Folders_KeepsStageSuffix verifies pull-folder's layout
+// invariant: the top-level "<id>_<name>.stage" directory keeps both its
+// contents nested (so a workspace can host multiple stages side by side)
+// AND its ".stage" suffix (so the stage directory is visually distinctive
+// from ordinary subfolders at the workspace root).
+func TestRenameFiles2Folders_KeepsStageSuffix(t *testing.T) {
+	root := t.TempDir()
+	stageDir := filepath.Join(root, "671255_develop.stage")
+	if err := os.MkdirAll(stageDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	marker := filepath.Join(stageDir, "671255_develop.stage.json")
+	if err := os.WriteFile(marker, []byte(`{"obj_id":671255}`), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := renameFiles2Folders(root); err != nil {
+		t.Fatalf("renameFiles2Folders error: %v", err)
+	}
+
+	if _, err := os.Stat(stageDir); err != nil {
+		t.Errorf("expected stage dir %q to keep .stage suffix: %v", stageDir, err)
+	}
+	stripped := filepath.Join(root, "671255_develop")
+	if _, err := os.Stat(stripped); err == nil {
+		t.Errorf("stage dir must not be renamed to %q", stripped)
+	}
+	if _, err := os.Stat(marker); err != nil {
+		t.Errorf("expected marker %q inside stage dir: %v", marker, err)
 	}
 }

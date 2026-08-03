@@ -277,12 +277,10 @@ func handlePullFolder(ctx context.Context, args map[string]interface{}) (string,
 	return fmt.Sprintf("Folder %d saved to current directory", folderID), false
 }
 
-// handleCreateVariable creates a Corezoid env variable scoped to the given stage.
+// handleCreateVariable creates a Corezoid env variable in the current stage.
+// The stage is resolved from the workspace marker file — never accepted as an
+// argument. The LLM never needs to look up stage_id.
 func handleCreateVariable(ctx context.Context, args map[string]interface{}) (string, bool) {
-	rootFolderID, err := strArg(args, "stage_id")
-	if err != nil {
-		return "Error: " + err.Error(), true
-	}
 	name, err := strArg(args, "name")
 	if err != nil {
 		return "Error: " + err.Error(), true
@@ -297,10 +295,14 @@ func handleCreateVariable(ctx context.Context, args map[string]interface{}) (str
 	}
 
 	v := NewValidator(ctx, 0)
+	if v.StageID == 0 {
+		return "Error: cannot resolve stage_id — no <id>_<name>.stage.json marker on disk. Run the 'login' tool to pull one.", true
+	}
+	rootFolderID := strconv.Itoa(v.StageID)
 	if err := v.CreateVariable(rootFolderID, name, description, value); err != nil {
 		return fmt.Sprintf("Error creating variable: %v", err), true
 	}
-	return fmt.Sprintf("Environment variable '%s' created successfully", name), false
+	return fmt.Sprintf("Environment variable '%s' created successfully in stage %d", name, v.StageID), false
 }
 
 // handlePushProcess validates a local .conv.json and deploys it to Corezoid.
@@ -945,9 +947,9 @@ func handleCreateAlias(ctx context.Context, args map[string]interface{}) (string
 		if strings.Contains(strings.ToLower(msg), "object is not in stage") {
 			hint := fmt.Sprintf(" — the process (obj_id %d) does not live in stage %d (%s).", procID, stageID, stageSrc)
 			if v.StageID != 0 && v.StageID != stageID {
-				hint += fmt.Sprintf(" The current folder's stage_id is %d; that value was NOT used here.", v.StageID)
+				hint += fmt.Sprintf(" The workspace marker's stage_id is %d; that value was NOT used here.", v.StageID)
 			}
-			hint += " Pass an explicit stage_id, or pull-process this file again so its parent_id points at the current stage."
+			hint += " Pull-process this file again so its parent_id points at the current stage."
 			return fmt.Sprintf("Error creating alias: %s%s", msg, hint), true
 		}
 		return fmt.Sprintf("Error creating alias: %v", err), true
@@ -956,27 +958,19 @@ func handleCreateAlias(ctx context.Context, args map[string]interface{}) (string
 	return fmt.Sprintf("Alias '%s' created successfully, AliasID: %d (stage %d, %s)", shortName, aliasID, stageID, stageSrc), false
 }
 
-// resolveAliasStageID picks the stage_id for a create-alias call. It returns
-// the resolved ID, a short label describing where it came from (for user
-// messages), and a hard error only if no source produced a usable stage.
+// resolveAliasStageID picks the stage_id for a create-alias call. The LLM
+// never supplies stage_id — the resolver walks the process file's parent_id
+// chain first (so a re-pulled file always lands in the right stage), then
+// falls back to the workspace marker's stage_id.
 func resolveAliasStageID(v *Executor, args map[string]interface{}, filePath string) (int, string, error) {
-	if _, ok := args["stage_id"]; ok {
-		s, err := intArg(args, "stage_id")
-		if err != nil {
-			return 0, "", err
-		}
-		if s == 0 {
-			return 0, "", fmt.Errorf("stage_id argument is 0")
-		}
-		return s, "from stage_id argument", nil
-	}
+	_ = args // signature kept for callers; stage_id is no longer a valid arg
 
 	if parentID, ok := readParentIDFromFile(filePath); ok && parentID != 0 {
 		stage, err := v.ResolveStageIDByFolder(parentID)
 		if err == nil && stage != 0 {
 			label := "derived from process parent_id"
 			if v.StageID != 0 && v.StageID != stage {
-				label = fmt.Sprintf("derived from process parent_id — overrides current folder stage_id=%d", v.StageID)
+				label = fmt.Sprintf("derived from process parent_id — overrides workspace marker stage_id=%d", v.StageID)
 			}
 			return stage, label, nil
 		}
@@ -986,9 +980,9 @@ func resolveAliasStageID(v *Executor, args map[string]interface{}, filePath stri
 	}
 
 	if v.StageID != 0 {
-		return v.StageID, "from current folder stage_id (fallback — process file had no parent_id)", nil
+		return v.StageID, "from workspace marker stage_id (fallback — process file had no parent_id)", nil
 	}
-	return 0, "", fmt.Errorf("could not resolve stage_id: process file has no parent_id, no stage_id argument was passed, and stage_id is not set on the current Folder. Re-pull the process (so parent_id is written), pass stage_id explicitly, or run 'login' to set stage_id.")
+	return 0, "", fmt.Errorf("could not resolve stage_id: process file has no parent_id and no stage marker is on disk. Re-pull the process (so parent_id is written) or run 'login' to materialize the marker.")
 }
 
 // readParentIDFromFile reads a .conv.json file just far enough to extract its

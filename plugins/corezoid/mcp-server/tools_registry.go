@@ -34,14 +34,10 @@ var toolRegistry = []mcpTool{
 	},
 	{
 		Name:        "create-variable",
-		Description: "Create an environment variable in a Corezoid folder.",
+		Description: "Create an environment variable in the current Corezoid stage. The stage is resolved automatically from the workspace's <id>_<name>.stage.json marker file — no stage argument.",
 		InputSchema: map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
-				"stage_id": map[string]interface{}{
-					"type":        "string",
-					"description": "Root folder ID where the variable will be created",
-				},
 				"name": map[string]interface{}{
 					"type":        "string",
 					"description": "Variable name",
@@ -55,26 +51,21 @@ var toolRegistry = []mcpTool{
 					"description": "Variable value",
 				},
 			},
-			"required": []string{"stage_id", "name", "description", "value"},
+			"required": []string{"name", "description", "value"},
 		},
 	},
 	{
 		Name:        "list-variables",
-		Description: "List all environment variables (env_var) in a Corezoid stage: short_name, obj_id, data_type (raw/json), env_var_type (visible/secret), title, value and change time. Read-only. Secret variables are ALWAYS shown masked — their value is never retrievable after creation, only fingerprints. Returns the obj_id needed by modify-variable / delete-variable.",
+		Description: "List all environment variables (env_var) in the current Corezoid stage: short_name, obj_id, data_type (raw/json), env_var_type (visible/secret), title, value and change time. Read-only. The stage is resolved automatically from the workspace's <id>_<name>.stage.json marker file — no stage argument. Secret variables are ALWAYS shown masked. Returns the obj_id needed by modify-variable / delete-variable.",
 		InputSchema: map[string]interface{}{
-			"type": "object",
-			"properties": map[string]interface{}{
-				"stage_id": map[string]interface{}{
-					"type":        "integer",
-					"description": "Stage (root folder) ID to list variables from. Defaults to stage_id from the current Folder in ~/.corezoid/config.json.",
-				},
-			},
-			"required": []string{},
+			"type":       "object",
+			"properties": map[string]interface{}{},
+			"required":   []string{},
 		},
 	},
 	{
 		Name:        "modify-variable",
-		Description: "Modify a Corezoid environment variable: change its value, description (display title), data_type (raw/json), and/or rename it (new_name). CONSEQUENTIAL: renaming breaks every {{env_var[@old-name]}} reference in the stage's processes, and a value change takes effect immediately in running processes without redeploy. env_var_type (visible/secret) CANNOT be changed after creation — the server silently ignores such changes. Modify is partial: omitted fields keep their current value (a secret's value survives a modify that does not send value). SAFETY: apply=false (default) is a dry-run showing the current → new diff and, for renames, a local reference scan — nothing is changed. To apply you MUST show the diff to the user, get their explicit confirmation, then call with apply=true AND confirm=\"<short_name>#<obj_id>\" (the CURRENT short_name, before any rename). Never modify a variable without the user confirming.",
+		Description: "Modify a Corezoid environment variable in the current stage: change its value, description (display title), data_type (raw/json), and/or rename it (new_name). The stage is resolved automatically from the workspace's <id>_<name>.stage.json marker file — no stage argument. CONSEQUENTIAL: renaming breaks every {{env_var[@old-name]}} reference in the stage's processes, and a value change takes effect immediately in running processes without redeploy. env_var_type (visible/secret) CANNOT be changed after creation — the server silently ignores such changes. Modify is partial: omitted fields keep their current value (a secret's value survives a modify that does not send value). SAFETY: apply=false (default) is a dry-run showing the current → new diff and, for renames, a local reference scan — nothing is changed. To apply you MUST show the diff to the user, get their explicit confirmation, then call with apply=true AND confirm=\"<short_name>#<obj_id>\" (the CURRENT short_name, before any rename). Never modify a variable without the user confirming.",
 		InputSchema: map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
@@ -85,10 +76,6 @@ var toolRegistry = []mcpTool{
 				"obj_id": map[string]interface{}{
 					"type":        "integer",
 					"description": "Optional numeric variable ID (from list-variables). If given together with name, both must refer to the same variable.",
-				},
-				"stage_id": map[string]interface{}{
-					"type":        "integer",
-					"description": "Stage the variable lives in. Defaults to stage_id from the current Folder in ~/.corezoid/config.json.",
 				},
 				"new_name": map[string]interface{}{
 					"type":        "string",
@@ -121,7 +108,7 @@ var toolRegistry = []mcpTool{
 	},
 	{
 		Name:        "delete-variable",
-		Description: "PERMANENTLY delete a Corezoid environment variable. DESTRUCTIVE AND IRREVERSIBLE: unlike processes/folders/projects there is NO recycle bin for variables — the value (secrets included) is gone immediately, and any process still referencing {{env_var[@name]}} will fail at runtime. SAFETY: apply=false (default) is a dry-run that shows the variable's full details plus a local reference scan — nothing is deleted. To delete you MUST show the user the dry-run warning block VERBATIM, get their explicit confirmation, then call with apply=true AND confirm=\"<short_name>#<obj_id>\". Never delete a variable without the user confirming.",
+		Description: "PERMANENTLY delete a Corezoid environment variable from the current stage. The stage is resolved automatically from the workspace's <id>_<name>.stage.json marker file — no stage argument. DESTRUCTIVE AND IRREVERSIBLE: unlike processes/folders/projects there is NO recycle bin for variables — the value (secrets included) is gone immediately, and any process still referencing {{env_var[@name]}} will fail at runtime. SAFETY: apply=false (default) is a dry-run that shows the variable's full details plus a local reference scan — nothing is deleted. To delete you MUST show the user the dry-run warning block VERBATIM, get their explicit confirmation, then call with apply=true AND confirm=\"<short_name>#<obj_id>\". Never delete a variable without the user confirming.",
 		InputSchema: map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
@@ -132,10 +119,6 @@ var toolRegistry = []mcpTool{
 				"obj_id": map[string]interface{}{
 					"type":        "integer",
 					"description": "Optional numeric variable ID (from list-variables). If given together with name, both must match.",
-				},
-				"stage_id": map[string]interface{}{
-					"type":        "integer",
-					"description": "Stage the variable lives in. Defaults to stage_id from the current Folder in ~/.corezoid/config.json.",
 				},
 				"apply": map[string]interface{}{
 					"type":        "boolean",
@@ -379,7 +362,7 @@ var toolRegistry = []mcpTool{
 	},
 	{
 		Name:        "create-alias",
-		Description: "Create a short alias for a Corezoid process. Aliases are stage-scoped; the stage is derived from the process file's parent_id (walking up folders until a stage is reached), so a stale stage_id in the current Folder no longer produces the cryptic \"Object is not in stage\" error. Pass stage_id explicitly to override.",
+		Description: "Create a short alias for a Corezoid process. Aliases are stage-scoped; the stage is derived from the process file's parent_id (walking up folders until a stage is reached), so a stale marker no longer produces the cryptic \"Object is not in stage\" error. LLM does not need to supply a stage.",
 		InputSchema: map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
@@ -390,10 +373,6 @@ var toolRegistry = []mcpTool{
 				"short_name": map[string]interface{}{
 					"type":        "string",
 					"description": "Short alias name for the process",
-				},
-				"stage_id": map[string]interface{}{
-					"type":        "integer",
-					"description": "Optional. Stage the alias should be created in. Defaults to the stage derived from the process file's parent_id, then to stage_id from the current Folder in ~/.corezoid/config.json.",
 				},
 			},
 			"required": []string{"process_path", "short_name"},
@@ -615,7 +594,7 @@ var toolRegistry = []mcpTool{
 				},
 				"stage_id": map[string]interface{}{
 					"type":        "string",
-					"description": "Corezoid stage (root folder) ID",
+					"description": "Corezoid stage (root folder) ID. Only pass this when the user explicitly dictates a stage ID (or asks to switch stages) — otherwise leave it out and let the interactive stage picker handle selection. The chosen stage is materialized on disk as the <id>_<name>.stage.json marker; every other MCP tool resolves stage from that marker, so you do not need to remember it.",
 				},
 				"api_login": map[string]interface{}{
 					"type":        "string",
@@ -648,7 +627,7 @@ var toolRegistry = []mcpTool{
 				},
 				"folder_id": map[string]interface{}{
 					"type":        "integer",
-					"description": "Folder (stage) ID where the dashboard will be created. Defaults to stage_id from the current Folder in ~/.corezoid/config.json.",
+					"description": "Optional. Folder ID where the dashboard will be created — pass a subfolder ID to nest the dashboard inside it. Defaults to the current stage (resolved from the workspace's <id>_<name>.stage.json marker file). LLM does not need to look this up.",
 				},
 			},
 			"required": []string{"title"},

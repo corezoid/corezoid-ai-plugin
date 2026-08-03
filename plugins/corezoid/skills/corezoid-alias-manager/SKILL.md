@@ -426,7 +426,7 @@ Response: `{ "obj_id": <ALIAS_ID>, "proc": "ok" }`
 | Renaming `short_name` without updating process JSON | Same — grep, replace, push each changed process |
 | Creating an alias with `short_name` that already exists | Use `list aliases` API call first to check |
 | Forgetting to push processes after replacing numeric IDs with aliases | Always `lint-process` then `push-process` for every modified file |
-| Using alias without `stage_id` set in the current Folder | Run `corezoid-init` |
+| Using alias when the workspace has no `<id>_<name>.stage.json` marker | Run `corezoid-init` |
 
 ---
 

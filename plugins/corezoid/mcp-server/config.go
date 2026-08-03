@@ -35,6 +35,12 @@ const defaultAPIGwURL = "https://api-apigw.corezoid.com"
 // parent_id is the primary source; ProjectID is populated as a fallback when
 // resolveAndCacheProjectID discovers it via API (e.g. legacy marker without
 // parent_id). Never trusted over the marker.
+//
+// StageID is a hint used only to disambiguate when multiple <id>_<name>.stage/
+// directories sit side-by-side in RootPath — resolveStageFromCWD picks the one
+// whose marker matches StageID. It is NOT a source of truth: any tool that
+// finds exactly one marker in the current directory tree uses that marker and
+// ignores this hint. Populated by handleLogin whenever a stage is selected.
 type Folder struct {
 	RootPath     string    `json:"root_path"`
 	AccountURL   string    `json:"account_url"`
@@ -42,6 +48,7 @@ type Folder struct {
 	APIGwURL     string    `json:"apigw_url,omitempty"`
 	WorkspaceID  string    `json:"workspace_id"`
 	ProjectID    int       `json:"project_id,omitempty"`
+	StageID      int       `json:"stage_id,omitempty"`
 	GitURL       string    `json:"git_url,omitempty"`
 	GitStagePath string    `json:"git_stage_path,omitempty"`
 	AccessToken  string    `json:"access_token"`

@@ -595,8 +595,10 @@ func TestHandleToolCall_CreateAlias_BadFilename(t *testing.T) {
 
 // TestHandleToolCall_CreateAlias_StageMismatchHint verifies that when the
 // server returns "Object is not in stage" (the exact failure mode from
-// issue #26), the tool surfaces a hint that explains stage_id derivation and
-// mentions the current folder's configured stage_id when it was NOT used.
+// issue #26), the tool surfaces a hint pointing the user at pull-process so
+// the file's parent_id gets refreshed. stage_id is no longer an accepted
+// argument — the LLM never supplies it — so the fallback path (marker's
+// stage_id) is what triggers the mismatch here.
 func TestHandleToolCall_CreateAlias_StageMismatchHint(t *testing.T) {
 	resetGlobals(t)
 
@@ -633,7 +635,6 @@ func TestHandleToolCall_CreateAlias_StageMismatchHint(t *testing.T) {
 	result, isErr := handleToolCall(context.Background(), "create-alias", map[string]interface{}{
 		"process_path": "123_proc.conv.json",
 		"short_name":   "my-alias",
-		"stage_id":     float64(10605), // explicit correct stage
 	})
 	if !isErr {
 		t.Fatalf("expected isError=true when server rejects with 'Object is not in stage', got %q", result)
@@ -641,11 +642,11 @@ func TestHandleToolCall_CreateAlias_StageMismatchHint(t *testing.T) {
 	if !strings.Contains(result, "Object is not in stage") {
 		t.Errorf("expected server error to be surfaced, got %q", result)
 	}
-	if !strings.Contains(result, "current folder's stage_id is 9026") {
-		t.Errorf("expected hint mentioning frozen folder stage, got %q", result)
+	if !strings.Contains(result, "stage 9026") {
+		t.Errorf("expected hint mentioning the stage the tool attempted (9026), got %q", result)
 	}
-	if !strings.Contains(result, "stage 10605") {
-		t.Errorf("expected hint mentioning attempted stage, got %q", result)
+	if !strings.Contains(result, "Pull-process this file again") {
+		t.Errorf("expected pull-process remediation hint, got %q", result)
 	}
 }
 

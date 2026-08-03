@@ -25,9 +25,12 @@ The `login` tool handles everything automatically in sequence:
 1. **Account URL prompt** — interactive form asking for `account_url`
 2. **OAuth2** — browser window opens for authentication; the token is saved to `~/.corezoid/config.json` (`access_token` field on the current Folder)
 3. **Workspace picker** — fetches available workspaces and shows a dropdown; saves `workspace_id`
-4. **Stage picker** — lists projects then stages for selection; saves `stage_id`
+4. **Stage picker** — lists projects then stages for selection; the chosen stage is materialized on disk as `<id>_<name>.stage/<id>_<name>.stage.json` (the marker file — NOT stored in `config.json`)
 
-When `login` returns "Setup complete", proceed to **Step 2**.
+### Interpreting the `login` response
+
+- **`"Setup complete! ... Stage <N> selected."`** → stage was picked and pulled. Proceed to **Step 2**.
+- **`"Setup incomplete: stage not selected. ..."`** → elicitation was cancelled or returned no stage. Follow the instructions in the message (usually: run `list-stages` + call `login(stage_id=…)` again). Do **not** fall back to Mode B — the token and workspace are already saved.
 
 ---
 
@@ -77,7 +80,7 @@ When `login` returns "Setup complete", proceed to **Step 2**.
 
 ## Step 2 — Pull the project
 
-After `login` returns "Setup complete", call MCP tool **`pull-folder`** with no arguments — it defaults to the `stage_id` just saved to the current Folder.
+After `login` returns "Setup complete", call MCP tool **`pull-folder`** with no arguments — the MCP server resolves the stage automatically from the on-disk marker file. You do **not** need to know or pass `stage_id`.
 
 Do not proceed until the tool returns successfully.
 
@@ -156,7 +159,7 @@ The server appends `/api/2/json` or `/api/2/download` automatically.
 
 ## Fields reference
 
-Every field lives in the current Folder inside `~/.corezoid/config.json`. All are managed by the `login` tool — you should not hand-edit them unless a documented exception applies.
+Every field below lives in the current Folder inside `~/.corezoid/config.json`. All are managed by the `login` tool — you should not hand-edit them unless a documented exception applies.
 
 | Field | Set during |
 |---|---|
@@ -164,7 +167,6 @@ Every field lives in the current Folder inside `~/.corezoid/config.json`. All ar
 | `corezoid_url` | login step 2.5 — derived from account clients API (or fallback to `account_url` in API-key mode) |
 | `access_token` / `expires_at` | login step 2 — OAuth2 (or manually for on-prem workaround) |
 | `workspace_id` | login step 3 — workspace selection |
-| `stage_id` | login step 4 — stage selection |
 | `api_login` / `api_secret` | login arguments (API-key auth mode) |
 | `project_id` | cached on first pull-folder / push-process |
 | `git_url` / `git_stage_path` | cached on first git-pull-context |

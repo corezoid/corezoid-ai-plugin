@@ -28,22 +28,15 @@ import (
 //   - delete requires obj_id + company_id + project_id + stage_id and is
 //     PERMANENT: there is no recycle bin for env vars.
 
-// resolveEnvVarTarget resolves the stage (from the tool argument or
-// stage_id on the current Folder) and the target variable by name and/or
-// obj_id against the live server list. It returns the full stage listing
-// too, so callers can reuse it (rename collision check) without a second
-// API call.
+// resolveEnvVarTarget resolves the current stage (from the workspace marker
+// file) and the target variable by name and/or obj_id against the live server
+// list. It returns the full stage listing too, so callers can reuse it (rename
+// collision check) without a second API call. Callers do not pass stage_id —
+// it is derived from the on-disk marker.
 func resolveEnvVarTarget(v *Executor, args map[string]interface{}) (stage int, target EnvVar, all []EnvVar, errMsg string) {
 	stage = v.StageID
-	if _, ok := args["stage_id"]; ok {
-		s, err := intArg(args, "stage_id")
-		if err != nil {
-			return 0, EnvVar{}, nil, "Error: " + err.Error()
-		}
-		stage = s
-	}
 	if stage == 0 {
-		return 0, EnvVar{}, nil, "Error: stage_id not provided and no stage_id is configured for this working directory (run the 'login' tool)"
+		return 0, EnvVar{}, nil, "Error: cannot resolve stage_id — no <id>_<name>.stage.json marker on disk. Run the 'login' tool to pull one."
 	}
 	name, err := strArg(args, "name")
 	if err != nil {
@@ -206,15 +199,8 @@ func renderRefScan(name string, matches []string, scanned int, consequence strin
 func handleListVariables(ctx context.Context, args map[string]interface{}) (string, bool) {
 	v := NewValidator(ctx, 0)
 	stage := v.StageID
-	if _, ok := args["stage_id"]; ok {
-		s, err := intArg(args, "stage_id")
-		if err != nil {
-			return "Error: " + err.Error(), true
-		}
-		stage = s
-	}
 	if stage == 0 {
-		return "Error: stage_id not provided and no stage_id is configured for this working directory (run the 'login' tool)", true
+		return "Error: cannot resolve stage_id — no <id>_<name>.stage.json marker on disk. Run the 'login' tool to pull one.", true
 	}
 	vars, err := v.ListEnvVars(stage)
 	if err != nil {
