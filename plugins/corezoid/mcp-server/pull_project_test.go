@@ -354,34 +354,37 @@ func TestRenameFiles2Folders_RenamesFolderDir(t *testing.T) {
 	}
 }
 
-// TestRenameFiles2Folders_KeepsStageSuffix verifies pull-folder's layout
-// invariant: the top-level "<id>_<name>.stage" directory keeps both its
-// contents nested (so a workspace can host multiple stages side by side)
-// AND its ".stage" suffix (so the stage directory is visually distinctive
-// from ordinary subfolders at the workspace root).
-func TestRenameFiles2Folders_KeepsStageSuffix(t *testing.T) {
+// TestRenameFiles2Folders_StripsAllSuffixes verifies pull-folder's layout
+// invariant: after flattening, every top-level Corezoid export suffix
+// (".stage", ".folder", ".project") is stripped from directory names —
+// nested subfolders that survive at the workspace root should carry the
+// plain "<id>_<name>" form.
+func TestRenameFiles2Folders_StripsAllSuffixes(t *testing.T) {
 	root := t.TempDir()
-	stageDir := filepath.Join(root, "671255_develop.stage")
-	if err := os.MkdirAll(stageDir, 0755); err != nil {
-		t.Fatal(err)
+	cases := map[string]string{
+		"671255_develop.stage":   "671255_develop",
+		"555_orders.folder":      "555_orders",
+		"999_billing.project":    "999_billing",
+		"777_plain":              "777_plain",
 	}
-	marker := filepath.Join(stageDir, "671255_develop.stage.json")
-	if err := os.WriteFile(marker, []byte(`{"obj_id":671255}`), 0644); err != nil {
-		t.Fatal(err)
+	for src := range cases {
+		if err := os.MkdirAll(filepath.Join(root, src), 0755); err != nil {
+			t.Fatal(err)
+		}
 	}
 
 	if err := renameFiles2Folders(root); err != nil {
 		t.Fatalf("renameFiles2Folders error: %v", err)
 	}
 
-	if _, err := os.Stat(stageDir); err != nil {
-		t.Errorf("expected stage dir %q to keep .stage suffix: %v", stageDir, err)
-	}
-	stripped := filepath.Join(root, "671255_develop")
-	if _, err := os.Stat(stripped); err == nil {
-		t.Errorf("stage dir must not be renamed to %q", stripped)
-	}
-	if _, err := os.Stat(marker); err != nil {
-		t.Errorf("expected marker %q inside stage dir: %v", marker, err)
+	for src, want := range cases {
+		if src != want {
+			if _, err := os.Stat(filepath.Join(root, src)); err == nil {
+				t.Errorf("original %q must be renamed", src)
+			}
+		}
+		if _, err := os.Stat(filepath.Join(root, want)); err != nil {
+			t.Errorf("expected %q after rename: %v", want, err)
+		}
 	}
 }

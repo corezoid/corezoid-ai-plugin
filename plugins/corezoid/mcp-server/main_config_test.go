@@ -116,8 +116,8 @@ func TestLoadConfig_PopulatesGlobalsFromConfig(t *testing.T) {
 }
 
 // TestLoadConfig_LoadsProjectIDFromStageMarker pins that stage_id and
-// project_id come from the on-disk <id>_<name>.stage.json marker — the marker
-// is the primary source. Folder.ProjectID is only a fallback.
+// project_id are both loaded from the current Folder in
+// ~/.corezoid/config.json — one stage per workspace, both persisted on login.
 func TestLoadConfig_LoadsProjectIDFromStageMarker(t *testing.T) {
 	snapshotConfigGlobals(t)
 	rootDir := tmpHomeAndCWD(t)
@@ -139,10 +139,10 @@ func TestLoadConfig_LoadsProjectIDFromStageMarker(t *testing.T) {
 	}
 }
 
-// TestLoadConfig_FallsBackToFolderProjectID pins that when the marker file
-// lacks parent_id (legacy or hand-written), the Folder.ProjectID cache
-// populates cachedProjectID as a fallback.
-func TestLoadConfig_FallsBackToFolderProjectID(t *testing.T) {
+// TestLoadConfig_KeepsExistingFolderProjectID pins that setting stage_id
+// afterwards does not clobber a pre-existing Folder.ProjectID — the fields
+// live side-by-side in the same Folder.
+func TestLoadConfig_KeepsExistingFolderProjectID(t *testing.T) {
 	snapshotConfigGlobals(t)
 	rootDir := tmpHomeAndCWD(t)
 
@@ -152,7 +152,6 @@ func TestLoadConfig_FallsBackToFolderProjectID(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("UpdateCurrent: %v", err)
 	}
-	// Marker with obj_id but no parent_id — parent_id=0 forces the fallback.
 	writeTestStageMarker(t, rootDir, 4242, 0, "develop")
 
 	loadConfig()
@@ -161,7 +160,7 @@ func TestLoadConfig_FallsBackToFolderProjectID(t *testing.T) {
 		t.Errorf("expected stageID=4242, got %d", stageID)
 	}
 	if cachedProjectID != 777 {
-		t.Errorf("expected fallback cachedProjectID=777, got %d", cachedProjectID)
+		t.Errorf("expected cachedProjectID=777, got %d", cachedProjectID)
 	}
 }
 

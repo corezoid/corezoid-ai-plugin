@@ -3,8 +3,6 @@ package main
 import (
 	"context"
 	"fmt"
-	"os"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -19,43 +17,6 @@ func updateAndSync(mutator func(*Folder), logCtx string) {
 		logger.Warn("%s: could not persist config: %v", logCtx, err)
 	}
 	syncGlobalsFromCurrent()
-}
-
-// removeStageMarkerInCWD removes any leftover <id>_<name>.stage.json marker
-// files that sit directly in the current Folder's RootPath — legacy layouts
-// where the marker was written next to the extracted stage directory rather
-// than inside it. Silent on missing files.
-//
-// Previously this also deleted every immediate subdirectory that contained a
-// stage marker (to keep resolveStageFromCWD unambiguous when switching stages).
-// That behaviour destroyed the user's other stage checkouts on every stage
-// switch — so we now leave nested stage directories in place and rely on the
-// Folder.StageID hint (populated by handleLogin) to disambiguate. Multiple
-// stages can coexist side-by-side under the same workspace.
-func removeStageMarkerInCWD() {
-	f := Current()
-	if f == nil || f.RootPath == "" {
-		return
-	}
-	removeStageMarkersInDir(f.RootPath)
-}
-
-// removeStageMarkersInDir deletes any <id>_<name>.stage.json files directly
-// inside dir. Silent on I/O errors — this is best-effort cleanup ahead of a
-// pull that will overwrite whatever survives anyway.
-func removeStageMarkersInDir(dir string) {
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		return
-	}
-	for _, e := range entries {
-		if e.IsDir() {
-			continue
-		}
-		if reStageMarker.MatchString(e.Name()) {
-			_ = os.Remove(filepath.Join(dir, e.Name()))
-		}
-	}
 }
 
 // resolveAndSaveAPIURL discovers the Corezoid API URL via fetchCorezoidAPIURL
@@ -112,9 +73,10 @@ func handleLogin(ctx context.Context, args map[string]interface{}) (string, bool
 	if v := optStrArg(args, "workspace_id"); v != "" {
 		_, _, current, _, _ := authSnapshot()
 		if v != current {
-			// Workspace changed — invalidate cached stage marker, project ID,
-			// stage ID hint, and git stage path (all keyed by workspace).
-			removeStageMarkerInCWD()
+			// Workspace changed — invalidate cached stage_id, project_id, and
+			// git_stage_path (all keyed by workspace). The on-disk contents of
+			// RootPath from the previous workspace's stage stay in place;
+			// pull-folder will overwrite them on stage re-selection.
 			updateAndSync(func(f *Folder) {
 				f.WorkspaceID = v
 				f.ProjectID = 0
@@ -125,24 +87,22 @@ func handleLogin(ctx context.Context, args map[string]interface{}) (string, bool
 			updateAndSync(func(f *Folder) { f.WorkspaceID = v }, "login")
 		}
 	}
-	// stage_id arg: nothing to persist here — the auto-pull below materializes
-	// the stage's zip into cwd, and that zip contains the authoritative
-	// <id>_<name>.stage.json marker. We only capture the value locally so the
-	// pull knows what to download.
+	// stage_id arg: persist immediately so a follow-up call without stage_id
+	// still knows which stage is active. When the value changes, cached
+	// project_id and git_stage_path become stale.
 	var argStageID int
 	if v := optStrArg(args, "stage_id"); v != "" {
 		if id, err := strconv.Atoi(v); err == nil && id != 0 {
 			argStageID = id
 			_, _, _, _, current := authSnapshot()
 			if id != current {
-				// Stage will change — drop stale cached project_id, git_stage_path,
-				// and any existing marker so the incoming zip is not merged with
-				// the previous stage.
-				removeStageMarkerInCWD()
 				updateAndSync(func(f *Folder) {
+					f.StageID = id
 					f.ProjectID = 0
 					f.GitStagePath = ""
 				}, "login")
+			} else {
+				updateAndSync(func(f *Folder) { f.StageID = id }, "login")
 			}
 		}
 	}
@@ -298,10 +258,8 @@ func handleLogin(ctx context.Context, args map[string]interface{}) (string, bool
 					if raw, ok := wsIDByLabel[selected]; ok {
 						id = raw
 					}
-					// Workspace being set from empty — drop any stale marker
-					// and cached project_id so subsequent stage selection
-					// starts clean.
-					removeStageMarkerInCWD()
+					// Workspace being set from empty — drop cached
+					// project_id so subsequent stage selection starts clean.
 					updateAndSync(func(f *Folder) {
 						f.WorkspaceID = id
 						f.ProjectID = 0
@@ -471,22 +429,13 @@ func handleLogin(ctx context.Context, args map[string]interface{}) (string, bool
 		}
 	}
 
-	// Auto pull-folder whenever a stage is (re)selected. The zip contains the
-	// <id>_<name>.stage.json marker at its root — that IS the persistence
-	// mechanism for stage_id/project_id, so without the pull there is no
-	// marker and subsequent tool calls would see stage_id=0. Covers both
-	// first-time setup (snapStageIDBefore == 0) and stage switching
-	// (snapStageIDBefore != 0 && snapStageID differs).
+	// Auto pull-folder whenever a stage is (re)selected. Persist StageID
+	// first so subsequent tool calls in this session — and any concurrent
+	// goroutines — see the same stage the pull is about to materialise.
+	// Covers both first-time setup (snapStageIDBefore == 0) and stage
+	// switching (snapStageIDBefore != 0 && snapStageID differs).
 	var autoPullErr error
 	if snapStageID != 0 && snapStageID != snapStageIDBefore {
-		// Clear any stray root-level marker so the new pull's marker (inside
-		// the extracted stage directory) is the single unambiguous source.
-		// Existing sibling stage directories are preserved — see
-		// removeStageMarkerInCWD.
-		removeStageMarkerInCWD()
-		// Persist the active-stage hint so resolveStageFromCWD can break the
-		// tie when multiple sibling stage directories coexist in RootPath.
-		// The marker file inside the extracted stage stays authoritative.
 		selectedStageID := snapStageID
 		updateAndSync(func(f *Folder) { f.StageID = selectedStageID }, "login")
 		pv := NewValidator(ctx, 0)
@@ -494,15 +443,9 @@ func handleLogin(ctx context.Context, args map[string]interface{}) (string, bool
 			logger.Warn("login: auto pull-folder failed: %v", pullErr)
 			autoPullErr = pullErr
 		}
-		// Refresh globals so the new marker becomes the source of stage state
-		// for the rest of this handler and any concurrent goroutines.
-		syncGlobalsFromCurrent()
 	}
 
-	// Re-snapshot after auto-pull so the response reflects the on-disk truth
-	// (stage_id lives in the marker file, not in config.json — callers that
-	// grep config.json for stage_id will not find it there and will otherwise
-	// wrongly conclude that stage selection did not happen).
+	// Re-snapshot so the response reflects the persisted stage_id.
 	_, _, _, _, finalStageID := authSnapshot()
 
 	cfgPath, _ := configFilePath()

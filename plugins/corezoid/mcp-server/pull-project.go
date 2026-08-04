@@ -134,7 +134,9 @@ func walkDepth(dir string, depth, maxDepth int, fn func(string, os.DirEntry) boo
 	return nil
 }
 
-// moveContents moves all entries from src directory into dst directory.
+// moveContents moves all entries from src directory into dst directory,
+// removing any pre-existing entry at the destination first so a re-pull
+// wins over stale contents from a previous fetch.
 func moveContents(src, dst string) error {
 	entries, err := os.ReadDir(src)
 	if err != nil {
@@ -143,6 +145,11 @@ func moveContents(src, dst string) error {
 	for _, e := range entries {
 		srcPath := filepath.Join(src, e.Name())
 		dstPath := filepath.Join(dst, e.Name())
+		if _, statErr := os.Lstat(dstPath); statErr == nil {
+			if err := os.RemoveAll(dstPath); err != nil {
+				return fmt.Errorf("clear stale %s: %w", dstPath, err)
+			}
+		}
 		if err := os.Rename(srcPath, dstPath); err != nil {
 			return err
 		}
@@ -271,29 +278,31 @@ func downloadStageRecursively(e *Executor, folderID int, filePath string) error 
 			"or another large directory, set it to a dedicated project folder and " +
 			"restart Claude Code / the MCP server")
 	}
-	// The stage folder (e.g. "671255_develop.stage") must live as a direct child
-	// of filePath — the whole point of keeping it nested is that filePath can
-	// host multiple stages side-by-side without their contents colliding.
-	// When the zip nests the stage inside a wrapper directory, hoist the stage
-	// folder up and drop the wrapper.
-	stagesDir := filepath.Dir(stageDir)
-	if stagesDir != filePath {
-		newStageDir := filepath.Join(filePath, filepath.Base(stageDir))
-		if _, err := os.Stat(newStageDir); err == nil {
-			if err := os.RemoveAll(newStageDir); err != nil {
-				return fmt.Errorf("failed to clear existing stage directory: %v", err)
+	// Flatten the stage into filePath: move the contents of the
+	// <id>_<name>.{stage,folder,project} directory up so subfolders and the
+	// stage marker JSON land directly at the workspace root. moveContents
+	// overwrites any stale entry at the destination — a re-pull always wins.
+	// Then drop the (now empty) wrapper along with any intermediate directory
+	// the exporter placed above it.
+	if stageDir != filePath {
+		if err := moveContents(stageDir, filePath); err != nil {
+			return fmt.Errorf("failed to flatten stage into workspace: %v", err)
+		}
+		wrapper := stageDir
+		for wrapper != filePath {
+			parent := filepath.Dir(wrapper)
+			if err := os.RemoveAll(wrapper); err != nil {
+				return fmt.Errorf("failed to remove stage wrapper: %v", err)
 			}
-		}
-		if err := os.Rename(stageDir, newStageDir); err != nil {
-			return fmt.Errorf("failed to hoist stage directory: %v", err)
-		}
-		if err := os.RemoveAll(stagesDir); err != nil {
-			return fmt.Errorf("failed to remove stages wrapper: %v", err)
+			if parent == filePath {
+				break
+			}
+			wrapper = parent
 		}
 	}
-	// renameFiles2Folders strips the .folder/.project suffix from nested
-	// directories. The top-level stage keeps its ".stage" suffix so it is
-	// visually distinguishable at the workspace root (e.g. "671255_develop.stage").
+	// renameFiles2Folders strips the .folder/.project/.stage suffix from
+	// every directory under filePath, including any nested stage the user
+	// previously pulled at a different depth.
 	err = renameFiles2Folders(filePath)
 	if err != nil {
 		return fmt.Errorf("failed to rename files: %v", err)
@@ -316,11 +325,12 @@ func renameFiles2Folders(filePath string) error {
 	for _, f := range files {
 		if f.IsDir() {
 			dirName := f.Name()
-			// ".stage" is preserved so the top-level stage directory keeps a
-			// distinctive name (e.g. "671255_develop.stage") at the workspace
-			// root. Only nested .folder/.project suffixes are stripped.
+			// Strip every Corezoid export suffix — the workspace root is
+			// itself the stage root now, so nested directories should carry
+			// only the plain "<id>_<name>" form.
 			newName := strings.TrimSuffix(dirName, ".folder")
 			newName = strings.TrimSuffix(newName, ".project")
+			newName = strings.TrimSuffix(newName, ".stage")
 			newPath := filepath.Join(filePath, newName)
 			if newName != dirName {
 				oldPath := filepath.Join(filePath, dirName)

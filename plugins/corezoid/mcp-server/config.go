@@ -28,19 +28,11 @@ const defaultAPIGwURL = "https://api-apigw.corezoid.com"
 // the longest-prefix RootPath in Config.Folders, and uses that Folder as the
 // sole source of auth state for the lifetime of the process.
 //
-// Stage identity (stage_id) lives ONLY in the on-disk <id>_<name>.stage.json
-// marker at RootPath (or nearest ancestor) — see resolveStageFromCWD.
-//
-// ProjectID is a per-folder cache of the parent project's ID. The marker's
-// parent_id is the primary source; ProjectID is populated as a fallback when
-// resolveAndCacheProjectID discovers it via API (e.g. legacy marker without
-// parent_id). Never trusted over the marker.
-//
-// StageID is a hint used only to disambiguate when multiple <id>_<name>.stage/
-// directories sit side-by-side in RootPath — resolveStageFromCWD picks the one
-// whose marker matches StageID. It is NOT a source of truth: any tool that
-// finds exactly one marker in the current directory tree uses that marker and
-// ignores this hint. Populated by handleLogin whenever a stage is selected.
+// StageID and ProjectID are persisted here — one Corezoid stage per workspace.
+// pull-folder writes the stage contents directly into RootPath (no
+// <id>_<name>.stage/ wrapper subdirectory), so RootPath IS the stage root on
+// disk. Both IDs are (re)written by handleLogin whenever the user (re)selects
+// a stage, and cleared on workspace change.
 type Folder struct {
 	RootPath     string    `json:"root_path"`
 	AccountURL   string    `json:"account_url"`
@@ -311,12 +303,10 @@ func Current() *Folder {
 // globals are reset to their zero values so a stale in-memory state from a
 // previous cwd cannot leak into new operations.
 //
-// stage_id and project_id are NOT read from the Folder — they come from the
-// nearest <id>_<name>.stage.json marker on disk (resolveStageFromCWD). That is
-// the sole source of truth for stage/project identity.
+// StageID and ProjectID come straight from the Folder — one stage per
+// workspace, both persisted on login.
 func syncGlobalsFromCurrent() {
 	f := Current()
-	marker := resolveStageFromCWD()
 	authStateMu.Lock()
 	defer authStateMu.Unlock()
 	if f == nil {
@@ -329,38 +319,28 @@ func syncGlobalsFromCurrent() {
 		apiSecret = ""
 		gitURL = ""
 		gitStagePath = ""
-	} else {
-		apiToken = f.AccessToken
-		// Clear the in-memory token if it has a known expiry in the past — the
-		// old loadCredentials/isCredentialsExpired pair had the same policy, so
-		// preserving it prevents callers from unknowingly using a stale token.
-		if apiToken != "" && !f.ExpiresAt.IsZero() && time.Now().After(f.ExpiresAt) {
-			apiToken = ""
-		}
-		accountURL = f.AccountURL
-		apiURL = f.CorezoidURL
-		apigwURL = f.APIGwURL
-		if apigwURL == "" {
-			apigwURL = defaultAPIGwURL
-		}
-		workspaceID = f.WorkspaceID
-		apiLogin = f.APILogin
-		apiSecret = f.APISecret
-		gitURL = f.GitURL
-		gitStagePath = f.GitStagePath
-	}
-	if marker != nil {
-		stageID = marker.StageID
-		cachedProjectID = marker.ProjectID
-	} else {
 		stageID = 0
 		cachedProjectID = 0
+		return
 	}
-	// Fallback for cached project_id: if the marker did not carry parent_id
-	// (legacy or hand-written marker), fall back to the value persisted in
-	// the Folder. handleLogin clears Folder.ProjectID on any stage/workspace
-	// switch, so whatever is here is always for the current stage.
-	if cachedProjectID == 0 && f != nil {
-		cachedProjectID = f.ProjectID
+	apiToken = f.AccessToken
+	// Clear the in-memory token if it has a known expiry in the past — the
+	// old loadCredentials/isCredentialsExpired pair had the same policy, so
+	// preserving it prevents callers from unknowingly using a stale token.
+	if apiToken != "" && !f.ExpiresAt.IsZero() && time.Now().After(f.ExpiresAt) {
+		apiToken = ""
 	}
+	accountURL = f.AccountURL
+	apiURL = f.CorezoidURL
+	apigwURL = f.APIGwURL
+	if apigwURL == "" {
+		apigwURL = defaultAPIGwURL
+	}
+	workspaceID = f.WorkspaceID
+	apiLogin = f.APILogin
+	apiSecret = f.APISecret
+	gitURL = f.GitURL
+	gitStagePath = f.GitStagePath
+	stageID = f.StageID
+	cachedProjectID = f.ProjectID
 }

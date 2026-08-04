@@ -348,209 +348,52 @@ func chdirTemp(t *testing.T, dir string) {
 	t.Cleanup(func() { os.Chdir(orig) }) //nolint:errcheck
 }
 
-func TestFindStageRootFromCWD_FromSubfolder(t *testing.T) {
-	root := t.TempDir()
-	// Layout:
-	//   <root>/671255_develop.stage.json
-	//   <root>/671259_Business_Process/  <- CWD
-	os.WriteFile(filepath.Join(root, "671255_develop.stage.json"), []byte("{}"), 0644) //nolint:errcheck
-	sub := filepath.Join(root, "671259_Business_Process")
-	os.MkdirAll(sub, 0755) //nolint:errcheck
-	chdirTemp(t, sub)
+func TestFindStageRootFromCWD_ReturnsRootPath(t *testing.T) {
+	rootDir := tmpHomeAndCWD(t)
+	if err := UpdateCurrent(func(f *Folder) { f.StageID = 671255 }); err != nil {
+		t.Fatalf("UpdateCurrent: %v", err)
+	}
 
-	// EvalSymlinks on macOS: /var → /private/var. Normalise both sides.
 	got := findStageRootFromCWD(671255)
 	gotReal, _ := filepath.EvalSymlinks(got)
-	rootReal, _ := filepath.EvalSymlinks(root)
+	rootReal, _ := filepath.EvalSymlinks(rootDir)
 	if gotReal != rootReal {
 		t.Errorf("findStageRootFromCWD(671255) = %q, want %q", gotReal, rootReal)
 	}
 }
 
-func TestFindStageRootFromCWD_MismatchedStageIDIgnored(t *testing.T) {
-	root := t.TempDir()
-	os.WriteFile(filepath.Join(root, "999999_other.stage.json"), []byte("{}"), 0644) //nolint:errcheck
-	chdirTemp(t, root)
+func TestFindStageRootFromCWD_MismatchedStageIDReturnsEmpty(t *testing.T) {
+	tmpHomeAndCWD(t)
+	if err := UpdateCurrent(func(f *Folder) { f.StageID = 999999 }); err != nil {
+		t.Fatalf("UpdateCurrent: %v", err)
+	}
 
 	if got := findStageRootFromCWD(671255); got != "" {
-		t.Errorf("expected empty when stage id mismatches, got %q", got)
+		t.Errorf("expected empty when Folder.StageID disagrees, got %q", got)
 	}
 }
 
-func TestFindStageRootFromCWD_MatchesWithZeroStageID(t *testing.T) {
-	root := t.TempDir()
-	os.WriteFile(filepath.Join(root, "42_anything.stage.json"), []byte("{}"), 0644) //nolint:errcheck
-	chdirTemp(t, root)
+func TestFindStageRootFromCWD_ZeroStageIDMatches(t *testing.T) {
+	rootDir := tmpHomeAndCWD(t)
+	if err := UpdateCurrent(func(f *Folder) { f.StageID = 42 }); err != nil {
+		t.Fatalf("UpdateCurrent: %v", err)
+	}
 
+	// expectedStageID=0 skips the guard — any Folder.StageID is accepted.
 	got := findStageRootFromCWD(0)
 	gotReal, _ := filepath.EvalSymlinks(got)
-	rootReal, _ := filepath.EvalSymlinks(root)
+	rootReal, _ := filepath.EvalSymlinks(rootDir)
 	if gotReal != rootReal {
 		t.Errorf("expected match when expectedStageID=0, got %q want %q", gotReal, rootReal)
 	}
 }
 
-func TestFindStageRootFromCWD_NoMarker(t *testing.T) {
-	root := t.TempDir()
-	chdirTemp(t, root)
+func TestFindStageRootFromCWD_NoFolderReturnsEmpty(t *testing.T) {
+	// tmpHome sets HOME to a fresh dir but does NOT register a Folder for
+	// COREZOID_WORK_DIR — Current() returns nil, findStageRootFromCWD "".
+	tmpHome(t)
 	if got := findStageRootFromCWD(0); got != "" {
-		t.Errorf("expected empty when no stage marker in ancestry, got %q", got)
-	}
-}
-
-func TestFindStageRootFromCWD_IgnoresFolderMarkers(t *testing.T) {
-	root := t.TempDir()
-	// A .folder.json marker should NOT match — only .stage.json does.
-	os.WriteFile(filepath.Join(root, "671259_bp.folder.json"), []byte("{}"), 0644) //nolint:errcheck
-	chdirTemp(t, root)
-	if got := findStageRootFromCWD(0); got != "" {
-		t.Errorf("folder marker must not be treated as stage root, got %q", got)
-	}
-}
-
-// TestFindStageRootFromCWD_FindsNestedStageDir verifies the downward fallback:
-// pull-folder now keeps the stage as a nested subfolder of the workspace root,
-// so a call issued from that root must still locate the stage root one level
-// down.
-func TestFindStageRootFromCWD_FindsNestedStageDir(t *testing.T) {
-	root := t.TempDir()
-	stage := filepath.Join(root, "671255_develop")
-	if err := os.MkdirAll(stage, 0755); err != nil {
-		t.Fatal(err)
-	}
-	os.WriteFile(filepath.Join(stage, "671255_develop.stage.json"), []byte("{}"), 0644) //nolint:errcheck
-	chdirTemp(t, root)
-
-	got := findStageRootFromCWD(671255)
-	gotReal, _ := filepath.EvalSymlinks(got)
-	stageReal, _ := filepath.EvalSymlinks(stage)
-	if gotReal != stageReal {
-		t.Errorf("findStageRootFromCWD(671255) = %q, want nested %q", gotReal, stageReal)
-	}
-}
-
-// TestResolveStageFromCWD_FindsNestedMarker verifies that resolveStageFromCWD
-// also looks one level down for pull-folder's nested layout.
-func TestResolveStageFromCWD_FindsNestedMarker(t *testing.T) {
-	root := t.TempDir()
-	stage := filepath.Join(root, "671255_develop")
-	if err := os.MkdirAll(stage, 0755); err != nil {
-		t.Fatal(err)
-	}
-	os.WriteFile(
-		filepath.Join(stage, "671255_develop.stage.json"),
-		[]byte(`{"obj_id":671255,"parent_id":42,"title":"develop"}`),
-		0644,
-	) //nolint:errcheck
-	chdirTemp(t, root)
-	t.Setenv("COREZOID_WORK_DIR", root)
-
-	m := resolveStageFromCWD()
-	if m == nil {
-		t.Fatal("resolveStageFromCWD returned nil for nested marker")
-	}
-	if m.StageID != 671255 || m.ProjectID != 42 {
-		t.Errorf("marker = %+v, want stage=671255 project=42", m)
-	}
-}
-
-// TestResolveStageFromCWD_AmbiguousNestedMarkersReturnNil guarantees that
-// multiple candidate subfolders at the same depth are refused when no
-// active-stage hint is set — silently picking one has historically pointed
-// operations at the wrong stage (develop vs. production).
-func TestResolveStageFromCWD_AmbiguousNestedMarkersReturnNil(t *testing.T) {
-	root := t.TempDir()
-	for _, s := range []struct{ dir, id string }{
-		{"111_develop", "111"},
-		{"222_production", "222"},
-	} {
-		d := filepath.Join(root, s.dir)
-		if err := os.MkdirAll(d, 0755); err != nil {
-			t.Fatal(err)
-		}
-		os.WriteFile(
-			filepath.Join(d, s.dir+".stage.json"),
-			[]byte(`{"obj_id":`+s.id+`,"parent_id":1}`),
-			0644,
-		) //nolint:errcheck
-	}
-	chdirTemp(t, root)
-	t.Setenv("COREZOID_WORK_DIR", root)
-
-	prev := currentFolderStageIDHint
-	currentFolderStageIDHint = func() int { return 0 }
-	defer func() { currentFolderStageIDHint = prev }()
-
-	if m := resolveStageFromCWD(); m != nil {
-		t.Errorf("expected nil for two nested markers with no hint, got %+v", m)
-	}
-}
-
-// TestResolveStageFromCWD_AmbiguousNestedMarkersUseHint verifies that when
-// multiple stage subdirectories coexist in RootPath (the "switch stages while
-// keeping the previous checkout" case), Folder.StageID is honoured as the
-// tiebreaker so tools running from the workspace root still pick the right
-// stage.
-func TestResolveStageFromCWD_AmbiguousNestedMarkersUseHint(t *testing.T) {
-	root := t.TempDir()
-	for _, s := range []struct{ dir, id string }{
-		{"111_develop", "111"},
-		{"222_production", "222"},
-	} {
-		d := filepath.Join(root, s.dir)
-		if err := os.MkdirAll(d, 0755); err != nil {
-			t.Fatal(err)
-		}
-		os.WriteFile(
-			filepath.Join(d, s.dir+".stage.json"),
-			[]byte(`{"obj_id":`+s.id+`,"parent_id":1}`),
-			0644,
-		) //nolint:errcheck
-	}
-	chdirTemp(t, root)
-	t.Setenv("COREZOID_WORK_DIR", root)
-
-	prev := currentFolderStageIDHint
-	currentFolderStageIDHint = func() int { return 222 }
-	defer func() { currentFolderStageIDHint = prev }()
-
-	m := resolveStageFromCWD()
-	if m == nil {
-		t.Fatal("resolveStageFromCWD returned nil despite active-stage hint")
-	}
-	if m.StageID != 222 {
-		t.Errorf("hint=222 but resolved stage_id=%d", m.StageID)
-	}
-}
-
-// TestResolveStageFromCWD_AmbiguousNestedMarkersHintMiss covers the case where
-// the hint is set but none of the on-disk markers match it — resolution must
-// stay nil rather than silently fall back to an arbitrary candidate.
-func TestResolveStageFromCWD_AmbiguousNestedMarkersHintMiss(t *testing.T) {
-	root := t.TempDir()
-	for _, s := range []struct{ dir, id string }{
-		{"111_develop", "111"},
-		{"222_production", "222"},
-	} {
-		d := filepath.Join(root, s.dir)
-		if err := os.MkdirAll(d, 0755); err != nil {
-			t.Fatal(err)
-		}
-		os.WriteFile(
-			filepath.Join(d, s.dir+".stage.json"),
-			[]byte(`{"obj_id":`+s.id+`,"parent_id":1}`),
-			0644,
-		) //nolint:errcheck
-	}
-	chdirTemp(t, root)
-	t.Setenv("COREZOID_WORK_DIR", root)
-
-	prev := currentFolderStageIDHint
-	currentFolderStageIDHint = func() int { return 999 }
-	defer func() { currentFolderStageIDHint = prev }()
-
-	if m := resolveStageFromCWD(); m != nil {
-		t.Errorf("expected nil when hint (999) matches no on-disk marker, got %+v", m)
+		t.Errorf("expected empty when no Folder registered, got %q", got)
 	}
 }
 
@@ -560,18 +403,17 @@ func TestResolveStageFromCWD_AmbiguousNestedMarkersHintMiss(t *testing.T) {
 // the correct on-disk location for any depth of nesting — including the
 // stage-root case where resolved == "".
 func TestPullProcess_TargetDirComposition(t *testing.T) {
-	root := t.TempDir()
-	os.WriteFile(filepath.Join(root, "671255_develop.stage.json"), []byte("{}"), 0644) //nolint:errcheck
-	sub := filepath.Join(root, "671259_Business_Process")
-	os.MkdirAll(sub, 0755) //nolint:errcheck
-	chdirTemp(t, sub)
+	rootDir := tmpHomeAndCWD(t)
+	if err := UpdateCurrent(func(f *Folder) { f.StageID = 671255 }); err != nil {
+		t.Fatalf("UpdateCurrent: %v", err)
+	}
 
 	stageRoot := findStageRootFromCWD(671255)
 	if stageRoot == "" {
-		t.Fatal("stage root not found from subfolder")
+		t.Fatal("stage root not resolved from Folder")
 	}
 	stageRootReal, _ := filepath.EvalSymlinks(stageRoot)
-	rootReal, _ := filepath.EvalSymlinks(root)
+	rootReal, _ := filepath.EvalSymlinks(rootDir)
 
 	cases := []struct {
 		name     string

@@ -2,7 +2,6 @@ package main
 
 import (
 	"encoding/json"
-	"fmt"
 	"os"
 	"path/filepath"
 	"sync"
@@ -40,17 +39,20 @@ func tmpHomeAndCWD(t *testing.T) string {
 	return os.Getenv("COREZOID_WORK_DIR")
 }
 
-// writeTestStageMarker writes a <stageID>_<name>.stage.json file into dir with
-// the given stage_id/project_id so resolveStageFromCWD picks it up.
-func writeTestStageMarker(t *testing.T, dir string, stageID, projectID int, shortName string) {
+// writeTestStageMarker persists stage_id and (optionally) project_id on the
+// current Folder in ~/.corezoid/config.json — the sole source of stage
+// identity now that pull-folder flattens the stage into RootPath. The
+// unused dir and shortName parameters are kept so callers written for the
+// previous disk-marker layout still compile.
+func writeTestStageMarker(t *testing.T, _dir string, stageID, projectID int, _shortName string) {
 	t.Helper()
-	payload := []byte(fmt.Sprintf(
-		`{"obj_id":%d,"obj_type":10,"parent_id":%d,"short_name":%q,"title":%q}`,
-		stageID, projectID, shortName, shortName,
-	))
-	name := fmt.Sprintf("%d_%s.stage.json", stageID, shortName)
-	if err := os.WriteFile(filepath.Join(dir, name), payload, 0644); err != nil {
-		t.Fatalf("write stage marker: %v", err)
+	if err := UpdateCurrent(func(f *Folder) {
+		f.StageID = stageID
+		if projectID != 0 {
+			f.ProjectID = projectID
+		}
+	}); err != nil {
+		t.Fatalf("persist stage: %v", err)
 	}
 }
 
