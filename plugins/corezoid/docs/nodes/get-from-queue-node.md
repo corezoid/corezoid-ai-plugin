@@ -129,6 +129,45 @@ Example of poor naming:
 Meaningful titles and descriptions make processes more maintainable, easier to troubleshoot, and
 more accessible to other team members.
 
+## Accessing Retrieved Task Data
+
+When a task is successfully dequeued, the Corezoid platform does **not** merge the task's fields
+flat into the current task's root `data` object. The dequeued data is placed under the system
+field `__queue_task_data__`:
+
+```
+__queue_task_data__
+├── <field_1>
+├── <field_2>
+└── ...
+```
+
+### Referencing fields in subsequent nodes
+
+Use the `{{__queue_task_data__.<field_name>}}` template syntax in Set Parameters nodes, Condition
+nodes, Code nodes, and API Call nodes that follow the Get from Queue node:
+
+```
+{{__queue_task_data__.session_id}}
+{{__queue_task_data__.amount}}
+{{__queue_task_data__.user_email}}
+```
+
+### Copying fields into the root data object
+
+If you need the retrieved fields at the root level, add a **Set Parameters** node immediately after
+the Get from Queue node and copy each field explicitly:
+
+| Parameter name | Value                                 |
+| -------------- | ------------------------------------- |
+| `session_id`   | `{{__queue_task_data__.session_id}}`  |
+| `amount`       | `{{__queue_task_data__.amount}}`      |
+
+### Empty queue
+
+When the queue is empty, `__queue_task_data__` is absent. Guard against this in subsequent nodes
+with a **Condition** node that checks whether the field exists before attempting to use it.
+
 ## Configuration Example
 
 This example demonstrates a Get from Queue Node configuration extracted from a real process. It
@@ -177,5 +216,6 @@ shows how to retrieve tasks from a specific Queue node in another process.
   access denied). Note that an empty queue is typically not considered an error by this node itself
   but might be handled by subsequent logic.
 - The `go` logic block defines the path taken after the retrieval attempt. The retrieved task's data
-  will be available in the `data` object for the subsequent nodes. If the queue was empty, the task
-  proceeds without new data.
+  is **not** merged flat into the root `data` object. Instead, it is placed under the system field
+  `__queue_task_data__` (see [Accessing Retrieved Task Data](#accessing-retrieved-task-data) below).
+  If the queue was empty, the task proceeds and `__queue_task_data__` is absent.
