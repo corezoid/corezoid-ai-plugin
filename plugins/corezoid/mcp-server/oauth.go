@@ -192,7 +192,13 @@ func oauthPKCEFlow(accountURL, clientID string) (*PKCEResult, error) {
 		"redirect_uri":  {redirectURI},
 	}
 	httpClient := &http.Client{Timeout: 60 * time.Second}
-	resp, err := httpClient.PostForm(tokenURL, tokenParams)
+	tokenReq, err := http.NewRequest(http.MethodPost, tokenURL, strings.NewReader(tokenParams.Encode()))
+	if err != nil {
+		return nil, fmt.Errorf("failed to build token request: %w", err)
+	}
+	tokenReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	setCorezoidOrigin(tokenReq, accountURL)
+	resp, err := httpClient.Do(tokenReq)
 	if err != nil {
 		return nil, fmt.Errorf("token exchange request failed: %w", err)
 	}
@@ -276,6 +282,7 @@ func fetchCorezoidAPIURL(accountURL, token string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("failed to create clients request: %w", err)
 	}
+	setCorezoidOrigin(req, accountURL)
 	if token != "" {
 		req.Header.Set("Authorization", "Bearer "+token)
 	}

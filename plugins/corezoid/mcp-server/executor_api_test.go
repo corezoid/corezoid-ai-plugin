@@ -335,6 +335,50 @@ func TestExecutorCheckCancel(t *testing.T) {
 	}
 }
 
+func TestCorezoidOriginFromURL(t *testing.T) {
+	cases := []struct {
+		in   string
+		want string
+	}{
+		{"", ""},
+		{"   ", ""},
+		{"not a url", ""},
+		{"https://admin.corezoid.com", "https://admin.corezoid.com"},
+		{"https://admin.corezoid.com/", "https://admin.corezoid.com"},
+		{"https://admin.corezoid.com/api/2/json", "https://admin.corezoid.com"},
+		{"http://localhost:8080/x", "http://localhost:8080"},
+		{"admin.corezoid.com/api/2/json", ""}, // no scheme, url.Parse gives empty Host
+	}
+	for _, c := range cases {
+		if got := corezoidOriginFromURL(c.in); got != c.want {
+			t.Errorf("corezoidOriginFromURL(%q) = %q, want %q", c.in, got, c.want)
+		}
+	}
+}
+
+func TestDoWithRetry_SetsOriginHeader(t *testing.T) {
+	shortenRetryDelays(t)
+
+	var gotOrigin string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotOrigin = r.Header.Get("Origin")
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(srv.Close)
+
+	resp, _, err := doWithRetry(context.Background(), srv.Client(), "POST", srv.URL, "json", []byte(`{}`), "tkn", "", "", false)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	resp.Body.Close()
+	if want := corezoidOriginFromURL(srv.URL); gotOrigin != want {
+		t.Fatalf("Origin header = %q, want %q", gotOrigin, want)
+	}
+	if gotOrigin == "" {
+		t.Fatal("Origin header must not be empty for a well-formed baseURL")
+	}
+}
+
 func TestParseRetryAfter(t *testing.T) {
 	cases := []struct {
 		in   string

@@ -11,6 +11,7 @@ import (
 	"io"
 	"math/rand"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -103,6 +104,38 @@ func (v *Executor) req(method string, ops []map[string]any) (map[string]interfac
 	return response, nil
 }
 
+// corezoidOriginFromURL returns the scheme://host origin of rawURL, suitable
+// for use as an Origin header on Corezoid-bound requests (Corezoid routes
+// cross-origin admin/API traffic based on Origin). Returns "" if rawURL is
+// unparseable or has no host — callers must decide whether to set the header
+// at all in that case.
+func corezoidOriginFromURL(rawURL string) string {
+	rawURL = strings.TrimSpace(rawURL)
+	if rawURL == "" {
+		return ""
+	}
+	u, err := url.Parse(rawURL)
+	if err != nil || u.Host == "" {
+		return ""
+	}
+	scheme := u.Scheme
+	if scheme == "" {
+		scheme = "https"
+	}
+	return scheme + "://" + u.Host
+}
+
+// setCorezoidOrigin sets the Origin header on req to the scheme+host of
+// originSource. No-op when originSource is empty or unparseable.
+func setCorezoidOrigin(req *http.Request, originSource string) {
+	if req == nil {
+		return
+	}
+	if origin := corezoidOriginFromURL(originSource); origin != "" {
+		req.Header.Set("Origin", origin)
+	}
+}
+
 // newHTTPClient returns an http.Client. TLS certificate verification is
 // disabled only when COREZOID_INSECURE_TLS=1 is set in the environment.
 func newHTTPClient() *http.Client {
@@ -172,6 +205,7 @@ func doWithRetry(ctx context.Context, client *http.Client, method, baseURL, path
 			return nil, nil, err
 		}
 		req.Header.Set("Content-Type", "application/json")
+		setCorezoidOrigin(req, baseURL)
 		if token != "" {
 			req.Header.Set("Authorization", fmt.Sprintf("Simulator %s", token))
 		}

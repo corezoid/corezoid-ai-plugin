@@ -36,6 +36,14 @@ func (v *Executor) fetchDownload(downloadURL string) ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to build download request: %w", err)
 	}
+	// Origin comes from the configured API URL (admin host) rather than the
+	// download URL — the download endpoint is served from a different subdomain
+	// (e.g. downloads.corezoid.com) and expects the caller's admin origin.
+	origin := v.APIUrl
+	if origin == "" {
+		origin = downloadURL
+	}
+	setCorezoidOrigin(req, origin)
 	if v.Token != "" {
 		req.Header.Set("Authorization", fmt.Sprintf("Simulator %s", v.Token))
 	}

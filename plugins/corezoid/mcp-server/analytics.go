@@ -319,6 +319,7 @@ func sendBatch(events []AnalyticsEvent) {
 		return
 	}
 	req.Header.Set("Content-Type", "application/json")
+	setCorezoidOrigin(req, analyticsEndpoint)
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
