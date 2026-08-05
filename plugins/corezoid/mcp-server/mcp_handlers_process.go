@@ -262,6 +262,17 @@ func handlePullFolder(ctx context.Context, args map[string]interface{}) (string,
 
 	v := NewValidator(ctx, 0)
 
+	// folder_id=0 is "No Project" mode: no stage root, mirror the workspace
+	// root view instead. project_id/stage_id are pinned to 0 in the config so
+	// downstream tools resolve context off individual process files.
+	if folderID == 0 {
+		if err := downloadWorkspaceRootRecursively(v, "."); err != nil {
+			return fmt.Sprintf("Error fetching workspace root: %v", err), true
+		}
+		regenerateLocalCLAUDEMDIfNeeded(ctx)
+		return "Workspace root saved to current directory", false
+	}
+
 	// Pre-warm project_id cache so push-process never needs an extra API call.
 	// folderID is the stage; its parent is the project.
 	_, _ = resolveAndCacheProjectID(v)

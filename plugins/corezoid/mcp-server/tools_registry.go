@@ -20,13 +20,13 @@ var toolRegistry = []mcpTool{
 	},
 	{
 		Name:        "pull-folder",
-		Description: "Recursively export all processes from a Corezoid folder/stage to a local directory.",
+		Description: "Recursively export all processes from a Corezoid folder/stage to a local directory. Pass folder_id=0 for \"No Project\" mode (workspace-root pull): downloads every top-level folder / process / dashboard in the workspace.",
 		InputSchema: map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
 				"folder_id": map[string]interface{}{
 					"type":        "integer",
-					"description": "Corezoid folder(stage) ID to export",
+					"description": "Corezoid folder(stage) ID to export. Use 0 to pull the entire workspace root (\"No Project\" mode).",
 				},
 			},
 			"required": []string{"folder_id"},

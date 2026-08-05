@@ -289,6 +289,11 @@ func handleLogin(ctx context.Context, args map[string]interface{}) (string, bool
 	}
 
 	// Steps 4 & 5: pick project then stage.
+	// noProjectSelected is set when the user explicitly chose "No Project" at
+	// step 4 — the workspace has no stage root selected, and pull-folder will
+	// later see folder_id=0 and download workspace-root items directly.
+	var noProjectSelected bool
+	const noProjectLabel = "No Project"
 	if snapStageID == 0 {
 		if clientElicitationSupported() {
 			var selectedProjectID int64
@@ -299,17 +304,20 @@ func handleLogin(ctx context.Context, args map[string]interface{}) (string, bool
 				logger.Warn("login: fetchProjectList failed: %v", projErr)
 			}
 
-			if projErr == nil && len(projects) > 0 {
-				enumVals := make([]string, len(projects))
+			if projErr == nil {
+				enumVals := make([]string, 0, len(projects)+1)
 				projIDByLabel := map[string]int64{}
-				for i, p := range projects {
+				for _, p := range projects {
 					label := fmt.Sprintf("%d — %s", p.projectID, p.title)
 					if p.shortName != "" && p.shortName != p.title {
 						label += " (" + p.shortName + ")"
 					}
-					enumVals[i] = label
+					enumVals = append(enumVals, label)
 					projIDByLabel[label] = p.projectID
 				}
+				// Always offer "No Project" as the last option so the user can
+				// work at workspace root when a Corezoid project isn't required.
+				enumVals = append(enumVals, noProjectLabel)
 				content, action, err := elicitValues(
 					"Select your Corezoid project:",
 					map[string]interface{}{
@@ -318,7 +326,7 @@ func handleLogin(ctx context.Context, args map[string]interface{}) (string, bool
 							"project": map[string]interface{}{
 								"type":        "string",
 								"title":       "Project",
-								"description": "Select the project to work with",
+								"description": "Select the project to work with, or pick \"No Project\" to work at workspace root",
 								"enum":        enumVals,
 							},
 						},
@@ -327,13 +335,17 @@ func handleLogin(ctx context.Context, args map[string]interface{}) (string, bool
 				)
 				if err == nil && action == "accept" {
 					if selected, _ := content["project"].(string); selected != "" {
-						selectedProjectID = projIDByLabel[selected]
+						if selected == noProjectLabel {
+							noProjectSelected = true
+						} else {
+							selectedProjectID = projIDByLabel[selected]
+						}
 					}
 				}
 			}
 
 			// Step 5: fetch stage list for selected project and elicit selection.
-			if selectedProjectID != 0 {
+			if !noProjectSelected && selectedProjectID != 0 {
 				stages, stagesErr := fetchStageList(ctx, snapWorkspaceID, selectedProjectID)
 				if stagesErr != nil {
 					logger.Warn("login: fetchStageList failed: %v", stagesErr)
@@ -379,7 +391,9 @@ func handleLogin(ctx context.Context, args map[string]interface{}) (string, bool
 			}
 
 			// Fallback: if stage still not set, ask for stage ID directly.
-			if snapStageID == 0 {
+			// Skipped when the user chose "No Project" — they have opted out of
+			// a stage entirely and pull-folder will operate at workspace root.
+			if !noProjectSelected && snapStageID == 0 {
 				content, action, err := elicitValues(
 					"Enter your Stage ID (root folder ID for this project):",
 					map[string]interface{}{
@@ -434,8 +448,21 @@ func handleLogin(ctx context.Context, args map[string]interface{}) (string, bool
 	// goroutines — see the same stage the pull is about to materialise.
 	// Covers both first-time setup (snapStageIDBefore == 0) and stage
 	// switching (snapStageIDBefore != 0 && snapStageID differs).
+	// When the user chose "No Project", project_id/stage_id are pinned to 0
+	// and a workspace-root pull runs instead.
 	var autoPullErr error
-	if snapStageID != 0 && snapStageID != snapStageIDBefore {
+	if noProjectSelected {
+		updateAndSync(func(f *Folder) {
+			f.ProjectID = 0
+			f.StageID = 0
+			f.GitStagePath = ""
+		}, "login")
+		pv := NewValidator(ctx, 0)
+		if pullErr := downloadWorkspaceRootRecursively(pv, "."); pullErr != nil {
+			logger.Warn("login: auto workspace-root pull failed: %v", pullErr)
+			autoPullErr = pullErr
+		}
+	} else if snapStageID != 0 && snapStageID != snapStageIDBefore {
 		selectedStageID := snapStageID
 		updateAndSync(func(f *Folder) { f.StageID = selectedStageID }, "login")
 		pv := NewValidator(ctx, 0)
@@ -457,8 +484,8 @@ func handleLogin(ctx context.Context, args map[string]interface{}) (string, bool
 	// user typed a blank stage_id), return a clearly-actionable message instead
 	// of the generic "Setup complete". The init skill and the LLM both key off
 	// this string to decide whether to proceed to pull-folder or drive stage
-	// selection themselves.
-	if finalStageID == 0 {
+	// selection themselves. "No Project" is not a failure — skip this branch.
+	if !noProjectSelected && finalStageID == 0 {
 		msg := "Setup incomplete: stage not selected. "
 		msg += fmt.Sprintf("Call list-stages(project_id=<id>, company_id=%s) to see available stages, ", snapWorkspaceID)
 		msg += fmt.Sprintf("then call login(workspace_id=%s, stage_id=<stage_id>).", snapWorkspaceID)
@@ -468,7 +495,12 @@ func handleLogin(ctx context.Context, args map[string]interface{}) (string, bool
 		return msg, false
 	}
 
-	msg := fmt.Sprintf("Setup complete! Configuration saved to %s. Stage %d selected", cfgPath, finalStageID)
+	var msg string
+	if noProjectSelected {
+		msg = fmt.Sprintf("Setup complete! Configuration saved to %s. \"No Project\" selected — working at workspace root", cfgPath)
+	} else {
+		msg = fmt.Sprintf("Setup complete! Configuration saved to %s. Stage %d selected", cfgPath, finalStageID)
+	}
 	if autoPullErr != nil {
 		// Pull failed but stage_id is set (e.g. previous marker still on disk).
 		// Callers should retry pull-folder — the marker is authoritative.

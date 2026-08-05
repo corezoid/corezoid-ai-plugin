@@ -253,6 +253,66 @@ func TestHoistZipWrapperDirs_ReplacesStaleStage(t *testing.T) {
 	}
 }
 
+// TestHoistZipWrapperDirs_UnwrapsWorkspaceRootWrappers covers the wrappers
+// emitted for a No-Project (workspace-root) pull: one per top-level object,
+// named after its obj_type — folder_/conv_/dashboard_. All three must be
+// hoisted so their contents land directly under root, or the user ends up
+// with an extra layer per object.
+func TestHoistZipWrapperDirs_UnwrapsWorkspaceRootWrappers(t *testing.T) {
+	root := t.TempDir()
+
+	// folder wrapper contains an inner "<id>_<name>" dir with a .folder.json inside.
+	folderInner := filepath.Join(root, "folder_687287_1785852544313.zip", "687287_et")
+	if err := os.MkdirAll(folderInner, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(folderInner, "687287_et.folder.json"), []byte("{}"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// conv wrapper contains a single .conv.json at its root.
+	convDir := filepath.Join(root, "conv_1571296_1785852544373.zip")
+	if err := os.MkdirAll(convDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(convDir, "1571296_Graph_Maker.conv.json"), []byte("{}"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// dashboard wrapper.
+	dashDir := filepath.Join(root, "dashboard_136538_1785852544843.zip")
+	if err := os.MkdirAll(dashDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dashDir, "136538_Test.dashboard.json"), []byte("{}"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := hoistZipWrapperDirs(root); err != nil {
+		t.Fatalf("hoistZipWrapperDirs error: %v", err)
+	}
+
+	// All three wrappers should be gone; their content should be at root.
+	for _, want := range []string{
+		"687287_et/687287_et.folder.json",
+		"1571296_Graph_Maker.conv.json",
+		"136538_Test.dashboard.json",
+	} {
+		if _, err := os.Stat(filepath.Join(root, want)); err != nil {
+			t.Errorf("expected %s at root: %v", want, err)
+		}
+	}
+	for _, wrapper := range []string{
+		"folder_687287_1785852544313.zip",
+		"conv_1571296_1785852544373.zip",
+		"dashboard_136538_1785852544843.zip",
+	} {
+		if _, err := os.Stat(filepath.Join(root, wrapper)); !os.IsNotExist(err) {
+			t.Errorf("wrapper %s should be gone, stat err=%v", wrapper, err)
+		}
+	}
+}
+
 func TestHoistZipWrapperDirs_NoWrapperNoop(t *testing.T) {
 	root := t.TempDir()
 	stage := filepath.Join(root, "7_x.stage")

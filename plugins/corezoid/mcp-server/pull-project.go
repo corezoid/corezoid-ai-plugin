@@ -157,20 +157,24 @@ func moveContents(src, dst string) error {
 	return nil
 }
 
-var stageWrapperDirRe = regexp.MustCompile(`^stage_\d+_\d+\.zip$`)
+// exportWrapperDirRe matches every top-level wrapper directory Corezoid's
+// exporter emits — one per object type. Despite the ".zip" suffix these are
+// DIRECTORIES, not files. Stage pulls only produce "stage_*" wrappers;
+// workspace-root pulls ("No Project" mode) also emit "folder_*", "conv_*",
+// and "dashboard_*" wrappers, one per exported top-level object.
+var exportWrapperDirRe = regexp.MustCompile(`^(stage|folder|conv|dashboard)_\d+_\d+\.zip$`)
 
-// hoistZipWrapperDirs unwraps any top-level directory in root whose name
-// matches "stage_<id>_<ts>.zip" — Corezoid's exporter emits a wrapper directory
-// (yes, a directory, despite the ".zip" suffix) that shields the real stage.
-// Each wrapper's contents are moved up to root; existing entries at the
-// destination are removed first so a fresh pull always wins over stale data.
+// hoistZipWrapperDirs unwraps every top-level wrapper directory in root
+// (see exportWrapperDirRe). Each wrapper's contents are moved up to root;
+// existing entries at the destination are removed first so a fresh pull
+// always wins over stale data.
 func hoistZipWrapperDirs(root string) error {
 	entries, err := os.ReadDir(root)
 	if err != nil {
 		return err
 	}
 	for _, e := range entries {
-		if !e.IsDir() || !stageWrapperDirRe.MatchString(e.Name()) {
+		if !e.IsDir() || !exportWrapperDirRe.MatchString(e.Name()) {
 			continue
 		}
 		wrapper := filepath.Join(root, e.Name())
@@ -193,6 +197,89 @@ func hoistZipWrapperDirs(root string) error {
 		if err := os.RemoveAll(wrapper); err != nil {
 			return fmt.Errorf("remove wrapper %s: %w", wrapper, err)
 		}
+	}
+	return nil
+}
+
+// downloadWorkspaceRootRecursively downloads every top-level object (folder,
+// conv, dashboard) in the current workspace and extracts each into filePath.
+// Used when the user picked "No Project" during login — the workspace has no
+// stage root, so we mirror what the Corezoid UI's root view shows straight
+// into the workspace directory.
+func downloadWorkspaceRootRecursively(e *Executor, filePath string) error {
+	if err := e.checkCancel(); err != nil {
+		return err
+	}
+
+	items, err := e.ListWorkspaceRoot()
+	if err != nil {
+		return fmt.Errorf("failed to list workspace root: %w", err)
+	}
+	if len(items) == 0 {
+		return nil
+	}
+
+	urls, err := e.BatchExportSchemes(items)
+	if err != nil {
+		return fmt.Errorf("failed to batch export workspace root: %w", err)
+	}
+
+	for i, url := range urls {
+		if err := e.checkCancel(); err != nil {
+			return err
+		}
+		data, err := e.fetchDownload(url)
+		if err != nil {
+			return fmt.Errorf("failed to download %s #%d: %w", items[i].ObjType, items[i].ObjID, err)
+		}
+		zipPath := filepath.Join(filePath, fmt.Sprintf(".root_%s_%d.zip", items[i].ObjType, items[i].ObjID))
+		if err := os.WriteFile(zipPath, data, 0644); err != nil {
+			return fmt.Errorf("failed to write zip: %w", err)
+		}
+		unzipErr := unzipFile(zipPath, filePath)
+		os.Remove(zipPath)
+		if unzipErr != nil {
+			return fmt.Errorf("failed to unzip %s #%d: %w", items[i].ObjType, items[i].ObjID, unzipErr)
+		}
+	}
+
+	// Corezoid's exporter wraps each top-level object in a
+	// {stage,folder,conv,dashboard}_<id>_<ts>.zip wrapper directory. Unwrap
+	// them so folder / conv / dashboard files land directly at filePath.
+	if err := hoistZipWrapperDirs(filePath); err != nil {
+		return fmt.Errorf("failed to unwrap workspace-root archives: %w", err)
+	}
+
+	// Some archives contain inner *.zip files that also need extracting.
+	// Loop until none remain (they can nest).
+	innerZipRe := exportWrapperDirRe
+	for {
+		files, err := os.ReadDir(filePath)
+		if err != nil {
+			return fmt.Errorf("failed to read directory: %w", err)
+		}
+		var innerZip string
+		for _, f := range files {
+			if !f.IsDir() && innerZipRe.MatchString(f.Name()) {
+				innerZip = filepath.Join(filePath, f.Name())
+				break
+			}
+		}
+		if innerZip == "" {
+			break
+		}
+		err = unzipFile(innerZip, filePath)
+		os.Remove(innerZip)
+		if err != nil {
+			return fmt.Errorf("failed to unzip %s: %w", filepath.Base(innerZip), err)
+		}
+	}
+
+	if err := renameFiles2Folders(filePath); err != nil {
+		return fmt.Errorf("failed to rename files: %w", err)
+	}
+	if err := formatJSONWithFallback(e, filePath); err != nil {
+		return fmt.Errorf("failed to format json: %w", err)
 	}
 	return nil
 }
