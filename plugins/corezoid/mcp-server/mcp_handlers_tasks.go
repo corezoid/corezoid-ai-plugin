@@ -131,8 +131,35 @@ func handleGetNodeStat(ctx context.Context, args map[string]interface{}) (string
 	return string(data), false
 }
 
+// deepMerge recursively merges src into dst and returns the result. For keys
+// present in both maps where both values are themselves maps, the values are
+// merged recursively. For all other types the src value wins (overwrites dst).
+// Neither dst nor src is mutated.
+func deepMerge(dst, src map[string]interface{}) map[string]interface{} {
+	result := make(map[string]interface{}, len(dst))
+	for k, v := range dst {
+		result[k] = v
+	}
+	for k, v := range src {
+		if srcMap, ok := v.(map[string]interface{}); ok {
+			if dstMap, ok := result[k].(map[string]interface{}); ok {
+				result[k] = deepMerge(dstMap, srcMap)
+				continue
+			}
+		}
+		result[k] = v
+	}
+	return result
+}
+
 // handleModifyTask updates the data payload of an existing task. Either
 // task_id or ref must be supplied to identify the task.
+//
+// By default the Corezoid API performs a SHALLOW (top-level) merge: every
+// top-level key in data overwrites the entire existing value, so nested
+// objects are fully replaced. Pass deep_merge: true to fetch the current
+// task data first and perform a recursive merge that preserves sub-keys not
+// present in the caller's payload.
 func handleModifyTask(ctx context.Context, args map[string]interface{}) (string, bool) {
 	processID, err := intArg(args, "process_id")
 	if err != nil {
@@ -153,6 +180,39 @@ func handleModifyTask(ctx context.Context, args map[string]interface{}) (string,
 		return fmt.Sprintf("Error parsing data JSON: %v", err), true
 	}
 
+	v := NewValidator(ctx, processID)
+
+	// deep_merge: fetch current task data and recursively merge into it.
+	deepMergeMode, _ := args["deep_merge"].(bool)
+	if deepMergeMode {
+		showOp := map[string]any{
+			"type":    "show",
+			"obj":     "task",
+			"conv_id": processID,
+		}
+		if taskID != "" {
+			showOp["obj_id"] = taskID
+		} else {
+			showOp["ref"] = ref
+		}
+		showResp, err := v.req("show_task", []map[string]any{showOp})
+		if err != nil {
+			return fmt.Sprintf("Error fetching current task for deep merge: %v", err), true
+		}
+		opsArr, _ := showResp["ops"].([]interface{})
+		if len(opsArr) == 0 {
+			return "Error: task not found", true
+		}
+		opMap, _ := opsArr[0].(map[string]interface{})
+		if opMap["proc"] != "ok" {
+			desc, _ := opMap["description"].(string)
+			return fmt.Sprintf("Error resolving task: %s", desc), true
+		}
+		if currentData, ok := opMap["data"].(map[string]interface{}); ok {
+			taskData = deepMerge(currentData, taskData)
+		}
+	}
+
 	op := map[string]any{
 		"type":    "modify",
 		"obj":     "task",
@@ -166,7 +226,6 @@ func handleModifyTask(ctx context.Context, args map[string]interface{}) (string,
 		op["ref"] = ref
 	}
 
-	v := NewValidator(ctx, processID)
 	resp, err := v.req("modify_task", []map[string]any{op})
 	if err != nil {
 		return fmt.Sprintf("Error: %v", err), true
