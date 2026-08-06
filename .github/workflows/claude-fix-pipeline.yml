@@ -113,6 +113,10 @@ jobs:
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
           github_token: ${{ secrets.GITHUB_TOKEN }}
+          # workflow_run inherits the actor of the failed CI; for PRs opened
+          # by our issue-worker that actor is github-actions[bot], which the
+          # upstream action's default human-only guard blocks.
+          allowed_bots: 'github-actions'
           prompt: |
             CI failed. Details in environment variables:
               PR_NUMBER — pull request number

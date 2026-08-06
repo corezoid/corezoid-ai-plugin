@@ -167,6 +167,11 @@ jobs:
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
           github_token: ${{ secrets.GITHUB_TOKEN }}
+          # PR opened by our issue-worker (app/github-actions) and the
+          # workflow_dispatch triggered by that worker both come from the
+          # github-actions[bot] identity. The upstream action's default
+          # human-only guard blocks that path; allow-list this one bot.
+          allowed_bots: 'github-actions'
           prompt: |
             You are the second-line code reviewer for @corezoid/corezoid-ai-plugin.
             PR #$PR_NUMBER has already been implemented and passed a first
