@@ -91,15 +91,15 @@ jobs:
           go-version-file: plugins/corezoid/mcp-server/go.mod
           cache: true
 
-      - name: Skip if a PR for this issue already exists
+      - name: Skip if an open PR for this issue already exists
         id: guard
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           BRANCH: ${{ steps.issue.outputs.branch }}
         run: |
           set -euo pipefail
-          if gh pr list --state all --head "$BRANCH" --json number --jq '.[].number' | grep -q .; then
-            echo "PR for $BRANCH already exists, skipping"
+          if gh pr list --state open --head "$BRANCH" --json number --jq '.[].number' | grep -q .; then
+            echo "Open PR for $BRANCH already exists, skipping"
             echo "skip=true" >> "$GITHUB_OUTPUT"
           fi
 
