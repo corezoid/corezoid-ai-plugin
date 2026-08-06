@@ -39,6 +39,20 @@ func sanitizeFileSegment(title string) string {
 	return b.String()
 }
 
+// convFileName builds the canonical local filename for a process or state
+// diagram: "<ID>_<name>.conv.json", falling back to "<ID>.conv.json" when the
+// title is empty. The ".conv.json" suffix is not cosmetic — resolveProcessPath,
+// the MCP resource listing, the git-sync process index and the env-var
+// reference scan all discover files by that exact suffix, so a file written
+// with a plain ".json" extension is invisible to every one of them.
+func convFileName(processID int, title string) string {
+	safeName := sanitizeFileSegment(title)
+	if safeName == "" {
+		return fmt.Sprintf("%d.conv.json", processID)
+	}
+	return fmt.Sprintf("%d_%s.conv.json", processID, safeName)
+}
+
 // extractProcessIDFromPath returns the numeric process ID encoded in the
 // filename, or an error message describing the expected format.
 func extractProcessIDFromPath(filePath string) (int, string) {
@@ -194,13 +208,11 @@ func handlePullProcess(ctx context.Context, args map[string]interface{}) (string
 	}
 
 	// Derive filename from process title if available
-	fileName := fmt.Sprintf("%d.conv.json", processID)
+	title := ""
 	if m, ok := procInfo.(map[string]interface{}); ok {
-		if title, _ := m["title"].(string); title != "" {
-			safeName := sanitizeFileSegment(title)
-			fileName = fmt.Sprintf("%d_%s.conv.json", processID, safeName)
-		}
+		title, _ = m["title"].(string)
 	}
+	fileName := convFileName(processID, title)
 
 	// Resolve save directory from parent_id so the file lands in the correct folder tree.
 	var dir string
@@ -682,8 +694,7 @@ func createConv(ctx context.Context, args map[string]interface{}, convType strin
 		return fmt.Sprintf("Error marshaling process: %v", err), true
 	}
 
-	safeName := sanitizeFileSegment(processName)
-	fileName := fmt.Sprintf("%d_%s.json", processID, safeName)
+	fileName := convFileName(processID, processName)
 	filePath := filepath.Join(folderPath, fileName)
 	if err := os.WriteFile(filePath, data, 0644); err != nil {
 		return fmt.Sprintf("Error writing file: %v", err), true
