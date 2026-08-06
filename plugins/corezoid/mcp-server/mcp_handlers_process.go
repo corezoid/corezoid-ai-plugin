@@ -16,7 +16,13 @@ import (
 // reProcessIDFromFilename extracts the leading numeric process ID from a
 // filename like "12345_my_process.conv.json". Compiled once and shared by the
 // handlers that resolve a process ID from a file path.
-var reProcessIDFromFilename = regexp.MustCompile(`^(\d+)_`)
+//
+// Both spellings convFileName can emit are accepted: the usual
+// "<ID>_<name>.conv.json" and the untitled "<ID>.conv.json" fallback, which a
+// pull of a process with no server-side title produces. The second alternative
+// is written out in full instead of a bare "<ID>." so that an unrelated
+// "<ID>.<something>.json" is not silently read as a process.
+var reProcessIDFromFilename = regexp.MustCompile(`^(\d+)(?:_|\.conv\.json)`)
 
 // sanitizeFileSegment converts a raw Corezoid title into a safe filename or
 // directory-name segment. It replaces spaces AND every character that is either
@@ -59,7 +65,7 @@ func extractProcessIDFromPath(filePath string) (int, string) {
 	baseName := filepath.Base(filePath)
 	matches := reProcessIDFromFilename.FindStringSubmatch(baseName)
 	if matches == nil {
-		return 0, fmt.Sprintf("Error: cannot extract process ID from filename '%s': expected format '<ID>_<name>.json'", baseName)
+		return 0, fmt.Sprintf("Error: cannot extract process ID from filename '%s': expected format '<ID>_<name>.conv.json'", baseName)
 	}
 	id, _ := strconv.Atoi(matches[1])
 	return id, ""
