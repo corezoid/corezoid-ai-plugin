@@ -269,6 +269,9 @@ func handlePullFolder(ctx context.Context, args map[string]interface{}) (string,
 		if err := downloadWorkspaceRootRecursively(v, "."); err != nil {
 			return fmt.Sprintf("Error fetching workspace root: %v", err), true
 		}
+		if err := writeWorkspaceProvisionedMarkerIfEmpty(resolveWorkDir()); err != nil {
+			logger.Warn("pull-folder: could not write %s marker: %v", workspaceProvisionedMarker, err)
+		}
 		regenerateLocalCLAUDEMDIfNeeded(ctx)
 		return "Workspace root saved to current directory", false
 	}
@@ -279,6 +282,9 @@ func handlePullFolder(ctx context.Context, args map[string]interface{}) (string,
 
 	if err := downloadStageRecursively(v, folderID, "."); err != nil {
 		return fmt.Sprintf("Error fetching folder: %v", err), true
+	}
+	if err := writeWorkspaceProvisionedMarkerIfEmpty(resolveWorkDir()); err != nil {
+		logger.Warn("pull-folder: could not write %s marker: %v", workspaceProvisionedMarker, err)
 	}
 
 	// In local/offline mode: regenerate CLAUDE.md from the freshly-downloaded

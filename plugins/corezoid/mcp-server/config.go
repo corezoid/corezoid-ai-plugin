@@ -297,16 +297,102 @@ func Current() *Folder {
 	return &f
 }
 
-// syncGlobalsFromCurrent reads the current Folder and mirrors its values into
-// the package-level auth-state globals under authStateMu. Call after every
-// UpdateCurrent / RemoveCurrent and at startup. If no Folder matches, all
-// globals are reset to their zero values so a stale in-memory state from a
-// previous cwd cannot leak into new operations.
+// workspaceProvisionedMarker is the sentinel directory name written into
+// Folder.RootPath after a successful login-time pull when the pulled stage
+// (or workspace root) contained no files. Its presence tells
+// pruneAbandonedFolder that the workspace is genuinely provisioned as
+// opposed to a bare empty directory the user has just wiped or recreated.
+const workspaceProvisionedMarker = ".corezoid"
+
+// writeWorkspaceProvisionedMarkerIfEmpty creates the sentinel inside
+// rootPath when the pull produced no other entries. If the pull
+// materialised any content, that content is itself proof of provisioning
+// and no marker is needed.
+func writeWorkspaceProvisionedMarkerIfEmpty(rootPath string) error {
+	if rootPath == "" {
+		return nil
+	}
+	entries, err := os.ReadDir(rootPath)
+	if err != nil {
+		return err
+	}
+	if len(entries) > 0 {
+		return nil
+	}
+	return os.MkdirAll(filepath.Join(rootPath, workspaceProvisionedMarker), 0700)
+}
+
+// isRootPathAbandoned reports whether Folder.RootPath signals that the
+// user has wiped the workspace since it was last provisioned. Two triggers:
+//  1. RootPath no longer exists on disk (deleted, never recreated).
+//  2. RootPath exists but has zero entries — matches "user rm -rf'd and
+//     recreated the same path" and "user emptied everything, including the
+//     .corezoid marker".
+//
+// A directory that contains any entry (files, subdirs, dotfiles) is
+// treated as provisioned; if there is content we do not second-guess the
+// user's intent.
+func isRootPathAbandoned(rootPath string) bool {
+	if rootPath == "" {
+		return false
+	}
+	info, err := os.Stat(rootPath)
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return true
+		}
+		return false
+	}
+	if !info.IsDir() {
+		return true
+	}
+	entries, err := os.ReadDir(rootPath)
+	if err != nil {
+		return false
+	}
+	return len(entries) == 0
+}
+
+// pruneAbandonedFolder removes the current Folder from
+// ~/.corezoid/config.json when its RootPath looks abandoned (see
+// isRootPathAbandoned) and refreshes the in-memory auth globals so
+// downstream ensureAuth() sees a fresh, un-authenticated state. Returns
+// true when a Folder was pruned. No-op when no Folder matches the current
+// cwd or the workspace is provisioned.
+func pruneAbandonedFolder() bool {
+	f := Current()
+	if f == nil {
+		return false
+	}
+	if !isRootPathAbandoned(f.RootPath) {
+		return false
+	}
+	if err := RemoveCurrent(); err != nil {
+		logger.Warn("pruneAbandonedFolder: RemoveCurrent failed: %v", err)
+		return false
+	}
+	syncGlobalsFromCurrent()
+	logger.Info("pruneAbandonedFolder: removed stale Folder rooted at %q (workspace wiped or recreated)", f.RootPath)
+	return true
+}
+
+// syncGlobalsFromCurrent reads the current Folder from disk and mirrors its
+// values into the package-level auth-state globals under authStateMu. Call
+// after every UpdateCurrent / RemoveCurrent and at startup.
 //
 // StageID and ProjectID come straight from the Folder — one stage per
 // workspace, both persisted on login.
 func syncGlobalsFromCurrent() {
-	f := Current()
+	syncGlobalsFromFolder(Current())
+}
+
+// syncGlobalsFromFolder mirrors f into the auth-state globals under
+// authStateMu. Split out from syncGlobalsFromCurrent so callers holding an
+// in-memory Folder (e.g. handleLogin's staged buffer) can update the globals
+// without an intermediate disk write. Passing nil resets every global to its
+// zero value, matching the fresh-install state — this prevents stale
+// in-memory state from a previous cwd leaking into new operations.
+func syncGlobalsFromFolder(f *Folder) {
 	authStateMu.Lock()
 	defer authStateMu.Unlock()
 	if f == nil {

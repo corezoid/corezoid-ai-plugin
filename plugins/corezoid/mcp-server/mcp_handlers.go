@@ -147,6 +147,13 @@ func handleToolCall(ctx context.Context, name string, args map[string]interface{
 		ctx = context.Background()
 	}
 
+	// Detect an abandoned workspace before auth gating: if Folder.RootPath was
+	// deleted or wiped since the last login (and the .corezoid marker is gone
+	// with it), drop the stale Folder so ensureAuth() falls through to the
+	// standard "Not authenticated" hint and the user re-runs login on a fresh
+	// binding. Cheap read-only check when the workspace is intact.
+	pruneAbandonedFolder()
+
 	switch {
 	case isInSet(name, noAuthTools):
 		// no auth required

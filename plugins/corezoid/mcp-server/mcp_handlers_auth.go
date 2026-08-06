@@ -8,24 +8,71 @@ import (
 	"time"
 )
 
-// updateAndSync mutates the current Folder in ~/.corezoid/config.json and
-// then refreshes the in-memory auth-state globals. Convenience wrapper used
-// by handleLogin's many small state updates; warns on persistence failure so
-// the user-driven login flow does not abort mid-step.
-func updateAndSync(mutator func(*Folder), logCtx string) {
-	if err := UpdateCurrent(mutator); err != nil {
-		logger.Warn("%s: could not persist config: %v", logCtx, err)
-	}
-	syncGlobalsFromCurrent()
+// loginBuffer accumulates Folder mutations during handleLogin without touching
+// ~/.corezoid/config.json. Every user-supplied value (Account URL, workspace,
+// project, stage, OAuth token) goes into the in-memory Folder and is mirrored
+// into the auth-state globals so mid-flow API calls see the new state, but
+// nothing lands on disk until commit() runs on the success path. Cancellation,
+// elicitation refusal, or an incomplete stage selection all return early
+// without persisting — the disk keeps whatever was there before the login
+// attempt started.
+type loginBuffer struct {
+	folder Folder
+	dirty  bool
 }
 
-// resolveAndSaveAPIURL discovers the Corezoid API URL via fetchCorezoidAPIURL
-// and persists it to the current Folder as CorezoidURL. Falls back to
-// account_url only when discovery genuinely returns an empty result with no
-// error — a real fetch failure (network, transient 5xx, permission) leaves
-// the URL unset so the next login retries, instead of silently pointing
-// requests at a host that may not serve /api/2/json.
-func resolveAndSaveAPIURL(accountURL, token, logSuffix string) {
+// newLoginBuffer seeds the buffer with the current on-disk Folder (or a zero
+// Folder when none exists yet), so a partial re-login preserves values the
+// user has already confirmed previously.
+func newLoginBuffer() *loginBuffer {
+	b := &loginBuffer{}
+	if cur := Current(); cur != nil {
+		b.folder = *cur
+	}
+	return b
+}
+
+// stage applies mutator to the buffered Folder and refreshes the in-memory
+// auth-state globals from the resulting state. Nothing is written to disk;
+// commit() is the only path that touches ~/.corezoid/config.json.
+func (b *loginBuffer) stage(mutator func(*Folder)) {
+	mutator(&b.folder)
+	b.dirty = true
+	snapshot := b.folder
+	syncGlobalsFromFolder(&snapshot)
+}
+
+// commit writes the buffered Folder to ~/.corezoid/config.json in one atomic
+// update. Returns false and logs a warning on write failure so callers can
+// signal the incomplete persistence in their user-facing message. A no-op
+// buffer (no stage() calls) is treated as a successful commit.
+func (b *loginBuffer) commit(logCtx string) bool {
+	if !b.dirty {
+		return true
+	}
+	snapshot := b.folder
+	err := UpdateCurrent(func(f *Folder) {
+		// RootPath is assigned by UpdateCurrent when it has to create a new
+		// Folder for this cwd; preserve it across the whole-Folder overwrite.
+		rp := f.RootPath
+		*f = snapshot
+		f.RootPath = rp
+	})
+	if err != nil {
+		logger.Warn("%s: could not persist config: %v", logCtx, err)
+		return false
+	}
+	syncGlobalsFromCurrent()
+	return true
+}
+
+// resolveAPIURL discovers the Corezoid API URL via fetchCorezoidAPIURL and
+// stages it on buf as CorezoidURL. Falls back to account_url only when
+// discovery genuinely returns an empty result with no error — a real fetch
+// failure (network, transient 5xx, permission) leaves the URL unset so the
+// next login retries, instead of silently pointing requests at a host that
+// may not serve /api/2/json.
+func resolveAPIURL(buf *loginBuffer, accountURL, token, logSuffix string) {
 	corezoidURL, fetchErr := fetchCorezoidAPIURL(accountURL, token)
 	if fetchErr != nil {
 		logger.Warn("login: fetchCorezoidAPIURL failed: %v — corezoid_url left unresolved, retry on next login", fetchErr)
@@ -35,15 +82,18 @@ func resolveAndSaveAPIURL(accountURL, token, logSuffix string) {
 		corezoidURL = strings.TrimRight(accountURL, "/")
 		logger.Info("login: corezoid_url discovery returned empty — using account_url %q", corezoidURL)
 	}
-	updateAndSync(func(f *Folder) { f.CorezoidURL = corezoidURL }, "login")
+	buf.stage(func(f *Folder) { f.CorezoidURL = corezoidURL })
 	logger.Info("login: corezoid_url=%q%s", corezoidURL, logSuffix)
 }
 
 // handleLogin runs the OAuth2 PKCE flow (or accepts pre-provided API-key
 // credentials). All persisted state lives in the current Folder in
-// ~/.corezoid/config.json. The handler is long-running and interactive
+// ~/.corezoid/config.json, but during this handler every mutation goes into
+// an in-memory loginBuffer instead — only the final success path calls
+// buf.commit() to persist. The handler is long-running and interactive
 // (elicitation + browser OAuth); we never hold authStateMu across user-facing
-// waits, and every mutation is serialised via UpdateCurrent's flock.
+// waits, and buf.commit() serialises the single terminal write via
+// UpdateCurrent's flock.
 func handleLogin(ctx context.Context, args map[string]interface{}) (string, bool) {
 	// Refresh in case another process wrote to config since startup.
 	syncGlobalsFromCurrent()
@@ -53,6 +103,8 @@ func handleLogin(ctx context.Context, args map[string]interface{}) (string, bool
 	// unconfigured before this login call).
 	_, _, _, _, snapStageIDBefore := authSnapshot()
 
+	buf := newLoginBuffer()
+
 	// Apply argument-provided values. Arguments always override current state
 	// so users can switch environments explicitly.
 	if v := optStrArg(args, "account_url"); v != "" {
@@ -60,14 +112,14 @@ func handleLogin(ctx context.Context, args map[string]interface{}) (string, bool
 		if v != current {
 			// Account URL changed — derived API URL and git mirror URL are no
 			// longer valid for the new host.
-			updateAndSync(func(f *Folder) {
+			buf.stage(func(f *Folder) {
 				f.AccountURL = v
 				f.CorezoidURL = ""
 				f.GitURL = ""
 				f.GitStagePath = ""
-			}, "login")
+			})
 		} else {
-			updateAndSync(func(f *Folder) { f.AccountURL = v }, "login")
+			buf.stage(func(f *Folder) { f.AccountURL = v })
 		}
 	}
 	if v := optStrArg(args, "workspace_id"); v != "" {
@@ -77,18 +129,18 @@ func handleLogin(ctx context.Context, args map[string]interface{}) (string, bool
 			// git_stage_path (all keyed by workspace). The on-disk contents of
 			// RootPath from the previous workspace's stage stay in place;
 			// pull-folder will overwrite them on stage re-selection.
-			updateAndSync(func(f *Folder) {
+			buf.stage(func(f *Folder) {
 				f.WorkspaceID = v
 				f.ProjectID = 0
 				f.StageID = 0
 				f.GitStagePath = ""
-			}, "login")
+			})
 		} else {
-			updateAndSync(func(f *Folder) { f.WorkspaceID = v }, "login")
+			buf.stage(func(f *Folder) { f.WorkspaceID = v })
 		}
 	}
-	// stage_id arg: persist immediately so a follow-up call without stage_id
-	// still knows which stage is active. When the value changes, cached
+	// stage_id arg: stage immediately so a follow-up API call inside this
+	// handler still knows which stage is active. When the value changes, cached
 	// project_id and git_stage_path become stale.
 	var argStageID int
 	if v := optStrArg(args, "stage_id"); v != "" {
@@ -96,21 +148,21 @@ func handleLogin(ctx context.Context, args map[string]interface{}) (string, bool
 			argStageID = id
 			_, _, _, _, current := authSnapshot()
 			if id != current {
-				updateAndSync(func(f *Folder) {
+				buf.stage(func(f *Folder) {
 					f.StageID = id
 					f.ProjectID = 0
 					f.GitStagePath = ""
-				}, "login")
+				})
 			} else {
-				updateAndSync(func(f *Folder) { f.StageID = id }, "login")
+				buf.stage(func(f *Folder) { f.StageID = id })
 			}
 		}
 	}
 	if v := optStrArg(args, "api_login"); v != "" {
-		updateAndSync(func(f *Folder) { f.APILogin = v }, "login")
+		buf.stage(func(f *Folder) { f.APILogin = v })
 	}
 	if v := optStrArg(args, "api_secret"); v != "" {
-		updateAndSync(func(f *Folder) { f.APISecret = v }, "login")
+		buf.stage(func(f *Folder) { f.APISecret = v })
 	}
 
 	// Snapshot post-arg-application state for the rest of this handler.
@@ -160,7 +212,7 @@ func handleLogin(ctx context.Context, args map[string]interface{}) (string, bool
 			return "Please ask the user for their Corezoid Account URL (e.g. https://account.corezoid.com), then call the login tool again with account_url=<value>.", false
 		}
 		snapAccountURL = resolved
-		updateAndSync(func(f *Folder) { f.AccountURL = resolved }, "login")
+		buf.stage(func(f *Folder) { f.AccountURL = resolved })
 	}
 
 	// Step 2: OAuth2 PKCE browser flow (skipped if already authenticated or if
@@ -172,10 +224,10 @@ func handleLogin(ctx context.Context, args map[string]interface{}) (string, bool
 		if err != nil {
 			return fmt.Sprintf("Authentication failed: %v", err), true
 		}
-		updateAndSync(func(f *Folder) {
+		buf.stage(func(f *Folder) {
 			f.AccessToken = res.AccessToken
 			f.ExpiresAt = res.ExpiresAt
-		}, "login")
+		})
 		snapToken = res.AccessToken
 		tokenExpiry = res.ExpiresAt
 
@@ -184,7 +236,7 @@ func handleLogin(ctx context.Context, args map[string]interface{}) (string, bool
 		apiURLEmpty := apiURL == ""
 		authStateMu.RUnlock()
 		if apiURLEmpty {
-			resolveAndSaveAPIURL(snapAccountURL, res.AccessToken, "")
+			resolveAPIURL(buf, snapAccountURL, res.AccessToken, "")
 		}
 	} else if snapToken != "" {
 		// Token pre-existing but no derived API URL — fetch now.
@@ -192,7 +244,7 @@ func handleLogin(ctx context.Context, args map[string]interface{}) (string, bool
 		apiURLEmpty := apiURL == ""
 		authStateMu.RUnlock()
 		if apiURLEmpty {
-			resolveAndSaveAPIURL(snapAccountURL, snapToken, " (pre-existing token)")
+			resolveAPIURL(buf, snapAccountURL, snapToken, " (pre-existing token)")
 		}
 	} else {
 		// API key flow: /face/api/1/clients requires a bearer token — fall back
@@ -204,7 +256,7 @@ func handleLogin(ctx context.Context, args map[string]interface{}) (string, bool
 		authStateMu.RUnlock()
 		if apiURLEmpty && snapAccountURL != "" {
 			fallback := strings.TrimRight(snapAccountURL, "/")
-			updateAndSync(func(f *Folder) { f.CorezoidURL = fallback }, "login")
+			buf.stage(func(f *Folder) { f.CorezoidURL = fallback })
 			logger.Info("login: corezoid_url not set — defaulting to account_url %q", fallback)
 		}
 	}
@@ -260,10 +312,10 @@ func handleLogin(ctx context.Context, args map[string]interface{}) (string, bool
 					}
 					// Workspace being set from empty — drop cached
 					// project_id so subsequent stage selection starts clean.
-					updateAndSync(func(f *Folder) {
+					buf.stage(func(f *Folder) {
 						f.WorkspaceID = id
 						f.ProjectID = 0
-					}, "login")
+					})
 					snapWorkspaceID = id
 				}
 			}
@@ -283,7 +335,7 @@ func handleLogin(ctx context.Context, args map[string]interface{}) (string, bool
 					sb.WriteString(fmt.Sprintf("  %s — %s\n", ws.companyID, label))
 				}
 			}
-			sb.WriteString("\nPlease ask the user which workspace they want to use, then call login(workspace_id=<selected_id>).")
+			sb.WriteString("\nPlease ask the user which workspace they want to use, then call login(account_url=<url>, workspace_id=<selected_id>).")
 			return sb.String(), false
 		}
 	}
@@ -427,7 +479,7 @@ func handleLogin(ctx context.Context, args map[string]interface{}) (string, bool
 				} else {
 					sb.WriteString("No projects found.\n")
 				}
-				sb.WriteString(fmt.Sprintf("Please ask the user for their stage ID (root folder ID), then call login(workspace_id=%s, stage_id=<stage_id>).", snapWorkspaceID))
+				sb.WriteString(fmt.Sprintf("Please ask the user for their stage ID (root folder ID), then call login(account_url=<url>, workspace_id=%s, stage_id=<stage_id>).", snapWorkspaceID))
 			} else {
 				sb.WriteString("Available projects:\n")
 				for _, p := range projects {
@@ -437,43 +489,48 @@ func handleLogin(ctx context.Context, args map[string]interface{}) (string, bool
 					}
 					sb.WriteString(line + "\n")
 				}
-				sb.WriteString(fmt.Sprintf("\nPlease ask the user which project to use. Call list-stages(project_id=<id>, company_id=%s) to see available stages, then ask the user to pick one and call login(workspace_id=%s, stage_id=<stage_id>).", snapWorkspaceID, snapWorkspaceID))
+				sb.WriteString(fmt.Sprintf("\nPlease ask the user which project to use. Call list-stages(project_id=<id>, company_id=%s) to see available stages, then ask the user to pick one and call login(account_url=<url>, workspace_id=%s, stage_id=<stage_id>).", snapWorkspaceID, snapWorkspaceID))
 			}
 			return sb.String(), false
 		}
 	}
 
-	// Auto pull-folder whenever a stage is (re)selected. Persist StageID
-	// first so subsequent tool calls in this session — and any concurrent
-	// goroutines — see the same stage the pull is about to materialise.
-	// Covers both first-time setup (snapStageIDBefore == 0) and stage
-	// switching (snapStageIDBefore != 0 && snapStageID differs).
+	// Auto pull-folder whenever a stage is (re)selected. Stage the StageID in
+	// the buffer first so any code path reached during the pull — and any
+	// concurrent goroutines — see the same stage the pull is about to
+	// materialise. Covers both first-time setup (snapStageIDBefore == 0) and
+	// stage switching (snapStageIDBefore != 0 && snapStageID differs).
 	// When the user chose "No Project", project_id/stage_id are pinned to 0
 	// and a workspace-root pull runs instead.
 	var autoPullErr error
 	if noProjectSelected {
-		updateAndSync(func(f *Folder) {
+		buf.stage(func(f *Folder) {
 			f.ProjectID = 0
 			f.StageID = 0
 			f.GitStagePath = ""
-		}, "login")
+		})
 		pv := NewValidator(ctx, 0)
 		if pullErr := downloadWorkspaceRootRecursively(pv, "."); pullErr != nil {
 			logger.Warn("login: auto workspace-root pull failed: %v", pullErr)
 			autoPullErr = pullErr
+		} else if err := writeWorkspaceProvisionedMarkerIfEmpty(resolveWorkDir()); err != nil {
+			logger.Warn("login: could not write %s marker: %v", workspaceProvisionedMarker, err)
 		}
 	} else if snapStageID != 0 && snapStageID != snapStageIDBefore {
 		selectedStageID := snapStageID
-		updateAndSync(func(f *Folder) { f.StageID = selectedStageID }, "login")
+		buf.stage(func(f *Folder) { f.StageID = selectedStageID })
 		pv := NewValidator(ctx, 0)
 		if pullErr := downloadStageRecursively(pv, snapStageID, "."); pullErr != nil {
 			logger.Warn("login: auto pull-folder failed: %v", pullErr)
 			autoPullErr = pullErr
+		} else if err := writeWorkspaceProvisionedMarkerIfEmpty(resolveWorkDir()); err != nil {
+			logger.Warn("login: could not write %s marker: %v", workspaceProvisionedMarker, err)
 		}
 	}
 
-	// Re-snapshot so the response reflects the persisted stage_id.
-	_, _, _, _, finalStageID := authSnapshot()
+	// Read final stage from the buffer (globals still mirror it, but the
+	// buffer is authoritative for what would be persisted).
+	finalStageID := buf.folder.StageID
 
 	cfgPath, _ := configFilePath()
 	if cfgPath == "" {
@@ -485,21 +542,35 @@ func handleLogin(ctx context.Context, args map[string]interface{}) (string, bool
 	// of the generic "Setup complete". The init skill and the LLM both key off
 	// this string to decide whether to proceed to pull-folder or drive stage
 	// selection themselves. "No Project" is not a failure — skip this branch.
+	// No commit here: partial state stays in-memory only, so the next login
+	// call starts from disk again and does not carry over a half-configured
+	// account_url/workspace_id/token trio.
 	if !noProjectSelected && finalStageID == 0 {
 		msg := "Setup incomplete: stage not selected. "
 		msg += fmt.Sprintf("Call list-stages(project_id=<id>, company_id=%s) to see available stages, ", snapWorkspaceID)
-		msg += fmt.Sprintf("then call login(workspace_id=%s, stage_id=<stage_id>).", snapWorkspaceID)
+		msg += fmt.Sprintf("then call login(account_url=%s, workspace_id=%s, stage_id=<stage_id>).", snapAccountURL, snapWorkspaceID)
 		if !tokenExpiry.IsZero() {
-			msg += fmt.Sprintf(" (Token saved to %s, expires %s.)", cfgPath, tokenExpiry.Format("2006-01-02 15:04"))
+			msg += " (Fresh token obtained but not persisted — the next login call will start a new OAuth flow.)"
 		}
 		return msg, false
 	}
 
+	// Success path — persist the whole buffered Folder in one atomic write.
+	committed := buf.commit("login")
+
 	var msg string
 	if noProjectSelected {
-		msg = fmt.Sprintf("Setup complete! Configuration saved to %s. \"No Project\" selected — working at workspace root", cfgPath)
+		if committed {
+			msg = fmt.Sprintf("Setup complete! Configuration saved to %s. \"No Project\" selected — working at workspace root", cfgPath)
+		} else {
+			msg = "Setup complete, but configuration could not be saved to disk. \"No Project\" selected — working at workspace root"
+		}
 	} else {
-		msg = fmt.Sprintf("Setup complete! Configuration saved to %s. Stage %d selected", cfgPath, finalStageID)
+		if committed {
+			msg = fmt.Sprintf("Setup complete! Configuration saved to %s. Stage %d selected", cfgPath, finalStageID)
+		} else {
+			msg = fmt.Sprintf("Setup complete, but configuration could not be saved to disk. Stage %d selected", finalStageID)
+		}
 	}
 	if autoPullErr != nil {
 		// Pull failed but stage_id is set (e.g. previous marker still on disk).

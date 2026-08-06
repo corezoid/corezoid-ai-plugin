@@ -322,3 +322,152 @@ func TestSyncGlobalsFromCurrent_NoFolderResetsAllGlobals(t *testing.T) {
 		t.Errorf("expected all globals reset, got token=%q ws=%q stage=%d login=%q", snapToken, snapWorkspaceID, snapStageID, snapAPILogin)
 	}
 }
+
+// setupWorkspaceWithHome points HOME + COREZOID_WORK_DIR at fresh, distinct
+// temp dirs so isRootPathAbandoned's checks against Folder.RootPath do not
+// accidentally observe the ~/.corezoid/ config directory that tmpHome creates
+// underneath HOME. Returns the workspace root, which does exist and is empty.
+func setupWorkspaceWithHome(t *testing.T) string {
+	t.Helper()
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	workspace := filepath.Join(t.TempDir(), "ws")
+	if err := os.Mkdir(workspace, 0700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("COREZOID_WORK_DIR", workspace)
+	return workspace
+}
+
+func TestIsRootPathAbandoned_MissingPath(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "gone")
+	if !isRootPathAbandoned(dir) {
+		t.Errorf("expected missing path to be abandoned")
+	}
+}
+
+func TestIsRootPathAbandoned_EmptyDir(t *testing.T) {
+	dir := t.TempDir()
+	if !isRootPathAbandoned(dir) {
+		t.Errorf("expected empty dir to be abandoned")
+	}
+}
+
+func TestIsRootPathAbandoned_WithMarker(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.Mkdir(filepath.Join(dir, workspaceProvisionedMarker), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if isRootPathAbandoned(dir) {
+		t.Errorf("expected dir with %s marker to be provisioned", workspaceProvisionedMarker)
+	}
+}
+
+func TestIsRootPathAbandoned_WithFilesButNoMarker(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "x.conv.json"), []byte("{}"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if isRootPathAbandoned(dir) {
+		t.Errorf("expected dir with files to be provisioned")
+	}
+}
+
+func TestWriteWorkspaceProvisionedMarkerIfEmpty_CreatesMarker(t *testing.T) {
+	dir := t.TempDir()
+	if err := writeWorkspaceProvisionedMarkerIfEmpty(dir); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	info, err := os.Stat(filepath.Join(dir, workspaceProvisionedMarker))
+	if err != nil {
+		t.Fatalf("marker not created: %v", err)
+	}
+	if !info.IsDir() {
+		t.Fatalf("marker exists but is not a directory")
+	}
+}
+
+func TestWriteWorkspaceProvisionedMarkerIfEmpty_NoOpWhenNotEmpty(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "existing.txt"), []byte("x"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeWorkspaceProvisionedMarkerIfEmpty(dir); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, workspaceProvisionedMarker)); !os.IsNotExist(err) {
+		t.Errorf("expected no marker in populated dir, got err=%v", err)
+	}
+}
+
+func TestPruneAbandonedFolder_RemovesEmptyWorkspace(t *testing.T) {
+	workspace := setupWorkspaceWithHome(t)
+	if err := UpdateCurrent(func(f *Folder) {
+		f.AccessToken = "tok"
+		f.WorkspaceID = "42"
+		f.StageID = 100
+	}); err != nil {
+		t.Fatalf("UpdateCurrent: %v", err)
+	}
+	// workspace is empty, no marker — should be pruned.
+	if !pruneAbandonedFolder() {
+		t.Fatalf("expected prune to remove abandoned workspace at %q", workspace)
+	}
+	if Current() != nil {
+		t.Errorf("expected Folder to be gone after prune")
+	}
+	_, snapToken, _, _, _ := authSnapshot()
+	if snapToken != "" {
+		t.Errorf("expected in-memory token cleared after prune, got %q", snapToken)
+	}
+}
+
+func TestPruneAbandonedFolder_RemovesDeletedWorkspace(t *testing.T) {
+	workspace := setupWorkspaceWithHome(t)
+	if err := UpdateCurrent(func(f *Folder) { f.AccessToken = "tok" }); err != nil {
+		t.Fatalf("UpdateCurrent: %v", err)
+	}
+	// Physically delete the workspace dir — simulates rm -rf without recreate.
+	if err := os.RemoveAll(workspace); err != nil {
+		t.Fatal(err)
+	}
+	if !pruneAbandonedFolder() {
+		t.Fatalf("expected prune to remove Folder whose RootPath was deleted")
+	}
+	if Current() != nil {
+		t.Errorf("expected Folder to be gone after prune")
+	}
+}
+
+func TestPruneAbandonedFolder_KeepsProvisionedWorkspace(t *testing.T) {
+	workspace := setupWorkspaceWithHome(t)
+	if err := os.Mkdir(filepath.Join(workspace, workspaceProvisionedMarker), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := UpdateCurrent(func(f *Folder) { f.AccessToken = "tok" }); err != nil {
+		t.Fatalf("UpdateCurrent: %v", err)
+	}
+	if pruneAbandonedFolder() {
+		t.Fatalf("expected prune to leave provisioned workspace alone")
+	}
+	if Current() == nil {
+		t.Errorf("expected Folder to still be present after prune")
+	}
+}
+
+func TestPruneAbandonedFolder_KeepsWorkspaceWithFiles(t *testing.T) {
+	workspace := setupWorkspaceWithHome(t)
+	if err := os.WriteFile(filepath.Join(workspace, "proc.conv.json"), []byte("{}"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := UpdateCurrent(func(f *Folder) { f.AccessToken = "tok" }); err != nil {
+		t.Fatalf("UpdateCurrent: %v", err)
+	}
+	if pruneAbandonedFolder() {
+		t.Fatalf("expected prune to leave workspace with real files alone")
+	}
+	if Current() == nil {
+		t.Errorf("expected Folder to still be present after prune")
+	}
+}
