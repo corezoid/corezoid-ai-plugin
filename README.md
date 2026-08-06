@@ -1,6 +1,6 @@
-# Corezoid — Claude Code & Codex Plugin
+# Corezoid AI Plugin
 
-A plugin for [Claude Code](https://claude.ai/code) and [Codex](https://openai.com/codex) that connects the [Corezoid](https://corezoid.com) platform to Claude via MCP. Claude gets direct access to Corezoid processes and deep platform knowledge to create, edit, review, and deploy workflows through natural conversation.
+A [Corezoid](https://corezoid.com) plugin that connects the platform to AI coding agents ([Claude Code](https://claude.ai/code), [Codex](https://openai.com/codex), [AWS Kiro](https://kiro.dev), and any MCP-compatible client) via MCP. The agent gets direct access to Corezoid processes and deep platform knowledge to create, edit, review, and deploy workflows through natural conversation.
 
 > *Not just an MCP wrapper over the Corezoid API — an AI-Native management layer for the platform.*
 
