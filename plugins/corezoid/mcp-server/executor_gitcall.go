@@ -172,10 +172,20 @@ func (v *Executor) buildGitCallNode(wsURL string, g gitCallBuild) error {
 		err error
 	}
 	reads := make(chan readResult, 1)
+	// done releases the reader once this function returns. conn.Close() alone
+	// only unblocks a reader sitting in ReadMessage — a reader blocked on a
+	// send to the full `reads` buffer (build service sent frames faster than
+	// the loop below drained them) would leak for the process lifetime.
+	done := make(chan struct{})
+	defer close(done)
 	go func() {
 		for {
 			_, msg, err := conn.ReadMessage()
-			reads <- readResult{msg, err}
+			select {
+			case reads <- readResult{msg, err}:
+			case <-done:
+				return
+			}
 			if err != nil {
 				return
 			}
