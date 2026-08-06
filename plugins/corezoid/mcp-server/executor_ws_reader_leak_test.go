@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -79,8 +80,12 @@ func TestMonitorDeployProgress_NoReaderLeakOnTimeout(t *testing.T) {
 	t.Cleanup(func() { deployTimeout = orig })
 	burstWSServer(t)
 
-	if _, err := newWSExecutor().monitorDeployProgress("H"); err == nil {
-		t.Fatalf("expected timeout error")
+	// Assert the *timeout* specifically: any other error (a dial failure because
+	// the WS override stopped being honoured, say) would mean the reader goroutine
+	// was never even started, and the leak assertion below would pass vacuously.
+	_, err := newWSExecutor().monitorDeployProgress("H")
+	if err == nil || !strings.Contains(err.Error(), "timed out") {
+		t.Fatalf("expected timeout, got %v", err)
 	}
 	assertNoGoroutine(t, "monitorDeployProgress.func")
 }
@@ -95,8 +100,9 @@ func TestBuildGitCallNode_NoReaderLeakOnCancel(t *testing.T) {
 	defer cancel()
 	v := &Executor{Ctx: ctx, Token: "t", APIUrl: "https://admin.corezoid.com"}
 	g := gitCallBuild{lang: "python", nodeServerID: "n1", nodeTitle: "my-fn"}
-	if err := v.buildGitCallNode(gitCallWSURL(v.APIUrl), g); err == nil {
-		t.Fatalf("expected context cancellation error")
+	// Must be the cancellation, not a dial error — see the note in the deploy test.
+	if err := v.buildGitCallNode(gitCallWSURL(v.APIUrl), g); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("expected context deadline exceeded, got %v", err)
 	}
 	assertNoGoroutine(t, "buildGitCallNode.func")
 }
