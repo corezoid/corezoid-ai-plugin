@@ -43,6 +43,54 @@ func TestArgInt_UnsupportedType(t *testing.T) {
 	}
 }
 
+// ---- convFileName ------------------------------------------------------------
+
+func TestConvFileName_Standard(t *testing.T) {
+	got := convFileName(12345, "My Process")
+	if got != "12345_My_Process.conv.json" {
+		t.Errorf("got %q, want %q", got, "12345_My_Process.conv.json")
+	}
+}
+
+func TestConvFileName_EmptyTitle(t *testing.T) {
+	got := convFileName(12345, "")
+	if got != "12345.conv.json" {
+		t.Errorf("got %q, want %q", got, "12345.conv.json")
+	}
+}
+
+// Every discovery path in the server (resolveProcessPath, the MCP resource
+// listing, the git-sync index, the env-var reference scan) selects files by the
+// ".conv.json" suffix. A name ending in a bare ".json" is silently invisible to
+// all of them, so pin the suffix rather than just the happy-path string.
+func TestConvFileName_AlwaysConvJSONSuffix(t *testing.T) {
+	for _, title := range []string{"", "plain", "with space", "/slashed", "dots.in.name"} {
+		got := convFileName(42, title)
+		if !strings.HasSuffix(got, ".conv.json") {
+			t.Errorf("convFileName(42, %q) = %q, want a .conv.json suffix", title, got)
+		}
+	}
+}
+
+// The name convFileName produces must round-trip through the ID extractor the
+// other handlers use to recover the process ID from a path — for EVERY title,
+// including the empty one that selects the "<ID>.conv.json" fallback. A name
+// the server writes but cannot read back breaks push-process and the snapshot
+// handlers on a file the user never touched.
+func TestConvFileName_RoundTripsThroughExtractProcessID(t *testing.T) {
+	for _, title := range []string{"Round Trip", "", "///", "plain", "dots.in.name"} {
+		name := convFileName(777, title)
+		id, errMsg := extractProcessIDFromPath(name)
+		if errMsg != "" {
+			t.Errorf("convFileName(777, %q) = %q, not readable back: %s", title, name, errMsg)
+			continue
+		}
+		if id != 777 {
+			t.Errorf("convFileName(777, %q) = %q, extracted %d, want 777", title, name, id)
+		}
+	}
+}
+
 // ---- extractProcessIDFromPath ----------------------------------------------
 
 func TestExtractProcessIDFromPath_Standard(t *testing.T) {
@@ -75,11 +123,24 @@ func TestExtractProcessIDFromPath_Invalid(t *testing.T) {
 	}
 }
 
+// "<ID>.conv.json" is what convFileName emits for a process with no title, so
+// it has to be readable — otherwise push-process and the snapshot handlers
+// reject a file the server itself just wrote.
 func TestExtractProcessIDFromPath_OnlyDigits(t *testing.T) {
-	// Without trailing underscore the regex does not match.
-	_, errMsg := extractProcessIDFromPath("12345.conv.json")
-	if errMsg == "" {
-		t.Error("expected error for filename without underscore separator")
+	id, errMsg := extractProcessIDFromPath("12345.conv.json")
+	if errMsg != "" {
+		t.Fatalf("unexpected error: %s", errMsg)
+	}
+	if id != 12345 {
+		t.Errorf("expected 12345, got %d", id)
+	}
+}
+
+// Accepting the underscore-less form must not widen to every "<ID>.*.json":
+// a folder marker is not a process.
+func TestExtractProcessIDFromPath_DigitsThenNonConvSuffix(t *testing.T) {
+	if _, errMsg := extractProcessIDFromPath("12345.folder.json"); errMsg == "" {
+		t.Error("expected error for a non-.conv.json file with no underscore")
 	}
 }
 
