@@ -183,6 +183,7 @@ func handleToolCall(ctx context.Context, name string, args map[string]interface{
 		clientNameV, clientVersionV := clientIdentityFor(ctx)
 		e := AnalyticsEvent{
 			Ts:             start.UTC().Format(time.RFC3339),
+			Product:        "corezoid",
 			Tool:           name,
 			DurationMs:     time.Since(start).Milliseconds(),
 			IsError:        isError,
@@ -190,7 +191,7 @@ func handleToolCall(ctx context.Context, name string, args map[string]interface{
 			Transport:      analyticsTransport,
 			ServerVersion:  mcpServerVersion,
 			InstallationID: installationID,
-			UserEmail:      telemetryEmail,
+			UserEmail:      telemetryEmailValue(),
 			ClientName:     clientNameV,
 			ClientVersion:  clientVersionV,
 		}

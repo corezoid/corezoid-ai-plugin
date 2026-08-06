@@ -23,8 +23,22 @@ const analyticsFlushInterval = 5 * time.Second
 var analyticsEnabled atomic.Bool
 var analyticsTransport string
 var installationID string
-var telemetryEmail string
+var telemetryEmail atomic.Pointer[string]
 var analyticsCh chan AnalyticsEvent
+
+// setTelemetryEmail and telemetryEmailValue give telemetryEmail atomic
+// read/write: it's written by the login opt-in handler and read on every
+// tool call, and the HTTP transport (mcp_http.go) serves those concurrently.
+func setTelemetryEmail(email string) {
+	telemetryEmail.Store(&email)
+}
+
+func telemetryEmailValue() string {
+	if v := telemetryEmail.Load(); v != nil {
+		return *v
+	}
+	return ""
+}
 
 // analyticsFlushCh lets stopAnalytics ask the sender goroutine to drain and
 // flush synchronously before process exit, avoiding the loss of events that
@@ -42,6 +56,7 @@ var teleCfg telemetryConfig
 // AnalyticsEvent holds telemetry data for a single tool call.
 type AnalyticsEvent struct {
 	Ts             string `json:"ts"`
+	Product        string `json:"product"` // "corezoid" — distinguishes this plugin's events from simulator-ai-plugin's in the shared ingest process
 	Tool           string `json:"tool"`
 	DurationMs     int64  `json:"duration_ms"`
 	IsError        bool   `json:"is_error"`
@@ -185,12 +200,12 @@ func initAnalytics() {
 	}
 	installationID = loadOrCreateInstallationID()
 	prefs := loadUserPreferences()
-	telemetryEmail = prefs.TelemetryEmail
+	setTelemetryEmail(prefs.TelemetryEmail)
 	analyticsCh = make(chan AnalyticsEvent, 100)
 	analyticsFlushCh = make(chan chan struct{})
 	analyticsEnabled.Store(true)
 	go runAnalyticsSender()
-	logger.Debug("analytics: enabled, installation_id=%s transport=%s has_email=%v", installationID, analyticsTransport, telemetryEmail != "")
+	logger.Debug("analytics: enabled, installation_id=%s transport=%s has_email=%v", installationID, analyticsTransport, telemetryEmailValue() != "")
 }
 
 // emitAnalyticsEvent enqueues an event for async delivery.
