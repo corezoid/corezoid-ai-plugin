@@ -503,6 +503,12 @@ func handleLogin(ctx context.Context, args map[string]interface{}) (string, bool
 	// When the user chose "No Project", project_id/stage_id are pinned to 0
 	// and a workspace-root pull runs instead.
 	var autoPullErr error
+	// Anchor the auto-pull at the matched Folder's RootPath when one exists,
+	// so a re-login from a subfolder still refreshes the workspace at its
+	// original root instead of nesting a duplicate copy under the caller's
+	// cwd. First-time logins have no matching Folder yet and fall back to "."
+	// (== cwd == the RootPath about to be persisted on commit).
+	pullDest := resolvePullDest()
 	if noProjectSelected {
 		buf.stage(func(f *Folder) {
 			f.ProjectID = 0
@@ -510,20 +516,20 @@ func handleLogin(ctx context.Context, args map[string]interface{}) (string, bool
 			f.GitStagePath = ""
 		})
 		pv := NewValidator(ctx, 0)
-		if pullErr := downloadWorkspaceRootRecursively(pv, "."); pullErr != nil {
+		if pullErr := downloadWorkspaceRootRecursively(pv, pullDest); pullErr != nil {
 			logger.Warn("login: auto workspace-root pull failed: %v", pullErr)
 			autoPullErr = pullErr
-		} else if err := writeWorkspaceProvisionedMarkerIfEmpty(resolveWorkDir()); err != nil {
+		} else if err := writeWorkspaceProvisionedMarkerIfEmpty(pullDest); err != nil {
 			logger.Warn("login: could not write %s marker: %v", workspaceProvisionedMarker, err)
 		}
 	} else if snapStageID != 0 && snapStageID != snapStageIDBefore {
 		selectedStageID := snapStageID
 		buf.stage(func(f *Folder) { f.StageID = selectedStageID })
 		pv := NewValidator(ctx, 0)
-		if pullErr := downloadStageRecursively(pv, snapStageID, "."); pullErr != nil {
+		if pullErr := downloadStageRecursively(pv, snapStageID, pullDest); pullErr != nil {
 			logger.Warn("login: auto pull-folder failed: %v", pullErr)
 			autoPullErr = pullErr
-		} else if err := writeWorkspaceProvisionedMarkerIfEmpty(resolveWorkDir()); err != nil {
+		} else if err := writeWorkspaceProvisionedMarkerIfEmpty(pullDest); err != nil {
 			logger.Warn("login: could not write %s marker: %v", workspaceProvisionedMarker, err)
 		}
 	}

@@ -280,28 +280,35 @@ func handlePullFolder(ctx context.Context, args map[string]interface{}) (string,
 
 	v := NewValidator(ctx, 0)
 
+	// pull-folder always writes into the matched Folder's RootPath — the stage
+	// root registered in ~/.corezoid/config.json — so a re-pull triggered from
+	// any subfolder overwrites the workspace in place instead of nesting a
+	// second copy under the caller's cwd. Falls back to "." for the first-ever
+	// pull (before any Folder exists), which matches cwd.
+	dest := resolvePullDest()
+
 	// folder_id=0 is "No Project" mode: no stage root, mirror the workspace
 	// root view instead. project_id/stage_id are pinned to 0 in the config so
 	// downstream tools resolve context off individual process files.
 	if folderID == 0 {
-		if err := downloadWorkspaceRootRecursively(v, "."); err != nil {
+		if err := downloadWorkspaceRootRecursively(v, dest); err != nil {
 			return fmt.Sprintf("Error fetching workspace root: %v", err), true
 		}
-		if err := writeWorkspaceProvisionedMarkerIfEmpty(resolveWorkDir()); err != nil {
+		if err := writeWorkspaceProvisionedMarkerIfEmpty(dest); err != nil {
 			logger.Warn("pull-folder: could not write %s marker: %v", workspaceProvisionedMarker, err)
 		}
 		regenerateLocalCLAUDEMDIfNeeded(ctx)
-		return "Workspace root saved to current directory", false
+		return fmt.Sprintf("Workspace root saved to %s", dest), false
 	}
 
 	// Pre-warm project_id cache so push-process never needs an extra API call.
 	// folderID is the stage; its parent is the project.
 	_, _ = resolveAndCacheProjectID(v)
 
-	if err := downloadStageRecursively(v, folderID, "."); err != nil {
+	if err := downloadStageRecursively(v, folderID, dest); err != nil {
 		return fmt.Sprintf("Error fetching folder: %v", err), true
 	}
-	if err := writeWorkspaceProvisionedMarkerIfEmpty(resolveWorkDir()); err != nil {
+	if err := writeWorkspaceProvisionedMarkerIfEmpty(dest); err != nil {
 		logger.Warn("pull-folder: could not write %s marker: %v", workspaceProvisionedMarker, err)
 	}
 
@@ -309,7 +316,7 @@ func handlePullFolder(ctx context.Context, args map[string]interface{}) (string,
 	// .conv.json files (online mode copies it from the Gitea mirror instead).
 	regenerateLocalCLAUDEMDIfNeeded(ctx)
 
-	return fmt.Sprintf("Folder %d saved to current directory", folderID), false
+	return fmt.Sprintf("Folder %d saved to %s", folderID, dest), false
 }
 
 // handleCreateVariable creates a Corezoid env variable in the current stage.

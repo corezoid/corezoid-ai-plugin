@@ -454,3 +454,42 @@ func TestPullProcess_TargetDirComposition(t *testing.T) {
 		})
 	}
 }
+
+// ---- resolvePullDest -------------------------------------------------------
+
+// TestResolvePullDest_NoFolderReturnsDot: first-ever pull, no Folder is
+// registered yet — resolvePullDest falls back to "." so downloadStageRecursively
+// writes into the current cwd, which UpdateCurrent will then register as
+// RootPath on commit.
+func TestResolvePullDest_NoFolderReturnsDot(t *testing.T) {
+	tmpHome(t)
+	if got := resolvePullDest(); got != "." {
+		t.Errorf("expected fallback to \".\" when no Folder registered, got %q", got)
+	}
+}
+
+// TestResolvePullDest_ReturnsRootPathFromDeeperCWD is the regression test for
+// the reported bug: user is already logged in with RootPath = /workspace, then
+// descends into /workspace/sub and re-runs pull-folder — the pull must land at
+// /workspace, not at /workspace/sub. Before the fix, both handlePullFolder and
+// the login auto-pull passed literal "." (== the process cwd) and produced a
+// duplicate stage tree under the caller's subfolder.
+func TestResolvePullDest_ReturnsRootPathFromDeeperCWD(t *testing.T) {
+	rootDir := tmpHomeAndCWD(t)
+	if err := UpdateCurrent(func(f *Folder) { f.StageID = 671255 }); err != nil {
+		t.Fatalf("UpdateCurrent: %v", err)
+	}
+
+	sub := filepath.Join(rootDir, "671257_API")
+	if err := os.MkdirAll(sub, 0700); err != nil {
+		t.Fatalf("mkdir sub: %v", err)
+	}
+	t.Setenv("COREZOID_WORK_DIR", sub)
+
+	got := resolvePullDest()
+	gotReal, _ := filepath.EvalSymlinks(got)
+	rootReal, _ := filepath.EvalSymlinks(rootDir)
+	if gotReal != rootReal {
+		t.Errorf("expected pull to anchor at Folder.RootPath=%q from subfolder cwd=%q, got %q", rootReal, sub, gotReal)
+	}
+}

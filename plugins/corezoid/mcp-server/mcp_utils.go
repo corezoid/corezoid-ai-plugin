@@ -144,6 +144,20 @@ func findStageRootFromCWD(expectedStageID int) string {
 	return f.RootPath
 }
 
+// resolvePullDest returns the destination directory for pull-folder /
+// workspace-root pulls. When a Folder matches the current cwd, the pull is
+// anchored at that Folder's RootPath so a re-pull invoked from any subfolder
+// still overwrites the stage at its original location — never nesting a
+// second copy under the caller's cwd. Falls back to "." for the first-ever
+// pull (no matching Folder yet), where cwd == the RootPath about to be
+// registered by UpdateCurrent.
+func resolvePullDest() string {
+	if root := findStageRootFromCWD(0); root != "" {
+		return root
+	}
+	return "."
+}
+
 // intArg extracts an integer argument from args map.
 func intArg(args map[string]interface{}, key string) (int, error) {
 	v, ok := args[key]
