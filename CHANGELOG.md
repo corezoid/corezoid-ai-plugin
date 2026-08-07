@@ -1,8 +1,29 @@
 # Changelog
 
-## [Unreleased]
+## [3.0.0]
 
-- Feat: **`git_call` selection guardrails.** `lint-process` now emits an advisory `GIT_CALL USAGE` finding for every `git_call`/`api_git` node (never blocks a push), and the `corezoid-create` and `corezoid-gitcall` skills plus `docs/nodes/git-call-node.md` define a concrete selection rule. Hosted sandbox measurements show an approximately 60 s execution deadline, with handlers kept comfortably below 50 s. Default resources are 50 MB RAM / 0.1 CPU from a shared, super-admin-configurable pool, concurrent calls can contend for that pool, and local storage is ephemeral. The rule: default to native nodes → a Code (`api_code`) node → `git_call` only when a step needs file parsing, an external library, cryptography, or a custom runtime that the former cannot provide; model long-running loops/polling and external waits as process state/callbacks instead of holding a handler open.
+- **Breaking / auth**: MCP-server persisted state has moved from per-project `.env` files plus `~/.corezoid/credentials` into a single `~/.corezoid/config.json` (mode `0600`) keyed by working directory. Each entry holds `account_url`, `corezoid_url`, `apigw_url`, `workspace_id`, `access_token`, `api_login`, `api_secret`, `git_url`, `git_stage_path`; `stage_id` and `project_id` are read from the on-disk `<id>_<name>.stage.json` marker and never persisted in config. Cross-process safety uses `gofrs/flock` plus an in-process mutex; writes go through a serialised read-modify-write. Codex/Kiro subprocesses that do not inherit `cwd` fall back to `$COREZOID_WORK_DIR`. **All users must re-authenticate after upgrade** (run `/corezoid-init` or the login flow again); existing `.env`/`credentials` files are no longer read.
+- Feat: new `corezoid-logout` skill — removes saved Corezoid credentials for the current workspace.
+- Feat: `server/discover` implemented on both stdio and HTTP MCP transports, so hosts can enumerate this plugin's tools without a full handshake.
+- Feat: safety annotations on every MCP tool (destructive / read-only / open-world hints); `set-stage-immutable` is marked destructive.
+- Feat: **"No Project" workspace-root pull mode.** `pull-folder` can now anchor at `Folder.RootPath` and pull without a project id, so a workspace that hasn't been split into projects still syncs cleanly. `pull-folder` is now always anchored at `Folder.RootPath` instead of the caller's cwd.
+- Feat: stage is resolved from the workspace marker (`<id>_<name>.stage.json`) instead of a `stage_id` argument; `stage_id` is persisted in config and flattened into `RootPath`.
+- Feat: atomic login persistence with abandoned-workspace pruning — half-written login state cannot leak, and orphaned workspace entries are cleaned up on next login.
+- Feat: `Origin` header is now set on Corezoid-bound HTTP requests, matching browser behaviour and unblocking gateways that require it.
+- Feat: `api_code` `lang` enum accepts `erl` (Erlang).
+- Feat: **`git_call` selection guardrails.** `lint-process` emits an advisory `GIT_CALL USAGE` finding for every `git_call`/`api_git` node (never blocks a push), and the `corezoid-create` and `corezoid-gitcall` skills plus `docs/nodes/git-call-node.md` define a concrete selection rule: default to native nodes → a Code (`api_code`) node → `git_call` only when a step needs file parsing, an external library, cryptography, or a custom runtime the former cannot provide. Hosted sandbox measurements show an approximately 60s execution deadline (handlers kept <50s), default 50MB RAM / 0.1 CPU from a shared pool, and ephemeral local storage; long-running loops/polling and external waits should be modelled as process state/callbacks instead of holding a handler open.
+- Fix: `run-task` no longer triggers an implicit process redeploy — a task run used to silently re-push the process, which could clobber concurrent edits.
+- Fix(mcp): WebSocket reader goroutine is released on early return; previously a failed handshake could leak a reader per attempt.
+- Fix(mcp): `create-process` writes `.conv.json` (not `.json`), matching the naming `pull-folder` already used.
+- Fix(mcp): `modify-task` documents its shallow-merge semantics and adds a `deep_merge` option for callers that need recursive merging.
+- Fix(mcp): `serverInfo.version` is derived from the ldflags-injected `main.Version` instead of a hard-coded string, so `server/info` reports the real build.
+- Fix(telemetry): analytics event schema aligned with `simulator-ai-plugin`; email-lookup race that could send events with an empty user id is fixed.
+- Docs: `__queue_task_data__` contract and the correct `moment` require pattern documented.
+- Perf: node box sizes are cached across `resolveOverlaps` and readability passes; large processes lay out noticeably faster.
+- Docs: HTTP transport is clarified as local-only in `runHTTPServer` — the server binds loopback and is not intended for network exposure.
+- Docs: Kiro manifest, `POWER.md`, `README.md`, `SECURITY.md`, `RELEASE_CHECKLIST.md`, `docs/Troubleshooting.md` and multiple skill/node docs updated for the new config layout (`corezoid-init`, `corezoid-alias-manager`, `corezoid-variable-manager`, `corezoid-git-context`, `corezoid-gitcall`, `corezoid-create`, `corezoid-project-review`; `git-call-node`, `get-from-queue-node`, `code-node-libraries`, `corezoid-api-integration`).
+- CI: version-sync check now covers the Kiro manifest and `POWER.md` in addition to the Claude/Codex/marketplace manifests.
+- CI: Claude Code review pipeline gains fork-PR support behind a maintainer `ai` label (via `pull_request_target`), the `github-actions` bot can dispatch the PR reviewer, the issue-worker skips only when an open PR exists, the auto-merge severity threshold is raised, and the AI worker no longer bumps versions on its own.
 
 ## [2.11.0]
 
