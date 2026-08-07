@@ -94,13 +94,14 @@ jobs:
             exit 1
           fi
 
-      - name: Resolve PR head (allow fork only on maintainer label)
+      - name: Resolve PR head (allow fork only on maintainer trigger)
         id: prref
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PR_NUMBER: ${{ steps.pr.outputs.number }}
           EVENT_NAME: ${{ github.event_name }}
           LABEL_NAME: ${{ github.event.label.name }}
+          SENDER: ${{ github.event.sender.login || github.triggering_actor }}
           # Frozen at label time — prevents the fork author from racing a
           # push between the maintainer labeling the PR and the job start.
           EVENT_HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
@@ -122,14 +123,24 @@ jobs:
             head_sha=$(echo "$data" | jq -r '.head.sha')
           fi
           if [ "$head_repo" != "$GITHUB_REPOSITORY" ]; then
+            # The Verify-sender step already ensured the trigger came from
+            # an admin (human) or our own worker bot. Two paths are safe:
+            #   - pull_request labeled 'ai' by a human admin
+            #   - workflow_dispatch by a human admin (the worker only
+            #     dispatches reviews on branches inside this repo, never
+            #     on forks, so a fork+dispatch is always a human action)
+            # The admin explicitly opts into running build/test steps on
+            # untrusted fork code with access to ANTHROPIC_API_KEY.
+            fork_ok="false"
             if [ "$EVENT_NAME" = "pull_request" ] && [ "$LABEL_NAME" = "ai" ]; then
-              # Admin labeling was verified in the previous step. The
-              # maintainer explicitly opted in to running the deep review
-              # against fork code — accept the risk that build/test steps
-              # execute untrusted code with access to ANTHROPIC_API_KEY.
-              echo "PR is from a fork, but a maintainer labeled it 'ai' — running review on $head_sha"
+              fork_ok="true"
+            elif [ "$EVENT_NAME" = "workflow_dispatch" ] && [ "$SENDER" != "github-actions[bot]" ]; then
+              fork_ok="true"
+            fi
+            if [ "$fork_ok" = "true" ]; then
+              echo "PR is from a fork, maintainer trigger accepted — running review on $head_sha"
             else
-              echo "PR is from a fork and trigger is not a maintainer 'ai' label — refusing"
+              echo "PR is from a fork and trigger is not a maintainer action — refusing"
               echo "skip=true" >> "$GITHUB_OUTPUT"
               exit 0
             fi
