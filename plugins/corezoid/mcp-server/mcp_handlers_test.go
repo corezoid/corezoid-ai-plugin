@@ -153,6 +153,43 @@ func TestHandlePushProcess_BlocksRpcReplyMismatch(t *testing.T) {
 	}
 }
 
+func TestHandlePushProcess_GitCallAdvisoryDoesNotBlock(t *testing.T) {
+	resetGlobals(t)
+	p := writeGitConv(t, "git_call")
+
+	orig, _ := os.Getwd()
+	if err := os.Chdir(filepath.Dir(p)); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chdir(orig) }) //nolint:errcheck
+
+	calls := 0
+	srv, _ := mockAPIServer(t, func(ops []map[string]interface{}) interface{} {
+		calls++
+		return wrapOp(map[string]interface{}{
+			"proc":        "error",
+			"description": "reached API after git_call advisory",
+		})
+	})
+	setProjectAuth(t, srv.URL)
+
+	result, isErr := handlePushProcess(context.Background(), map[string]interface{}{
+		"process_path": filepath.Base(p),
+	})
+	if !isErr {
+		t.Fatalf("expected the downstream mock API error, got success: %q", result)
+	}
+	if calls == 0 {
+		t.Fatalf("git_call advisory blocked before the API was called; result:\n%s", result)
+	}
+	if strings.Contains(result, "Push blocked: lint found") {
+		t.Fatalf("git_call must remain advisory-only without force=true; result:\n%s", result)
+	}
+	if !strings.Contains(result, "reached API after git_call advisory") {
+		t.Fatalf("expected downstream API marker, got:\n%s", result)
+	}
+}
+
 func TestHandlePushProcess_BlocksActiveStubMode(t *testing.T) {
 	resetGlobals(t)
 
