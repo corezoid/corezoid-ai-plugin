@@ -49,9 +49,17 @@ type mcpToolResult struct {
 	IsError bool         `json:"isError,omitempty"`
 }
 
-// mcpServerVersion is the version reported in MCP initialize responses.
-// Keep this in sync with .claude-plugin/plugin.json.
-const mcpServerVersion = "2.3.5"
+// serverVersion is the version reported in MCP initialize responses and in
+// analytics/feedback events. It derives from main.Version, which the release
+// workflow injects via -ldflags "-X main.Version=${GITHUB_REF_NAME}" — so it
+// arrives tag-shaped ("v2.11.0") and is normalized here to the manifest shape
+// ("2.11.0"). Local and test builds report "dev".
+//
+// Never reintroduce a hand-maintained version constant here: it silently
+// drifts from the manifests (see version_guard_test.go, which enforces this).
+func serverVersion() string {
+	return strings.TrimPrefix(Version, "v")
+}
 
 // oauthClientID is the OAuth2 client ID used for PKCE flow.
 // Resolved from COREZOID_OAUTH_CLIENT_ID env var, falling back to the built-in default.
@@ -312,7 +320,7 @@ func runMCPServer() {
 					},
 					"serverInfo": map[string]interface{}{
 						"name":    "convctl-mcp",
-						"version": mcpServerVersion,
+						"version": serverVersion(),
 					},
 				},
 			})

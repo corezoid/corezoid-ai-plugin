@@ -11,17 +11,57 @@ import (
 )
 
 // buildTestBinary compiles the MCP server to a temp binary for protocol tests.
+// It propagates this test binary's own Version so the subprocess reports the
+// same serverInfo.version the in-process serverVersion() would.
 func buildTestBinary(t *testing.T) string {
+	t.Helper()
+	return buildTestBinaryWithVersion(t, Version)
+}
+
+// buildTestBinaryWithVersion compiles the MCP server with an explicit
+// -ldflags-injected main.Version, mirroring how the release workflow builds it.
+func buildTestBinaryWithVersion(t *testing.T, version string) string {
 	t.Helper()
 	bin := filepath.Join(t.TempDir(), "convctl-test")
 	if runtime.GOOS == "windows" {
 		bin += ".exe"
 	}
-	out, err := exec.Command("go", "build", "-o", bin, ".").CombinedOutput()
+	out, err := exec.Command("go", "build", "-ldflags", "-X main.Version="+version, "-o", bin, ".").CombinedOutput()
 	if err != nil {
 		t.Fatalf("failed to build test binary: %v\n%s", err, out)
 	}
 	return bin
+}
+
+// initializeServerVersion starts bin, performs the MCP initialize handshake and
+// returns the reported serverInfo.version.
+func initializeServerVersion(t *testing.T, bin string) string {
+	t.Helper()
+	sess := newMCPSession(t, bin)
+	sess.send(map[string]interface{}{
+		"jsonrpc": "2.0",
+		"id":      1,
+		"method":  "initialize",
+		"params": map[string]interface{}{
+			"protocolVersion": "2025-03-26",
+			"capabilities":    map[string]interface{}{},
+			"clientInfo":      map[string]interface{}{"name": "test", "version": "0.0.1"},
+		},
+	})
+
+	resp := sess.recv()
+	if resp["error"] != nil {
+		t.Fatalf("initialize returned error: %s", resp["error"])
+	}
+	var result struct {
+		ServerInfo struct {
+			Version string `json:"version"`
+		} `json:"serverInfo"`
+	}
+	if err := json.Unmarshal(resp["result"], &result); err != nil {
+		t.Fatalf("result parse: %v", err)
+	}
+	return result.ServerInfo.Version
 }
 
 // mcpSession wraps a running MCP server subprocess with helpers to send and receive JSON-RPC messages.
@@ -105,8 +145,31 @@ func TestMCPProtocol_Initialize(t *testing.T) {
 	if result["protocolVersion"] == nil {
 		t.Error("expected protocolVersion in initialize result")
 	}
-	if result["serverInfo"] == nil {
-		t.Error("expected serverInfo in initialize result")
+	serverInfo, ok := result["serverInfo"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("expected serverInfo object in initialize result, got %#v", result["serverInfo"])
+	}
+
+	// serverInfo.version must track the ldflags-injected main.Version, never a
+	// hardcoded constant. buildTestBinary injects this process's own Version,
+	// so the two agree whether or not `go test` itself was built with -ldflags.
+	got, _ := serverInfo["version"].(string)
+	if got == "" {
+		t.Error("expected a non-empty serverInfo.version")
+	}
+	if want := serverVersion(); got != want {
+		t.Errorf("serverInfo.version = %q, want %q", got, want)
+	}
+}
+
+// TestMCPProtocol_InitializeVersionFromLdflags is the end-to-end guard for the
+// release pipeline: build the way the release workflow does and confirm the
+// injected version surfaces in initialize, with the tag's "v" prefix stripped
+// so it matches the plugin manifests.
+func TestMCPProtocol_InitializeVersionFromLdflags(t *testing.T) {
+	bin := buildTestBinaryWithVersion(t, "v9.9.9")
+	if got := initializeServerVersion(t, bin); got != "9.9.9" {
+		t.Errorf("serverInfo.version = %q, want %q", got, "9.9.9")
 	}
 }
 
