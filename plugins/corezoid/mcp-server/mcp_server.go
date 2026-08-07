@@ -34,10 +34,28 @@ type mcpError struct {
 }
 
 type mcpTool struct {
-	Name        string      `json:"name"`
-	Description string      `json:"description"`
-	InputSchema interface{} `json:"inputSchema"`
+	Name        string           `json:"name"`
+	Description string           `json:"description"`
+	InputSchema interface{}      `json:"inputSchema"`
+	Annotations *toolAnnotations `json:"annotations,omitempty"`
 }
+
+// toolAnnotations carries the MCP tool annotations (spec 2025-03-26 and
+// later) that let clients and models reason about a tool's safety before
+// invoking it. The hints are *bool on purpose: an omitted hint means
+// "unknown", while false is a positive claim ("this tool is not
+// destructive"). Plain bools would serialise every unset hint as false and
+// turn every silence into a claim.
+type toolAnnotations struct {
+	Title           string `json:"title,omitempty"`
+	ReadOnlyHint    *bool  `json:"readOnlyHint,omitempty"`
+	DestructiveHint *bool  `json:"destructiveHint,omitempty"`
+	IdempotentHint  *bool  `json:"idempotentHint,omitempty"`
+	OpenWorldHint   *bool  `json:"openWorldHint,omitempty"`
+}
+
+// boolPtr returns a pointer to b, for the *bool annotation hints.
+func boolPtr(b bool) *bool { return &b }
 
 type mcpContent struct {
 	Type string `json:"type"`
@@ -334,7 +352,6 @@ func runMCPServer() {
 				ID:      req.ID,
 				Result: map[string]interface{}{
 					"tools": toolRegistry,
-
 				},
 			})
 
