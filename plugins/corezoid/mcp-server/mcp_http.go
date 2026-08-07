@@ -111,9 +111,10 @@ func pruneIdleHTTPSessions(cutoff time.Time) {
 }
 
 // runHTTPServer starts the Streamable-HTTP MCP transport on addr.
-// Activate by setting COREZOID_HTTP_PORT (e.g. "8080").
-// In hosted environments credentials must be pre-configured via env vars;
-// the login tool (browser OAuth) is not usable from a remote server.
+// Activate by setting COREZOID_HTTP_PORT (e.g. "8080"); the transport is
+// local-only and binds to 127.0.0.1. Credentials come from saved OAuth
+// credentials or env vars — the login tool (browser OAuth) is not usable
+// over HTTP.
 func runHTTPServer(addr string) error {
 	go sweepIdleHTTPSessions()
 
