@@ -139,6 +139,53 @@ func TestHTTPDispatch_Initialize(t *testing.T) {
 	}
 }
 
+// TestHTTPDispatch_ServerDiscover covers the MCP 2026-07-28 era-detection probe
+// over HTTP: a valid result naming only the legacy protocol version, with
+// capabilities and serverInfo identical to initialize's.
+func TestHTTPDispatch_ServerDiscover(t *testing.T) {
+	out := dispatchJSON(t, "server/discover", nil)
+	if out["error"] != nil {
+		t.Fatalf("unexpected error: %s", out["error"])
+	}
+	var discover map[string]json.RawMessage
+	if err := json.Unmarshal(out["result"], &discover); err != nil {
+		t.Fatalf("discover result parse: %v", err)
+	}
+
+	if got := string(discover["protocolVersion"]); got != `"2025-03-26"` {
+		t.Errorf("protocolVersion = %s, want \"2025-03-26\"", got)
+	}
+	if got := string(discover["supportedProtocolVersions"]); got != `["2025-03-26"]` {
+		t.Errorf("supportedProtocolVersions = %s, want [\"2025-03-26\"]", got)
+	}
+	if discover["capabilities"] == nil {
+		t.Error("expected capabilities in server/discover result")
+	}
+	if discover["serverInfo"] == nil {
+		t.Error("expected serverInfo in server/discover result")
+	}
+
+	initOut := dispatchJSON(t, "initialize", map[string]interface{}{
+		"protocolVersion": "2025-03-26",
+		"capabilities":    map[string]interface{}{},
+	})
+	if initOut["error"] != nil {
+		t.Fatalf("unexpected initialize error: %s", initOut["error"])
+	}
+	var initResult map[string]json.RawMessage
+	if err := json.Unmarshal(initOut["result"], &initResult); err != nil {
+		t.Fatalf("initialize result parse: %v", err)
+	}
+	for _, field := range []string{"protocolVersion", "capabilities", "serverInfo"} {
+		if string(discover[field]) != string(initResult[field]) {
+			t.Errorf("%s differs: discover=%s initialize=%s", field, discover[field], initResult[field])
+		}
+	}
+	if _, ok := initResult["supportedProtocolVersions"]; ok {
+		t.Error("initialize result must not contain supportedProtocolVersions")
+	}
+}
+
 func TestHTTPDispatch_ToolsList(t *testing.T) {
 	out := dispatchJSON(t, "tools/list", nil)
 	if out["error"] != nil {

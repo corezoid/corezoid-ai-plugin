@@ -210,7 +210,7 @@ func httpHandlePost(w http.ResponseWriter, r *http.Request) {
 	if req.Method == "initialize" {
 		sessionID = generateUUIDv4()
 		w.Header().Set("Mcp-Session-Id", sessionID)
-	} else if sessionID != "" && !strings.HasPrefix(req.Method, "notifications/") {
+	} else if sessionID != "" && req.Method != "server/discover" && !strings.HasPrefix(req.Method, "notifications/") {
 		// The client is asserting an existing session (evicted by idle
 		// eviction, orphaned by a server restart, or simply invented) that we
 		// don't recognize. Per the Streamable HTTP spec this must be a 404,
@@ -223,6 +223,9 @@ func httpHandlePost(w http.ResponseWriter, r *http.Request) {
 		// clientIdentityFor, same as before this check existed. Notifications
 		// are exempt: they get no JSON-RPC response to signal recovery on,
 		// and 202-with-empty-body is already the correct reply either way.
+		// server/discover is exempt too: it's a stateless capability probe that
+		// must answer even to a client holding a stale ID, since its whole
+		// purpose is telling that client which protocol era to speak.
 		if _, found := httpSessionIdentity(sessionID); !found {
 			w.WriteHeader(http.StatusNotFound)
 			return
@@ -288,18 +291,17 @@ func httpDispatch(reqCtx context.Context, req mcpRequest) interface{} {
 		return mcpResponse{
 			JSONRPC: "2.0",
 			ID:      req.ID,
-			Result: map[string]interface{}{
-				"protocolVersion": "2025-03-26",
-				"capabilities": map[string]interface{}{
-					"tools":     map[string]interface{}{},
-					"resources": map[string]interface{}{},
-					"prompts":   map[string]interface{}{},
-				},
-				"serverInfo": map[string]interface{}{
-					"name":    "convctl-mcp",
-					"version": serverVersion(),
-				},
-			},
+			Result:  buildInitializeResult(),
+		}
+
+	case "server/discover":
+		// MCP 2026-07-28 era-detection probe. Deliberately stateless: it neither
+		// reads nor registers a session, because a modern client probes before
+		// it has one (see the exemption in httpHandlePost).
+		return mcpResponse{
+			JSONRPC: "2.0",
+			ID:      req.ID,
+			Result:  buildDiscoverResult(),
 		}
 
 	case "notifications/initialized", "notifications/cancelled":
