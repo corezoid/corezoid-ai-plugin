@@ -2,7 +2,7 @@
 name: corezoid
 displayName: Corezoid
 version: 3.0.0
-description: Corezoid BPM platform assistant. Exposes the Corezoid REST API as MCP tools (`convctl`) plus 20 skills covering process creation, editing, review, validation, dashboards, state diagrams, variables, and access. Ships JSON schemas and per-node-type documentation for all 24 Corezoid node types.
+description: Corezoid BPM platform assistant. Exposes the Corezoid REST API as MCP tools (`convctl`) plus 23 skills covering process creation, editing, review, validation, dashboards, state diagrams, variables, access, layout, docs, and custom-code git_call. Ships JSON schemas and per-node-type documentation for all 24 Corezoid node types.
 author:
   name: Corezoid
   url: https://corezoid.com
@@ -85,12 +85,17 @@ Each skill is auto-loaded from `.kiro/skills/<name>/SKILL.md`:
 - `corezoid-state-diagram-create` / `corezoid-state-diagram-edit` — state-machine processes.
 - `corezoid-process-optimizer` — tact reduction, resilience patterns.
 - `corezoid-process-tech-writer` — generate human-readable docs.
+- `corezoid-node-layout` — auto-arrange node x/y (positions only) before push.
+- `corezoid-describe` — set or refresh descriptions on processes, folders, projects.
 - `corezoid-dashboard-manager` — dashboards and chart wiring.
 - `corezoid-access` — groups, API keys, sharing.
 - `corezoid-variable-manager` — env vars and `{{env_var[@name]}}` references.
 - `corezoid-alias-manager` — process aliases.
 - `corezoid-api-connector` — external API wrap templates.
+- `corezoid-gitcall` — custom code (Python/Go/Java/PHP/JS/…) as a `git_call` step.
+- `corezoid-retro` — end-of-session retrospective; routes learnings to CLAUDE.md, feedback, settings, or memory.
 - `corezoid-feedback` — bug reports and quality signals to the Corezoid team.
+- `corezoid-git-context` — analyse session changes and update `_ext/docs/*.md` in the Corezoid git mirror.
 - `marketplace-publish-validation` — pre-publish checklist.
 
 ## Same codebase, three hosts

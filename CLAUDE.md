@@ -52,13 +52,13 @@ go test -run TestLayoutGolden -update ./...
 
 CI (`.github/workflows/ci.yml`) also runs:
 
-- JSON validation for the Claude, Codex, and two marketplace manifests + `.mcp.json`.
-- Version sync across `plugins/corezoid/.claude-plugin/plugin.json`, `plugins/corezoid/.codex-plugin/plugin.json`, `.claude-plugin/marketplace.json`, `.agents/plugins/marketplace.json`.
-- License consistency (must be MIT everywhere).
+- JSON validation for the Claude, Codex, Kiro, and two marketplace manifests + `.mcp.json` and `.mcp.kiro.json`.
+- Version sync across all six release files: `plugins/corezoid/.claude-plugin/plugin.json`, `plugins/corezoid/.codex-plugin/plugin.json`, `plugins/corezoid/.kiro-plugin/plugin.json`, `.claude-plugin/marketplace.json`, `.agents/plugins/marketplace.json`, and `POWER.md`.
+- License consistency (must be MIT) across the Claude, Codex, and two marketplace manifests.
 - Markdown link check.
 - Skills-list sync (`scripts/check-skills-sync.py`): the skill directories under `plugins/corezoid/skills/` must match the lists in `CLAUDE.md` and `README.md`.
 
-The Kiro manifest (`plugins/corezoid/.kiro-plugin/plugin.json`), `.mcp.kiro.json`, and `POWER.md` are **not** checked by CI yet — their version/license consistency is enforced only at release time via `RELEASE_CHECKLIST.md` and `PUBLISHING.md`.
+`.mcp.kiro.json` and the Kiro manifest's `license` field are **not** checked by CI — their consistency is enforced only at release time via `RELEASE_CHECKLIST.md` and `PUBLISHING.md`.
 
 To regenerate the machine-readable discovery files (`public/llms.txt`, `public/.well-known/skills/index.json`) locally — normally the release workflow does this automatically:
 
