@@ -61,6 +61,7 @@ grep -nE '"version"|^version:' \
 - [ ] Claude Code can install the plugin from the local clone.
 - [ ] Codex can install the plugin from the local clone.
 - [ ] MCP server starts and `login` tool responds.
+- [ ] AWS Kiro overlay installs via `plugins/corezoid/scripts/install-kiro.sh` and loads skills + MCP server end-to-end.
 
 ## Git
 

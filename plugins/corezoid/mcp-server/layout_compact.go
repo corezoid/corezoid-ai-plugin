@@ -167,40 +167,59 @@ func resolveOverlaps(coords map[string]lpoint, g *layoutGraph, rowStep int) {
 	const hgap, vgap = 30, 8
 	_ = rowStep
 
-	box := func(id string) (int, int, int, int) {
-		p := coords[id]
-		return nodeBox(g.byID[id], p.X, p.Y)
+	// A node's width, height and circle-ness are content-derived (obj_type,
+	// extra.modeForm, title wrapping, branch count) and none of them change
+	// here — only Y moves. The pair scan below is O(n^3) in the worst case, so
+	// calling nodeBox per comparison re-ran json.Unmarshal on node.extra
+	// millions of times on a large process (a ~230-node graph spent most of the
+	// layout in isCollapsedNode). Measure every box once up front and carry the
+	// working coordinates in the same slice, leaving the hot loop pure integer
+	// arithmetic.
+	type boxed struct {
+		id     string
+		x, y   int
+		w, h   int
+		circle bool
 	}
-
-	var order []string
+	order := make([]boxed, 0, len(g.ids))
 	for _, id := range g.ids {
-		if _, ok := coords[id]; ok {
-			order = append(order, id)
+		p, ok := coords[id]
+		if !ok {
+			continue
 		}
+		n := g.byID[id]
+		w, h := nodeBoxSize(n)
+		order = append(order, boxed{id: id, x: p.X, y: p.Y, w: w, h: h, circle: isCircle(n)})
+	}
+	box := func(e boxed) (int, int, int, int) {
+		if e.circle {
+			return e.x - e.w/2, e.y - e.h/2, e.x + e.w/2, e.y + e.h/2
+		}
+		return e.x, e.y, e.x + e.w, e.y + e.h
 	}
 	sortYX := func() {
 		sort.SliceStable(order, func(i, j int) bool {
-			a, b := coords[order[i]], coords[order[j]]
-			if a.Y != b.Y {
-				return a.Y < b.Y
+			if order[i].y != order[j].y {
+				return order[i].y < order[j].y
 			}
-			return a.X < b.X
+			return order[i].x < order[j].x
 		})
 	}
 	sortYX()
 	for pass := 0; pass < len(order); pass++ {
 		moved := false
-		for i, a := range order {
-			ax0, ay0, ax1, ay1 := box(a)
-			for _, b := range order[i+1:] {
-				bx0, by0, bx1, by1 := box(b)
+		for i := range order {
+			ax0, ay0, ax1, ay1 := box(order[i])
+			for j := i + 1; j < len(order); j++ {
+				b := &order[j]
+				bx0, by0, bx1, by1 := box(*b)
 				if ax0-hgap < bx1 && bx0 < ax1+hgap && ay0-vgap < by1 && by0 < ay1+vgap {
-					p := coords[b]
 					bump := 0
-					if isCircle(g.byID[b]) {
+					if b.circle {
 						bump = 28
 					}
-					coords[b] = lpoint{p.X, ay1 + vgap + bump}
+					b.y = ay1 + vgap + bump
+					coords[b.id] = lpoint{b.x, b.y}
 					moved = true
 				}
 			}

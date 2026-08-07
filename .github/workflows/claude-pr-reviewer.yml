@@ -21,13 +21,19 @@ name: Claude – PR reviewer (second line)
 # [WARNING] markers is treated as [CRITICAL] (format deviation → escalate).
 #
 # Triggers:
-#   • pull_request: labeled — a human admin adds the `ai` label to a PR.
+#   • pull_request_target: labeled — a human admin adds the `ai` label to a PR.
+#     Uses pull_request_target (not pull_request) so that secrets flow even
+#     for PRs opened from a fork. This is safe only because every code path
+#     that runs untrusted code is admin-gated: the top-level `if` demands
+#     label == 'ai', the `Verify sender` step requires admin, and checkout
+#     pins to the SHA in the label event payload (frozen at admin action).
 #     Note: labels applied by GITHUB_TOKEN (i.e. by our own worker) do
 #     NOT fire this trigger — GitHub blocks that path to prevent loops.
 #     For the auto-chain from the worker we use workflow_dispatch below.
 #   • workflow_dispatch — the issue-worker calls
 #       `gh workflow run claude-pr-reviewer.yml -f pr_number=<N>`
-#     at the end of its run.
+#     at the end of its run. Also the manual escape hatch for maintainers
+#     to (re-)run the review on any PR, including forks.
 #
 # Required secrets: ANTHROPIC_API_KEY
 # Required repo setting: Settings → General → Pull Requests → "Allow
@@ -35,7 +41,7 @@ name: Claude – PR reviewer (second line)
 #   and the workflow escalates instead of merging.
 
 on:
-  pull_request:
+  pull_request_target:
     types: [labeled]
   workflow_dispatch:
     inputs:
@@ -52,7 +58,7 @@ jobs:
   review:
     if: >-
       github.event_name == 'workflow_dispatch' ||
-      (github.event_name == 'pull_request' && github.event.label.name == 'ai')
+      (github.event_name == 'pull_request_target' && github.event.label.name == 'ai')
     runs-on: ubuntu-latest
     permissions:
       contents: write        # needed for gh pr merge
@@ -94,24 +100,62 @@ jobs:
             exit 1
           fi
 
-      - name: Resolve PR head (skip forks)
+      - name: Resolve PR head (allow fork only on maintainer trigger)
         id: prref
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PR_NUMBER: ${{ steps.pr.outputs.number }}
+          EVENT_NAME: ${{ github.event_name }}
+          LABEL_NAME: ${{ github.event.label.name }}
+          SENDER: ${{ github.event.sender.login || github.triggering_actor }}
+          # Frozen at label time — prevents the fork author from racing a
+          # push between the maintainer labeling the PR and the job start.
+          EVENT_HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+          EVENT_HEAD_REF: ${{ github.event.pull_request.head.ref }}
+          EVENT_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
           set -euo pipefail
-          data=$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}")
-          head_repo=$(echo "$data" | jq -r '.head.repo.full_name')
-          head_ref=$(echo "$data" | jq -r '.head.ref')
-          head_sha=$(echo "$data" | jq -r '.head.sha')
+          if [ "$EVENT_NAME" = "pull_request_target" ] && [ -n "$EVENT_HEAD_SHA" ]; then
+            # Use payload snapshot — SHA is pinned at the moment the label
+            # was applied, so the maintainer's admin check gates that exact
+            # commit even if the fork pushes new commits afterwards.
+            head_repo="$EVENT_HEAD_REPO"
+            head_ref="$EVENT_HEAD_REF"
+            head_sha="$EVENT_HEAD_SHA"
+          else
+            data=$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}")
+            head_repo=$(echo "$data" | jq -r '.head.repo.full_name')
+            head_ref=$(echo "$data" | jq -r '.head.ref')
+            head_sha=$(echo "$data" | jq -r '.head.sha')
+          fi
           if [ "$head_repo" != "$GITHUB_REPOSITORY" ]; then
-            echo "PR is from a fork — refusing to run the deep review"
-            echo "skip=true" >> "$GITHUB_OUTPUT"
-            exit 0
+            # The Verify-sender step already ensured the trigger came from
+            # an admin (human) or our own worker bot. Two paths are safe:
+            #   - pull_request_target labeled 'ai' by a human admin
+            #   - workflow_dispatch by a human admin (the worker only
+            #     dispatches reviews on branches inside this repo, never
+            #     on forks, so a fork+dispatch is always a human action)
+            # The admin explicitly opts into running build/test steps on
+            # untrusted fork code with access to ANTHROPIC_API_KEY.
+            fork_ok="false"
+            if [ "$EVENT_NAME" = "pull_request_target" ] && [ "$LABEL_NAME" = "ai" ]; then
+              fork_ok="true"
+            elif [ "$EVENT_NAME" = "workflow_dispatch" ] && [ "$SENDER" != "github-actions[bot]" ]; then
+              fork_ok="true"
+            fi
+            if [ "$fork_ok" = "true" ]; then
+              echo "PR is from a fork, maintainer trigger accepted — running review on $head_sha"
+            else
+              echo "PR is from a fork and trigger is not a maintainer action — refusing"
+              echo "skip=true" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
           fi
           if ! printf '%s' "$head_ref" | grep -Eq '^[A-Za-z0-9._/-]+$'; then
             echo "Suspicious branch name: $head_ref"; exit 1
+          fi
+          if ! printf '%s' "$head_sha" | grep -Eq '^[0-9a-f]{40}$'; then
+            echo "Suspicious head sha: $head_sha"; exit 1
           fi
           echo "sha=$head_sha" >> "$GITHUB_OUTPUT"
           echo "ref=$head_ref" >> "$GITHUB_OUTPUT"
@@ -119,7 +163,12 @@ jobs:
       - uses: actions/checkout@v4
         if: steps.prref.outputs.skip != 'true'
         with:
+          # Frozen 40-hex SHA from the label event payload (validated in
+          # the Resolve step). Explicit opt-in because pull_request_target
+          # refuses to check out fork code by default; the admin-gate and
+          # SHA freeze make that opt-in intentional and audited.
           ref: ${{ steps.prref.outputs.sha }}
+          allow-unsafe-pr-checkout: true
           fetch-depth: 0
 
       - uses: actions/setup-go@v5
@@ -167,6 +216,11 @@ jobs:
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
           github_token: ${{ secrets.GITHUB_TOKEN }}
+          # PR opened by our issue-worker (app/github-actions) and the
+          # workflow_dispatch triggered by that worker both come from the
+          # github-actions[bot] identity. The upstream action's default
+          # human-only guard blocks that path; allow-list this one bot.
+          allowed_bots: 'github-actions'
           prompt: |
             You are the second-line code reviewer for @corezoid/corezoid-ai-plugin.
             PR #$PR_NUMBER has already been implemented and passed a first

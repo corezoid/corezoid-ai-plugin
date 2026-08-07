@@ -7,7 +7,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 This is a Claude Code / Codex / Kiro plugin (`@corezoid/corezoid-ai-plugin`) that gives the AI the knowledge and tools to create, edit, and review [Corezoid](https://corezoid.com) BPM processes directly from the IDE. The repo ships:
 
 - Static skills (`plugins/corezoid/skills/*/SKILL.md` + reference docs, JSON samples).
-- Plugin manifests for Claude Code, Codex, and the agents marketplace.
+- Plugin manifests for Claude Code, Codex, Kiro, and the agents marketplace, plus `POWER.md` for the Kiro Powers registry.
 - A Go-based MCP server (`convctl`) in `plugins/corezoid/mcp-server/` that exposes Corezoid operations as MCP tools. It has real tests (`go test -race`), golden tests for layout and lint, integration tests, and a release pipeline that builds signed multi-platform binaries.
 
 ## Plugin Development Commands
@@ -52,11 +52,13 @@ go test -run TestLayoutGolden -update ./...
 
 CI (`.github/workflows/ci.yml`) also runs:
 
-- JSON validation for all four plugin manifests + `.mcp.json`.
+- JSON validation for the Claude, Codex, and two marketplace manifests + `.mcp.json`.
 - Version sync across `plugins/corezoid/.claude-plugin/plugin.json`, `plugins/corezoid/.codex-plugin/plugin.json`, `.claude-plugin/marketplace.json`, `.agents/plugins/marketplace.json`.
 - License consistency (must be MIT everywhere).
 - Markdown link check.
 - Skills-list sync (`scripts/check-skills-sync.py`): the skill directories under `plugins/corezoid/skills/` must match the lists in `CLAUDE.md` and `README.md`.
+
+The Kiro manifest (`plugins/corezoid/.kiro-plugin/plugin.json`), `.mcp.kiro.json`, and `POWER.md` are **not** checked by CI yet — their version/license consistency is enforced only at release time via `RELEASE_CHECKLIST.md` and `PUBLISHING.md`.
 
 To regenerate the machine-readable discovery files (`public/llms.txt`, `public/.well-known/skills/index.json`) locally — normally the release workflow does this automatically:
 
