@@ -832,6 +832,67 @@ func TestHandleToolCall_ModifyTask_BadDataJSON(t *testing.T) {
 	_ = result
 }
 
+// ---- deepMerge unit tests ---------------------------------------------------
+
+func TestDeepMerge_ShallowScalar(t *testing.T) {
+	dst := map[string]interface{}{"a": 1, "b": 2}
+	src := map[string]interface{}{"b": 99, "c": 3}
+	got := deepMerge(dst, src)
+	if got["a"] != 1 || got["b"] != 99 || got["c"] != 3 {
+		t.Errorf("unexpected result: %v", got)
+	}
+}
+
+func TestDeepMerge_NestedObjectPreservesExistingKeys(t *testing.T) {
+	dst := map[string]interface{}{
+		"currencies": map[string]interface{}{
+			"count": 5, "ms": 100, "seconds": 1, "value": 42, "Requests ": 10,
+		},
+	}
+	src := map[string]interface{}{
+		"currencies": map[string]interface{}{
+			"usd": 1, "eur": 2, "gbp": 3, "jpy": 4,
+		},
+	}
+	got := deepMerge(dst, src)
+	cur, ok := got["currencies"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("currencies not a map: %T", got["currencies"])
+	}
+	// original keys must survive
+	for _, k := range []string{"count", "ms", "seconds", "value", "Requests "} {
+		if _, exists := cur[k]; !exists {
+			t.Errorf("key %q was lost after deep merge", k)
+		}
+	}
+	// new keys must be present
+	for _, k := range []string{"usd", "eur", "gbp", "jpy"} {
+		if _, exists := cur[k]; !exists {
+			t.Errorf("new key %q missing after deep merge", k)
+		}
+	}
+}
+
+func TestDeepMerge_NestedObjectScalarOverwrites(t *testing.T) {
+	// When src has a scalar at a key that dst has a map, src wins.
+	dst := map[string]interface{}{"x": map[string]interface{}{"a": 1}}
+	src := map[string]interface{}{"x": "flat"}
+	got := deepMerge(dst, src)
+	if got["x"] != "flat" {
+		t.Errorf("expected scalar overwrite, got %v", got["x"])
+	}
+}
+
+func TestDeepMerge_DoesNotMutateDst(t *testing.T) {
+	dst := map[string]interface{}{"a": map[string]interface{}{"k": 1}}
+	src := map[string]interface{}{"a": map[string]interface{}{"k": 2}}
+	_ = deepMerge(dst, src)
+	inner := dst["a"].(map[string]interface{})
+	if inner["k"] != 1 {
+		t.Error("deepMerge mutated dst")
+	}
+}
+
 func TestHandleToolCall_DeleteTask_MissingRefAndTaskID(t *testing.T) {
 	resetGlobals(t)
 	result, isErr := handleToolCall(context.Background(), "delete-task", map[string]interface{}{
