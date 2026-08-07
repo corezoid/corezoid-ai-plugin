@@ -43,6 +43,13 @@
       ]
     },
     {
+      "name": "corezoid-describe",
+      "description": "Updates or creates the description of a Corezoid process, folder, or project without touching its logic. Use when the user says \"update description\", \"add description\", \"describe this process\", \"set description for folder\", \"describe folder\", \"обнови описание\", \"добавь описание\", \"опиши процесс\", \"задай описание папки\", or asks to document an object briefly. Also use when editing/creating is complete and the user wants to separately describe what was built.",
+      "files": [
+        "https://raw.githubusercontent.com/corezoid/corezoid-ai-plugin/main/plugins/corezoid/skills/corezoid-describe/SKILL.md"
+      ]
+    },
+    {
       "name": "corezoid-edit",
       "description": "Corezoid process editing specialist. Use when the user wants to modify, update, or fix an existing Corezoid process, add or remove nodes, change node behavior, add an API call, fix an error, or update process logic. Activate when the user says \"edit a process\", \"modify\", \"update\", \"fix\", \"add a node\", \"change behavior\", \"add a call\", \"remove a node\", or \"update the logic\".",
       "files": [
@@ -57,10 +64,38 @@
       ]
     },
     {
+      "name": "corezoid-git-context",
+      "description": "Analyzes the current session and updates _ext/docs/*.md in the Corezoid git mirror for the active stage. Use after corezoid-edit, corezoid-create, or corezoid-review when the session was substantial (processes deployed, new external dependencies discovered, architectural decisions made, issues found or resolved). Activate when the user says \"update context\", \"save context\", \"update docs\", \"push context\", \"зафіксуй контекст\", \"збережи контекст\", \"оновити документацію\", \"corezoid-git-context\", or signals the session is wrapping up after real changes were made to Corezoid. Do NOT activate for purely informational sessions where nothing was deployed.",
+      "files": [
+        "https://raw.githubusercontent.com/corezoid/corezoid-ai-plugin/main/plugins/corezoid/skills/corezoid-git-context/SKILL.md"
+      ]
+    },
+    {
+      "name": "corezoid-gitcall",
+      "description": "Corezoid Git Call node specialist — run custom code (Python, Go, Java, PHP, JavaScript, Clojure, Lisp, Prolog, or a custom Dockerfile) as a step inside a process. Use when the user needs logic that plain nodes cannot do: parsing files, using external libraries, cryptography, building email/attachments, or any custom runtime. Activate on \"git call\", \"gitcall\", \"run my code\", \"parse a file\", \"use a library\", \"custom code node\", \"python/go/php in a process\", or \"why does push-process hang on git_call\". Load this skill only when the task is actually about git_call — it is not needed for ordinary flows.",
+      "files": [
+        "https://raw.githubusercontent.com/corezoid/corezoid-ai-plugin/main/plugins/corezoid/skills/corezoid-gitcall/SKILL.md"
+      ]
+    },
+    {
       "name": "corezoid-init",
       "description": "Corezoid environment setup specialist. Use when the user wants to connect to Corezoid, set up credentials, authenticate, pull a project, configure the environment, or start working with a Corezoid project for the first time. Activate when the user says \"init\", \"setup\", \"connect to corezoid\", \"login\", \"pull workspace\", \"configure environment\", or \"get started\".",
       "files": [
         "https://raw.githubusercontent.com/corezoid/corezoid-ai-plugin/main/plugins/corezoid/skills/corezoid-init/SKILL.md"
+      ]
+    },
+    {
+      "name": "corezoid-logout",
+      "description": "Log out of Corezoid: remove saved credentials for the current workspace from `~/.corezoid/config.json`. Activate when the user says \"logout\", \"log out\", \"sign out\", \"disconnect\", \"выйти\", \"разлогинься\", \"разлогиниться\", \"отключись от corezoid\", \"убери токен\", \"clear credentials\", \"remove credentials\", \"forget account\", or otherwise asks to end the Corezoid session for this working directory.",
+      "files": [
+        "https://raw.githubusercontent.com/corezoid/corezoid-ai-plugin/main/plugins/corezoid/skills/corezoid-logout/SKILL.md"
+      ]
+    },
+    {
+      "name": "corezoid-node-layout",
+      "description": "Auto-arrange the nodes of a Corezoid process into a clean, readable layout — a vertical top-to-bottom business flow with error handling railed off to the right and no overlapping nodes. Use it AUTOMATICALLY on every process YOU built or assembled, as the last step before push-process — never hand-place coordinates by eye (eyeballed grids overlap the moment nodes are taller than the step). Also reach for it whenever the user says a process is unreadable, tangled, ugly, a mess, or that nodes sit on top of each other, or asks to \"arrange\", \"lay out\", \"tidy up\", \"make readable\", \"fix positions\", \"clean the diagram\", \"remove the overlaps\" — or their equivalents in any language the user speaks. Do NOT silently re-arrange a process the user already positioned — see the \"When you MAY re-layout\" rules in the body. It changes x/y coordinates only — never collapse/expand state, edges, logic, conv_id, aliases or node types.",
+      "files": [
+        "https://raw.githubusercontent.com/corezoid/corezoid-ai-plugin/main/plugins/corezoid/skills/corezoid-node-layout/SKILL.md"
       ]
     },
     {
@@ -82,6 +117,13 @@
       "description": "Corezoid project review and audit specialist. Use when the user wants to review or audit an entire Corezoid project or folder — multiple processes at once. Activate when the user says \"review project\", \"audit project\", \"review all processes\", \"audit all processes\", \"review folder\", \"review all processes in\", \"project-wide review\", \"cross-process analysis\", \"find issues across processes\", \"review the whole project\", or \"audit folder\".",
       "files": [
         "https://raw.githubusercontent.com/corezoid/corezoid-ai-plugin/main/plugins/corezoid/skills/corezoid-project-review/SKILL.md"
+      ]
+    },
+    {
+      "name": "corezoid-retro",
+      "description": "Corezoid session retrospective specialist. Analyzes the finished (or ending) session of Corezoid work and turns what was learned into concrete, ready-to-apply updates — workspace CLAUDE.md entries, feedback reports to the Corezoid team, permission allowlist entries, personal memory. Routes each finding to the right scope and applies nothing without explicit user confirmation. The goal: every session makes the next one smarter. Use when the user says \"retro\", \"retrospective\", \"what did we learn\", \"capture learnings\", \"update CLAUDE.md from this session\", \"session retrospective\", \"ретро\", \"что мы узнали\", \"зафиксируй выводы\", or signals the session is wrapping up and wants to keep the takeaways. Do not trigger on a mere summary request that transfers nothing into files or configs.",
+      "files": [
+        "https://raw.githubusercontent.com/corezoid/corezoid-ai-plugin/main/plugins/corezoid/skills/corezoid-retro/SKILL.md"
       ]
     },
     {
