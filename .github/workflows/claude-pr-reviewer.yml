@@ -21,13 +21,19 @@ name: Claude – PR reviewer (second line)
 # [WARNING] markers is treated as [CRITICAL] (format deviation → escalate).
 #
 # Triggers:
-#   • pull_request: labeled — a human admin adds the `ai` label to a PR.
+#   • pull_request_target: labeled — a human admin adds the `ai` label to a PR.
+#     Uses pull_request_target (not pull_request) so that secrets flow even
+#     for PRs opened from a fork. This is safe only because every code path
+#     that runs untrusted code is admin-gated: the top-level `if` demands
+#     label == 'ai', the `Verify sender` step requires admin, and checkout
+#     pins to the SHA in the label event payload (frozen at admin action).
 #     Note: labels applied by GITHUB_TOKEN (i.e. by our own worker) do
 #     NOT fire this trigger — GitHub blocks that path to prevent loops.
 #     For the auto-chain from the worker we use workflow_dispatch below.
 #   • workflow_dispatch — the issue-worker calls
 #       `gh workflow run claude-pr-reviewer.yml -f pr_number=<N>`
-#     at the end of its run.
+#     at the end of its run. Also the manual escape hatch for maintainers
+#     to (re-)run the review on any PR, including forks.
 #
 # Required secrets: ANTHROPIC_API_KEY
 # Required repo setting: Settings → General → Pull Requests → "Allow
@@ -35,7 +41,7 @@ name: Claude – PR reviewer (second line)
 #   and the workflow escalates instead of merging.
 
 on:
-  pull_request:
+  pull_request_target:
     types: [labeled]
   workflow_dispatch:
     inputs:
@@ -52,7 +58,7 @@ jobs:
   review:
     if: >-
       github.event_name == 'workflow_dispatch' ||
-      (github.event_name == 'pull_request' && github.event.label.name == 'ai')
+      (github.event_name == 'pull_request_target' && github.event.label.name == 'ai')
     runs-on: ubuntu-latest
     permissions:
       contents: write        # needed for gh pr merge
@@ -109,7 +115,7 @@ jobs:
           EVENT_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
           set -euo pipefail
-          if [ "$EVENT_NAME" = "pull_request" ] && [ -n "$EVENT_HEAD_SHA" ]; then
+          if [ "$EVENT_NAME" = "pull_request_target" ] && [ -n "$EVENT_HEAD_SHA" ]; then
             # Use payload snapshot — SHA is pinned at the moment the label
             # was applied, so the maintainer's admin check gates that exact
             # commit even if the fork pushes new commits afterwards.
@@ -125,14 +131,14 @@ jobs:
           if [ "$head_repo" != "$GITHUB_REPOSITORY" ]; then
             # The Verify-sender step already ensured the trigger came from
             # an admin (human) or our own worker bot. Two paths are safe:
-            #   - pull_request labeled 'ai' by a human admin
+            #   - pull_request_target labeled 'ai' by a human admin
             #   - workflow_dispatch by a human admin (the worker only
             #     dispatches reviews on branches inside this repo, never
             #     on forks, so a fork+dispatch is always a human action)
             # The admin explicitly opts into running build/test steps on
             # untrusted fork code with access to ANTHROPIC_API_KEY.
             fork_ok="false"
-            if [ "$EVENT_NAME" = "pull_request" ] && [ "$LABEL_NAME" = "ai" ]; then
+            if [ "$EVENT_NAME" = "pull_request_target" ] && [ "$LABEL_NAME" = "ai" ]; then
               fork_ok="true"
             elif [ "$EVENT_NAME" = "workflow_dispatch" ] && [ "$SENDER" != "github-actions[bot]" ]; then
               fork_ok="true"
