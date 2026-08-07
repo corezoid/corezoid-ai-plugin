@@ -75,10 +75,21 @@ func (v *Executor) monitorDeployProgress(hash string) (string, error) {
 		err error
 	}
 	reads := make(chan readResult, 1)
+	// readerDone releases the reader goroutine when this function returns while
+	// the goroutine is blocked sending to the (buffered, size 1) channel — e.g.
+	// the server bursts frames and the deadline fires before we drain them.
+	// conn.Close() only wakes a goroutine parked in ReadMessage, not one parked
+	// on a channel send, so without this it would leak for the process lifetime.
+	readerDone := make(chan struct{})
+	defer close(readerDone)
 	go func() {
 		for {
 			_, msg, err := conn.ReadMessage()
-			reads <- readResult{msg, err}
+			select {
+			case reads <- readResult{msg, err}:
+			case <-readerDone:
+				return
+			}
 			if err != nil {
 				return
 			}

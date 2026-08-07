@@ -56,6 +56,24 @@ function. These libraries provide functionality for cryptography, date manipulat
 | Moment Timezone     | `require("libs/moment-timezone.js")`     | Adds timezone support to Moment.js                                                |
 | Moment with Locales | `require("libs/moment-with-locales.js")` | Adds internationalization support to Moment.js                                    |
 
+> **Important — Moment.js libraries use global side-effect injection, not CommonJS exports.**
+> These libraries do **not** return a value from `require()`. Instead, calling `require()` attaches
+> the `moment` function to the global scope as a side effect. Do **not** assign the result of
+> `require()` to a variable — doing so creates a local variable that shadows the global `moment`
+> with `undefined`, causing a `TypeError` on any subsequent call.
+>
+> **Correct pattern:**
+> ```javascript
+> require("libs/moment.js");          // side-effect: sets global moment
+> var date = moment(data.timestamp);  // use global directly
+> ```
+>
+> **Incorrect pattern (breaks with TypeError):**
+> ```javascript
+> var moment = require("libs/moment.js");  // ← moment is undefined here
+> var date = moment(data.timestamp);       // TypeError: moment is not a function
+> ```
+
 ### Other Libraries
 
 | Library | Import Statement             | Description                                |
@@ -133,7 +151,7 @@ function. These libraries provide functionality for cryptography, date manipulat
 
 ```javascript
 
-  var moment = require("libs/moment.js");
+  require("libs/moment.js");  // side-effect: sets global moment — do not assign
 
   // Parse and format a date
   var date = moment(data.timestamp);
@@ -154,7 +172,7 @@ function. These libraries provide functionality for cryptography, date manipulat
 
 ```javascript
 
-  var moment = require("libs/moment-timezone.js");
+  require("libs/moment-timezone.js");  // side-effect: sets global moment — do not assign
 
   // Convert timestamp to specific timezone
   var date = moment(data.timestamp).tz("Europe/Kiev");
@@ -334,9 +352,9 @@ Set an appropriate timeout value based on the complexity of your code:
 ```javascript
 
   try {
-    // Require necessary libraries
-    var moment = require("libs/moment.js");
-    require("libs/sha256.js");  // sets global CryptoJS — do not assign
+    // Require necessary libraries — neither returns a value; both inject globals
+    require("libs/moment.js");   // sets global moment — do not assign
+    require("libs/sha256.js");   // sets global CryptoJS — do not assign
 
     // Process dates
     var now = moment();

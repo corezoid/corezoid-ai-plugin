@@ -297,7 +297,7 @@ func httpDispatch(reqCtx context.Context, req mcpRequest) interface{} {
 				},
 				"serverInfo": map[string]interface{}{
 					"name":    "convctl-mcp",
-					"version": mcpServerVersion,
+					"version": serverVersion(),
 				},
 			},
 		}

@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 )
 
 // resetGlobals clears global auth state so tests don't interfere.
@@ -149,6 +150,43 @@ func TestHandlePushProcess_BlocksRpcReplyMismatch(t *testing.T) {
 		if !strings.Contains(result, want) {
 			t.Fatalf("expected result to contain %q, got:\n%s", want, result)
 		}
+	}
+}
+
+func TestHandlePushProcess_GitCallAdvisoryDoesNotBlock(t *testing.T) {
+	resetGlobals(t)
+	p := writeGitConv(t, "git_call")
+
+	orig, _ := os.Getwd()
+	if err := os.Chdir(filepath.Dir(p)); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chdir(orig) }) //nolint:errcheck
+
+	calls := 0
+	srv, _ := mockAPIServer(t, func(ops []map[string]interface{}) interface{} {
+		calls++
+		return wrapOp(map[string]interface{}{
+			"proc":        "error",
+			"description": "reached API after git_call advisory",
+		})
+	})
+	setProjectAuth(t, srv.URL)
+
+	result, isErr := handlePushProcess(context.Background(), map[string]interface{}{
+		"process_path": filepath.Base(p),
+	})
+	if !isErr {
+		t.Fatalf("expected the downstream mock API error, got success: %q", result)
+	}
+	if calls == 0 {
+		t.Fatalf("git_call advisory blocked before the API was called; result:\n%s", result)
+	}
+	if strings.Contains(result, "Push blocked: lint found") {
+		t.Fatalf("git_call must remain advisory-only without force=true; result:\n%s", result)
+	}
+	if !strings.Contains(result, "reached API after git_call advisory") {
+		t.Fatalf("expected downstream API marker, got:\n%s", result)
 	}
 }
 
@@ -794,6 +832,67 @@ func TestHandleToolCall_ModifyTask_BadDataJSON(t *testing.T) {
 	_ = result
 }
 
+// ---- deepMerge unit tests ---------------------------------------------------
+
+func TestDeepMerge_ShallowScalar(t *testing.T) {
+	dst := map[string]interface{}{"a": 1, "b": 2}
+	src := map[string]interface{}{"b": 99, "c": 3}
+	got := deepMerge(dst, src)
+	if got["a"] != 1 || got["b"] != 99 || got["c"] != 3 {
+		t.Errorf("unexpected result: %v", got)
+	}
+}
+
+func TestDeepMerge_NestedObjectPreservesExistingKeys(t *testing.T) {
+	dst := map[string]interface{}{
+		"currencies": map[string]interface{}{
+			"count": 5, "ms": 100, "seconds": 1, "value": 42, "Requests ": 10,
+		},
+	}
+	src := map[string]interface{}{
+		"currencies": map[string]interface{}{
+			"usd": 1, "eur": 2, "gbp": 3, "jpy": 4,
+		},
+	}
+	got := deepMerge(dst, src)
+	cur, ok := got["currencies"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("currencies not a map: %T", got["currencies"])
+	}
+	// original keys must survive
+	for _, k := range []string{"count", "ms", "seconds", "value", "Requests "} {
+		if _, exists := cur[k]; !exists {
+			t.Errorf("key %q was lost after deep merge", k)
+		}
+	}
+	// new keys must be present
+	for _, k := range []string{"usd", "eur", "gbp", "jpy"} {
+		if _, exists := cur[k]; !exists {
+			t.Errorf("new key %q missing after deep merge", k)
+		}
+	}
+}
+
+func TestDeepMerge_NestedObjectScalarOverwrites(t *testing.T) {
+	// When src has a scalar at a key that dst has a map, src wins.
+	dst := map[string]interface{}{"x": map[string]interface{}{"a": 1}}
+	src := map[string]interface{}{"x": "flat"}
+	got := deepMerge(dst, src)
+	if got["x"] != "flat" {
+		t.Errorf("expected scalar overwrite, got %v", got["x"])
+	}
+}
+
+func TestDeepMerge_DoesNotMutateDst(t *testing.T) {
+	dst := map[string]interface{}{"a": map[string]interface{}{"k": 1}}
+	src := map[string]interface{}{"a": map[string]interface{}{"k": 2}}
+	_ = deepMerge(dst, src)
+	inner := dst["a"].(map[string]interface{})
+	if inner["k"] != 1 {
+		t.Error("deepMerge mutated dst")
+	}
+}
+
 func TestHandleToolCall_DeleteTask_MissingRefAndTaskID(t *testing.T) {
 	resetGlobals(t)
 	result, isErr := handleToolCall(context.Background(), "delete-task", map[string]interface{}{
@@ -955,6 +1054,136 @@ func TestHandleToolCall_RunTask_MissingData(t *testing.T) {
 		t.Error("expected isError=true when data missing")
 	}
 	_ = result
+}
+
+func TestHandleRunTask_UsesDeployedProcessWithoutRedeploy(t *testing.T) {
+	resetGlobals(t)
+	var operations []string
+	srv, _ := mockAPIServer(t, func(ops []map[string]interface{}) interface{} {
+		if len(ops) != 1 {
+			return map[string]interface{}{"request_proc": "error", "description": "unexpected operation count"}
+		}
+		obj, _ := ops[0]["obj"].(string)
+		typ, _ := ops[0]["type"].(string)
+		operations = append(operations, obj+":"+typ)
+		switch obj + ":" + typ {
+		case "conv:list":
+			return map[string]interface{}{
+				"request_proc": "ok",
+				"ops": []interface{}{map[string]interface{}{
+					"proc": "ok",
+					"list": []interface{}{map[string]interface{}{
+						"scheme": map[string]interface{}{"nodes": []interface{}{
+							map[string]interface{}{
+								"id": "server-final", "title": "Final", "obj_type": float64(2),
+								"extra": `{"icon":""}`,
+							},
+						}},
+					}},
+				}},
+			}
+		case "task:create":
+			return map[string]interface{}{
+				"request_proc": "ok",
+				"ops":          []interface{}{map[string]interface{}{"proc": "ok"}},
+			}
+		case "task:show":
+			return map[string]interface{}{
+				"request_proc": "ok",
+				"ops": []interface{}{map[string]interface{}{
+					"proc": "ok", "obj_id": "task-1", "node_id": "server-final",
+					"data": map[string]interface{}{"result": "ok"},
+				}},
+			}
+		default:
+			return map[string]interface{}{"request_proc": "error", "description": "unexpected mutating operation"}
+		}
+	})
+	setProjectAuth(t, srv.URL)
+
+	dir := t.TempDir()
+	t.Chdir(dir)
+	path := filepath.Join(dir, "123_runtime.conv.json")
+	localDraft := []byte(`this intentionally is not a deployable process`)
+	if err := os.WriteFile(path, localDraft, 0644); err != nil {
+		t.Fatal(err)
+	}
+	originalFirstPoll := runTaskFirstPollAfter
+	originalPollEvery := runTaskPollEvery
+	runTaskFirstPollAfter = time.Millisecond
+	runTaskPollEvery = time.Millisecond
+	t.Cleanup(func() {
+		runTaskFirstPollAfter = originalFirstPoll
+		runTaskPollEvery = originalPollEvery
+	})
+
+	result, isErr := handleRunTask(context.Background(), map[string]interface{}{
+		"process_path": filepath.Base(path), "data": `{}`, "ref": "read-only-run", "wait_sec": 1,
+	})
+	if isErr || !strings.Contains(result, "Task completed") || !strings.Contains(result, "NodeName: Final") {
+		t.Fatalf("read-only task run failed: %s", result)
+	}
+	if got := strings.Join(operations, ","); got != "conv:list,task:create,task:show" {
+		t.Fatalf("run-task issued unexpected operations: %s", got)
+	}
+	after, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(after) != string(localDraft) {
+		t.Fatalf("run-task modified the local process file: %q", after)
+	}
+}
+
+func TestLoadRuntimeNodeMap_FallsBackToReadOnlyExport(t *testing.T) {
+	var srv *httptest.Server
+	var requests []string
+	srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests = append(requests, r.Method+" "+r.URL.Path)
+		w.Header().Set("Content-Type", "application/json")
+		if r.Method == http.MethodGet {
+			_ = json.NewEncoder(w).Encode([]interface{}{map[string]interface{}{
+				"obj_id": float64(123),
+				"scheme": map[string]interface{}{"nodes": []interface{}{
+					map[string]interface{}{
+						"id": "exported-error", "title": "Failed", "obj_type": float64(2),
+						"extra": `{"icon":"error"}`,
+					},
+				}},
+			}})
+			return
+		}
+		var body struct {
+			Ops []map[string]interface{} `json:"ops"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		if r.URL.Path == "/api/2/download" {
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
+				"request_proc": "ok",
+				"ops": []interface{}{map[string]interface{}{
+					"proc": "ok", "download_url": srv.URL + "/runtime-process.json",
+				}},
+			})
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{"request_proc": "error"})
+	}))
+	t.Cleanup(srv.Close)
+
+	v := &Executor{
+		Ctx: context.Background(), APIUrl: srv.URL, Token: "test-token",
+		WorkspaceID: "workspace", ProcessID: 123, NodeIDMap: map[string]NodeInfo{},
+	}
+	if err := loadRuntimeNodeMap(v); err != nil {
+		t.Fatal(err)
+	}
+	node, ok := v.NodeIDMap["exported-error"]
+	if !ok || node.Type != 2 || node.Name != "Failed" || node.Icon != "error" {
+		t.Fatalf("unexpected exported runtime node: %+v", v.NodeIDMap)
+	}
+	if got := strings.Join(requests, ","); got != "POST /api/2/json,POST /api/2/download,GET /runtime-process.json" {
+		t.Fatalf("unexpected runtime metadata requests: %s", got)
+	}
 }
 
 // ---- get-dashboard ---------------------------------------------------------

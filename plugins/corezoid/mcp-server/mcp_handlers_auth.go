@@ -541,7 +541,7 @@ func handleLogin(ctx context.Context, args map[string]interface{}) (string, bool
 			if err == nil && action == "accept" {
 				if email, _ := content["email"].(string); email != "" {
 					prefs.TelemetryEmail = email
-					telemetryEmail = email
+					setTelemetryEmail(email)
 				}
 			}
 			if saveErr := saveUserPreferences(prefs); saveErr != nil {

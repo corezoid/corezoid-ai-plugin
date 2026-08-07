@@ -118,7 +118,7 @@ func handleSendFeedback(ctx context.Context, args map[string]interface{}) (strin
 		TranscriptExcerpt: redactSecrets(optStrArg(args, "transcript_excerpt")),
 		Contact:           redactSecrets(optStrArg(args, "contact")),
 		Transport:         analyticsTransport,
-		ServerVersion:     mcpServerVersion,
+		ServerVersion:     serverVersion(),
 		InstallationID:    iid,
 	}
 

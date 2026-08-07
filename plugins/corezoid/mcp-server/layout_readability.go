@@ -57,15 +57,27 @@ func measureLayoutReadability(coords map[string]lpoint, g *layoutGraph) layoutRe
 			edges = append(edges, edge)
 		}
 	}
+	// nodeCenter goes through nodeBox -> nodeBoxSize -> json.Unmarshal on
+	// node.extra. Nothing moves while the metrics are measured, so resolve each
+	// endpoint once instead of O(E^2) times in the crossing scan below.
+	centers := make(map[string]lpoint, len(edges)*2)
+	center := func(id string) lpoint {
+		if c, ok := centers[id]; ok {
+			return c
+		}
+		c := nodeCenter(g.byID[id], coords[id])
+		centers[id] = c
+		return c
+	}
 	for i, a := range edges {
 		for _, b := range edges[i+1:] {
 			if a.from == b.from || a.from == b.to || a.to == b.from || a.to == b.to {
 				continue
 			}
-			a0 := nodeCenter(g.byID[a.from], coords[a.from])
-			a1 := nodeCenter(g.byID[a.to], coords[a.to])
-			b0 := nodeCenter(g.byID[b.from], coords[b.from])
-			b1 := nodeCenter(g.byID[b.to], coords[b.to])
+			a0 := center(a.from)
+			a1 := center(a.to)
+			b0 := center(b.from)
+			b1 := center(b.to)
 			if strictSegmentCross(a0, a1, b0, b1) {
 				out.EdgeCrossings++
 			}
@@ -73,8 +85,8 @@ func measureLayoutReadability(coords map[string]lpoint, g *layoutGraph) layoutRe
 	}
 	var spans []int
 	for _, edge := range edges {
-		from := nodeCenter(g.byID[edge.from], coords[edge.from])
-		to := nodeCenter(g.byID[edge.to], coords[edge.to])
+		from := center(edge.from)
+		to := center(edge.to)
 		span := int(math.Round(math.Hypot(float64(to.X-from.X), float64(to.Y-from.Y))))
 		spans = append(spans, span)
 		if span > out.MaxEdgeSpan {

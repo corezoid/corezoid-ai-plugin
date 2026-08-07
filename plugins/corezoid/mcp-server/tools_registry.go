@@ -247,7 +247,7 @@ var toolRegistry = []mcpTool{
 	},
 	{
 		Name:        "lint-process",
-		Description: "Validate process structure. Reports orphaned nodes, noop conditions, unused set_params, passthrough escalations, shared error clusters (an error node fed by several different failing nodes — each needs its own Reply/Error cluster), old-format nodes (obj_type:0 err_node_id targets, or action logic mixed with go_if_const — the UI would force-convert the process), finals reachable without api_rpc_reply in a process that replies elsewhere (an RPC caller would hang), nodes whose logics do not end with a default go and time semaphors under the 30s server minimum (both reject the deploy), literal non-string values in api_rpc_reply res_data (a scheme shape that hangs the server commit on push), and active Call Process Stub Mode nodes (obj_type:4) that bypass the real called process.",
+		Description: "Validate process structure. Reports orphaned nodes, noop conditions, unused set_params, passthrough escalations, shared error clusters (an error node fed by several different failing nodes — each needs its own Reply/Error cluster), old-format nodes (obj_type:0 err_node_id targets, or action logic mixed with go_if_const — the UI would force-convert the process), finals reachable without api_rpc_reply in a process that replies elsewhere (an RPC caller would hang), nodes whose logics do not end with a default go and time semaphors under the 30s server minimum (both reject the deploy), literal non-string values in api_rpc_reply res_data (a scheme shape that hangs the server commit on push), active Call Process Stub Mode nodes (obj_type:4) that bypass the real called process, and git_call (api_git) usage (advisory: hosted sandbox measurements show an approximately 60s execution deadline; default resources are 50 MB/0.1 CPU from a shared, super-admin-configurable pool; local storage is ephemeral; use only when native nodes plus a Code node cannot provide the required file parsing, external library, cryptography, or custom runtime, and avoid long-running or latency-critical work).",
 		Annotations: toolHints(hintReadOnly, hintSafe, hintIdempotent, hintLocal),
 		InputSchema: map[string]interface{}{
 			"type": "object",
@@ -858,7 +858,7 @@ var toolRegistry = []mcpTool{
 	},
 	{
 		Name:        "list-task-history",
-		Description: "Return the execution history (node path) for a task. Shows each node transition with node_id, node_prev_id, create_time_ms.",
+		Description: "Return the execution history (node path) for a task. Shows each node transition with node_id, node_prev_id, create_time_ms. NOTE: the Corezoid API does not record data snapshots — the data field is always null in history entries. To inspect the current data payload before modifying a task, use modify-task with deep_merge: true (it fetches the live data internally).",
 		Annotations: toolHints(hintReadOnly, hintSafe, hintIdempotent, hintOpenWorld),
 		InputSchema: map[string]interface{}{
 			"type": "object",
@@ -939,7 +939,7 @@ var toolRegistry = []mcpTool{
 	},
 	{
 		Name:        "modify-task",
-		Description: "Modify an existing task's data. The task will continue from the node where it was paused with the updated data. At least one of task_id or ref must be provided.",
+		Description: "Modify an existing task's data. At least one of task_id or ref must be provided. WARNING: the Corezoid API performs a SHALLOW (top-level) merge — if a top-level key already holds a nested object (e.g. data.currencies), its entire value is replaced and any sub-keys absent from your payload are silently lost. Pass deep_merge: true to fetch the current task data first and perform a recursive merge that preserves existing sub-keys.",
 		Annotations: toolHints(hintMutates, hintSafe, hintIdempotent, hintOpenWorld),
 		InputSchema: map[string]interface{}{
 			"type": "object",
@@ -950,7 +950,7 @@ var toolRegistry = []mcpTool{
 				},
 				"data": map[string]interface{}{
 					"type":        "string",
-					"description": "JSON string with fields to merge into the task",
+					"description": "JSON string with fields to merge into the task. Each top-level key overwrites the full existing value at that key (shallow merge). Use deep_merge: true to recursively preserve existing sub-keys inside nested objects.",
 				},
 				"task_id": map[string]interface{}{
 					"type":        "string",
@@ -959,6 +959,10 @@ var toolRegistry = []mcpTool{
 				"ref": map[string]interface{}{
 					"type":        "string",
 					"description": "Task reference string",
+				},
+				"deep_merge": map[string]interface{}{
+					"type":        "boolean",
+					"description": "If true, fetch the current task data first and recursively merge your data into it before writing; existing sub-keys not present in your payload are preserved. Default: false (standard shallow merge).",
 				},
 			},
 			"required": []string{"process_id", "data"},
