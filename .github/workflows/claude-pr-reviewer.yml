@@ -127,6 +127,7 @@ jobs:
             head_ref=$(echo "$data" | jq -r '.head.ref')
             head_sha=$(echo "$data" | jq -r '.head.sha')
           fi
+          is_fork="false"
           if [ "$head_repo" != "$GITHUB_REPOSITORY" ]; then
             # The Verify-sender step already ensured the trigger came from
             # an admin (human) or our own worker bot. Two paths are safe:
@@ -144,12 +145,14 @@ jobs:
             fi
             if [ "$fork_ok" = "true" ]; then
               echo "PR is from a fork, maintainer trigger accepted — running review on $head_sha"
+              is_fork="true"
             else
               echo "PR is from a fork and trigger is not a maintainer action — refusing"
               echo "skip=true" >> "$GITHUB_OUTPUT"
               exit 0
             fi
           fi
+          echo "is_fork=$is_fork" >> "$GITHUB_OUTPUT"
           if ! printf '%s' "$head_ref" | grep -Eq '^[A-Za-z0-9._/-]+$'; then
             echo "Suspicious branch name: $head_ref"; exit 1
           fi
@@ -181,6 +184,11 @@ jobs:
           ref: ${{ steps.prref.outputs.sha }}
           allow-unsafe-pr-checkout: true
           fetch-depth: 0
+          # Do not leave the write-scoped GITHUB_TOKEN in .git/config on the
+          # runner: a prompt-injected Claude step with `Bash(cat:*)` could
+          # otherwise read it via `cat .git/config`. This job never needs to
+          # push from git; the trusted `Decide` step uses the token via `gh`.
+          persist-credentials: false
 
       - name: Prepare review workspace
         if: steps.prref.outputs.skip != 'true'
@@ -423,14 +431,24 @@ jobs:
 
             Do NOT push code. Do NOT comment on the PR yourself. Do NOT
             approve, merge, or request changes. Only the two files above.
+          # SECURITY: no `Bash(cat:*)` — the `Read` tool covers legitimate
+          # file-content needs and is confined to the workspace, while `cat`
+          # could exfiltrate `.git/config`, `/proc/self/environ`, or the
+          # runner's home dotfiles under prompt injection. No `Bash(jq:*)`
+          # either — `jq -n env` would dump every environment variable
+          # (including GITHUB_TOKEN) into a channel the trusted `Decide`
+          # step then publishes as a PR comment. The `Decide` step itself
+          # still uses `jq`, but in an unprompted shell where injection
+          # cannot reach it.
           claude_args: |
-            --allowedTools "Bash(git diff:*),Bash(git log:*),Bash(git fetch:*),Bash(git show:*),Bash(git ls-files:*),Bash(gh pr view:*),Bash(gh pr diff:*),Bash(ls:*),Bash(cat:*),Bash(wc:*),Bash(jq:*),Read,Write,Glob,Grep"
+            --allowedTools "Bash(git diff:*),Bash(git log:*),Bash(git fetch:*),Bash(git show:*),Bash(git ls-files:*),Bash(gh pr view:*),Bash(gh pr diff:*),Bash(ls:*),Bash(wc:*),Read,Write,Glob,Grep"
 
       - name: Decide — merge or escalate
         if: steps.prref.outputs.skip != 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PR_NUMBER: ${{ steps.pr.outputs.number }}
+          IS_FORK: ${{ steps.prref.outputs.is_fork }}
         run: |
           set -euo pipefail
           findings="$(cat .review/findings.md 2>/dev/null || true)"
@@ -475,6 +493,26 @@ jobs:
             {
               cat .review/findings.md
               printf '\n---\n**Change magnitude:** %s/10\n%s\n' "$score" "$reasons"
+            } > .review/comment.md
+            gh pr comment "$PR_NUMBER" --body-file .review/comment.md
+            gh pr edit "$PR_NUMBER" --add-assignee "$HUMAN_REVIEWER"
+            exit 0
+          fi
+
+          # --- Case 2a: fork PR — never auto-merge on model verdict -----
+          # Even a clean review + low score gets escalated. Prompt injection
+          # in the fork diff could steer the model to emit "OK" and a low
+          # score; a human must be the one to press merge on external code.
+          if [ "$IS_FORK" = "true" ]; then
+            echo "PR head is a fork — escalating to @$HUMAN_REVIEWER regardless of verdict"
+            {
+              if [ "$severity" = "warning" ]; then
+                cat .review/findings.md
+                printf '\n---\n'
+              fi
+              printf 'Second-line review completed on a fork PR. Auto-merge is disabled for external contributions regardless of model verdict.\n\n'
+              printf '**Change magnitude:** %s/10\n\n%s\n\n' "$score" "$reasons"
+              printf 'Manual review required — assigned to @%s.\n' "$HUMAN_REVIEWER"
             } > .review/comment.md
             gh pr comment "$PR_NUMBER" --body-file .review/comment.md
             gh pr edit "$PR_NUMBER" --add-assignee "$HUMAN_REVIEWER"
