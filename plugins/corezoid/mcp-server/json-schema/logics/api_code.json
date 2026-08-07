@@ -13,8 +13,8 @@
     },
     "lang": {
       "type": "string",
-      "enum": ["js", "python"],
-      "description": "Programming language for the code",
+      "enum": ["js", "python", "erl"],
+      "description": "Programming language for the code. For 'erl' the src must be a full module: -module(node). -export([main/1]). main(Data) -> ... .",
       "default": "js"
     },
     "src": {
@@ -58,6 +58,12 @@
       "extra_type": {
         "timeout": "number"
       }
+    },
+    {
+      "type": "api_code",
+      "lang": "erl",
+      "src": "-module(node).\n-export([main/1]).\n\nmain(Data) ->\n    [{<<\"result\">>, <<\"ok\">>} | Data].",
+      "err_node_id": "error_node_id"
     }
   ]
 }
