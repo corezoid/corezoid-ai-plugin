@@ -16,7 +16,13 @@ import (
 // reProcessIDFromFilename extracts the leading numeric process ID from a
 // filename like "12345_my_process.conv.json". Compiled once and shared by the
 // handlers that resolve a process ID from a file path.
-var reProcessIDFromFilename = regexp.MustCompile(`^(\d+)_`)
+//
+// Both spellings convFileName can emit are accepted: the usual
+// "<ID>_<name>.conv.json" and the untitled "<ID>.conv.json" fallback, which a
+// pull of a process with no server-side title produces. The second alternative
+// is written out in full instead of a bare "<ID>." so that an unrelated
+// "<ID>.<something>.json" is not silently read as a process.
+var reProcessIDFromFilename = regexp.MustCompile(`^(\d+)(?:_|\.conv\.json)`)
 
 // sanitizeFileSegment converts a raw Corezoid title into a safe filename or
 // directory-name segment. It replaces spaces AND every character that is either
@@ -39,13 +45,27 @@ func sanitizeFileSegment(title string) string {
 	return b.String()
 }
 
+// convFileName builds the canonical local filename for a process or state
+// diagram: "<ID>_<name>.conv.json", falling back to "<ID>.conv.json" when the
+// title is empty. The ".conv.json" suffix is not cosmetic — resolveProcessPath,
+// the MCP resource listing, the git-sync process index and the env-var
+// reference scan all discover files by that exact suffix, so a file written
+// with a plain ".json" extension is invisible to every one of them.
+func convFileName(processID int, title string) string {
+	safeName := sanitizeFileSegment(title)
+	if safeName == "" {
+		return fmt.Sprintf("%d.conv.json", processID)
+	}
+	return fmt.Sprintf("%d_%s.conv.json", processID, safeName)
+}
+
 // extractProcessIDFromPath returns the numeric process ID encoded in the
 // filename, or an error message describing the expected format.
 func extractProcessIDFromPath(filePath string) (int, string) {
 	baseName := filepath.Base(filePath)
 	matches := reProcessIDFromFilename.FindStringSubmatch(baseName)
 	if matches == nil {
-		return 0, fmt.Sprintf("Error: cannot extract process ID from filename '%s': expected format '<ID>_<name>.json'", baseName)
+		return 0, fmt.Sprintf("Error: cannot extract process ID from filename '%s': expected format '<ID>_<name>.conv.json'", baseName)
 	}
 	id, _ := strconv.Atoi(matches[1])
 	return id, ""
@@ -194,13 +214,11 @@ func handlePullProcess(ctx context.Context, args map[string]interface{}) (string
 	}
 
 	// Derive filename from process title if available
-	fileName := fmt.Sprintf("%d.conv.json", processID)
+	title := ""
 	if m, ok := procInfo.(map[string]interface{}); ok {
-		if title, _ := m["title"].(string); title != "" {
-			safeName := sanitizeFileSegment(title)
-			fileName = fmt.Sprintf("%d_%s.conv.json", processID, safeName)
-		}
+		title, _ = m["title"].(string)
 	}
+	fileName := convFileName(processID, title)
 
 	// Resolve save directory from parent_id so the file lands in the correct folder tree.
 	var dir string
@@ -377,7 +395,7 @@ func handlePushProcess(ctx context.Context, args map[string]interface{}) (string
 			len(lintRes.UnrepliedTerminals)
 		advisory := len(lintRes.NoopConditions) + len(lintRes.UnusedSetParams) +
 			len(lintRes.OrphanedNodes) + len(lintRes.PassthroughEscalations) +
-			len(lintRes.SharedErrorClusters)
+			len(lintRes.SharedErrorClusters) + len(lintRes.GitCallUsages)
 		if hard > 0 && !force {
 			return fmt.Sprintf("Push blocked: lint found %d issue(s) that would break the deploy or its callers. Fix them, or re-run with force=true to override.\n\n%s",
 				hard, FormatLintResult(lintRes)), true
@@ -472,10 +490,10 @@ var runTaskPollEvery = 2 * time.Second
 // instead of waiting out a full poll interval.
 var runTaskFirstPollAfter = 300 * time.Millisecond
 
-// handleRunTask deploys the local process, fires a task at it, and polls until
-// the task reaches a final node or wait_sec elapses. Used to smoke-test a
-// process end-to-end — including processes whose path crosses async nodes
-// (api, api_rpc, db_call, delay), which take longer than one scheduler tick.
+// handleRunTask fires a task at the already-deployed process and polls until it
+// reaches a final node or wait_sec elapses. It deliberately reads runtime node
+// metadata from the server and never deploys the local file: all deployments
+// must pass through push-process and its safety gates first.
 func handleRunTask(ctx context.Context, args map[string]interface{}) (string, bool) {
 	filePath, err := resolveProcessPath(args, "process_path")
 	if err != nil {
@@ -504,21 +522,20 @@ func handleRunTask(ctx context.Context, args map[string]interface{}) (string, bo
 	if errMsg != "" {
 		return errMsg, true
 	}
+	if info, statErr := os.Stat(filePath); statErr != nil {
+		return fmt.Sprintf("Error reading process file: %v", statErr), true
+	} else if info.IsDir() {
+		return fmt.Sprintf("Error reading process file: %s is a directory", filePath), true
+	}
 
 	v := NewValidator(ctx, procID)
-
-	jsonContent, err := LoadBinFromFile(filePath)
-	if err != nil {
-		return fmt.Sprintf("Error reading process file: %v", err), true
-	}
-
-	if _, err := v.ProcessJSON(filePath, jsonContent); err != nil {
-		return fmt.Sprintf("Error deploying process: %v", err), true
-	}
 
 	taskData := make(map[string]interface{})
 	if err := json.Unmarshal([]byte(dataStr), &taskData); err != nil {
 		return fmt.Sprintf("Error parsing task data: %v", err), true
+	}
+	if err := loadRuntimeNodeMap(v); err != nil {
+		return fmt.Sprintf("Error reading deployed process: %v", err), true
 	}
 
 	ref := optStrArg(args, "ref")
@@ -613,6 +630,63 @@ func handleRunTask(ctx context.Context, args map[string]interface{}) (string, bo
 	return summary, isErr
 }
 
+// loadRuntimeNodeMap indexes the server's currently deployed nodes without
+// modifying the process. run-task must never call ProcessJSON: doing so turns a
+// smoke test into an implicit deploy and bypasses push-process safety gates.
+func loadRuntimeNodeMap(v *Executor) error {
+	nodes, listErr := v.GetProcessNodes()
+	if len(nodes) == 0 {
+		exported, exportErr := v.ExportProcess()
+		if exportErr != nil {
+			if listErr != nil {
+				return fmt.Errorf("process node list failed (%v) and export failed: %w", listErr, exportErr)
+			}
+			return fmt.Errorf("process node list is empty and export failed: %w", exportErr)
+		}
+		doc := exported
+		if list, ok := exported.([]interface{}); ok && len(list) > 0 {
+			doc = list[0]
+		}
+		if process, ok := doc.(map[string]interface{}); ok {
+			for _, node := range schemeNodesFromDoc(process) {
+				nodes = append(nodes, node)
+			}
+		}
+	}
+	if len(nodes) == 0 {
+		if listErr != nil {
+			return fmt.Errorf("process node list failed (%v) and export returned no nodes", listErr)
+		}
+		return fmt.Errorf("process %d has no deployed nodes", v.ProcessID)
+	}
+	for _, raw := range nodes {
+		node, ok := raw.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		id, _ := node["id"].(string)
+		if id == "" {
+			continue
+		}
+		title, _ := node["title"].(string)
+		objType := nodeObjType(node)
+		icon := ""
+		if extra, _ := node["extra"].(string); extra != "" {
+			var decoded map[string]interface{}
+			if json.Unmarshal([]byte(extra), &decoded) == nil {
+				icon, _ = decoded["icon"].(string)
+			}
+		}
+		v.NodeIDMap[id] = NodeInfo{
+			Type: objType, ObjType: objType, ServerID: id, Name: title, Icon: icon,
+		}
+	}
+	if len(v.NodeIDMap) == 0 {
+		return fmt.Errorf("process %d returned no valid deployed nodes", v.ProcessID)
+	}
+	return nil
+}
+
 // lookupNode resolves a server node ID against the validator's NodeIDMap,
 // falling back to a scan over ServerID values (the map is keyed by local IDs
 // after a push, but show_task returns server-side IDs).
@@ -682,8 +756,7 @@ func createConv(ctx context.Context, args map[string]interface{}, convType strin
 		return fmt.Sprintf("Error marshaling process: %v", err), true
 	}
 
-	safeName := sanitizeFileSegment(processName)
-	fileName := fmt.Sprintf("%d_%s.json", processID, safeName)
+	fileName := convFileName(processID, processName)
 	filePath := filepath.Join(folderPath, fileName)
 	if err := os.WriteFile(filePath, data, 0644); err != nil {
 		return fmt.Sprintf("Error writing file: %v", err), true

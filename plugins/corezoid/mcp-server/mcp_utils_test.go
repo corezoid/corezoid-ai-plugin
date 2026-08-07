@@ -307,6 +307,27 @@ func TestResolveProcessPath_AutoDiscoverSingle(t *testing.T) {
 	}
 }
 
+// Regression: create-process used to write "<id>_<name>.json", which
+// auto-discovery silently skipped — every later push/pull/lint call in the same
+// directory failed with "no .conv.json file found" unless process_path was
+// passed explicitly.
+func TestResolveProcessPath_FindsFileNamedByConvFileName(t *testing.T) {
+	dir := t.TempDir()
+	orig, _ := os.Getwd()
+	os.Chdir(dir)                        //nolint:errcheck
+	t.Cleanup(func() { os.Chdir(orig) }) //nolint:errcheck
+
+	name := convFileName(12345, "My Process")
+	os.WriteFile(filepath.Join(dir, name), []byte("{}"), 0644) //nolint:errcheck
+	p, err := resolveProcessPath(map[string]interface{}{}, "process_path")
+	if err != nil {
+		t.Fatalf("file created as %q was not auto-discovered: %v", name, err)
+	}
+	if p != name {
+		t.Errorf("got %q, want %q", p, name)
+	}
+}
+
 func TestResolveProcessPath_AutoDiscoverMultiple(t *testing.T) {
 	dir := t.TempDir()
 	orig, _ := os.Getwd()

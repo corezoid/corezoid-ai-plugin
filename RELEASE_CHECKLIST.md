@@ -6,17 +6,20 @@ Use this before tagging a public release.
 
 - [ ] `plugins/corezoid/.claude-plugin/plugin.json` version is updated.
 - [ ] `plugins/corezoid/.codex-plugin/plugin.json` version matches Claude manifest.
-- [ ] `.claude-plugin/marketplace.json` `plugins[0].version` matches both manifests.
+- [ ] `plugins/corezoid/.kiro-plugin/plugin.json` version matches all manifests.
+- [ ] `.claude-plugin/marketplace.json` `plugins[0].version` matches all manifests.
 - [ ] `.agents/plugins/marketplace.json` `plugins[0].version` matches all manifests.
+- [ ] `POWER.md` frontmatter `version:` matches all manifests.
 - [ ] `.agents/plugins/marketplace.json` `plugins[0].license` is `"MIT"`.
 - [ ] No TODO or placeholder values remain in any manifest.
 - [ ] Manifest asset and skill paths resolve under `plugins/corezoid/`.
-- [ ] All four manifests have `"license": "MIT"` (not ISC).
+- [ ] All five manifests (three plugin.json + two marketplace.json) and `POWER.md` have `"license": "MIT"` (not ISC).
 - [ ] All plugin `source` paths listed in marketplace manifests exist on disk.
 
 ## MCP Server
 
 - [ ] `plugins/corezoid/.mcp.json` contains no credentials or private URLs.
+- [ ] `plugins/corezoid/.mcp.kiro.json` contains no credentials or private URLs.
 - [ ] Go source in `plugins/corezoid/mcp-server/` compiles without errors (`go build ./...`).
 
 ## Content
@@ -34,13 +37,16 @@ python3 -m json.tool .claude-plugin/marketplace.json >/dev/null
 python3 -m json.tool .agents/plugins/marketplace.json >/dev/null
 python3 -m json.tool plugins/corezoid/.claude-plugin/plugin.json >/dev/null
 python3 -m json.tool plugins/corezoid/.codex-plugin/plugin.json >/dev/null
+python3 -m json.tool plugins/corezoid/.kiro-plugin/plugin.json >/dev/null
 python3 -m json.tool plugins/corezoid/.mcp.json >/dev/null
+python3 -m json.tool plugins/corezoid/.mcp.kiro.json >/dev/null
 ```
 
 ## Testing
 
 - [ ] Claude Code can install the plugin from the local clone.
 - [ ] Codex can install the plugin from the local clone.
+- [ ] AWS Kiro overlay installs via `plugins/corezoid/scripts/install-kiro.sh` and loads skills + MCP server end-to-end.
 - [ ] MCP server starts and `login` tool responds.
 
 ## Git

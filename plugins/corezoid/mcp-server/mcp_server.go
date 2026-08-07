@@ -34,10 +34,28 @@ type mcpError struct {
 }
 
 type mcpTool struct {
-	Name        string      `json:"name"`
-	Description string      `json:"description"`
-	InputSchema interface{} `json:"inputSchema"`
+	Name        string           `json:"name"`
+	Description string           `json:"description"`
+	InputSchema interface{}      `json:"inputSchema"`
+	Annotations *toolAnnotations `json:"annotations,omitempty"`
 }
+
+// toolAnnotations carries the MCP tool annotations (spec 2025-03-26 and
+// later) that let clients and models reason about a tool's safety before
+// invoking it. The hints are *bool on purpose: an omitted hint means
+// "unknown", while false is a positive claim ("this tool is not
+// destructive"). Plain bools would serialise every unset hint as false and
+// turn every silence into a claim.
+type toolAnnotations struct {
+	Title           string `json:"title,omitempty"`
+	ReadOnlyHint    *bool  `json:"readOnlyHint,omitempty"`
+	DestructiveHint *bool  `json:"destructiveHint,omitempty"`
+	IdempotentHint  *bool  `json:"idempotentHint,omitempty"`
+	OpenWorldHint   *bool  `json:"openWorldHint,omitempty"`
+}
+
+// boolPtr returns a pointer to b, for the *bool annotation hints.
+func boolPtr(b bool) *bool { return &b }
 
 type mcpContent struct {
 	Type string `json:"type"`
@@ -49,9 +67,17 @@ type mcpToolResult struct {
 	IsError bool         `json:"isError,omitempty"`
 }
 
-// mcpServerVersion is the version reported in MCP initialize responses.
-// Keep this in sync with .claude-plugin/plugin.json.
-const mcpServerVersion = "2.3.5"
+// serverVersion is the version reported in MCP initialize responses and in
+// analytics/feedback events. It derives from main.Version, which the release
+// workflow injects via -ldflags "-X main.Version=${GITHUB_REF_NAME}" — so it
+// arrives tag-shaped ("v2.11.0") and is normalized here to the manifest shape
+// ("2.11.0"). Local and test builds report "dev".
+//
+// Never reintroduce a hand-maintained version constant here: it silently
+// drifts from the manifests (see version_guard_test.go, which enforces this).
+func serverVersion() string {
+	return strings.TrimPrefix(Version, "v")
+}
 
 // oauthClientID is the OAuth2 client ID used for PKCE flow.
 // Resolved from COREZOID_OAUTH_CLIENT_ID env var, falling back to the built-in default.
@@ -195,7 +221,7 @@ func buildInitializeResult() map[string]interface{} {
 		},
 		"serverInfo": map[string]interface{}{
 			"name":    "convctl-mcp",
-			"version": mcpServerVersion,
+			"version": serverVersion(),
 		},
 	}
 }
@@ -372,7 +398,6 @@ func runMCPServer() {
 				ID:      req.ID,
 				Result: map[string]interface{}{
 					"tools": toolRegistry,
-
 				},
 			})
 
