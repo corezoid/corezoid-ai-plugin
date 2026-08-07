@@ -25,6 +25,8 @@ You have access to the Corezoid API via the `corezoid` MCP server.
 | `pull-process` | Export a single process to a file |
 | `push-process` | Validate and deploy a `.conv.json` file |
 | `lint-process` | Validate process structure locally (no API needed) |
+| `show-project-policy` | Show effective opt-in cycle-safety and process-contract policy (no API needed) |
+| `configure-project-policy` | Create or update `.corezoid/policy.json` after explicit user opt-in (no API needed) |
 | `layout-process` | Auto-arrange node coordinates into a clean layout (local; only x/y and collapse flags change) |
 | `run-task` | Run a task on an already-deployed process |
 | `create-process` | Create a new empty process (`conv_type: "process"`) in a folder |
@@ -106,6 +108,25 @@ Workspace
 
 ## Common Operations
 
+### Check optional project protections
+```
+show-project-policy(project_path=".")
+```
+
+At the start of process creation, editing, optimization, or review, inspect the policy once for the
+project. If both modes are off and the user has not already declined in this session, briefly offer:
+
+- cycle safety (`warn` or `strict`) to detect uncontrolled tact/budget loops;
+- process contracts (`warn` or `strict`) to require typed, described inputs and outputs.
+
+Recommend `strict` for cost-sensitive or shared projects, but never call
+`configure-project-policy` without the user's explicit choice. Do not repeatedly ask after a user
+declines. Never pass `confirm_policy_downgrade=true` until the user approves the exact weakening
+reported by the tool, and never edit `.corezoid/policy.json` directly to bypass that guard. The
+policy is MCP-server-side and therefore applies equally in Claude Code, Codex, Kiro, and generic MCP
+clients. Full semantics:
+`${CLAUDE_PLUGIN_ROOT}/docs/process/project-safety-policy.md`.
+
 ### Deploy a process
 ```
 push-process(process_path="./folder/12345_MyProcess.conv.json")
@@ -164,6 +185,7 @@ Use the `Read` tool to load these files when you need deeper detail:
 | `${CLAUDE_PLUGIN_ROOT}/docs/nodes/end-node.md` | End node success/error configuration |
 | `${CLAUDE_PLUGIN_ROOT}/docs/process/process-json-validation.md` | Validation rules and common errors |
 | `${CLAUDE_PLUGIN_ROOT}/docs/process/error-handling.md` | Error handling patterns |
+| `${CLAUDE_PLUGIN_ROOT}/docs/process/project-safety-policy.md` | Opt-in bounded-cycle and strict-contract policy, confirmation rules |
 | `${CLAUDE_PLUGIN_ROOT}/docs/state-diagrams/state-diagram-overview.md` | State diagram concepts and allowed nodes |
 | `${CLAUDE_PLUGIN_ROOT}/docs/state-diagrams/state-diagram-node-structures.md` | JSON schemas for nodes inside a state diagram |
 | `${CLAUDE_PLUGIN_ROOT}/docs/state-diagrams/state-diagram-process-interaction.md` | How driver processes read / create / modify state tasks |

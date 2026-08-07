@@ -189,6 +189,21 @@ func stubModePolicyForStage(v *Executor, stageID, projectID int) stubModeStagePo
 	}
 }
 
+func policyLintFailureResult(filePath string, lintErr error) (string, bool) {
+	effective, policyErr := loadEffectiveProjectPolicy(filePath)
+	if policyErr != nil {
+		return fmt.Sprintf("Push blocked: project policy could not be loaded after lint failed (%v). force=true does not bypass this policy.\n\nLint error: %v", policyErr, lintErr), true
+	}
+	strict := effective.CycleSafety.Mode == policyModeStrict || effective.ProcessContracts.Mode == policyModeStrict
+	if effective.Configured && strict {
+		return fmt.Sprintf("Push blocked: strict project policy could not be evaluated because lint-process failed: %v. force=true does not bypass this policy.", lintErr), true
+	}
+	if effective.Configured {
+		return fmt.Sprintf("Warning: project policy is warn-only, but lint-process could not evaluate it: %v", lintErr), false
+	}
+	return "", false
+}
+
 // handlePullProcess downloads a process by ID and writes its JSON to disk in
 // the folder that mirrors its parent_id chain, so re-pulling places the file
 // back where it lived.
@@ -374,8 +389,44 @@ func handlePushProcess(ctx context.Context, args map[string]interface{}) (string
 	// bypasses the real called process at runtime.
 	force, _ := args["force"].(bool)
 	allowStubMode, _ := args["allow_active_stub_mode"].(bool)
+	confirmCycleRisk, _ := args["confirm_cycle_risk"].(string)
+	confirmUnresolvedCallRisk, _ := args["confirm_unresolved_call_risk"].(string)
 	var lintNote string // advisory findings surfaced on a proceeding push (see below)
 	if lintRes, lintErr := lintProcess(filePath); lintErr == nil {
+		if lintRes.PolicyError != "" {
+			return fmt.Sprintf("Push blocked: project policy is invalid and cannot be safely enforced. Fix the policy before deploying; force=true does not bypass this policy.\n\n%s",
+				FormatLintResult(lintRes)), true
+		}
+		policyFindings := 0
+		if lintRes.EffectivePolicy != nil && lintRes.CycleSafety != nil {
+			cycleRisks := cycleRiskCount(lintRes.CycleSafety)
+			unresolvedRisks := len(lintRes.CycleSafety.UnresolvedCalls)
+			policyFindings = cycleRisks + unresolvedRisks
+			if lintRes.EffectivePolicy.CycleSafety.Mode == policyModeStrict {
+				if cycleRisks > 0 && confirmCycleRisk != lintRes.CycleSafety.CycleRiskFingerprint {
+					return fmt.Sprintf("Push paused: strict cycle safety found %d cycle risk(s). Every cycle must have a proven finite counter/deadline bound. An intentionally unbounded cycle is allowed only after the user reviews the tact/budget risk and confirms this exact graph with confirm_cycle_risk=%q. force=true does not bypass this policy.\n\n%s",
+						cycleRisks, lintRes.CycleSafety.CycleRiskFingerprint, FormatLintResult(lintRes)), true
+				}
+				if unresolvedRisks > 0 && confirmUnresolvedCallRisk != lintRes.CycleSafety.UnresolvedRiskFingerprint {
+					return fmt.Sprintf("Push paused: strict cycle safety found %d unresolved process target(s). Dynamic conv_id, aliases, explicitly cross-project/stage calls, and unavailable, unreadable, or ambiguous targets anywhere in the reachable local call graph remain supported, but recursion cannot be excluded statically. After the user reviews the possible recursive-call and extra-tact risk, confirm this exact graph with confirm_unresolved_call_risk=%q. force=true does not bypass this policy.\n\n%s",
+						unresolvedRisks, lintRes.CycleSafety.UnresolvedRiskFingerprint, FormatLintResult(lintRes)), true
+				}
+				if cycleRisks > 0 {
+					fmt.Fprintf(os.Stderr, "[policy] %d cycle risk(s) confirmed with graph fingerprint %s\n", cycleRisks, confirmCycleRisk)
+				}
+				if unresolvedRisks > 0 {
+					fmt.Fprintf(os.Stderr, "[policy] %d unresolved process target risk(s) confirmed with graph fingerprint %s\n", unresolvedRisks, confirmUnresolvedCallRisk)
+				}
+			}
+		}
+		if lintRes.EffectivePolicy != nil && lintRes.ProcessContracts != nil {
+			contractBlocking := blockingContractIssueCount(lintRes.ProcessContracts)
+			policyFindings += len(lintRes.ProcessContracts.Issues)
+			if lintRes.EffectivePolicy.ProcessContracts.Mode == policyModeStrict && contractBlocking > 0 {
+				return fmt.Sprintf("Push blocked: strict process contracts found %d blocking issue(s). Synchronize params with every inferred input, success Reply output, and statically resolved callee contract before deploying. Advisory-only dynamic, alias, unavailable, and Send-all mappings remain allowed. force=true does not bypass this policy.\n\n%s",
+					contractBlocking, FormatLintResult(lintRes)), true
+			}
+		}
 		stubMode := len(lintRes.StubModeNodes)
 		if stubMode > 0 {
 			policy := stubModeStagePolicyForPush(v, jsonContent)
@@ -406,8 +457,14 @@ func handlePushProcess(ctx context.Context, args map[string]interface{}) (string
 		// The push proceeds. Surface any findings so the promise "advisory
 		// findings are shown but do not block" is actually kept — otherwise
 		// advisory-only issues would deploy silently and never be seen.
-		if hard+advisory+stubMode > 0 {
+		if hard+advisory+stubMode+policyFindings > 0 {
 			lintNote = FormatLintResult(lintRes)
+		}
+	} else {
+		if note, blocked := policyLintFailureResult(filePath, lintErr); blocked {
+			return note, true
+		} else if note != "" {
+			lintNote = note
 		}
 	}
 

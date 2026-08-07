@@ -17,18 +17,26 @@
     },
     "mode": {
       "type": "string",
-      "enum": ["key_value", ""],
-      "description": "Mode for the reply, typically 'key_value'",
+      "enum": ["key_value", "keys", ""],
+      "description": "Reply format: key_value uses objects; keys uses parallel arrays of parameter names and types",
       "default": "key_value"
     },
     "res_data": {
-      "type": "object",
-      "description": "Parameters to return to the calling process",
+      "type": ["object", "array"],
+      "description": "Parameters to return to the calling process, or parameter names in keys mode",
+      "items": {
+        "type": "string"
+      },
+      "uniqueItems": true,
       "default": {}
     },
     "res_data_type": {
-      "type": "object",
-      "description": "Data types for the parameters",
+      "type": ["object", "array"],
+      "description": "Data types for the parameters, parallel to res_data in keys mode",
+      "items": {
+        "type": "string",
+        "enum": ["string", "number", "boolean", "array", "object"]
+      },
       "default": {}
     },
     "extra": {
@@ -51,6 +59,29 @@
       "description": "ID of the node for error handling"
     }
   },
+  "allOf": [
+    {
+      "if": {
+        "required": ["mode"],
+        "properties": {
+          "mode": { "const": "keys" }
+        }
+      },
+      "then": {
+        "required": ["res_data", "res_data_type"],
+        "properties": {
+          "res_data": { "type": "array" },
+          "res_data_type": { "type": "array" }
+        }
+      },
+      "else": {
+        "properties": {
+          "res_data": { "type": "object" },
+          "res_data_type": { "type": "object" }
+        }
+      }
+    }
+  ],
   "examples": [
     {
       "type": "api_rpc_reply",

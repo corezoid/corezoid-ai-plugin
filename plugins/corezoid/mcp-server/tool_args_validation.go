@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 )
@@ -50,8 +51,8 @@ func buildToolAllowedArgs() {
 // InputSchema declares. CLI args always arrive as strings ("apply=true"), but
 // handlers type-assert booleans (`args["apply"].(bool)`) — so before this,
 // boolean flags passed on the CLI were silently ignored: deploy-stage
-// apply=true ran as a dry-run. Integers are left alone (intArg already parses
-// strings); only booleans need the conversion.
+// apply=true ran as a dry-run. Integers are normalized here as well so every
+// handler receives the same type over CLI and MCP JSON-RPC.
 func coerceCLIArgs(tool string, args map[string]interface{}) error {
 	toolAllowedArgsOnce.Do(buildToolAllowedArgs)
 	for k, v := range args {
@@ -59,7 +60,8 @@ func coerceCLIArgs(tool string, args map[string]interface{}) error {
 		if !ok {
 			continue
 		}
-		if toolArgTypes[tool][k] == "boolean" {
+		switch toolArgTypes[tool][k] {
+		case "boolean":
 			switch strings.ToLower(s) {
 			case "true", "1", "yes":
 				args[k] = true
@@ -71,6 +73,12 @@ func coerceCLIArgs(tool string, args map[string]interface{}) error {
 				// loudly instead of guessing.
 				return fmt.Errorf("argument %s of %s is boolean; got %q (use true/false)", k, tool, s)
 			}
+		case "integer":
+			value, err := strconv.Atoi(strings.TrimSpace(s))
+			if err != nil {
+				return fmt.Errorf("argument %s of %s is an integer; got %q", k, tool, s)
+			}
+			args[k] = value
 		}
 	}
 	return nil

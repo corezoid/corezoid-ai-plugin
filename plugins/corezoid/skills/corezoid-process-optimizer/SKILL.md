@@ -55,7 +55,9 @@ Resolve `PROCESS_PATH` before calling any tools:
 2. If not — ask: "Which process? Provide a file path, name, or ID."
 3. If name or ID — search locally: `find . -name "*.conv.json"`.
 4. Read and parse the file.
-5. Call **`lint-process`** — record findings. They become Group 1 quick-wins.
+5. Call **`show-project-policy`**. If both protections are off, offer the optional modes once and
+   never enable them without explicit user consent.
+6. Call **`lint-process`** — record findings. They become Group 1 quick-wins.
 
 ---
 
@@ -192,7 +194,16 @@ Never overwrite an existing non-empty `title`.
 
 If `params: []` and the Start node clearly receives input (inferred from downstream references to fields never set internally) — propose a `params` array.
 
-Always ask for confirmation before applying — field types cannot be reliably inferred.
+When strict `process_contracts` is enabled, completing and synchronizing the contract is mandatory
+for the push; resolve ambiguous types and required/optional status with the user. Otherwise, ask for
+confirmation before applying because field types cannot always be inferred reliably.
+
+### 3.2 Preserve cycle safety
+
+After every graph rewrite, re-run `lint-process`. Do not remove or bypass finite loop guards, retry
+Delays, their every-path coverage, or the isolation of counter/deadline fields from runtime outputs.
+A new unbounded cycle or unresolved process-call risk requires the same explicit fingerprint
+confirmation as a normal edit.
 
 ---
 

@@ -22,6 +22,13 @@ Before you start, make sure you understand:
 
 Read `${CLAUDE_PLUGIN_ROOT}/docs/state-diagrams/state-diagram-overview.md` if you need a refresher on the model.
 
+Call `show-project-policy` for the target project before designing the diagram. If protections are
+off, offer them once and never enable them without explicit consent. A state node's callback
+self-loop is intentionally persistent; strict cycle safety may request `confirm_cycle_risk` for
+that graph. Explain that behavior and obtain explicit user confirmation instead of disabling the
+state loop or pretending it is finitely bounded. Strict process contracts do not apply to state
+diagrams because their task fields are not a callable process RPC interface.
+
 ---
 
 ## Step 1: Gather Requirements

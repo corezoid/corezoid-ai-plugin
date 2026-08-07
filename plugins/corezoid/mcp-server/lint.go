@@ -26,6 +26,10 @@ type LintResult struct {
 	BrokenLinks            []BrokenLink
 	UnderspecifiedAPINodes []UnderspecifiedAPINode
 	StubModeNodes          []StubModeNode
+	EffectivePolicy        *EffectiveProjectPolicy
+	PolicyError            string
+	CycleSafety            *CycleSafetyReport
+	ProcessContracts       *ContractReport
 	TotalNodes             int
 	ReachableCount         int
 	SchemaValid            bool
@@ -239,6 +243,13 @@ func lintProcess(filePath string) (*LintResult, error) {
 	result.BrokenLinks = findBrokenLinks(typed)
 	result.UnderspecifiedAPINodes = findUnderspecifiedAPINodes(typed)
 	result.StubModeNodes = findStubModeNodes(typed)
+	if policy, policyErr := loadEffectiveProjectPolicy(filePath); policyErr != nil {
+		result.PolicyError = policyErr.Error()
+	} else if policy.Configured && (policy.CycleSafety.Mode != policyModeOff || policy.ProcessContracts.Mode != policyModeOff) {
+		result.EffectivePolicy = &policy
+		result.CycleSafety = analyzeCycleSafety(proc, typed, policy)
+		result.ProcessContracts = analyzeProcessContract(proc, typed, policy)
+	}
 
 	schemaErr := ValidateJSONSchema(filePath, debug)
 	if schemaErr != nil {
@@ -677,7 +688,7 @@ func findShortTimers(nodes []processNode) []ShortTimer {
 func findStubModeNodes(nodes []processNode) []StubModeNode {
 	var result []StubModeNode
 	for _, n := range nodes {
-		if n.objType != 4 {
+		if !isActiveStubNode(n) {
 			continue
 		}
 		title := n.title
@@ -696,6 +707,10 @@ func findStubModeNodes(nodes []processNode) []StubModeNode {
 		})
 	}
 	return result
+}
+
+func isActiveStubNode(n processNode) bool {
+	return n.objType == 4
 }
 
 // BrokenLink is a transition (logic to_node_id/err_node_id/go_to/goto, or a
@@ -1135,6 +1150,20 @@ func FormatLintResult(result *LintResult) string {
 
 	hasIssues := false
 
+	if result.EffectivePolicy != nil {
+		sources := "project policy"
+		if len(result.EffectivePolicy.Sources) > 0 {
+			sources = strings.Join(result.EffectivePolicy.Sources, ", ")
+		}
+		sb.WriteString(fmt.Sprintf("Policy: cycle_safety=%s, process_contracts=%s (%s)\n",
+			result.EffectivePolicy.CycleSafety.Mode, result.EffectivePolicy.ProcessContracts.Mode, sources))
+	}
+	if result.PolicyError != "" {
+		hasIssues = true
+		sb.WriteString("\n=== PROJECT POLICY INVALID — push blocked ===\n")
+		sb.WriteString("  " + result.PolicyError + "\n")
+	}
+
 	if !result.SchemaValid {
 		hasIssues = true
 		sb.WriteString("\n=== JSON SCHEMA VALIDATION FAILED ===\n")
@@ -1270,6 +1299,112 @@ func FormatLintResult(result *LintResult) string {
 		}
 	}
 
+	cycleIssues := 0
+	dynamicIssues := 0
+	if result.CycleSafety != nil {
+		if len(result.CycleSafety.Cycles) > 0 {
+			sb.WriteString(fmt.Sprintf("\n=== CYCLE SAFETY (%d reachable cycle(s), mode: %s) ===\n",
+				len(result.CycleSafety.Cycles), result.CycleSafety.Mode))
+			for _, cycle := range result.CycleSafety.Cycles {
+				status := "BOUNDED"
+				if !cycle.Bounded {
+					status = "RISK"
+					hasIssues = true
+					cycleIssues++
+				}
+				labels := make([]string, len(cycle.NodeTitles))
+				for i := range cycle.NodeTitles {
+					labels[i] = fmt.Sprintf("%s [%s]", cycle.NodeTitles[i], cycle.NodeIDs[i])
+				}
+				sb.WriteString(fmt.Sprintf("  [%s] %s\n", status, strings.Join(labels, " -> ")))
+				if cycle.Bounded {
+					sb.WriteString(fmt.Sprintf("  Bound: %s (%s)\n", cycle.BoundDetail, cycle.BoundKind))
+				} else {
+					sb.WriteString(fmt.Sprintf("  Issue: %s. The cycle may consume Corezoid tacts indefinitely.\n", cycle.Issue))
+				}
+			}
+		}
+		if len(result.CycleSafety.InterprocessCycles) > 0 {
+			hasIssues = true
+			cycleIssues += len(result.CycleSafety.InterprocessCycles)
+			sb.WriteString(fmt.Sprintf("\n=== INTER-PROCESS CYCLE RISK (%d) ===\n", len(result.CycleSafety.InterprocessCycles)))
+			for _, risk := range result.CycleSafety.InterprocessCycles {
+				labels := make([]string, len(risk.ProcessTitles))
+				for i := range risk.ProcessTitles {
+					labels[i] = fmt.Sprintf("%s [%d]", risk.ProcessTitles[i], risk.ProcessIDs[i])
+				}
+				sb.WriteString("  " + strings.Join(labels, " -> ") + "\n")
+				sb.WriteString("  Issue: " + risk.Issue + "\n")
+			}
+		}
+		if cycleIssues > 0 && result.CycleSafety.CycleRiskFingerprint != "" {
+			sb.WriteString("  Confirmation fingerprint: " + result.CycleSafety.CycleRiskFingerprint + "\n")
+		}
+		if len(result.CycleSafety.UnresolvedCalls) > 0 {
+			hasIssues = true
+			dynamicIssues = len(result.CycleSafety.UnresolvedCalls)
+			sb.WriteString(fmt.Sprintf("\n=== UNRESOLVED PROCESS TARGETS (%d) — static cycle analysis incomplete ===\n", dynamicIssues))
+			for _, risk := range result.CycleSafety.UnresolvedCalls {
+				source := ""
+				if risk.SourceProcessID > 0 {
+					sourceTitle := risk.SourceProcessTitle
+					if sourceTitle == "" {
+						sourceTitle = "process"
+					}
+					source = fmt.Sprintf(" in %s [%d]", sourceTitle, risk.SourceProcessID)
+				}
+				sb.WriteString(fmt.Sprintf("  [%s] %s%s (%s %s)\n", risk.NodeID, risk.NodeTitle, source, risk.LogicType, risk.ConvID))
+				sb.WriteString("  Issue: " + risk.Issue + "\n")
+			}
+			if result.CycleSafety.UnresolvedRiskFingerprint != "" {
+				sb.WriteString("  Confirmation fingerprint: " + result.CycleSafety.UnresolvedRiskFingerprint + "\n")
+			}
+		}
+	}
+
+	contractIssues := 0
+	if result.ProcessContracts != nil {
+		if result.ProcessContracts.SkippedReason != "" {
+			sb.WriteString("\nProcess contracts: not applicable (" + result.ProcessContracts.SkippedReason + ").\n")
+		} else {
+			blocking := blockingContractIssueCount(result.ProcessContracts)
+			advisory := len(result.ProcessContracts.Issues) - blocking
+			if len(result.ProcessContracts.Issues) > 0 {
+				hasIssues = true
+				contractIssues = len(result.ProcessContracts.Issues)
+				primaryLabel := "findings"
+				if result.ProcessContracts.Mode == policyModeStrict {
+					primaryLabel = "blocking"
+				}
+				sb.WriteString(fmt.Sprintf("\n=== PROCESS CONTRACTS (%d %s, %d advisory; mode: %s) ===\n",
+					blocking, primaryLabel, advisory, result.ProcessContracts.Mode))
+				for _, issue := range result.ProcessContracts.Issues {
+					level := "WARNING"
+					if result.ProcessContracts.Mode == policyModeStrict {
+						level = "BLOCKING"
+					}
+					if issue.Advisory {
+						level = "ADVISORY"
+					}
+					location := ""
+					if issue.NodeID != "" {
+						location = fmt.Sprintf(" [%s] %s", issue.NodeID, issue.NodeTitle)
+					} else if issue.Parameter != "" {
+						location = " " + issue.Parameter
+					}
+					sb.WriteString(fmt.Sprintf("  [%s] %s%s\n", level, issue.Code, location))
+					sb.WriteString("  Issue: " + issue.Issue + "\n")
+					if issue.SuggestedType != "" {
+						sb.WriteString("  Suggested type: " + issue.SuggestedType + "\n")
+					}
+				}
+			} else {
+				sb.WriteString(fmt.Sprintf("\nProcess contracts: valid (%d input(s), %d output(s); dependency scope: %s).\n",
+					len(result.ProcessContracts.Inputs), len(result.ProcessContracts.Outputs), result.ProcessContracts.DependencyScope))
+			}
+		}
+	}
+
 	if !hasIssues {
 		sb.WriteString("\nNo issues found.")
 	} else {
@@ -1277,7 +1412,11 @@ func FormatLintResult(result *LintResult) string {
 		if !result.SchemaValid {
 			schemaIssues = 1
 		}
-		total := len(result.NoopConditions) + len(result.UnusedSetParams) + len(result.OrphanedNodes) + len(result.RpcReplyMismatches) + len(result.PassthroughEscalations) + len(result.LiteralReplyValues) + len(result.SharedErrorClusters) + len(result.OldFormatNodes) + len(result.UnrepliedTerminals) + len(result.MissingDefaultGo) + len(result.ShortTimers) + len(result.BrokenLinks) + len(result.UnderspecifiedAPINodes) + len(result.StubModeNodes) + schemaIssues
+		policyIssues := 0
+		if result.PolicyError != "" {
+			policyIssues = 1
+		}
+		total := len(result.NoopConditions) + len(result.UnusedSetParams) + len(result.OrphanedNodes) + len(result.RpcReplyMismatches) + len(result.PassthroughEscalations) + len(result.LiteralReplyValues) + len(result.SharedErrorClusters) + len(result.OldFormatNodes) + len(result.UnrepliedTerminals) + len(result.MissingDefaultGo) + len(result.ShortTimers) + len(result.BrokenLinks) + len(result.UnderspecifiedAPINodes) + len(result.StubModeNodes) + schemaIssues + policyIssues + cycleIssues + dynamicIssues + contractIssues
 		sb.WriteString(fmt.Sprintf("\nTotal issues: %d\n", total))
 	}
 

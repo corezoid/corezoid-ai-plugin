@@ -145,7 +145,9 @@ func TestHTTPDispatch_ToolsList(t *testing.T) {
 		t.Fatalf("unexpected error: %s", out["error"])
 	}
 	var result struct {
-		Tools []struct{ Name string `json:"name"` } `json:"tools"`
+		Tools []struct {
+			Name string `json:"name"`
+		} `json:"tools"`
 	}
 	json.Unmarshal(out["result"], &result) //nolint:errcheck
 	if len(result.Tools) == 0 {
@@ -159,7 +161,9 @@ func TestHTTPDispatch_PromptsList(t *testing.T) {
 		t.Fatalf("unexpected error: %s", out["error"])
 	}
 	var result struct {
-		Prompts []struct{ Name string `json:"name"` } `json:"prompts"`
+		Prompts []struct {
+			Name string `json:"name"`
+		} `json:"prompts"`
 	}
 	json.Unmarshal(out["result"], &result) //nolint:errcheck
 	if len(result.Prompts) == 0 {
@@ -190,7 +194,7 @@ func TestHTTPDispatch_PromptsGet_Unknown(t *testing.T) {
 func TestHTTPDispatch_ResourcesList(t *testing.T) {
 	dir := t.TempDir()
 	orig, _ := os.Getwd()
-	os.Chdir(dir) //nolint:errcheck
+	os.Chdir(dir)                        //nolint:errcheck
 	t.Cleanup(func() { os.Chdir(orig) }) //nolint:errcheck
 
 	out := dispatchJSON(t, "resources/list", nil)
@@ -237,6 +241,43 @@ func TestHTTPDispatch_ToolsCall_LintProcess(t *testing.T) {
 	})
 	if out["error"] != nil {
 		t.Fatalf("unexpected JSON-RPC error: %s", out["error"])
+	}
+}
+
+func TestHTTPDispatch_ProjectPolicyLifecycle(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	t.Setenv("COREZOID_POLICY_FILE", "")
+	t.Setenv("COREZOID_MIN_CYCLE_SAFETY_MODE", "")
+	t.Setenv("COREZOID_MIN_PROCESS_CONTRACTS_MODE", "")
+
+	out := dispatchJSON(t, "tools/call", map[string]interface{}{
+		"name": "configure-project-policy",
+		"arguments": map[string]interface{}{
+			"cycle_safety": "strict", "process_contracts": "warn",
+			"max_cycle_iterations": 5,
+		},
+	})
+	if out["error"] != nil {
+		t.Fatalf("configure returned JSON-RPC error: %s", out["error"])
+	}
+	var configured mcpToolResult
+	if err := json.Unmarshal(out["result"], &configured); err != nil {
+		t.Fatal(err)
+	}
+	if configured.IsError || len(configured.Content) != 1 || !strings.Contains(configured.Content[0].Text, "Cycle safety: strict (maximum 5 iterations") {
+		t.Fatalf("unexpected HTTP configure result: %+v", configured)
+	}
+
+	out = dispatchJSON(t, "tools/call", map[string]interface{}{
+		"name": "show-project-policy", "arguments": map[string]interface{}{},
+	})
+	var shown mcpToolResult
+	if err := json.Unmarshal(out["result"], &shown); err != nil {
+		t.Fatal(err)
+	}
+	if shown.IsError || len(shown.Content) != 1 || !strings.Contains(shown.Content[0].Text, "Process contracts: warn") {
+		t.Fatalf("unexpected HTTP show result: %+v", shown)
 	}
 }
 
@@ -290,11 +331,11 @@ func TestHTTPMCPEndpoint_Post_Notification_Returns202(t *testing.T) {
 func TestHTTPDispatch_ResourcesRead_OK(t *testing.T) {
 	dir := t.TempDir()
 	orig, _ := os.Getwd()
-	os.Chdir(dir) //nolint:errcheck
+	os.Chdir(dir)                        //nolint:errcheck
 	t.Cleanup(func() { os.Chdir(orig) }) //nolint:errcheck
 
 	procDir := filepath.Join(dir, ".processes")
-	os.MkdirAll(procDir, 0755)                                                               //nolint:errcheck
+	os.MkdirAll(procDir, 0755)                                                            //nolint:errcheck
 	os.WriteFile(filepath.Join(procDir, "1_test.conv.json"), []byte(`{"ok":true}`), 0644) //nolint:errcheck
 
 	out := dispatchJSON(t, "resources/read", map[string]interface{}{
@@ -308,8 +349,8 @@ func TestHTTPDispatch_ResourcesRead_OK(t *testing.T) {
 func TestHTTPDispatch_ResourcesRead_NotFound(t *testing.T) {
 	dir := t.TempDir()
 	orig, _ := os.Getwd()
-	os.Chdir(dir) //nolint:errcheck
-	t.Cleanup(func() { os.Chdir(orig) }) //nolint:errcheck
+	os.Chdir(dir)                                       //nolint:errcheck
+	t.Cleanup(func() { os.Chdir(orig) })                //nolint:errcheck
 	os.MkdirAll(filepath.Join(dir, ".processes"), 0755) //nolint:errcheck
 
 	out := dispatchJSON(t, "resources/read", map[string]interface{}{

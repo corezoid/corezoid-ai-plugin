@@ -50,7 +50,8 @@ START NODE → CONDITION NODE
 Data enters a Process through the single **Start** node. As it flows forward, each Node may validate
 parameters, call external services, or update values. The Process terminates when the data reaches
 one or more **End** nodes, completing its lifecycle. Conditional or branching Nodes can introduce
-multiple paths, but all ultimately resolve in an End node, ensuring no infinite loops.
+multiple paths and controlled loops. Loops should have a finite counter or deadline unless their
+intentionally persistent behavior has been reviewed.
 
 ## Usage Context
 
@@ -117,6 +118,8 @@ For JSON examples of processes, see the individual process files below:
   Corezoid node renderer
 - [Error Handling Strategies](error-handling.md) - Comprehensive approaches to handling errors in
   processes
+- [Opt-in Project Safety Policy](project-safety-policy.md) - Cycle budget guardrails and strict
+  process input/output contracts
 
 ## Related Documentation
 

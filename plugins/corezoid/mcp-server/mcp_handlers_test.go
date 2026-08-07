@@ -485,6 +485,12 @@ func TestPushProcessToolSchema_DocumentsStubModeConfirmation(t *testing.T) {
 			t.Fatalf("expected allow_active_stub_mode description to contain %q, got:\n%s", want, desc)
 		}
 	}
+	if _, ok := schema["confirm_unresolved_call_risk"].(map[string]interface{}); !ok {
+		t.Fatalf("expected confirm_unresolved_call_risk property in push-process schema, got %#v", schema)
+	}
+	if _, legacy := schema["confirm_dynamic_call_risk"]; legacy {
+		t.Fatalf("legacy dynamic-only confirmation name must not remain in push-process schema: %#v", schema)
+	}
 }
 
 // ---- pull-process ----------------------------------------------------------

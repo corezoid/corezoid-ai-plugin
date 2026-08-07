@@ -152,6 +152,10 @@ A process does **not** need declared `params` to accept input. When one process 
 required. Declare `params` only to enforce types / required-ness or to drive a UI; otherwise keep
 `"params": []`.
 
+This describes the Corezoid platform requirement. A project that enables `process_contracts` in
+the [opt-in project safety policy](project-safety-policy.md) intentionally applies a stricter rule:
+all inferred inputs and success outputs must be declared, typed, described, and kept synchronized.
+
 ## Input Parameters
 
 The process defines five input parameters with different types, validation rules, and flags:
