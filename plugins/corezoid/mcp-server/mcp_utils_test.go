@@ -353,3 +353,143 @@ func TestResolveProcessPath_AutoDiscoverNone(t *testing.T) {
 		t.Error("expected error when no .conv.json present, got nil")
 	}
 }
+
+// ---- findStageRootFromCWD --------------------------------------------------
+
+// chdirTemp switches CWD to dir for the duration of the test.
+func chdirTemp(t *testing.T, dir string) {
+	t.Helper()
+	orig, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	if err := os.Chdir(dir); err != nil {
+		t.Fatalf("chdir %q: %v", dir, err)
+	}
+	t.Cleanup(func() { os.Chdir(orig) }) //nolint:errcheck
+}
+
+func TestFindStageRootFromCWD_ReturnsRootPath(t *testing.T) {
+	rootDir := tmpHomeAndCWD(t)
+	if err := UpdateCurrent(func(f *Folder) { f.StageID = 671255 }); err != nil {
+		t.Fatalf("UpdateCurrent: %v", err)
+	}
+
+	got := findStageRootFromCWD(671255)
+	gotReal, _ := filepath.EvalSymlinks(got)
+	rootReal, _ := filepath.EvalSymlinks(rootDir)
+	if gotReal != rootReal {
+		t.Errorf("findStageRootFromCWD(671255) = %q, want %q", gotReal, rootReal)
+	}
+}
+
+func TestFindStageRootFromCWD_MismatchedStageIDReturnsEmpty(t *testing.T) {
+	tmpHomeAndCWD(t)
+	if err := UpdateCurrent(func(f *Folder) { f.StageID = 999999 }); err != nil {
+		t.Fatalf("UpdateCurrent: %v", err)
+	}
+
+	if got := findStageRootFromCWD(671255); got != "" {
+		t.Errorf("expected empty when Folder.StageID disagrees, got %q", got)
+	}
+}
+
+func TestFindStageRootFromCWD_ZeroStageIDMatches(t *testing.T) {
+	rootDir := tmpHomeAndCWD(t)
+	if err := UpdateCurrent(func(f *Folder) { f.StageID = 42 }); err != nil {
+		t.Fatalf("UpdateCurrent: %v", err)
+	}
+
+	// expectedStageID=0 skips the guard — any Folder.StageID is accepted.
+	got := findStageRootFromCWD(0)
+	gotReal, _ := filepath.EvalSymlinks(got)
+	rootReal, _ := filepath.EvalSymlinks(rootDir)
+	if gotReal != rootReal {
+		t.Errorf("expected match when expectedStageID=0, got %q want %q", gotReal, rootReal)
+	}
+}
+
+func TestFindStageRootFromCWD_NoFolderReturnsEmpty(t *testing.T) {
+	// tmpHome sets HOME to a fresh dir but does NOT register a Folder for
+	// COREZOID_WORK_DIR — Current() returns nil, findStageRootFromCWD "".
+	tmpHome(t)
+	if got := findStageRootFromCWD(0); got != "" {
+		t.Errorf("expected empty when no Folder registered, got %q", got)
+	}
+}
+
+// TestPullProcess_TargetDirComposition documents the invariant that
+// handlePullProcess relies on: resolveFolderPathFromAPI returns a path
+// RELATIVE to the stage root, and filepath.Join(stageRoot, resolved) yields
+// the correct on-disk location for any depth of nesting — including the
+// stage-root case where resolved == "".
+func TestPullProcess_TargetDirComposition(t *testing.T) {
+	rootDir := tmpHomeAndCWD(t)
+	if err := UpdateCurrent(func(f *Folder) { f.StageID = 671255 }); err != nil {
+		t.Fatalf("UpdateCurrent: %v", err)
+	}
+
+	stageRoot := findStageRootFromCWD(671255)
+	if stageRoot == "" {
+		t.Fatal("stage root not resolved from Folder")
+	}
+	stageRootReal, _ := filepath.EvalSymlinks(stageRoot)
+	rootReal, _ := filepath.EvalSymlinks(rootDir)
+
+	cases := []struct {
+		name     string
+		resolved string // what resolveFolderPathFromAPI would return
+		want     string
+	}{
+		{"process at stage root", "", rootReal},
+		{"one-level nesting", "671257_API", filepath.Join(rootReal, "671257_API")},
+		{"deep nesting", filepath.Join("671257_API", "671262_GPT"), filepath.Join(rootReal, "671257_API", "671262_GPT")},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got := filepath.Join(stageRootReal, c.resolved)
+			if got != c.want {
+				t.Errorf("resolved=%q: got %q, want %q", c.resolved, got, c.want)
+			}
+		})
+	}
+}
+
+// ---- resolvePullDest -------------------------------------------------------
+
+// TestResolvePullDest_NoFolderReturnsDot: first-ever pull, no Folder is
+// registered yet — resolvePullDest falls back to "." so downloadStageRecursively
+// writes into the current cwd, which UpdateCurrent will then register as
+// RootPath on commit.
+func TestResolvePullDest_NoFolderReturnsDot(t *testing.T) {
+	tmpHome(t)
+	if got := resolvePullDest(); got != "." {
+		t.Errorf("expected fallback to \".\" when no Folder registered, got %q", got)
+	}
+}
+
+// TestResolvePullDest_ReturnsRootPathFromDeeperCWD is the regression test for
+// the reported bug: user is already logged in with RootPath = /workspace, then
+// descends into /workspace/sub and re-runs pull-folder — the pull must land at
+// /workspace, not at /workspace/sub. Before the fix, both handlePullFolder and
+// the login auto-pull passed literal "." (== the process cwd) and produced a
+// duplicate stage tree under the caller's subfolder.
+func TestResolvePullDest_ReturnsRootPathFromDeeperCWD(t *testing.T) {
+	rootDir := tmpHomeAndCWD(t)
+	if err := UpdateCurrent(func(f *Folder) { f.StageID = 671255 }); err != nil {
+		t.Fatalf("UpdateCurrent: %v", err)
+	}
+
+	sub := filepath.Join(rootDir, "671257_API")
+	if err := os.MkdirAll(sub, 0700); err != nil {
+		t.Fatalf("mkdir sub: %v", err)
+	}
+	t.Setenv("COREZOID_WORK_DIR", sub)
+
+	got := resolvePullDest()
+	gotReal, _ := filepath.EvalSymlinks(got)
+	rootReal, _ := filepath.EvalSymlinks(rootDir)
+	if gotReal != rootReal {
+		t.Errorf("expected pull to anchor at Folder.RootPath=%q from subfolder cwd=%q, got %q", rootReal, sub, gotReal)
+	}
+}

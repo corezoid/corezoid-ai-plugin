@@ -144,6 +144,7 @@ func handleSendFeedback(ctx context.Context, args map[string]interface{}) (strin
 		return "Error: failed to prepare feedback request.", true
 	}
 	req.Header.Set("Content-Type", "application/json")
+	setCorezoidOrigin(req, cfg.FeedbackEndpoint)
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {

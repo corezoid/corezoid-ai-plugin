@@ -31,7 +31,7 @@ Never reproduce the signature in a Code node — it is error-prone and unnecessa
 Keep `api_login` / `api_secret` as process parameters (or reference a stored
 key), never hard-coded.
 
-> **On-prem:** replace `api.corezoid.com` with your own API host (the value of `COREZOID_API_URL`).
+> **On-prem:** replace `api.corezoid.com` with your own API host (the `corezoid_url` from the current Folder in `~/.corezoid/config.json`).
 
 ## 3. Input parameters
 

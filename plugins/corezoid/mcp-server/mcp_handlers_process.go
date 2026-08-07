@@ -142,7 +142,7 @@ func stubModeStagePolicyForPush(v *Executor, jsonContent string) stubModeStagePo
 	if v.StageID == 0 {
 		return stubModeStagePolicy{
 			requiresConfirmation: true,
-			reason:               "target stage is unknown because process parent_id could not be resolved and COREZOID_STAGE_ID is not configured",
+			reason:               "target stage is unknown because process parent_id could not be resolved and stage_id is not configured for this folder",
 		}
 	}
 
@@ -232,7 +232,20 @@ func handlePullProcess(ctx context.Context, args map[string]interface{}) (string
 			if resolveErr != nil {
 				logger.Warn("pull-process: could not resolve folder path for parent_id %d: %v", parentID, resolveErr)
 			} else {
-				dir = resolved
+				// resolved is relative to the stage root. Anchor it at the
+				// local stage-root directory (found by walking up from CWD
+				// to a *.stage.json marker) so a re-pull from a subfolder
+				// still writes the file to the same location it lives at
+				// inside Corezoid — not into whatever the current CWD is.
+				// When the process sits at the stage root (resolved == ""),
+				// filepath.Join(stageRoot, "") == stageRoot, which is what
+				// we want. If no stage marker is found (user is outside a
+				// workspace), fall back to the old CWD-relative behaviour.
+				if stageRoot := findStageRootFromCWD(v.StageID); stageRoot != "" {
+					dir = filepath.Join(stageRoot, resolved)
+				} else {
+					dir = resolved
+				}
 			}
 		}
 	}
@@ -261,33 +274,55 @@ func handlePullFolder(ctx context.Context, args map[string]interface{}) (string,
 	}
 
 	// Sync git mirror context before downloading processes.
-	// ensureGitContext handles elicitation of COREZOID_GIT_URL if missing,
+	// ensureGitContext handles derivation of git_url if missing,
 	// and silently skips on any error so the main pull always proceeds.
 	ensureGitContext(ctx)
 
 	v := NewValidator(ctx, 0)
 
+	// pull-folder always writes into the matched Folder's RootPath — the stage
+	// root registered in ~/.corezoid/config.json — so a re-pull triggered from
+	// any subfolder overwrites the workspace in place instead of nesting a
+	// second copy under the caller's cwd. Falls back to "." for the first-ever
+	// pull (before any Folder exists), which matches cwd.
+	dest := resolvePullDest()
+
+	// folder_id=0 is "No Project" mode: no stage root, mirror the workspace
+	// root view instead. project_id/stage_id are pinned to 0 in the config so
+	// downstream tools resolve context off individual process files.
+	if folderID == 0 {
+		if err := downloadWorkspaceRootRecursively(v, dest); err != nil {
+			return fmt.Sprintf("Error fetching workspace root: %v", err), true
+		}
+		if err := writeWorkspaceProvisionedMarkerIfEmpty(dest); err != nil {
+			logger.Warn("pull-folder: could not write %s marker: %v", workspaceProvisionedMarker, err)
+		}
+		regenerateLocalCLAUDEMDIfNeeded(ctx)
+		return fmt.Sprintf("Workspace root saved to %s", dest), false
+	}
+
 	// Pre-warm project_id cache so push-process never needs an extra API call.
 	// folderID is the stage; its parent is the project.
 	_, _ = resolveAndCacheProjectID(v)
 
-	if err := downloadStageRecursively(v, folderID, "."); err != nil {
+	if err := downloadStageRecursively(v, folderID, dest); err != nil {
 		return fmt.Sprintf("Error fetching folder: %v", err), true
+	}
+	if err := writeWorkspaceProvisionedMarkerIfEmpty(dest); err != nil {
+		logger.Warn("pull-folder: could not write %s marker: %v", workspaceProvisionedMarker, err)
 	}
 
 	// In local/offline mode: regenerate CLAUDE.md from the freshly-downloaded
 	// .conv.json files (online mode copies it from the Gitea mirror instead).
 	regenerateLocalCLAUDEMDIfNeeded(ctx)
 
-	return fmt.Sprintf("Folder %d saved to current directory", folderID), false
+	return fmt.Sprintf("Folder %d saved to %s", folderID, dest), false
 }
 
-// handleCreateVariable creates a Corezoid env variable scoped to the given stage.
+// handleCreateVariable creates a Corezoid env variable in the current stage.
+// The stage is resolved from the workspace marker file — never accepted as an
+// argument. The LLM never needs to look up stage_id.
 func handleCreateVariable(ctx context.Context, args map[string]interface{}) (string, bool) {
-	rootFolderID, err := strArg(args, "stage_id")
-	if err != nil {
-		return "Error: " + err.Error(), true
-	}
 	name, err := strArg(args, "name")
 	if err != nil {
 		return "Error: " + err.Error(), true
@@ -302,10 +337,14 @@ func handleCreateVariable(ctx context.Context, args map[string]interface{}) (str
 	}
 
 	v := NewValidator(ctx, 0)
+	if v.StageID == 0 {
+		return "Error: cannot resolve stage_id — no <id>_<name>.stage.json marker on disk. Run the 'login' tool to pull one.", true
+	}
+	rootFolderID := strconv.Itoa(v.StageID)
 	if err := v.CreateVariable(rootFolderID, name, description, value); err != nil {
 		return fmt.Sprintf("Error creating variable: %v", err), true
 	}
-	return fmt.Sprintf("Environment variable '%s' created successfully", name), false
+	return fmt.Sprintf("Environment variable '%s' created successfully in stage %d", name, v.StageID), false
 }
 
 // handlePushProcess validates a local .conv.json and deploys it to Corezoid.
@@ -972,10 +1011,11 @@ func handleDeleteFolder(ctx context.Context, args map[string]interface{}) (strin
 //  1. explicit stage_id argument (belt-and-braces override for scripts);
 //  2. stage derived from the process file's parent_id (walk up folders until
 //     obj_type==3) — this is the correct answer for the target process and
-//     avoids the frozen-env failure mode where COREZOID_STAGE_ID pointed at a
-//     different project's stage and the server rejected with the cryptic
+//     avoids the frozen-config failure mode where a stale stage_id pointed at
+//     a different project's stage and the server rejected with the cryptic
 //     "Object is not in stage";
-//  3. COREZOID_STAGE_ID from .env (legacy fallback for pre-parent_id files).
+//  3. stage_id from the current Folder in ~/.corezoid/config.json (legacy
+//     fallback for pre-parent_id files).
 func handleCreateAlias(ctx context.Context, args map[string]interface{}) (string, bool) {
 	filePath, err := resolveProcessPath(args, "process_path")
 	if err != nil {
@@ -1004,9 +1044,9 @@ func handleCreateAlias(ctx context.Context, args map[string]interface{}) (string
 		if strings.Contains(strings.ToLower(msg), "object is not in stage") {
 			hint := fmt.Sprintf(" — the process (obj_id %d) does not live in stage %d (%s).", procID, stageID, stageSrc)
 			if v.StageID != 0 && v.StageID != stageID {
-				hint += fmt.Sprintf(" COREZOID_STAGE_ID is set to %d; that value was NOT used here.", v.StageID)
+				hint += fmt.Sprintf(" The workspace marker's stage_id is %d; that value was NOT used here.", v.StageID)
 			}
-			hint += " Pass an explicit stage_id, or pull-process this file again so its parent_id points at the current stage."
+			hint += " Pull-process this file again so its parent_id points at the current stage."
 			return fmt.Sprintf("Error creating alias: %s%s", msg, hint), true
 		}
 		return fmt.Sprintf("Error creating alias: %v", err), true
@@ -1015,27 +1055,19 @@ func handleCreateAlias(ctx context.Context, args map[string]interface{}) (string
 	return fmt.Sprintf("Alias '%s' created successfully, AliasID: %d (stage %d, %s)", shortName, aliasID, stageID, stageSrc), false
 }
 
-// resolveAliasStageID picks the stage_id for a create-alias call. It returns
-// the resolved ID, a short label describing where it came from (for user
-// messages), and a hard error only if no source produced a usable stage.
+// resolveAliasStageID picks the stage_id for a create-alias call. The LLM
+// never supplies stage_id — the resolver walks the process file's parent_id
+// chain first (so a re-pulled file always lands in the right stage), then
+// falls back to the workspace marker's stage_id.
 func resolveAliasStageID(v *Executor, args map[string]interface{}, filePath string) (int, string, error) {
-	if _, ok := args["stage_id"]; ok {
-		s, err := intArg(args, "stage_id")
-		if err != nil {
-			return 0, "", err
-		}
-		if s == 0 {
-			return 0, "", fmt.Errorf("stage_id argument is 0")
-		}
-		return s, "from stage_id argument", nil
-	}
+	_ = args // signature kept for callers; stage_id is no longer a valid arg
 
 	if parentID, ok := readParentIDFromFile(filePath); ok && parentID != 0 {
 		stage, err := v.ResolveStageIDByFolder(parentID)
 		if err == nil && stage != 0 {
 			label := "derived from process parent_id"
 			if v.StageID != 0 && v.StageID != stage {
-				label = fmt.Sprintf("derived from process parent_id — overrides COREZOID_STAGE_ID=%d", v.StageID)
+				label = fmt.Sprintf("derived from process parent_id — overrides workspace marker stage_id=%d", v.StageID)
 			}
 			return stage, label, nil
 		}
@@ -1045,9 +1077,9 @@ func resolveAliasStageID(v *Executor, args map[string]interface{}, filePath stri
 	}
 
 	if v.StageID != 0 {
-		return v.StageID, "from COREZOID_STAGE_ID (fallback — process file had no parent_id)", nil
+		return v.StageID, "from workspace marker stage_id (fallback — process file had no parent_id)", nil
 	}
-	return 0, "", fmt.Errorf("could not resolve stage_id: process file has no parent_id, no stage_id argument was passed, and COREZOID_STAGE_ID is not set. Re-pull the process (so parent_id is written), pass stage_id explicitly, or set COREZOID_STAGE_ID.")
+	return 0, "", fmt.Errorf("could not resolve stage_id: process file has no parent_id and no stage marker is on disk. Re-pull the process (so parent_id is written) or run 'login' to materialize the marker.")
 }
 
 // readParentIDFromFile reads a .conv.json file just far enough to extract its

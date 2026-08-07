@@ -10,7 +10,6 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
-	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -61,31 +60,32 @@ var stageID int
 var insecureTLS bool
 
 // cachedProjectID holds the project ID resolved by resolveProjectID (see
-// mcp_handlers_git.go), persisted to COREZOID_PROJECT_ID in the project .env
-// so it survives server restarts without a repeat API round-trip. It is keyed
-// by stage — resolveProjectID resolves it from COREZOID_STAGE_ID — so it is
-// explicitly cleared (in-memory and in .env) whenever WORKSPACE_ID or
-// COREZOID_STAGE_ID changes (handleLogin) or on logout — never silently reset
-// on every loadConfig.
+// mcp_handlers_git.go), persisted to the current Folder in
+// ~/.corezoid/config.json so it survives server restarts without a repeat API
+// round-trip. It is keyed by stage — resolveProjectID resolves it from the
+// Folder's StageID — so it is cleared (in-memory and in the Folder) whenever
+// workspace or stage changes (handleLogin) or on logout.
 var cachedProjectID int
 
-// apiLogin and apiSecret are the Corezoid API key credentials (API_LOGIN /
-// API_SECRET). They provide an alternative to OAuth2 PKCE for environments
-// where browser-based authentication is not available. When both are set,
-// requests are signed using the Corezoid double-salted SHA1 pattern instead of using a Simulator bearer token.
-// The same credentials are reused for git mirror Basic auth (login_id:secret).
+// apiLogin and apiSecret are the Corezoid API key credentials. They provide
+// an alternative to OAuth2 PKCE for environments where browser-based
+// authentication is not available. When both are set, requests are signed
+// using the Corezoid double-salted SHA1 pattern instead of using a Simulator
+// bearer token. Persisted per-folder in ~/.corezoid/config.json. The same
+// credentials are reused for git mirror Basic auth (login_id:secret).
 var apiLogin string
 var apiSecret string
 
 // gitURL is the Corezoid git mirror base URL including org path
-// (e.g. https://git-dev.dev.corezoid.com/corezoid-dev). Set via COREZOID_GIT_URL.
-// apiLogin/apiSecret are reused for git Basic auth — no separate git credential needed.
+// (e.g. https://git-dev.dev.corezoid.com/corezoid-dev). Persisted per-folder
+// in ~/.corezoid/config.json. apiLogin/apiSecret are reused for git Basic
+// auth — no separate git credential needed.
 var gitURL string
 
 // gitStagePath is the relative path inside .git-context/ to the current stage
 // directory (e.g. "projects/123_Foo/stages/456_Bar"). Resolved once after
-// git-pull-context and saved to .env as COREZOID_GIT_STAGE_PATH so the agent
-// can reference it directly when reading CLAUDE.md or _ext/docs/*.
+// git-pull-context and persisted per-folder in ~/.corezoid/config.json so
+// the agent can reference it directly when reading CLAUDE.md or _ext/docs/*.
 var gitStagePath string
 
 // authSnapshot returns a coherent snapshot of the auth-state globals taken
@@ -107,7 +107,7 @@ func apiKeySnapshot() (login, secret string) {
 
 // gitConfigSnapshot returns a coherent snapshot of the git mirror config.
 // gitLogin/gitSecret reuse apiLogin/apiSecret (same Corezoid API key for both).
-// accountURLv is included so callers can derive COREZOID_GIT_URL when not set.
+// accountURLv is included so callers can derive git_url when not set.
 // The project ID itself is not part of this snapshot — resolveProjectID
 // resolves/caches it via the shared resolveAndCacheProjectID (see main.go).
 func gitConfigSnapshot() (gitURLv, loginv, secretv, companyIDv, accountURLv string) {
@@ -133,124 +133,21 @@ func withAuthLock(fn func()) {
 	fn()
 }
 
-func loadDotEnv(filename string) {
-	data, err := os.ReadFile(filename)
-	if err != nil {
-		return
-	}
-	for _, line := range strings.Split(string(data), "\n") {
-		line = strings.TrimSpace(line)
-		if line == "" || strings.HasPrefix(line, "#") {
-			continue
-		}
-		parts := strings.SplitN(line, "=", 2)
-		if len(parts) != 2 {
-			continue
-		}
-		key := strings.TrimSpace(parts[0])
-		value := strings.TrimSpace(parts[1])
-		// strip optional surrounding quotes
-		if len(value) >= 2 && ((value[0] == '"' && value[len(value)-1] == '"') || (value[0] == '\'' && value[len(value)-1] == '\'')) {
-			value = value[1 : len(value)-1]
-		}
-		// skip unexpanded shell variable references (e.g. ${VAR_NAME})
-		if strings.HasPrefix(value, "${") && strings.HasSuffix(value, "}") {
-			continue
-		}
-		os.Setenv(key, value)
-	}
-}
-
-// isProjectRoot returns true if the given directory contains a *stage.json file,
-// which marks the root of a convctl project.
-func isProjectRoot(dir string) bool {
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		return false
-	}
-	reStage := regexp.MustCompile(`^\d+_.*\.stage\.json$`)
-	for _, e := range entries {
-		if !e.IsDir() && reStage.MatchString(e.Name()) {
-			return true
-		}
-	}
-	return false
-}
-
-// findAndLoadDotEnv searches for a .env file starting from the current directory
-// and walking up the tree. It stops at the project root (directory containing a
-// *stage.json file) and will not traverse above it.
-func findAndLoadDotEnv() {
-	cwd, err := os.Getwd()
-	if err != nil {
-		return
-	}
-	dir := cwd
-	for {
-		envPath := filepath.Join(dir, ".env")
-		if _, err := os.Stat(envPath); err == nil {
-			loadDotEnv(envPath)
-			return
-		}
-		// Stop here — cannot go above the project root.
-		if isProjectRoot(dir) {
-			return
-		}
-		parent := filepath.Dir(dir)
-		if parent == dir {
-			// Reached filesystem root without finding anything.
-			return
-		}
-		dir = parent
-	}
-}
-
+// loadConfig populates the in-memory auth-state globals from the current
+// Folder in ~/.corezoid/config.json. Called at startup and after any write
+// that could have changed persisted state. Dev flags (COREZOID_DEBUG,
+// COREZOID_INSECURE_TLS) are still read from env — they are process-scope
+// switches, not user-visible config.
 func loadConfig() {
-	// User-level credentials (~/.corezoid/credentials) are loaded first so that
-	// a project .env can still override ACCESS_TOKEN for power users who need it.
-	if credPath, err := credentialsFilePath(); err == nil {
-		if _, err := os.Stat(credPath); err == nil {
-			loadDotEnv(credPath)
-		}
-	}
-	findAndLoadDotEnv()
-	apiURL = os.Getenv("COREZOID_API_URL")
-	accountURL = os.Getenv("ACCOUNT_URL")
-	workspaceID = os.Getenv("WORKSPACE_ID")
-	apiToken = os.Getenv("ACCESS_TOKEN")
-	apigwURL = os.Getenv("COREZOID_APIGW_URL")
-	if apigwURL == "" {
-		apigwURL = "https://api-apigw.corezoid.com"
-	}
-	stageID, _ = strconv.Atoi(os.Getenv("COREZOID_STAGE_ID"))
-	debug = debugFromEnv() // executor API trace; same switch as logger.IsDebug
+	syncGlobalsFromCurrent()
+	debug = debugFromEnv()
 	insecureTLS = os.Getenv("COREZOID_INSECURE_TLS") != ""
-	// Loaded from .env, but only trusted if COREZOID_PROJECT_ID_STAGE_ID (written
-	// alongside it by resolveAndCacheProjectID) matches the stage we just loaded.
-	// Without this check, manually editing WORKSPACE_ID/COREZOID_STAGE_ID in .env
-	// (bypassing the login tool, which clears the cache on a real switch) would
-	// silently reuse a project ID resolved for a different stage — pointing
-	// git-pull-context/git-push-context at the wrong project's mirror repo.
-	if pid, _ := strconv.Atoi(os.Getenv("COREZOID_PROJECT_ID")); pid != 0 && projectIDStageMatches(stageID) {
-		cachedProjectID = pid
-	} else {
-		cachedProjectID = 0
-		os.Unsetenv("COREZOID_PROJECT_ID")
-		os.Unsetenv("COREZOID_PROJECT_ID_STAGE_ID")
-		if envPath := findDotEnvPath(); envPath != "" {
-			removeEnvKey(envPath, "COREZOID_PROJECT_ID")          //nolint:errcheck
-			removeEnvKey(envPath, "COREZOID_PROJECT_ID_STAGE_ID") //nolint:errcheck
-		}
-	}
-	apiLogin = os.Getenv("API_LOGIN")
-	apiSecret = os.Getenv("API_SECRET")
-	gitURL = os.Getenv("COREZOID_GIT_URL")
-	gitStagePath = os.Getenv("COREZOID_GIT_STAGE_PATH")
 }
 
 // runCLI executes a single MCP tool from the command line and exits.
 // Usage: <binary> <tool-name> [key=value ...]
-// For pull-folder: folder_id defaults to COREZOID_STAGE_ID from .env; path defaults to cwd.
+// For pull-folder: folder_id defaults to the current Folder's stage_id in
+// ~/.corezoid/config.json; path defaults to cwd.
 // example export COREZOID_WORK_DIR="$PWD"; cd "/Users/mac/work/sources/corezoid-ai-doc/plugins/corezoid/mcp-server" && go run . pull-process process_id=1832359 && cd $COREZOID_WORK_DIR
 func runCLI(toolName string, rawArgs []string) {
 	args := make(map[string]interface{}, len(rawArgs))
@@ -346,13 +243,12 @@ func main() {
 	logger.Debug("Loaded configuration: apiURL=%s workspaceID=%s apigwURL=%s hasToken=%v", apiURL, workspaceID, apigwURL, apiToken != "")
 
 	if apiToken == "" && (apiLogin == "" || apiSecret == "") {
-		fmt.Fprintln(os.Stderr, "[corezoid-mcp] NOTICE: No credentials found.")
+		fmt.Fprintln(os.Stderr, "[corezoid-mcp] NOTICE: No credentials found for this working directory.")
 		fmt.Fprintln(os.Stderr, "[corezoid-mcp] Authenticate via one of:")
 		fmt.Fprintln(os.Stderr, "[corezoid-mcp]   1. OAuth2 browser flow — run the 'login' MCP tool.")
-		fmt.Fprintln(os.Stderr, "[corezoid-mcp]   2. API key — set API_LOGIN and API_SECRET in your project .env,")
-		fmt.Fprintln(os.Stderr, "[corezoid-mcp]      then call the 'login' MCP tool to select workspace/stage.")
-		if credPath, err := credentialsFilePath(); err == nil {
-			fmt.Fprintf(os.Stderr, "[corezoid-mcp] OAuth2 token will be saved to: %s\n", credPath)
+		fmt.Fprintln(os.Stderr, "[corezoid-mcp]   2. API key — call login(api_login=<L>, api_secret=<S>) to select workspace/stage.")
+		if cfgPath, err := configFilePath(); err == nil {
+			fmt.Fprintf(os.Stderr, "[corezoid-mcp] Credentials will be saved to: %s\n", cfgPath)
 		}
 	}
 
@@ -696,32 +592,22 @@ func fixStruct(dataBin string, inProcessID int) (string, []string) {
 	return string(dataRspBin), messages
 }
 
-// resolveAndCacheProjectID returns the project ID for the current stage and an
-// optional user-visible notice when COREZOID_PROJECT_ID is written to .env for
-// the first time. The notice is non-empty only on the first API resolution.
-// Priority: in-memory cache → COREZOID_PROJECT_ID env var (only if recorded for
-// the current stage, see projectIDStageMatches) → API (ShowFolder).
-// Thread-safe: reads under RLock, writes under Lock.
+// resolveAndCacheProjectID returns the project ID for the current stage.
+// Priority: in-memory cache (populated by syncGlobalsFromCurrent from the
+// marker's parent_id, or the Folder's ProjectID as fallback) → API
+// (GetProjectIDByStageID). On API discovery the value is persisted to
+// Folder.ProjectID so subsequent server restarts don't repeat the round-trip
+// even when the marker doesn't carry parent_id.
+//
+// The second return value is a user-visible notice emitted when a fresh ID
+// is persisted; empty otherwise.
 func resolveAndCacheProjectID(v *Executor) (int, string) {
-	// Fast path: cache hit (read lock only).
 	authStateMu.RLock()
 	id := cachedProjectID
 	authStateMu.RUnlock()
 	if id != 0 {
 		return id, ""
 	}
-
-	// Try env var (no API call needed) — only trust it if COREZOID_PROJECT_ID_STAGE_ID
-	// confirms it was resolved for this exact stage (see loadConfig for the
-	// equivalent startup-time check).
-	if s := os.Getenv("COREZOID_PROJECT_ID"); s != "" {
-		if parsed, err := strconv.Atoi(s); err == nil && parsed != 0 && projectIDStageMatches(v.StageID) {
-			withAuthLock(func() { cachedProjectID = parsed })
-			return parsed, ""
-		}
-	}
-
-	// Resolve via API — must not hold the lock during I/O.
 	if v.StageID == 0 {
 		return 0, ""
 	}
@@ -729,90 +615,14 @@ func resolveAndCacheProjectID(v *Executor) (int, string) {
 	if resolved == 0 {
 		return 0, ""
 	}
-	withAuthLock(func() { cachedProjectID = resolved })
-	wasEmpty := os.Getenv("COREZOID_PROJECT_ID") == ""
-	os.Setenv("COREZOID_PROJECT_ID", strconv.Itoa(resolved))
-	os.Setenv("COREZOID_PROJECT_ID_STAGE_ID", strconv.Itoa(v.StageID))
-	// Always (over)write both keys together — unlike the old append-only-if-absent
-	// behavior, a stale COREZOID_PROJECT_ID left over from a different stage must
-	// not survive in .env once we've resolved a fresh value for this one.
-	if envPath := findDotEnvPath(); envPath != "" {
-		withAuthLock(func() {
-			updateEnvFile(envPath, "COREZOID_PROJECT_ID", strconv.Itoa(resolved))          //nolint:errcheck
-			updateEnvFile(envPath, "COREZOID_PROJECT_ID_STAGE_ID", strconv.Itoa(v.StageID)) //nolint:errcheck
-		})
+	if err := UpdateCurrent(func(f *Folder) {
+		f.ProjectID = resolved
+	}); err != nil {
+		logger.Warn("resolveProjectID: could not persist project ID to config: %v", err)
 	}
-	if wasEmpty {
-		notice := fmt.Sprintf("(COREZOID_PROJECT_ID=%d saved to .env for future use)", resolved)
-		return resolved, notice
-	}
-	return resolved, ""
-}
-
-// projectIDStageMatches reports whether COREZOID_PROJECT_ID_STAGE_ID in the
-// environment matches stageID — i.e. whether a cached COREZOID_PROJECT_ID was
-// actually resolved for the stage we're currently on, not left over from a
-// stage/workspace switch that bypassed the login tool's cache invalidation.
-func projectIDStageMatches(stageID int) bool {
-	if stageID == 0 {
-		return false
-	}
-	saved, err := strconv.Atoi(os.Getenv("COREZOID_PROJECT_ID_STAGE_ID"))
-	return err == nil && saved == stageID
-}
-
-// appendToDotEnv appends key=value to the nearest .env file if the key is absent.
-// Returns true when the value was actually written (first time only).
-// The read-check-write is serialised under authStateMu to prevent duplicate entries
-// from concurrent resolveAndCacheProjectID calls.
-func appendToDotEnv(key, value string) bool {
-	authStateMu.Lock()
-	defer authStateMu.Unlock()
-
-	envPath := findDotEnvPath()
-	if envPath == "" {
-		return false
-	}
-	data, _ := os.ReadFile(envPath)
-	// Skip if key already present.
-	for _, line := range strings.Split(string(data), "\n") {
-		if strings.HasPrefix(strings.TrimSpace(line), key+"=") {
-			return false
-		}
-	}
-	f, err := os.OpenFile(envPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
-	if err != nil {
-		logger.Warn("[snapshot] could not update .env: %v", err)
-		return false
-	}
-	defer f.Close()
-	_, _ = fmt.Fprintf(f, "\n%s=%s\n", key, value)
-	logger.Info("[snapshot] wrote %s=%s to %s", key, value, envPath)
-	return true
-}
-
-// findDotEnvPath returns the path of the nearest .env file by walking up from cwd.
-func findDotEnvPath() string {
-	cwd, err := os.Getwd()
-	if err != nil {
-		return ""
-	}
-	dir := cwd
-	for {
-		candidate := filepath.Join(dir, ".env")
-		if _, err := os.Stat(candidate); err == nil {
-			return candidate
-		}
-		if isProjectRoot(dir) {
-			// Create .env at project root if none exists yet.
-			return filepath.Join(dir, ".env")
-		}
-		parent := filepath.Dir(dir)
-		if parent == dir {
-			return filepath.Join(cwd, ".env")
-		}
-		dir = parent
-	}
+	syncGlobalsFromCurrent()
+	notice := fmt.Sprintf("(project_id=%d cached in ~/.corezoid/config.json for future use)", resolved)
+	return resolved, notice
 }
 
 // extractObjIDFromJSON returns the obj_id from a process JSON string.

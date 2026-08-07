@@ -134,7 +134,9 @@ func walkDepth(dir string, depth, maxDepth int, fn func(string, os.DirEntry) boo
 	return nil
 }
 
-// moveContents moves all entries from src directory into dst directory.
+// moveContents moves all entries from src directory into dst directory,
+// removing any pre-existing entry at the destination first so a re-pull
+// wins over stale contents from a previous fetch.
 func moveContents(src, dst string) error {
 	entries, err := os.ReadDir(src)
 	if err != nil {
@@ -143,9 +145,141 @@ func moveContents(src, dst string) error {
 	for _, e := range entries {
 		srcPath := filepath.Join(src, e.Name())
 		dstPath := filepath.Join(dst, e.Name())
+		if _, statErr := os.Lstat(dstPath); statErr == nil {
+			if err := os.RemoveAll(dstPath); err != nil {
+				return fmt.Errorf("clear stale %s: %w", dstPath, err)
+			}
+		}
 		if err := os.Rename(srcPath, dstPath); err != nil {
 			return err
 		}
+	}
+	return nil
+}
+
+// exportWrapperDirRe matches every top-level wrapper directory Corezoid's
+// exporter emits — one per object type. Despite the ".zip" suffix these are
+// DIRECTORIES, not files. Stage pulls only produce "stage_*" wrappers;
+// workspace-root pulls ("No Project" mode) also emit "folder_*", "conv_*",
+// and "dashboard_*" wrappers, one per exported top-level object.
+var exportWrapperDirRe = regexp.MustCompile(`^(stage|folder|conv|dashboard)_\d+_\d+\.zip$`)
+
+// hoistZipWrapperDirs unwraps every top-level wrapper directory in root
+// (see exportWrapperDirRe). Each wrapper's contents are moved up to root;
+// existing entries at the destination are removed first so a fresh pull
+// always wins over stale data.
+func hoistZipWrapperDirs(root string) error {
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		return err
+	}
+	for _, e := range entries {
+		if !e.IsDir() || !exportWrapperDirRe.MatchString(e.Name()) {
+			continue
+		}
+		wrapper := filepath.Join(root, e.Name())
+		inner, err := os.ReadDir(wrapper)
+		if err != nil {
+			return fmt.Errorf("read wrapper %s: %w", wrapper, err)
+		}
+		for _, ie := range inner {
+			src := filepath.Join(wrapper, ie.Name())
+			dst := filepath.Join(root, ie.Name())
+			if _, statErr := os.Lstat(dst); statErr == nil {
+				if err := os.RemoveAll(dst); err != nil {
+					return fmt.Errorf("clear stale %s: %w", dst, err)
+				}
+			}
+			if err := os.Rename(src, dst); err != nil {
+				return fmt.Errorf("hoist %s -> %s: %w", src, dst, err)
+			}
+		}
+		if err := os.RemoveAll(wrapper); err != nil {
+			return fmt.Errorf("remove wrapper %s: %w", wrapper, err)
+		}
+	}
+	return nil
+}
+
+// downloadWorkspaceRootRecursively downloads every top-level object (folder,
+// conv, dashboard) in the current workspace and extracts each into filePath.
+// Used when the user picked "No Project" during login — the workspace has no
+// stage root, so we mirror what the Corezoid UI's root view shows straight
+// into the workspace directory.
+func downloadWorkspaceRootRecursively(e *Executor, filePath string) error {
+	if err := e.checkCancel(); err != nil {
+		return err
+	}
+
+	items, err := e.ListWorkspaceRoot()
+	if err != nil {
+		return fmt.Errorf("failed to list workspace root: %w", err)
+	}
+	if len(items) == 0 {
+		return nil
+	}
+
+	urls, err := e.BatchExportSchemes(items)
+	if err != nil {
+		return fmt.Errorf("failed to batch export workspace root: %w", err)
+	}
+
+	for i, url := range urls {
+		if err := e.checkCancel(); err != nil {
+			return err
+		}
+		data, err := e.fetchDownload(url)
+		if err != nil {
+			return fmt.Errorf("failed to download %s #%d: %w", items[i].ObjType, items[i].ObjID, err)
+		}
+		zipPath := filepath.Join(filePath, fmt.Sprintf(".root_%s_%d.zip", items[i].ObjType, items[i].ObjID))
+		if err := os.WriteFile(zipPath, data, 0644); err != nil {
+			return fmt.Errorf("failed to write zip: %w", err)
+		}
+		unzipErr := unzipFile(zipPath, filePath)
+		os.Remove(zipPath)
+		if unzipErr != nil {
+			return fmt.Errorf("failed to unzip %s #%d: %w", items[i].ObjType, items[i].ObjID, unzipErr)
+		}
+	}
+
+	// Corezoid's exporter wraps each top-level object in a
+	// {stage,folder,conv,dashboard}_<id>_<ts>.zip wrapper directory. Unwrap
+	// them so folder / conv / dashboard files land directly at filePath.
+	if err := hoistZipWrapperDirs(filePath); err != nil {
+		return fmt.Errorf("failed to unwrap workspace-root archives: %w", err)
+	}
+
+	// Some archives contain inner *.zip files that also need extracting.
+	// Loop until none remain (they can nest).
+	innerZipRe := exportWrapperDirRe
+	for {
+		files, err := os.ReadDir(filePath)
+		if err != nil {
+			return fmt.Errorf("failed to read directory: %w", err)
+		}
+		var innerZip string
+		for _, f := range files {
+			if !f.IsDir() && innerZipRe.MatchString(f.Name()) {
+				innerZip = filepath.Join(filePath, f.Name())
+				break
+			}
+		}
+		if innerZip == "" {
+			break
+		}
+		err = unzipFile(innerZip, filePath)
+		os.Remove(innerZip)
+		if err != nil {
+			return fmt.Errorf("failed to unzip %s: %w", filepath.Base(innerZip), err)
+		}
+	}
+
+	if err := renameFiles2Folders(filePath); err != nil {
+		return fmt.Errorf("failed to rename files: %w", err)
+	}
+	if err := formatJSONWithFallback(e, filePath); err != nil {
+		return fmt.Errorf("failed to format json: %w", err)
 	}
 	return nil
 }
@@ -208,6 +342,18 @@ func downloadStageRecursively(e *Executor, folderID int, filePath string) error 
 		}
 	}
 
+	// Hoist contents out of any wrapper *directory* that Corezoid exports
+	// wrap around the real stage (e.g. "stage_671255_1785764880374.zip/" —
+	// note it is a directory, not a file, because Corezoid's exporter names
+	// the top-level entry after the download filename). Left in place, these
+	// wrappers accumulate on every re-pull because findStageDir/hoist below
+	// prefer the stale .stage that lives directly at filePath and skip the
+	// wrapper next to it. Doing this before findStageDir guarantees the
+	// freshly-extracted stage lands at filePath, overwriting any prior copy.
+	if err := hoistZipWrapperDirs(filePath); err != nil {
+		return fmt.Errorf("failed to unwrap stage archive: %w", err)
+	}
+
 	// Find .stage directory anywhere up to depth 2: <id>_<name>.stage
 	stageDir, err := findStageDir(filePath, 2)
 	if err != nil {
@@ -219,26 +365,31 @@ func downloadStageRecursively(e *Executor, folderID int, filePath string) error 
 			"or another large directory, set it to a dedicated project folder and " +
 			"restart Claude Code / the MCP server")
 	}
-	// stagesDir is the parent of stageDir (needed for cleanup)
-	stagesDir := filepath.Dir(stageDir)
-	if stagesDir == filePath {
-		stagesDir = ""
-	}
-	// Move all contents of stageDir into filePath
-	if err = moveContents(stageDir, filePath); err != nil {
-		return fmt.Errorf("failed to move files: %v", err)
-	}
-	// удалить stagesDir (родитель stageDir, если он не сам filePath)
-	if stagesDir != "" {
-		if err = os.RemoveAll(stagesDir); err != nil {
-			return fmt.Errorf("failed to remove stages directory: %v", err)
+	// Flatten the stage into filePath: move the contents of the
+	// <id>_<name>.{stage,folder,project} directory up so subfolders and the
+	// stage marker JSON land directly at the workspace root. moveContents
+	// overwrites any stale entry at the destination — a re-pull always wins.
+	// Then drop the (now empty) wrapper along with any intermediate directory
+	// the exporter placed above it.
+	if stageDir != filePath {
+		if err := moveContents(stageDir, filePath); err != nil {
+			return fmt.Errorf("failed to flatten stage into workspace: %v", err)
 		}
-	} else {
-		if err = os.RemoveAll(stageDir); err != nil {
-			return fmt.Errorf("failed to remove stage directory: %v", err)
+		wrapper := stageDir
+		for wrapper != filePath {
+			parent := filepath.Dir(wrapper)
+			if err := os.RemoveAll(wrapper); err != nil {
+				return fmt.Errorf("failed to remove stage wrapper: %v", err)
+			}
+			if parent == filePath {
+				break
+			}
+			wrapper = parent
 		}
 	}
-	// теперь везде где json файлы форматировать их через MarshalIndent
+	// renameFiles2Folders strips the .folder/.project/.stage suffix from
+	// every directory under filePath, including any nested stage the user
+	// previously pulled at a different depth.
 	err = renameFiles2Folders(filePath)
 	if err != nil {
 		return fmt.Errorf("failed to rename files: %v", err)
@@ -261,9 +412,12 @@ func renameFiles2Folders(filePath string) error {
 	for _, f := range files {
 		if f.IsDir() {
 			dirName := f.Name()
-			newName := strings.TrimSuffix(dirName, ".stage")
-			newName = strings.TrimSuffix(newName, ".folder")
+			// Strip every Corezoid export suffix — the workspace root is
+			// itself the stage root now, so nested directories should carry
+			// only the plain "<id>_<name>" form.
+			newName := strings.TrimSuffix(dirName, ".folder")
 			newName = strings.TrimSuffix(newName, ".project")
+			newName = strings.TrimSuffix(newName, ".stage")
 			newPath := filepath.Join(filePath, newName)
 			if newName != dirName {
 				oldPath := filepath.Join(filePath, dirName)

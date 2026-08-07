@@ -204,14 +204,12 @@ If found, reuse it — do not create a duplicate.
 ### Step 2 — Create the variable
 
 Call MCP tool **`create-variable`** with:
-- `stage_id`: value of `COREZOID_STAGE_ID` from `.env`
 - `name`: the `short_name` (kebab-case, e.g. `stripe-api-key`)
 - `description`: human-readable label (min 3 chars), used as `title` in the API
 - `value`: the actual value
 
 ```
 create-variable(
-  stage_id="671255",
   name="payment-api-url",
   description="Payment Service Base URL",
   value="https://api.payments.example.com"
@@ -231,8 +229,8 @@ Use `{{env_var[@payment-api-url]}}` wherever this value is needed.
 Use when storing tokens, passwords, API keys — values that must be masked in the UI.
 
 ```
-POST {COREZOID_API_URL}/api/2/json
-Authorization: Simulator {ACCESS_TOKEN}
+POST {corezoid_url}/api/2/json
+Authorization: Simulator {access_token}
 Content-Type: application/json
 
 {
@@ -266,8 +264,8 @@ Response: `{ "obj_id": 2192, "proc": "ok", "fingerprints": [...] }`
 Use when a variable holds a structured config object or array.
 
 ```
-POST {COREZOID_API_URL}/api/2/json
-Authorization: Simulator {ACCESS_TOKEN}
+POST {corezoid_url}/api/2/json
+Authorization: Simulator {access_token}
 Content-Type: application/json
 
 {
@@ -299,8 +297,8 @@ Content-Type: application/json
 ## Workflow: List variables (direct API)
 
 ```
-POST {COREZOID_API_URL}/api/2/json
-Authorization: Simulator {ACCESS_TOKEN}
+POST {corezoid_url}/api/2/json
+Authorization: Simulator {access_token}
 Content-Type: application/json
 
 {
@@ -340,8 +338,8 @@ Modify updates all mutable fields in one call. Always send the full payload — 
 updates are not supported.
 
 ```
-POST {COREZOID_API_URL}/api/2/json
-Authorization: Simulator {ACCESS_TOKEN}
+POST {corezoid_url}/api/2/json
+Authorization: Simulator {access_token}
 Content-Type: application/json
 
 {
@@ -380,8 +378,8 @@ grep -r "env_var\[@variable-name\]" . --include="*.conv.json"
 ```
 
 ```
-POST {COREZOID_API_URL}/api/2/json
-Authorization: Simulator {ACCESS_TOKEN}
+POST {corezoid_url}/api/2/json
+Authorization: Simulator {access_token}
 Content-Type: application/json
 
 {
@@ -400,16 +398,20 @@ Content-Type: application/json
 
 ## Resolving environment values
 
+When calling the MCP `create-variable` / `modify-variable` / `delete-variable` / `list-variables` tools you do **not** need to look up `stage_id` or `project_id` — MCP resolves both from the `<id>_<name>.stage.json` marker at the workspace root.
+
+For **direct** `/api/2/json` calls (the raw workflows below) you need the values explicitly:
+
 | Value | Where to find it |
-|-------|-----------------|
-| `WORKSPACE_ID` (company_id) | `.env` — `WORKSPACE_ID=...` |
-| `COREZOID_STAGE_ID` (stage_id) | `.env` — `COREZOID_STAGE_ID=...` |
-| `project_id` | `*.stage.json` in project root — field `project_id` |
-| `COREZOID_API_URL` | `.env` — `COREZOID_API_URL=...` |
-| `ACCESS_TOKEN` | `~/.corezoid/credentials` |
+|-------|------------------|
+| `company_id` | `workspace_id` field in current Folder in `~/.corezoid/config.json` |
+| `stage_id` | `obj_id` in `<id>_<name>.stage.json` at the workspace root |
+| `project_id` | `parent_id` in the same `<id>_<name>.stage.json` |
+| API URL | `corezoid_url` field in current Folder |
+| Access token | `access_token` field in current Folder |
 | `obj_id` of variable | List API response, or `_ENV_VARS_.json` |
 
-If `.env` is missing, run the `corezoid-init` skill.
+If the marker file is missing, run the `corezoid-init` skill.
 
 ---
 

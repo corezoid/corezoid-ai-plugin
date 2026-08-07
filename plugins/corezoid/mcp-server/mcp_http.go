@@ -117,13 +117,15 @@ func pruneIdleHTTPSessions(cutoff time.Time) {
 func runHTTPServer(addr string) error {
 	go sweepIdleHTTPSessions()
 
-	// Load saved OAuth credentials the same way stdio mode does.
-	// Lock the check-then-set so the race detector sees a happens-before edge
-	// against the HTTP handlers we're about to start.
+	// Refresh in-memory auth state from ~/.corezoid/config.json — startup
+	// already called loadConfig, but another process may have written to the
+	// file since. The re-read is under the auth write lock so the race
+	// detector sees a happens-before edge against the HTTP handlers.
 	_, snapToken, _, _, _ := authSnapshot()
 	if snapToken == "" {
-		if creds, err := loadCredentials(); err == nil && creds != nil && !isCredentialsExpired(creds) {
-			withAuthLock(func() { apiToken = creds.AccessToken })
+		syncGlobalsFromCurrent()
+		_, snapToken, _, _, _ = authSnapshot()
+		if snapToken != "" {
 			logger.Info("http: loaded saved credentials")
 		}
 	}

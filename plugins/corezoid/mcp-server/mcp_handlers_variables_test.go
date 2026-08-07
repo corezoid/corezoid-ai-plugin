@@ -172,7 +172,7 @@ func TestListVariables_NoStage(t *testing.T) {
 	setVarTestAuth(t)
 	stageID = 0
 	res, isErr := handleToolCall(context.Background(), "list-variables", map[string]interface{}{})
-	if !isErr || !strings.Contains(res, "COREZOID_STAGE_ID") {
+	if !isErr || !strings.Contains(res, "stage_id") {
 		t.Fatalf("expected stage error, got isErr=%v: %s", isErr, res)
 	}
 }

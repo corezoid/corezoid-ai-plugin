@@ -8,8 +8,8 @@ import (
 )
 
 // handleListWorkspaces prints the workspaces the authenticated user can see.
-// Used during login when ACCOUNT_URL is set but WORKSPACE_ID hasn't been
-// picked yet.
+// Used during login when account_url is set on the current Folder but
+// workspace_id hasn't been picked yet.
 func handleListWorkspaces(ctx context.Context, _ map[string]interface{}) (string, bool) {
 	v := NewValidator(ctx, 0)
 	ops := []map[string]any{

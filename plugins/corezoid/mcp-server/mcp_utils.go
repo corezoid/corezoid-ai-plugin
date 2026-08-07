@@ -124,6 +124,40 @@ func resolveFolderIDFromDir(dir string) (int, string, error) {
 	}
 }
 
+// findStageRootFromCWD returns the absolute path of the local stage root —
+// i.e. Folder.RootPath, since pull-folder writes the stage's contents
+// directly into RootPath (no <id>_<name>.stage wrapper). Returns "" when
+// no Folder matches the current cwd, or when expectedStageID is non-zero
+// and disagrees with the Folder's StageID (guards pull-process against
+// writing into the wrong workspace after a stage change).
+//
+// Used by pull-process so a re-pull from a subfolder still writes the file
+// to the location it lives at inside Corezoid, not to the CWD.
+func findStageRootFromCWD(expectedStageID int) string {
+	f := Current()
+	if f == nil || f.RootPath == "" {
+		return ""
+	}
+	if expectedStageID != 0 && f.StageID != 0 && f.StageID != expectedStageID {
+		return ""
+	}
+	return f.RootPath
+}
+
+// resolvePullDest returns the destination directory for pull-folder /
+// workspace-root pulls. When a Folder matches the current cwd, the pull is
+// anchored at that Folder's RootPath so a re-pull invoked from any subfolder
+// still overwrites the stage at its original location — never nesting a
+// second copy under the caller's cwd. Falls back to "." for the first-ever
+// pull (no matching Folder yet), where cwd == the RootPath about to be
+// registered by UpdateCurrent.
+func resolvePullDest() string {
+	if root := findStageRootFromCWD(0); root != "" {
+		return root
+	}
+	return "."
+}
+
 // intArg extracts an integer argument from args map.
 func intArg(args map[string]interface{}, key string) (int, error) {
 	v, ok := args[key]

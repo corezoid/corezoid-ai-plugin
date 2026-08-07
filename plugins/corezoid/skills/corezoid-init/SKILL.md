@@ -22,12 +22,15 @@ Call MCP tool **`login`** with no arguments. It will guide setup in one of two m
 
 The `login` tool handles everything automatically in sequence:
 
-1. **API URL prompt** — interactive form asking for `ACCOUNT_URL`
-2. **OAuth2** — browser window opens for authentication, token saved to `~/.corezoid/credentials`
-3. **Workspace picker** — fetches available workspaces and shows a dropdown, saves `WORKSPACE_ID` to `.env`
-4. **Stage picker** — lists projects then stages for selection, saves `COREZOID_STAGE_ID` to `.env`
+1. **Account URL prompt** — interactive form asking for `account_url`
+2. **OAuth2** — browser window opens for authentication; the token is saved to `~/.corezoid/config.json` (`access_token` field on the current Folder)
+3. **Workspace picker** — fetches available workspaces and shows a dropdown; saves `workspace_id`
+4. **Stage picker** — lists projects then stages for selection; the chosen stage is materialized on disk as `<id>_<name>.stage/<id>_<name>.stage.json` (the marker file — NOT stored in `config.json`)
 
-When `login` returns "Setup complete", proceed to **Step 2**.
+### Interpreting the `login` response
+
+- **`"Setup complete! ... Stage <N> selected."`** → stage was picked and pulled. Proceed to **Step 2**.
+- **`"Setup incomplete: stage not selected. ..."`** → elicitation was cancelled or returned no stage. Follow the instructions in the message (usually: run `list-stages` + call `login(stage_id=…)` again). Do **not** fall back to Mode B — the token and workspace are already saved.
 
 ---
 
@@ -41,7 +44,7 @@ When elicitation is unavailable, drive the setup yourself using explicit tool ca
 
 → Call `login(account_url=<value>)`
 
-The tool opens a browser for OAuth2 authentication and saves the token to `~/.corezoid/credentials`.
+The tool opens a browser for OAuth2 authentication and saves the token to the current Folder in `~/.corezoid/config.json`.
 
 ### B2 — Select Workspace
 
@@ -77,8 +80,7 @@ When `login` returns "Setup complete", proceed to **Step 2**.
 
 ## Step 2 — Pull the project
 
-After `login` returns "Setup complete", call MCP tool **`pull-folder`** with:
-- `folder_id`: value of `COREZOID_STAGE_ID` (now set in `.env`)
+After `login` returns "Setup complete", call MCP tool **`pull-folder`** with no arguments — the MCP server resolves the stage automatically from the on-disk marker file. You do **not** need to know or pass `stage_id`.
 
 Do not proceed until the tool returns successfully.
 
@@ -86,15 +88,17 @@ Do not proceed until the tool returns successfully.
 
 ## Exception: user provides values directly
 
-If the user explicitly pastes values, write them to `.env` and skip the corresponding prompts:
+If the user pastes values (account URL, workspace ID, stage ID, or API key credentials), pass them to `login` as arguments — do **not** edit `~/.corezoid/config.json` by hand:
 
 ```
-COREZOID_API_URL=<value>
-WORKSPACE_ID=<value>
-COREZOID_STAGE_ID=<value>
+login(
+  account_url=<value>,
+  workspace_id=<value>,
+  stage_id=<value>
+)
 ```
 
-Then call `login` — it will skip already-set values and only prompt for what's missing.
+`login` will persist them to the current Folder and only prompt for what's still missing.
 
 ---
 
@@ -116,82 +120,55 @@ login(
 )
 ```
 
-⚠️ **Critical:** pass `api_login` and `api_secret` **as arguments to the `login` tool** — do NOT write them to `.env` manually. The tool saves them to `.env` automatically with the correct variable names (`API_LOGIN`, `API_SECRET`). Writing them manually with wrong names (e.g. `COREZOID_LOGIN`) will break authentication.
+⚠️ **Critical:** pass `api_login` and `api_secret` **as arguments to the `login` tool** — do NOT edit `~/.corezoid/config.json` by hand. The tool writes them to the current Folder with the correct field names (`api_login`, `api_secret`). Hand-editing under wrong field names will break authentication.
 
 The login tool will:
 1. Skip the OAuth2 browser flow
-2. Save `API_LOGIN` and `API_SECRET` to the project `.env`
-3. Set `COREZOID_API_URL` from `ACCOUNT_URL` if not already set
+2. Save `api_login` and `api_secret` to the current Folder in `~/.corezoid/config.json`
+3. Set `corezoid_url` from `account_url` if not already set
 4. Complete workspace/stage selection normally
 
 ---
 
-## Exception: OAuth fails on private on-prem instances
-
-On private Corezoid installations, the OAuth2 browser flow may time out because `localhost` is not registered as an allowed `redirect_uri` (see issue #7). Symptom: browser opens the workspace UI instead of redirecting back.
-
-**Workaround — populate credentials manually before calling `login`:**
-
-1. Get `ACCESS_TOKEN` from the account UI at `https://<host>/access_tokens` (create a token manually)
-2. Write the token to `~/.corezoid/credentials`:
-
-```
-ACCESS_TOKEN=<token>
-```
-
-3. Write project config to `.env` in `COREZOID_WORK_DIR` (the directory where Claude Code was opened):
-
-```
-ACCOUNT_URL=https://<host>
-COREZOID_API_URL=https://<host>
-WORKSPACE_ID=<company_id>
-COREZOID_STAGE_ID=<stage_id>
-```
-
-4. Restart the MCP server so it picks up the changes:
-```bash
-ps aux | grep "go run\|convctl" | grep -v grep | awk '{print $2}' | xargs kill
-```
-
-5. Call `login` — it will detect `ACCESS_TOKEN` in `~/.corezoid/credentials`, skip OAuth, and complete setup.
-
----
 
 ## Credential and config file locations
 
-Credentials and project config are stored in two separate files:
+All credentials and per-workspace auth state live in a user-level file. Stage identity (and normally project identity too) lives in the workspace itself, in an on-disk marker file:
 
 | File | Contents | Notes |
 |------|----------|-------|
-| `~/.corezoid/credentials` | `ACCESS_TOKEN`, `ACCESS_TOKEN_EXPIRES_AT` | User-level; shared across all projects; never in git |
-| `<COREZOID_WORK_DIR>/.env` | `WORKSPACE_ID`, `COREZOID_STAGE_ID`, API URLs | Project-level; one per workspace |
+| `~/.corezoid/config.json` | Array of Folders — one per working directory. Each Folder holds auth state: `account_url`, `corezoid_url`, `workspace_id`, `access_token`, `expires_at`, `api_login`, `api_secret`, `git_url`, `git_stage_path`, and a cached `project_id` used as a fallback when the marker's `parent_id` is missing. | Mode `0600`; never in git; secrets never leave the user's home directory. |
+| `<workspace>/<stage_id>_<name>.stage.json` | Stage marker at the workspace root. Contains `obj_id` (stage_id) and `parent_id` (project_id). Materialized automatically by the stage's zip during `pull-folder`/auto-pull; parsed by every tool that needs stage/project identity. | Checked into the workspace repo; safe to share. |
 
-`COREZOID_WORK_DIR` is the directory where Claude Code was opened when the MCP server started (typically the project root). This is **not** the `mcp-server/` source directory.
-
-The MCP server loads `~/.corezoid/credentials` first, then the project `.env`. A token in `.env` overrides the user-level one — useful for environments that manage credentials externally.
+The MCP server chooses which Folder to use by matching the current working directory (or `$COREZOID_WORK_DIR`, set by Claude Code / Codex / Kiro) against each `root_path` and picking the longest-prefix match. This means sub-agents launched from any subdirectory of the workspace pick up the right credentials automatically.
 
 ---
 
-## `COREZOID_API_URL` format
+## `corezoid_url` format
 
-⚠️ `COREZOID_API_URL` must be the **base URL only** — no path suffix:
+⚠️ `corezoid_url` must be the **base URL only** — no path suffix:
 
 ```
-✅ COREZOID_API_URL=https://your-corezoid-host.example.com
-❌ COREZOID_API_URL=https://your-corezoid-host.example.com/api/2/json
+✅ "corezoid_url": "https://your-corezoid-host.example.com"
+❌ "corezoid_url": "https://your-corezoid-host.example.com/api/2/json"
 ```
 
 The server appends `/api/2/json` or `/api/2/download` automatically.
 
 ---
 
-## Variables reference
+## Fields reference
 
-| Variable | Stored in | Set during |
-|---|---|---|
-| `ACCOUNT_URL` | project `.env` | login step 1 — API URL prompt |
-| `COREZOID_API_URL` | project `.env` | login step 2.5 — derived from account clients API |
-| `ACCESS_TOKEN` | `~/.corezoid/credentials` | login step 2 — OAuth2 (or manually for on-prem) |
-| `WORKSPACE_ID` | project `.env` | login step 3 — workspace selection |
-| `COREZOID_STAGE_ID` | project `.env` | login step 4 — stage selection |
-| `COREZOID_OAUTH_CLIENT_ID` | project `.env` | pre-login (on-prem only) — OAuth2 client ID for deployments with a custom authorization server; cloud users do not need this |
+Every field below lives in the current Folder inside `~/.corezoid/config.json`. All are managed by the `login` tool — you should not hand-edit them unless a documented exception applies.
+
+| Field | Set during |
+|---|---|
+| `account_url` | login step 1 — account URL prompt |
+| `corezoid_url` | login step 2.5 — derived from account clients API (or fallback to `account_url` in API-key mode) |
+| `access_token` / `expires_at` | login step 2 — OAuth2 (or manually for on-prem workaround) |
+| `workspace_id` | login step 3 — workspace selection |
+| `api_login` / `api_secret` | login arguments (API-key auth mode) |
+| `project_id` | cached on first pull-folder / push-process |
+| `git_url` / `git_stage_path` | cached on first git-pull-context |
+
+`COREZOID_OAUTH_CLIENT_ID` remains an environment variable (not a Folder field) — pre-login only, on-prem deployments with a custom authorization server. Cloud users do not need it.

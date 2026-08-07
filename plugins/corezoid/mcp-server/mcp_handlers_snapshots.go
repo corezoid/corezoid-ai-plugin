@@ -30,7 +30,7 @@ func handleCreateSnapshot(ctx context.Context, args map[string]interface{}) (str
 	v := NewValidator(ctx, procID)
 	projectID, envNotice := resolveAndCacheProjectID(v)
 	if projectID == 0 {
-		return "Error: could not resolve project_id. Set COREZOID_PROJECT_ID in .env or ensure COREZOID_STAGE_ID is configured.", true
+		return "Error: could not resolve project_id. Ensure stage_id is configured for this folder (run the 'login' tool).", true
 	}
 
 	objID, version, err := v.CreateSnapshot(procID, projectID, v.StageID, title)

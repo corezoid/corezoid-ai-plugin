@@ -44,7 +44,7 @@ func ensureGitignoreEntry(workDir, entry string) error {
 	return os.WriteFile(path, []byte(content), 0644)
 }
 
-// deriveGitURL computes COREZOID_GIT_URL from the Corezoid account host.
+// deriveGitURL computes git_url from the Corezoid account host.
 //
 // Formula (see Gitea-URL-Formula.md):
 //
@@ -56,7 +56,7 @@ func ensureGitignoreEntry(workDir, entry string) error {
 //     - starts with "corezoid-"           → strip "corezoid-", keep remainder
 //     - anything else                     → return error (caller silently skips)
 //  4. env = join(remaining labels, ".")   or "prod" if nothing remains
-//  5. COREZOID_GIT_URL = https://git-{env}.{env}.{apex}/corezoid-{env}
+//  5. git_url = https://git-{env}.{env}.{apex}/corezoid-{env}
 //
 // Examples:
 //
@@ -68,14 +68,14 @@ func ensureGitignoreEntry(workDir, entry string) error {
 //	corezoid.staging.liobank.vn → https://git-staging.staging.liobank.vn/corezoid-staging
 func deriveGitURL(rawAccountURL string) (string, error) {
 	if rawAccountURL == "" {
-		return "", fmt.Errorf("ACCOUNT_URL is empty")
+		return "", fmt.Errorf("account_url is empty")
 	}
 	if !strings.Contains(rawAccountURL, "://") {
 		rawAccountURL = "https://" + rawAccountURL
 	}
 	u, err := url.Parse(rawAccountURL)
 	if err != nil || u.Host == "" {
-		return "", fmt.Errorf("invalid ACCOUNT_URL %q", rawAccountURL)
+		return "", fmt.Errorf("invalid account_url %q", rawAccountURL)
 	}
 	host := u.Hostname() // strip port if any
 
@@ -143,7 +143,7 @@ func buildGitRepoURL(base, companyID, projectID string) (string, error) {
 	}
 	u, err := url.Parse(base)
 	if err != nil {
-		return "", fmt.Errorf("invalid COREZOID_GIT_URL %q: %w", base, err)
+		return "", fmt.Errorf("invalid git_url %q: %w", base, err)
 	}
 	rawCompanyID := strings.TrimPrefix(companyID, "c-")
 	rawProjectID := strings.TrimPrefix(projectID, "p-")

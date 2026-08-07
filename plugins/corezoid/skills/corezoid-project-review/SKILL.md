@@ -21,10 +21,10 @@ Per-process analysis follows the same steps as the `corezoid-review` skill (lint
 
 ### Step 0.1: Verify Environment
 
-Read `.env` from the current working directory and check for `COREZOID_STAGE_ID`.
+Check whether the workspace root contains a `<id>_<name>.stage.json` marker file (its `obj_id` is the stage ID). Practical test: call any Corezoid MCP tool with no arguments (e.g. `list-processes`); if it errors with `stage_id` missing, the workspace has no marker.
 
-- If `COREZOID_STAGE_ID` is **missing or empty** → stop and invoke the `corezoid-init` skill. Do not proceed until init completes.
-- If `COREZOID_STAGE_ID` is present → use it as the root `folder_id` for the review scope.
+- If the marker is **missing** → stop and invoke the `corezoid-init` skill. Do not proceed until init completes.
+- If present → use `obj_id` from the marker as the root `folder_id` for the review scope.
 
 ### Step 0.2: Build Process Inventory
 
@@ -251,7 +251,7 @@ Cross-process finding example:
 
 | Step | MCP call |
 |------|----------|
-| 0.1 List processes | `list folder filter:"conveyor" obj_id:<COREZOID_STAGE_ID>` |
+| 0.1 List processes | `list folder filter:"conveyor" obj_id:<stage_id from current Folder>` |
 | 1 Pull process | `pull-process process_id:<conv_id>` |
 | 1 Lint process | `lint-process process_path:<path>` |
 | 2.1 List & resolve aliases | `/corezoid-alias-manager` → "Workflow: List aliases" |

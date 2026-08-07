@@ -6,8 +6,93 @@ on:
       - "v*"
 
 jobs:
+  guard:
+    name: Pre-release gate (version sync + tests)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Parse JSON manifests
+        run: |
+          python3 -m json.tool .claude-plugin/marketplace.json > /dev/null
+          python3 -m json.tool .agents/plugins/marketplace.json > /dev/null
+          python3 -m json.tool plugins/corezoid/.claude-plugin/plugin.json > /dev/null
+          python3 -m json.tool plugins/corezoid/.codex-plugin/plugin.json > /dev/null
+          python3 -m json.tool plugins/corezoid/.kiro-plugin/plugin.json > /dev/null
+          python3 -m json.tool plugins/corezoid/.mcp.json > /dev/null
+          python3 -m json.tool plugins/corezoid/.mcp.kiro.json > /dev/null
+
+      - name: Version sync (six sources + tag match)
+        env:
+          TAG_REF: ${{ github.ref_name }}
+        run: |
+          python3 - <<'EOF'
+          import json, os, re, sys
+
+          def read_frontmatter_version(path):
+              with open(path) as f:
+                  text = f.read()
+              m = re.match(r"^---\n(.*?)\n---", text, re.DOTALL)
+              if not m:
+                  raise SystemExit(f"{path}: no YAML frontmatter")
+              for line in m.group(1).splitlines():
+                  mv = re.match(r"^version:\s*(.+?)\s*$", line)
+                  if mv:
+                      return mv.group(1).strip().strip('"').strip("'")
+              raise SystemExit(f"{path}: no version field in frontmatter")
+
+          with open("plugins/corezoid/.claude-plugin/plugin.json") as f:
+              claude_ver = json.load(f)["version"]
+          with open("plugins/corezoid/.codex-plugin/plugin.json") as f:
+              codex_ver = json.load(f)["version"]
+          with open("plugins/corezoid/.kiro-plugin/plugin.json") as f:
+              kiro_ver = json.load(f)["version"]
+          with open(".claude-plugin/marketplace.json") as f:
+              market_ver = json.load(f)["plugins"][0]["version"]
+          with open(".agents/plugins/marketplace.json") as f:
+              agents_ver = json.load(f)["plugins"][0]["version"]
+          power_ver = read_frontmatter_version("POWER.md")
+
+          versions = {
+              "claude plugin.json": claude_ver,
+              "codex plugin.json": codex_ver,
+              "kiro plugin.json": kiro_ver,
+              ".claude-plugin/marketplace.json": market_ver,
+              ".agents/plugins/marketplace.json": agents_ver,
+              "POWER.md": power_ver,
+          }
+          print("Versions found:", versions)
+
+          if len(set(versions.values())) > 1:
+              print("ERROR: version mismatch across manifests")
+              for name, ver in versions.items():
+                  print(f"  {name}: {ver}")
+              sys.exit(1)
+
+          tag = os.environ.get("TAG_REF", "")
+          if not re.fullmatch(r"v\d+\.\d+\.\d+", tag):
+              raise SystemExit(f"ERROR: tag {tag!r} is not of the form vX.Y.Z")
+          tag_ver = tag[1:]
+
+          if tag_ver != claude_ver:
+              print(f"ERROR: tag {tag!r} does not match manifest version {claude_ver!r}")
+              sys.exit(1)
+
+          print(f"All six manifests match tag {tag!r}: {claude_ver}")
+          EOF
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: plugins/corezoid/mcp-server/go.mod
+          cache: true
+
+      - name: MCP server tests
+        working-directory: plugins/corezoid/mcp-server
+        run: go test -race ./...
+
   build-binaries:
     name: Build MCP server binaries
+    needs: guard
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

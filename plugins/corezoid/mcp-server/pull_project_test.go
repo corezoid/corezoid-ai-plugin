@@ -210,6 +210,123 @@ func TestWalkDepth_SkipsPermissionDenied(t *testing.T) {
 	// but no error should propagate from trying to descend into it.
 }
 
+// ---- hoistZipWrapperDirs ---------------------------------------------------
+
+// A fresh Corezoid export always lands as filePath/stage_<id>_<ts>.zip/<id>_<name>.stage/…
+// (the ".zip" here is a directory suffix, not a file). If a stale <id>_<name>.stage
+// from an earlier pull already exists at root, findStageDir/hoist below prefer the
+// stale one and leave the wrapper behind — so re-pulls quietly grow a pile of
+// stage_*.zip wrapper directories at root. hoistZipWrapperDirs must unwrap it and
+// overwrite the stale stage with the fresh content.
+func TestHoistZipWrapperDirs_ReplacesStaleStage(t *testing.T) {
+	root := t.TempDir()
+
+	staleStage := filepath.Join(root, "42_demo.stage")
+	if err := os.MkdirAll(staleStage, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(staleStage, "old.marker"), []byte("stale"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	wrapper := filepath.Join(root, "stage_42_1700000000000.zip")
+	freshStage := filepath.Join(wrapper, "42_demo.stage")
+	if err := os.MkdirAll(freshStage, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(freshStage, "new.marker"), []byte("fresh"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := hoistZipWrapperDirs(root); err != nil {
+		t.Fatalf("hoistZipWrapperDirs error: %v", err)
+	}
+
+	if _, err := os.Stat(wrapper); !os.IsNotExist(err) {
+		t.Errorf("wrapper %s should be gone, stat err=%v", wrapper, err)
+	}
+	if _, err := os.Stat(filepath.Join(root, "42_demo.stage", "new.marker")); err != nil {
+		t.Errorf("fresh marker should have replaced the stale stage: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(root, "42_demo.stage", "old.marker")); !os.IsNotExist(err) {
+		t.Errorf("stale marker should have been overwritten, stat err=%v", err)
+	}
+}
+
+// TestHoistZipWrapperDirs_UnwrapsWorkspaceRootWrappers covers the wrappers
+// emitted for a No-Project (workspace-root) pull: one per top-level object,
+// named after its obj_type — folder_/conv_/dashboard_. All three must be
+// hoisted so their contents land directly under root, or the user ends up
+// with an extra layer per object.
+func TestHoistZipWrapperDirs_UnwrapsWorkspaceRootWrappers(t *testing.T) {
+	root := t.TempDir()
+
+	// folder wrapper contains an inner "<id>_<name>" dir with a .folder.json inside.
+	folderInner := filepath.Join(root, "folder_687287_1785852544313.zip", "687287_et")
+	if err := os.MkdirAll(folderInner, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(folderInner, "687287_et.folder.json"), []byte("{}"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// conv wrapper contains a single .conv.json at its root.
+	convDir := filepath.Join(root, "conv_1571296_1785852544373.zip")
+	if err := os.MkdirAll(convDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(convDir, "1571296_Graph_Maker.conv.json"), []byte("{}"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// dashboard wrapper.
+	dashDir := filepath.Join(root, "dashboard_136538_1785852544843.zip")
+	if err := os.MkdirAll(dashDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dashDir, "136538_Test.dashboard.json"), []byte("{}"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := hoistZipWrapperDirs(root); err != nil {
+		t.Fatalf("hoistZipWrapperDirs error: %v", err)
+	}
+
+	// All three wrappers should be gone; their content should be at root.
+	for _, want := range []string{
+		"687287_et/687287_et.folder.json",
+		"1571296_Graph_Maker.conv.json",
+		"136538_Test.dashboard.json",
+	} {
+		if _, err := os.Stat(filepath.Join(root, want)); err != nil {
+			t.Errorf("expected %s at root: %v", want, err)
+		}
+	}
+	for _, wrapper := range []string{
+		"folder_687287_1785852544313.zip",
+		"conv_1571296_1785852544373.zip",
+		"dashboard_136538_1785852544843.zip",
+	} {
+		if _, err := os.Stat(filepath.Join(root, wrapper)); !os.IsNotExist(err) {
+			t.Errorf("wrapper %s should be gone, stat err=%v", wrapper, err)
+		}
+	}
+}
+
+func TestHoistZipWrapperDirs_NoWrapperNoop(t *testing.T) {
+	root := t.TempDir()
+	stage := filepath.Join(root, "7_x.stage")
+	if err := os.MkdirAll(stage, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := hoistZipWrapperDirs(root); err != nil {
+		t.Fatalf("hoistZipWrapperDirs error: %v", err)
+	}
+	if _, err := os.Stat(stage); err != nil {
+		t.Errorf("stage should be untouched, got: %v", err)
+	}
+}
+
 // ---- moveContents ----------------------------------------------------------
 
 func TestMoveContents(t *testing.T) {
@@ -294,5 +411,40 @@ func TestRenameFiles2Folders_RenamesFolderDir(t *testing.T) {
 	}
 	if _, err := os.Stat(oldDir); err == nil {
 		t.Errorf("expected old dir %q to be gone", oldDir)
+	}
+}
+
+// TestRenameFiles2Folders_StripsAllSuffixes verifies pull-folder's layout
+// invariant: after flattening, every top-level Corezoid export suffix
+// (".stage", ".folder", ".project") is stripped from directory names —
+// nested subfolders that survive at the workspace root should carry the
+// plain "<id>_<name>" form.
+func TestRenameFiles2Folders_StripsAllSuffixes(t *testing.T) {
+	root := t.TempDir()
+	cases := map[string]string{
+		"671255_develop.stage":   "671255_develop",
+		"555_orders.folder":      "555_orders",
+		"999_billing.project":    "999_billing",
+		"777_plain":              "777_plain",
+	}
+	for src := range cases {
+		if err := os.MkdirAll(filepath.Join(root, src), 0755); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	if err := renameFiles2Folders(root); err != nil {
+		t.Fatalf("renameFiles2Folders error: %v", err)
+	}
+
+	for src, want := range cases {
+		if src != want {
+			if _, err := os.Stat(filepath.Join(root, src)); err == nil {
+				t.Errorf("original %q must be renamed", src)
+			}
+		}
+		if _, err := os.Stat(filepath.Join(root, want)); err != nil {
+			t.Errorf("expected %q after rename: %v", want, err)
+		}
 	}
 }

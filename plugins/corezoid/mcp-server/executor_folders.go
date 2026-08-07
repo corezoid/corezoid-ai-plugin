@@ -127,6 +127,127 @@ func (v *Executor) ListFolder(folderID int) ([]FolderChild, error) {
 	return out, nil
 }
 
+// WorkspaceRootItem is one top-level entry in a Corezoid workspace: a folder,
+// a conv (process / state diagram) or a dashboard living directly at the
+// workspace root (project_id=0, stage_id=0). Used by ListWorkspaceRoot and
+// BatchExportSchemes to mirror the workspace UI's root view onto disk when the
+// user selects "No Project".
+type WorkspaceRootItem struct {
+	ObjID    int
+	Title    string
+	ObjType  string // "folder" | "conv" | "dashboard"
+	ConvType string // for convs only: "process" | "state"
+}
+
+// ListWorkspaceRoot lists the top-level items (folders, convs, dashboards) in
+// the current workspace. The equivalent of opening a workspace's root view in
+// the Corezoid UI — items whose project_id and stage_id are both 0.
+func (v *Executor) ListWorkspaceRoot() ([]WorkspaceRootItem, error) {
+	ops := []map[string]any{
+		{
+			"type":       "list",
+			"obj":        "folder",
+			"obj_id":     0,
+			"company_id": v.WorkspaceID,
+			"id":         v.WorkspaceID,
+			"sort":       "date",
+			"order":      "asc",
+		},
+	}
+	response, err := v.req("list_workspace_root", ops)
+	if err != nil {
+		return nil, fmt.Errorf("ListWorkspaceRoot request failed: %w", err)
+	}
+	first, err := firstOp(response)
+	if err != nil {
+		return nil, err
+	}
+	list, _ := first["list"].([]any)
+	out := make([]WorkspaceRootItem, 0, len(list))
+	for _, item := range list {
+		m, ok := item.(map[string]any)
+		if !ok {
+			continue
+		}
+		it := WorkspaceRootItem{}
+		if f, ok := m["obj_id"].(float64); ok {
+			it.ObjID = int(f)
+		}
+		if s, ok := m["title"].(string); ok {
+			it.Title = s
+		}
+		if s, ok := m["obj_type"].(string); ok {
+			it.ObjType = s
+		}
+		if s, ok := m["conv_type"].(string); ok {
+			it.ConvType = s
+		}
+		if it.ObjID == 0 || it.ObjType == "" {
+			continue
+		}
+		out = append(out, it)
+	}
+	return out, nil
+}
+
+// BatchExportSchemes exports many items in a single API call and returns their
+// download URLs, one per item in the same order. Cuts N round-trips (one per
+// item) down to one when mirroring a whole workspace root — the Corezoid API
+// accepts multiple obj_scheme ops per request.
+func (v *Executor) BatchExportSchemes(items []WorkspaceRootItem) ([]string, error) {
+	if len(items) == 0 {
+		return nil, nil
+	}
+	opType := "create"
+	if v.Token != "" {
+		opType = "download"
+	}
+	ops := make([]map[string]any, 0, len(items))
+	for _, it := range items {
+		ops = append(ops, map[string]any{
+			"type":       opType,
+			"obj":        "obj_scheme",
+			"obj_id":     it.ObjID,
+			"company_id": v.WorkspaceID,
+			"obj_type":   it.ObjType,
+			"with_alias": false,
+			"async":      false,
+			"format":     "zip",
+		})
+	}
+	response, err := v.req("export_process", ops)
+	if err != nil {
+		return nil, fmt.Errorf("BatchExportSchemes request failed: %w", err)
+	}
+	if response["request_proc"] != "ok" {
+		return nil, fmt.Errorf("BatchExportSchemes: request_proc not ok: %v", response)
+	}
+	opsRaw, ok := response["ops"].([]any)
+	if !ok || len(opsRaw) != len(items) {
+		return nil, fmt.Errorf("BatchExportSchemes: expected %d ops, got %d", len(items), len(opsRaw))
+	}
+	urls := make([]string, len(items))
+	for i, opRaw := range opsRaw {
+		opMap, ok := opRaw.(map[string]any)
+		if !ok {
+			return nil, fmt.Errorf("BatchExportSchemes: op %d unexpected format", i)
+		}
+		if proc, _ := opMap["proc"].(string); proc != "ok" {
+			desc, _ := opMap["description"].(string)
+			if desc == "" {
+				desc = fmt.Sprintf("proc=%v", opMap["proc"])
+			}
+			return nil, fmt.Errorf("BatchExportSchemes: op %d (%s #%d): %s", i, items[i].ObjType, items[i].ObjID, desc)
+		}
+		url, _ := opMap["download_url"].(string)
+		if url == "" {
+			return nil, fmt.Errorf("BatchExportSchemes: op %d (%s #%d): no download_url", i, items[i].ObjType, items[i].ObjID)
+		}
+		urls[i] = url
+	}
+	return urls, nil
+}
+
 // ModifyFolder renames a folder and/or updates its description. At least one
 // of title/description must be non-empty — the caller is expected to enforce
 // that before calling.
@@ -682,10 +803,11 @@ func (v *Executor) GetProjectIDByStageID(folderID int) int {
 // ResolveStageIDByFolder walks up from folderID until it hits a stage
 // (FolderInfo.ObjType == 3). folderID itself may already be the stage. Returns
 // 0 if the walk cannot find one within maxDepth or an API call fails — the
-// caller is expected to fall back to the env COREZOID_STAGE_ID or explicit
-// argument. Used by stage-scoped tools (create-alias, env-var ops) so they can
-// target the stage the process actually lives in instead of blindly trusting
-// the env value, which caused "Object is not in stage" when the two diverged.
+// caller is expected to fall back to the current folder's stage_id or an
+// explicit argument. Used by stage-scoped tools (create-alias, env-var ops)
+// so they can target the stage the process actually lives in instead of
+// blindly trusting the configured stage_id, which caused "Object is not in
+// stage" when the two diverged.
 func (v *Executor) ResolveStageIDByFolder(folderID int) (int, error) {
 	const maxDepth = 20
 	if folderID == 0 {

@@ -192,7 +192,13 @@ func oauthPKCEFlow(accountURL, clientID string) (*PKCEResult, error) {
 		"redirect_uri":  {redirectURI},
 	}
 	httpClient := &http.Client{Timeout: 60 * time.Second}
-	resp, err := httpClient.PostForm(tokenURL, tokenParams)
+	tokenReq, err := http.NewRequest(http.MethodPost, tokenURL, strings.NewReader(tokenParams.Encode()))
+	if err != nil {
+		return nil, fmt.Errorf("failed to build token request: %w", err)
+	}
+	tokenReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	setCorezoidOrigin(tokenReq, accountURL)
+	resp, err := httpClient.Do(tokenReq)
 	if err != nil {
 		return nil, fmt.Errorf("token exchange request failed: %w", err)
 	}
@@ -269,13 +275,14 @@ type accountClient struct {
 
 // fetchCorezoidAPIURL calls {accountURL}/face/api/1/clients and returns the homepage
 // of the Corezoid client entry (matched first by name=="corezoid", then by
-// full_name=="Corezoid"). This URL is used as COREZOID_API_URL.
+// full_name=="Corezoid"). This URL is stored as corezoid_url on the current Folder.
 func fetchCorezoidAPIURL(accountURL, token string) (string, error) {
 	clientsURL := strings.TrimRight(accountURL, "/") + "/face/api/1/clients"
 	req, err := http.NewRequest("GET", clientsURL, nil)
 	if err != nil {
 		return "", fmt.Errorf("failed to create clients request: %w", err)
 	}
+	setCorezoidOrigin(req, accountURL)
 	if token != "" {
 		req.Header.Set("Authorization", "Bearer "+token)
 	}

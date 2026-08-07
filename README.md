@@ -117,42 +117,60 @@ Restart Claude Code / Codex after updating to apply the new version.
 
 ## Authentication
 
-On the first Corezoid operation Claude detects that no token is present and runs the `login` tool automatically — your browser opens for OAuth2 sign-in and the session continues without interruption.
+On the first Corezoid operation Claude detects that no credentials are present for the current working directory and runs the `login` tool automatically — your browser opens for OAuth2 sign-in and the session continues without interruption.
 
-The token is saved to `~/.corezoid/credentials` and reused on every subsequent session across all projects. When it expires, the login flow triggers again automatically.
+All credentials plus per-workspace config (account URL, workspace ID, stage ID, cached project ID, git mirror URL) are stored in a single user-level file `~/.corezoid/config.json` (mode `0600`). Each entry in `folders[]` is keyed by an absolute `root_path`; the MCP server picks the longest-prefix match against the current working directory, so sub-agents launched deep in the workspace pick up the right credentials automatically.
 
-You can also trigger login manually at any time:
+You can trigger login manually at any time:
 
 ```
 log in to Corezoid
 ```
 
-### Static token (optional)
+Nothing needs to live in the project tree — secrets (`access_token`, `api_secret`) never leave `~/.corezoid/`.
 
-If you prefer to manage the token yourself, write it to `~/.corezoid/credentials`:
+### Config file layout
+
+```json
+{
+  "version": 1,
+  "folders": [
+    {
+      "root_path": "/Users/you/work/my-corezoid-ws",
+      "account_url": "https://account.corezoid.com",
+      "corezoid_url": "https://admin.corezoid.com",
+      "workspace_id": "12345",
+      "project_id": 4242,
+      "access_token": "eyJhbGci...",
+      "expires_at": "2026-08-09T12:34:56Z",
+      "api_login": "",
+      "api_secret": ""
+    }
+  ]
+}
+```
+
+### API-key auth (alternative to OAuth)
+
+On private/on-prem instances where browser OAuth is unavailable, pass API-key credentials to `login`:
 
 ```
-ACCESS_TOKEN=your_token_here
+log in with api_login=<login_id> api_secret=<secret>
 ```
 
-Or export it as an environment variable before starting Claude Code or Codex:
-
-```bash
-export ACCESS_TOKEN=your_token_here
-```
+They are saved to the current Folder in the same `~/.corezoid/config.json`.
 
 ## Configuration
 
 | Environment variable       | Required | Description                                       |
 |----------------------------|----------|---------------------------------------------------|
-| `ACCESS_TOKEN`             | No       | Static token — overrides OAuth2 saved credentials |
-| `COREZOID_API_URL`         | No       | Override the default Corezoid API base URL        |
-| `WORKSPACE_ID`             | No       | Default workspace ID                              |
-| `COREZOID_STAGE_ID`        | No       | Default stage ID                                  |
+| `COREZOID_WORK_DIR`        | No       | Absolute path used to pick which entry in `folders[]` applies. Set automatically by Claude Code / Codex / Kiro from the user's cwd. Only meaningful if the host cannot preserve cwd across MCP subprocess spawn. |
 | `COREZOID_APIGW_URL`       | No       | Override the API Gateway URL                      |
 | `COREZOID_OAUTH_CLIENT_ID` | No       | OAuth2 client ID — on-prem deployments with a custom authorization server should set this to their own client ID; cloud (account.corezoid.com) users do not need it |
-| `COREZOID_HTTP_PORT`       | No       | Activate the Streamable HTTP transport on this port (e.g. `8080`). When set the server listens for MCP over HTTP instead of stdio — intended for hosted marketplace deployments. Credentials must be pre-configured via env vars; the browser OAuth login flow is not available in HTTP mode |
+| `COREZOID_HTTP_PORT`       | No       | Activate the Streamable HTTP transport on this port (e.g. `8080`). When set the server listens for MCP over HTTP instead of stdio — intended for hosted marketplace deployments. Credentials must be pre-configured in `~/.corezoid/config.json`; the browser OAuth login flow is not available in HTTP mode. |
 | `COREZOID_AUTOLAYOUT`      | No       | Set to `off` to disable auto-placement of new `(0,0)` nodes on `push-process` (default: preserve) |
+
+All auth-related values (`account_url`, `workspace_id`, `stage_id`, `access_token`, `api_login`, `api_secret`, `git_url`, ...) live in `~/.corezoid/config.json` — not in environment variables.
 
 ## Telemetry
 
@@ -395,7 +413,7 @@ COREZOID_DEBUG=1 ./convctl pull-process process_id=123
 See [docs/Troubleshooting.md](docs/Troubleshooting.md) for solutions to common problems:
 
 - Browser did not open during `login`
-- Expired or missing `ACCESS_TOKEN`
+- Expired or missing `access_token` in `~/.corezoid/config.json`
 - `push-process` validation errors
 - MCP server startup failures
 - Common Corezoid API error codes
