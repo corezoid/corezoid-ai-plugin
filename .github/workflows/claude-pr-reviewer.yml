@@ -94,24 +94,51 @@ jobs:
             exit 1
           fi
 
-      - name: Resolve PR head (skip forks)
+      - name: Resolve PR head (allow fork only on maintainer label)
         id: prref
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PR_NUMBER: ${{ steps.pr.outputs.number }}
+          EVENT_NAME: ${{ github.event_name }}
+          LABEL_NAME: ${{ github.event.label.name }}
+          # Frozen at label time — prevents the fork author from racing a
+          # push between the maintainer labeling the PR and the job start.
+          EVENT_HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+          EVENT_HEAD_REF: ${{ github.event.pull_request.head.ref }}
+          EVENT_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
           set -euo pipefail
-          data=$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}")
-          head_repo=$(echo "$data" | jq -r '.head.repo.full_name')
-          head_ref=$(echo "$data" | jq -r '.head.ref')
-          head_sha=$(echo "$data" | jq -r '.head.sha')
+          if [ "$EVENT_NAME" = "pull_request" ] && [ -n "$EVENT_HEAD_SHA" ]; then
+            # Use payload snapshot — SHA is pinned at the moment the label
+            # was applied, so the maintainer's admin check gates that exact
+            # commit even if the fork pushes new commits afterwards.
+            head_repo="$EVENT_HEAD_REPO"
+            head_ref="$EVENT_HEAD_REF"
+            head_sha="$EVENT_HEAD_SHA"
+          else
+            data=$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}")
+            head_repo=$(echo "$data" | jq -r '.head.repo.full_name')
+            head_ref=$(echo "$data" | jq -r '.head.ref')
+            head_sha=$(echo "$data" | jq -r '.head.sha')
+          fi
           if [ "$head_repo" != "$GITHUB_REPOSITORY" ]; then
-            echo "PR is from a fork — refusing to run the deep review"
-            echo "skip=true" >> "$GITHUB_OUTPUT"
-            exit 0
+            if [ "$EVENT_NAME" = "pull_request" ] && [ "$LABEL_NAME" = "ai" ]; then
+              # Admin labeling was verified in the previous step. The
+              # maintainer explicitly opted in to running the deep review
+              # against fork code — accept the risk that build/test steps
+              # execute untrusted code with access to ANTHROPIC_API_KEY.
+              echo "PR is from a fork, but a maintainer labeled it 'ai' — running review on $head_sha"
+            else
+              echo "PR is from a fork and trigger is not a maintainer 'ai' label — refusing"
+              echo "skip=true" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
           fi
           if ! printf '%s' "$head_ref" | grep -Eq '^[A-Za-z0-9._/-]+$'; then
             echo "Suspicious branch name: $head_ref"; exit 1
+          fi
+          if ! printf '%s' "$head_sha" | grep -Eq '^[0-9a-f]{40}$'; then
+            echo "Suspicious head sha: $head_sha"; exit 1
           fi
           echo "sha=$head_sha" >> "$GITHUB_OUTPUT"
           echo "ref=$head_ref" >> "$GITHUB_OUTPUT"
