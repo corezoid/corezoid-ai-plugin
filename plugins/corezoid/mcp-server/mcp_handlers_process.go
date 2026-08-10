@@ -260,7 +260,28 @@ func handlePullProcess(ctx context.Context, args map[string]interface{}) (string
 	if err := os.WriteFile(filePath, data, 0644); err != nil {
 		return fmt.Sprintf("Error writing file: %v", err), true
 	}
-	return fmt.Sprintf("Process %d saved to %s", processID, filePath), false
+
+	result := fmt.Sprintf("Process %d saved to %s", processID, filePath)
+
+	// Warn if the downloaded process contains self-referencing api_copy/api_rpc
+	// nodes — the Corezoid UI supports this pattern but push-process cannot deploy
+	// it and force=true does NOT bypass the pre-deployment check.
+	if m, ok := procInfo.(map[string]interface{}); ok {
+		if rawNodes, getErr := getNodes(m); getErr == nil {
+			typed := parseProcessNodes(rawNodes)
+			if selfRefs := findSelfReferenceCopies(typed, processID); len(selfRefs) > 0 {
+				var parts []string
+				for _, sr := range selfRefs {
+					parts = append(parts, fmt.Sprintf("%q (id=%s, type=%s)", sr.NodeTitle, sr.NodeID, sr.NodeType))
+				}
+				result += fmt.Sprintf(
+					"\n\nWarning: %d self-referencing node(s) detected — this process cannot be re-deployed with push-process without fixing them first (force=true does not bypass this check):\n  • %s\nFix: replace each self-copy node with a time-semaphore delay node (≥30s) followed by a bare `go` back to the loop entry. The task cycles in-place without spawning a new one.",
+					len(selfRefs), strings.Join(parts, "\n  • "))
+			}
+		}
+	}
+
+	return result, false
 }
 
 // handlePullFolder recursively downloads a folder (stage) and all its
@@ -431,7 +452,7 @@ func handlePushProcess(ctx context.Context, args map[string]interface{}) (string
 		hard := len(lintRes.BrokenLinks) + len(lintRes.OldFormatNodes) +
 			len(lintRes.MissingDefaultGo) + len(lintRes.ShortTimers) +
 			len(lintRes.RpcReplyMismatches) + len(lintRes.LiteralReplyValues) +
-			len(lintRes.UnrepliedTerminals)
+			len(lintRes.UnrepliedTerminals) + len(lintRes.SelfReferenceCopies)
 		advisory := len(lintRes.NoopConditions) + len(lintRes.UnusedSetParams) +
 			len(lintRes.OrphanedNodes) + len(lintRes.PassthroughEscalations) +
 			len(lintRes.SharedErrorClusters) + len(lintRes.GitCallUsages)
