@@ -151,7 +151,7 @@ var toolRegistry = []mcpTool{
 	},
 	{
 		Name:        "push-process",
-		Description: "Validate and deploy a process file to Corezoid. Runs lint-process first and blocks the deploy on issues that would break it (broken node links, old-format nodes, RPC paths without reply, nodes missing a default go, sub-30s timers, literal reply values); advisory findings are shown but do not block. Pass force=true to deploy despite blocking lint issues. Note: the server regenerates node IDs on every push and the local file is rewritten in place with the server's canonical scheme — reference nodes by title when iterating, and re-read the file after a push instead of reusing old node IDs.",
+		Description: "Validate and deploy a process file to Corezoid. Runs lint-process first and blocks the deploy on issues that would break it (broken node links, old-format nodes, RPC paths without reply, nodes missing a default go, sub-30s timers, literal reply values); advisory findings are shown but do not block. Pass force=true to deploy despite blocking lint issues. Note: force=true only bypasses lint-detected structural issues — pre-deployment validation errors such as self-referencing api_copy/api_rpc nodes are always blocked and cannot be overridden. Note: the server regenerates node IDs on every push and the local file is rewritten in place with the server's canonical scheme — reference nodes by title when iterating, and re-read the file after a push instead of reusing old node IDs.",
 		InputSchema: map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
@@ -161,7 +161,7 @@ var toolRegistry = []mcpTool{
 				},
 				"force": map[string]interface{}{
 					"type":        "boolean",
-					"description": "Deploy even if the pre-push lint finds blocking issues. Advisory findings never block. Default false.",
+					"description": "Deploy even if the pre-push lint finds blocking issues (broken links, old-format nodes, etc.). Advisory findings never block. Does NOT bypass pre-deployment validation errors such as self-referencing api_copy/api_rpc nodes — those must be fixed in the process design. Default false.",
 				},
 			},
 			"required": []string{"process_path"},
@@ -191,7 +191,7 @@ var toolRegistry = []mcpTool{
 	},
 	{
 		Name:        "lint-process",
-		Description: "Validate process structure. Reports orphaned nodes, noop conditions, unused set_params, passthrough escalations, shared error clusters (an error node fed by several different failing nodes — each needs its own Reply/Error cluster), old-format nodes (obj_type:0 err_node_id targets, or action logic mixed with go_if_const — the UI would force-convert the process), finals reachable without api_rpc_reply in a process that replies elsewhere (an RPC caller would hang), nodes whose logics do not end with a default go and time semaphors under the 30s server minimum (both reject the deploy), and literal non-string values in api_rpc_reply res_data (a scheme shape that hangs the server commit on push).",
+		Description: "Validate process structure. Reports orphaned nodes, noop conditions, unused set_params, passthrough escalations, shared error clusters (an error node fed by several different failing nodes — each needs its own Reply/Error cluster), old-format nodes (obj_type:0 err_node_id targets, or action logic mixed with go_if_const — the UI would force-convert the process), finals reachable without api_rpc_reply in a process that replies elsewhere (an RPC caller would hang), nodes whose logics do not end with a default go and time semaphors under the 30s server minimum (both reject the deploy), literal non-string values in api_rpc_reply res_data (a scheme shape that hangs the server commit on push), and self-referencing api_copy/api_rpc nodes (valid in the Corezoid UI but always blocked by push-process — force=true does not bypass this).",
 		InputSchema: map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{

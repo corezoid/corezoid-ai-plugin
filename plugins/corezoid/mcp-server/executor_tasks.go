@@ -120,7 +120,21 @@ func (v *Executor) BeforeValidation(jsonContent string, taskData map[string]inte
 						type1, _ := logicMap["type"].(string)
 						if type1 == "api_copy" || type1 == "api_rpc" {
 							if convID, ok := logicMap["conv_id"].(float64); ok && int(convID) == v.ProcessID {
-								return fmt.Errorf("node with type %s and conv_id %d must not have the same process", type1, int(convID))
+								nodeID, _ := nodeMap["id"].(string)
+								nodeTitle, _ := nodeMap["title"].(string)
+								if nodeTitle == "" {
+									nodeTitle = "(untitled)"
+								}
+								kindName := "Copy Task"
+								if type1 == "api_rpc" {
+									kindName = "Call a Process"
+								}
+								return fmt.Errorf(
+									"self-reference blocked: node %q (id=%s) uses %s (type=%s, conv_id=%d) to send tasks into this same process.\n"+
+										"This check cannot be bypassed with force=true — it is a pre-deployment validation, not a lint finding.\n"+
+										"Fix: replace the self-copy node with a time-semaphore delay node (≥30s) followed by a bare `go` back to the loop entry point. "+
+										"The task cycles in-place without spawning a new one. Run lint-process for a full analysis of this process.",
+									nodeTitle, nodeID, kindName, type1, int(convID))
 							}
 						}
 						if type1 != "go" && type1 != "go_if_const" {
