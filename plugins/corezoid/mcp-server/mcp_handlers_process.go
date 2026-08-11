@@ -521,6 +521,11 @@ const runTaskDefaultWaitSec = 30
 // cannot pin the session for more than 10 minutes.
 const runTaskMaxWaitSec = 600
 
+// runTaskNoNodeMetaWaitSec caps the wait when deployed node metadata could not
+// be read: without it there is no way to tell a final node from a logic node,
+// so waiting out the full budget would only stall the caller.
+const runTaskNoNodeMetaWaitSec = 5
+
 // runTaskPollEvery is the interval between show_task polls while waiting.
 var runTaskPollEvery = 2 * time.Second
 
@@ -573,8 +578,18 @@ func handleRunTask(ctx context.Context, args map[string]interface{}) (string, bo
 	if err := json.Unmarshal([]byte(dataStr), &taskData); err != nil {
 		return fmt.Sprintf("Error parsing task data: %v", err), true
 	}
-	if err := loadRuntimeNodeMap(v); err != nil {
-		return fmt.Sprintf("Error reading deployed process: %v", err), true
+	// Node metadata is only needed to name the node the task settles on. A
+	// caller with run-only rights can be denied both read paths, and refusing
+	// to create the task in that case is the regression this tool used to have
+	// with its implicit deploy: creating the task is what was actually asked
+	// for, so degrade the reporting instead of failing.
+	nodeMetaErr := loadRuntimeNodeMap(v)
+	nodeMetaOK := nodeMetaErr == nil
+	if !nodeMetaOK {
+		logger.Info("run-task: deployed node metadata unavailable for process %d, reporting without node names: %v", v.ProcessID, nodeMetaErr)
+		if waitSec > runTaskNoNodeMetaWaitSec {
+			waitSec = runTaskNoNodeMetaWaitSec
+		}
 	}
 
 	ref := optStrArg(args, "ref")
@@ -614,6 +629,11 @@ func handleRunTask(ctx context.Context, args map[string]interface{}) (string, bo
 						"Last error: %v", ref, err), false
 			}
 			if time.Now().After(deadline) {
+				if !nodeMetaOK {
+					// The task itself was created; only the follow-up read failed.
+					return runTaskNoNodeMetaSummary(v, ref, "", "", "{}", nodeMetaErr,
+						fmt.Sprintf("its result could not be read (%v)", err)), false
+				}
 				return fmt.Sprintf("Error getting task result (ref %s): %v", ref, err), true
 			}
 			continue
@@ -621,6 +641,9 @@ func handleRunTask(ctx context.Context, args map[string]interface{}) (string, bo
 		sawTask = true
 		rspTask = rsp
 
+		if !nodeMetaOK {
+			break // no node types to compare against — report the first observation
+		}
 		serverNodeID, _ := rsp["node_id"].(string)
 		if ni, ok := lookupNode(v, serverNodeID); ok && ni.Type == 2 {
 			break // final node reached
@@ -637,6 +660,11 @@ func handleRunTask(ctx context.Context, args map[string]interface{}) (string, bo
 	taskID := ""
 	if idv, ok := rspTask["obj_id"]; ok && idv != nil {
 		taskID = fmt.Sprintf("%v", idv)
+	}
+
+	if !nodeMetaOK {
+		return runTaskNoNodeMetaSummary(v, ref, taskID, serverNodeID, string(rspTaskDataBin), nodeMetaErr,
+			"the node it settled on cannot be classified"), false
 	}
 
 	if v.Debug {
@@ -667,6 +695,23 @@ func handleRunTask(ctx context.Context, args map[string]interface{}) (string, bo
 	summary := fmt.Sprintf("%s\nNodeID: %s\nNodeName: %s\nNodeType: %s\nProcessID: %d\nTaskRef: %s\nTaskID: %s\nData: %s",
 		msg, serverNodeID, nodeInfo.Name, nodeType, v.ProcessID, ref, taskID, string(rspTaskDataBin))
 	return summary, isErr
+}
+
+// runTaskNoNodeMetaSummary reports a task that was created while the deployed
+// node list was unreadable — typically run-only access, where the caller may
+// send tasks but not inspect the scheme. The task creation is the part that
+// succeeded, so this is not an error; the summary just says which half of the
+// usual answer is missing.
+func runTaskNoNodeMetaSummary(v *Executor, ref, taskID, serverNodeID, data string, metaErr error, consequence string) string {
+	if data == "" {
+		data = "{}"
+	}
+	return fmt.Sprintf(
+		"Task created, but %s: the deployed node list could not be read (%v). "+
+			"This usually means run-only access to the process — the task was still sent. "+
+			"Use list-task-history or list-node-tasks to follow it.\n"+
+			"NodeID: %s\nNodeName: (unknown)\nNodeType: (unknown)\nProcessID: %d\nTaskRef: %s\nTaskID: %s\nData: %s",
+		consequence, metaErr, serverNodeID, v.ProcessID, ref, taskID, data)
 }
 
 // loadRuntimeNodeMap indexes the server's currently deployed nodes without
