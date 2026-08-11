@@ -102,6 +102,12 @@ The default task timeout is determined by the process configuration in Corezoid.
 
 ---
 
+### `run-task` reports "the deployed node list could not be read"
+
+`run-task` never commits or deploys, so it works with run-only access and on immutable stages. To name the node a task settles on it additionally reads the deployed scheme; when that read is denied the task is still sent, and the summary reports `NodeName: (unknown)`. Follow the task with `list-task-history` or `list-node-tasks`, or ask for read access to the process to get the full report.
+
+---
+
 ## MCP server
 
 ### MCP server does not start

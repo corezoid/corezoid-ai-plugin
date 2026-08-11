@@ -1187,6 +1187,70 @@ func TestLoadRuntimeNodeMap_FallsBackToReadOnlyExport(t *testing.T) {
 	}
 }
 
+// A caller with run-only rights can be denied both node-metadata reads. The
+// task must still be created — refusing here is the same regression the
+// implicit deploy used to cause.
+func TestHandleRunTask_CreatesTaskWhenNodeMetadataUnavailable(t *testing.T) {
+	resetGlobals(t)
+	var operations []string
+	srv, _ := mockAPIServer(t, func(ops []map[string]interface{}) interface{} {
+		if len(ops) != 1 {
+			return map[string]interface{}{"request_proc": "error", "description": "unexpected operation count"}
+		}
+		obj, _ := ops[0]["obj"].(string)
+		typ, _ := ops[0]["type"].(string)
+		operations = append(operations, obj+":"+typ)
+		switch obj {
+		case "task":
+			if typ == "create" {
+				return map[string]interface{}{
+					"request_proc": "ok",
+					"ops":          []interface{}{map[string]interface{}{"proc": "ok"}},
+				}
+			}
+			return map[string]interface{}{
+				"request_proc": "ok",
+				"ops": []interface{}{map[string]interface{}{
+					"proc": "ok", "obj_id": "task-9", "node_id": "server-unknown",
+					"data": map[string]interface{}{"result": "sent"},
+				}},
+			}
+		default:
+			// conv:list and the export fallback both denied.
+			return map[string]interface{}{"request_proc": "error", "description": "Access denied"}
+		}
+	})
+	setProjectAuth(t, srv.URL)
+
+	dir := t.TempDir()
+	t.Chdir(dir)
+	path := filepath.Join(dir, "123_runonly.conv.json")
+	if err := os.WriteFile(path, []byte(`{}`), 0644); err != nil {
+		t.Fatal(err)
+	}
+	originalFirstPoll := runTaskFirstPollAfter
+	originalPollEvery := runTaskPollEvery
+	runTaskFirstPollAfter = time.Millisecond
+	runTaskPollEvery = time.Millisecond
+	t.Cleanup(func() {
+		runTaskFirstPollAfter = originalFirstPoll
+		runTaskPollEvery = originalPollEvery
+	})
+
+	result, isErr := handleRunTask(context.Background(), map[string]interface{}{
+		"process_path": filepath.Base(path), "data": `{}`, "ref": "run-only", "wait_sec": 1,
+	})
+	if isErr {
+		t.Fatalf("run-only task run reported an error: %s", result)
+	}
+	if !strings.Contains(result, "Task created") || !strings.Contains(result, "TaskRef: run-only") {
+		t.Fatalf("unexpected degraded summary: %s", result)
+	}
+	if !strings.Contains(strings.Join(operations, ","), "task:create") {
+		t.Fatalf("task was never created: %s", strings.Join(operations, ","))
+	}
+}
+
 // ---- get-dashboard ---------------------------------------------------------
 
 func TestHandleToolCall_GetDashboard_MissingArg(t *testing.T) {
