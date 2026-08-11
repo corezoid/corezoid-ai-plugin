@@ -423,6 +423,120 @@ var toolRegistry = []mcpTool{
 		},
 	},
 	{
+		Name:        "pause-process",
+		Description: "Pause one Corezoid process without changing or deploying its graph. CONSEQUENTIAL: Corezoid rejects NEW task creation for a paused process with conveyor_is_not_active. This is admission control, not proof that tasks already running or parked in nodes have stopped; inspect them separately. EXPLICIT-INTENT ONLY: never invoke because a process merely looks unused, during a review/refactor, or as an inferred safety step. Use only when the user directly asks to pause this exact process. SAFETY: apply=false (default) reads live status and returns a dry-run. After showing it to the user and receiving explicit approval, call apply=true with confirm=\"process#<id>:<live_status>->paused\". The live status is re-read on every invocation and the result is post-verified.",
+		Annotations: toolHints(hintMutates, hintDestructive, hintNonIdempotent, hintOpenWorld),
+		InputSchema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"process_id": map[string]interface{}{
+					"type":        "integer",
+					"minimum":     1,
+					"description": "Exact Corezoid process/state-diagram ID to pause.",
+				},
+				"apply": map[string]interface{}{
+					"type":        "boolean",
+					"description": "false (default) = read live state and preview only. true = pause (also requires the exact confirm token from a fresh dry-run).",
+				},
+				"confirm": map[string]interface{}{
+					"type":        "string",
+					"description": "Required when apply=true. Exact form: process#<id>:<current_status>->paused, for example process#123:active->paused.",
+				},
+			},
+			"required": []string{"process_id"},
+		},
+	},
+	{
+		Name:        "resume-process",
+		Description: "Resume (activate) one paused/debug Corezoid process without changing or deploying its graph. CONSEQUENTIAL: after activation, API clients, schedules, callbacks, and other processes may create new tasks immediately. EXPLICIT-INTENT ONLY: never resume automatically after edits, tests, a review, or a previous pause; use only when the user directly asks to resume this exact process and accepts incoming traffic. SAFETY: apply=false (default) reads live status and returns a dry-run. After showing it to the user and receiving explicit approval, call apply=true with confirm=\"process#<id>:<live_status>->active\". The live status is re-read on every invocation and the result is post-verified.",
+		Annotations: toolHints(hintMutates, hintDestructive, hintNonIdempotent, hintOpenWorld),
+		InputSchema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"process_id": map[string]interface{}{
+					"type":        "integer",
+					"minimum":     1,
+					"description": "Exact Corezoid process/state-diagram ID to resume.",
+				},
+				"apply": map[string]interface{}{
+					"type":        "boolean",
+					"description": "false (default) = read live state and preview only. true = activate (also requires the exact confirm token from a fresh dry-run).",
+				},
+				"confirm": map[string]interface{}{
+					"type":        "string",
+					"description": "Required when apply=true. Exact form: process#<id>:<current_status>->active, for example process#123:paused->active.",
+				},
+			},
+			"required": []string{"process_id"},
+		},
+	},
+	{
+		Name:        "move-process",
+		Description: "Move (reparent) one existing Corezoid process/state diagram to another folder in the configured workspace. This preserves the same object ID and graph; it is NOT copy, import, or deploy. EXPLICIT-INTENT ONLY: never reorganize objects automatically during create/edit/review/refactor. Use only when the user directly identifies the object and destination. SAFETY: apply=false (default) reads the live current parent, destination, and effective project/stage contexts and returns a dry-run. To apply, show it to the user and pass the exact context-bound confirm token returned by that dry-run. Moving the source, destination, or either effective stage/project context invalidates an old token; completion is post-verified. destination_folder_id=0 means workspace root. Cross-stage/project/root moves additionally require allow_cross_stage=true because stage-scoped aliases/variables, access, and deployment behavior are not migrated. Local mirror files are not relocated automatically.",
+		Annotations: toolHints(hintMutates, hintDestructive, hintNonIdempotent, hintOpenWorld),
+		InputSchema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"process_id": map[string]interface{}{
+					"type":        "integer",
+					"minimum":     1,
+					"description": "Exact process/state-diagram ID to move.",
+				},
+				"destination_folder_id": map[string]interface{}{
+					"type":        "integer",
+					"minimum":     0,
+					"description": "Exact destination folder/stage/project ID. Use 0 for workspace root.",
+				},
+				"allow_cross_stage": map[string]interface{}{
+					"type":        "boolean",
+					"description": "Required only when the destination changes project/stage context or moves the process to/from workspace root. Set true only after the user accepts alias, variable, access, and deployment risks.",
+				},
+				"apply": map[string]interface{}{
+					"type":        "boolean",
+					"description": "false (default) = resolve source/destination and preview only. true = move (also requires exact confirm).",
+				},
+				"confirm": map[string]interface{}{
+					"type":        "string",
+					"description": "Required when apply=true. Pass the exact token returned by the fresh dry-run; it binds source parent, destination parent, and both effective project/stage contexts.",
+				},
+			},
+			"required": []string{"process_id", "destination_folder_id"},
+		},
+	},
+	{
+		Name:        "move-folder",
+		Description: "Move (reparent) one existing NORMAL Corezoid folder to another folder in the configured workspace. Projects and stages are intentionally rejected. This preserves the same folder ID and descendants; it is NOT copy, import, or deploy. EXPLICIT-INTENT ONLY: never reorganize automatically during create/edit/review/refactor. SAFETY: apply=false (default) reads the live parent, destination, and effective project/stage contexts; checks destination ancestry to prevent self/descendant cycles; and returns a dry-run. To apply, show it to the user and pass the exact context-bound confirm token returned by that dry-run. Moving the source, destination, or either effective stage/project context invalidates an old token; completion is post-verified. destination_folder_id=0 means workspace root. Cross-stage/project/root moves additionally require allow_cross_stage=true and affect every descendant's environment context. Local mirror directories are not relocated automatically.",
+		Annotations: toolHints(hintMutates, hintDestructive, hintNonIdempotent, hintOpenWorld),
+		InputSchema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"folder_id": map[string]interface{}{
+					"type":        "integer",
+					"minimum":     1,
+					"description": "Exact normal-folder ID to move. Project/stage IDs are rejected.",
+				},
+				"destination_folder_id": map[string]interface{}{
+					"type":        "integer",
+					"minimum":     0,
+					"description": "Exact destination folder/stage/project ID. Use 0 for workspace root.",
+				},
+				"allow_cross_stage": map[string]interface{}{
+					"type":        "boolean",
+					"description": "Required only when the destination changes project/stage context or moves the folder to/from workspace root. Set true only after the user accepts risks for every descendant.",
+				},
+				"apply": map[string]interface{}{
+					"type":        "boolean",
+					"description": "false (default) = resolve source/destination and preview only. true = move (also requires exact confirm).",
+				},
+				"confirm": map[string]interface{}{
+					"type":        "string",
+					"description": "Required when apply=true. Pass the exact token returned by the fresh dry-run; it binds source parent, destination parent, and both effective project/stage contexts.",
+				},
+			},
+			"required": []string{"folder_id", "destination_folder_id"},
+		},
+	},
+	{
 		Name:        "create-alias",
 		Description: "Create a short alias for a Corezoid process. Aliases are stage-scoped; the stage is derived from the process file's parent_id (walking up folders until a stage is reached), so a stale marker no longer produces the cryptic \"Object is not in stage\" error. LLM does not need to supply a stage.",
 		Annotations: toolHints(hintMutates, hintSafe, hintIdempotent, hintOpenWorld),

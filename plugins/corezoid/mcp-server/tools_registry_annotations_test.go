@@ -233,6 +233,10 @@ func TestToolAnnotations_UnsetHintsAreOmitted(t *testing.T) {
 func TestToolAnnotations_Representative(t *testing.T) {
 	want := map[string]struct{ readOnly, destructive, idempotent, openWorld bool }{
 		"delete-process": {false, true, false, true},
+		"pause-process":  {false, true, false, true},
+		"resume-process": {false, true, false, true},
+		"move-process":   {false, true, false, true},
+		"move-folder":    {false, true, false, true},
 		"push-process":   {false, true, false, true},
 		"deploy-stage":   {false, true, false, true},
 		"list-variables": {true, false, true, true},

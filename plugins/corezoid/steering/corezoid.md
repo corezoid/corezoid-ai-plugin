@@ -41,6 +41,12 @@ deploy to fail server-side:
   diagrams — the matching `corezoid-*` skill (or steering file, on Kiro
   Powers) carries the deep reference docs. Activate the relevant one when
   the user signals intent.
+- `pause-process`, `resume-process`, `move-process`, and `move-folder` are
+  explicit-intent-only operations. Never infer them from a review, edit,
+  refactor, apparently unused process, or untidy folder layout. Run the
+  default dry-run, show it to the user, and apply only after the user approves
+  the exact live-state confirmation token. A prior pause is not permission to
+  auto-resume. Use `corezoid-lifecycle` for the full workflow.
 
 ## Language policy
 

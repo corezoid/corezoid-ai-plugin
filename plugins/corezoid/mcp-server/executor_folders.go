@@ -18,13 +18,15 @@ type FolderInfo struct {
 }
 
 // ShowFolder calls the "show folder" API for the given folderID and returns FolderInfo.
-// obj_type values: 0 — normal, 1 — root user, 2 — project, 3 — stage.
+// obj_type values observed in current admin API: 0 = normal, 5 = project,
+// 10 = stage. Older deployments/tests may still return 2/3 for project/stage.
 func (v *Executor) ShowFolder(folderID int) (*FolderInfo, error) {
 	ops := []map[string]any{
 		{
-			"type":   "show",
-			"obj":    "folder",
-			"obj_id": folderID,
+			"type":       "show",
+			"obj":        "folder",
+			"obj_id":     folderID,
+			"company_id": v.WorkspaceID,
 		},
 	}
 	response, err := v.req("json", ops)
@@ -64,6 +66,14 @@ func (v *Executor) ShowFolder(folderID int) (*FolderInfo, error) {
 	return info, nil
 }
 
+func isFolderProjectObjType(objType int) bool {
+	return objType == 2 || objType == 5
+}
+
+func isFolderStageObjType(objType int) bool {
+	return objType == 3 || objType == 10
+}
+
 // FolderChild describes one entry returned by ListFolder. Folders and convs
 // share the same response slice, distinguished by Obj ("folder" | "conv") and
 // — for convs — ConvType ("process" | "state").
@@ -71,7 +81,7 @@ type FolderChild struct {
 	Obj      string // "folder" | "conv"
 	ObjID    int
 	Title    string
-	ObjType  int    // for folders: 0 normal, 2 project, 3 stage
+	ObjType  int    // folders: 0 normal; project/stage are 5/10 (legacy 2/3)
 	ConvType string // for convs only
 	Status   string
 }
@@ -376,7 +386,7 @@ func (v *Executor) resolveFolderPathFromAPI(folderID int) (string, error) {
 		if err != nil {
 			return "", fmt.Errorf("failed to resolve folder path at id %d: %w", currentID, err)
 		}
-		if info.ObjType == 3 || (v.StageID != 0 && info.ObjID == v.StageID) {
+		if isFolderStageObjType(info.ObjType) || (v.StageID != 0 && info.ObjID == v.StageID) {
 			break
 		}
 		safeName := sanitizeFileSegment(info.Title)
@@ -801,7 +811,8 @@ func (v *Executor) GetProjectIDByStageID(folderID int) int {
 }
 
 // ResolveStageIDByFolder walks up from folderID until it hits a stage
-// (FolderInfo.ObjType == 3). folderID itself may already be the stage. Returns
+// (FolderInfo obj_type 10, or legacy 3). folderID itself may already be the
+// stage. Returns
 // 0 if the walk cannot find one within maxDepth or an API call fails — the
 // caller is expected to fall back to the current folder's stage_id or an
 // explicit argument. Used by stage-scoped tools (create-alias, env-var ops)
@@ -819,8 +830,7 @@ func (v *Executor) ResolveStageIDByFolder(folderID int) (int, error) {
 		if err != nil {
 			return 0, fmt.Errorf("show folder %d: %w", currentID, err)
 		}
-		// obj_type 3 is a stage (per FolderInfo doc), the top of the walk we care about.
-		if info.ObjType == 3 {
+		if isFolderStageObjType(info.ObjType) {
 			return info.ObjID, nil
 		}
 		if info.ParentObjID == 0 || info.ParentObjID == info.ObjID {
@@ -830,7 +840,6 @@ func (v *Executor) ResolveStageIDByFolder(folderID int) (int, error) {
 	}
 	return 0, fmt.Errorf("folder walk exceeded %d levels starting from %d", maxDepth, folderID)
 }
-
 
 // envVarProjectID resolves the project for a stage PRESERVING the underlying
 // failure — the bare "could not resolve project for stage N" hid the real

@@ -9,6 +9,8 @@ examples.
 
 - [Process Overview](process/README.md) - Definition, operational mechanics, and key features of
   Corezoid processes
+- [Process Lifecycle and Object Moves](process/process-lifecycle-and-move.md) - Pause/resume
+  semantics and safe process/folder reparenting
 
 ### Nodes
 

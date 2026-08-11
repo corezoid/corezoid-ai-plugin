@@ -117,6 +117,8 @@ For JSON examples of processes, see the individual process files below:
   Corezoid node renderer
 - [Error Handling Strategies](error-handling.md) - Comprehensive approaches to handling errors in
   processes
+- [Process Lifecycle and Object Moves](process-lifecycle-and-move.md) - Verified pause/resume
+  behavior and safe process/folder reparenting
 
 ## Related Documentation
 

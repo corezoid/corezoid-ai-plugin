@@ -81,6 +81,7 @@ plugins/corezoid/
     corezoid-logout/                — Remove saved Corezoid credentials for the current workspace
     corezoid-create/                — Create a new process from scratch
     corezoid-edit/                  — Modify an existing process
+    corezoid-lifecycle/             — Explicitly pause/resume processes and move processes/folders
     corezoid-state-diagram-create/  — Create a new state diagram (conv_type "state") from scratch
     corezoid-state-diagram-edit/    — Modify an existing state diagram
     corezoid-review/                — Audit and analyze a single process
