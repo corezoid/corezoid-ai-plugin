@@ -1245,7 +1245,13 @@ func findInterprocessCycleRisks(root string, currentID int, currentTitle string,
 		currentTitle = entries[currentID].Title
 	}
 	entries[currentID] = processCallGraphEntry{ID: currentID, Title: currentTitle, Targets: staticProcessTargets(currentNodes)}
+	return interprocessCycleRisks(entries, currentID)
+}
 
+// interprocessCycleRisks finds every reachable recursive component in O(V+E)
+// with one Tarjan SCC pass. Enumerating simple paths is exponential even on a
+// DAG and can hang lint/push for ordinary branching process-call graphs.
+func interprocessCycleRisks(entries map[int]processCallGraphEntry, currentID int) []InterprocessCycleRisk {
 	reachable := map[int]bool{currentID: true}
 	queue := []int{currentID}
 	for len(queue) > 0 {
@@ -1258,52 +1264,13 @@ func findInterprocessCycleRisks(root string, currentID int, currentTitle string,
 			}
 		}
 	}
-	starts := make([]int, 0, len(reachable))
-	for id := range reachable {
-		starts = append(starts, id)
-	}
-	sort.Ints(starts)
-
-	var risks []InterprocessCycleRisk
-	seenCycles := map[string]bool{}
-	for _, start := range starts {
-		path := []int{start}
-		onPath := map[int]bool{start: true}
-		var found []int
-		var walk func(int) bool
-		walk = func(id int) bool {
-			for _, next := range entries[id].Targets {
-				if next == start {
-					found = append(append([]int(nil), path...), start)
-					return true
-				}
-				if onPath[next] || !reachable[next] {
-					continue
-				}
-				onPath[next] = true
-				path = append(path, next)
-				if walk(next) {
-					return true
-				}
-				path = path[:len(path)-1]
-				delete(onPath, next)
-			}
-			return false
-		}
-		if !walk(start) {
+	components := reachableProcessCallSCCs(entries, reachable)
+	risks := make([]InterprocessCycleRisk, 0, len(components))
+	for _, component := range components {
+		found := processCallCyclePath(entries, component)
+		if len(found) == 0 {
 			continue
 		}
-		uniqueIDs := append([]int(nil), found[:len(found)-1]...)
-		sort.Ints(uniqueIDs)
-		keyParts := make([]string, len(uniqueIDs))
-		for i, id := range uniqueIDs {
-			keyParts[i] = strconv.Itoa(id)
-		}
-		cycleKey := strings.Join(keyParts, ",")
-		if seenCycles[cycleKey] {
-			continue
-		}
-		seenCycles[cycleKey] = true
 		titles := make([]string, 0, len(found))
 		for _, id := range found {
 			title := entries[id].Title
@@ -1318,6 +1285,120 @@ func findInterprocessCycleRisks(root string, currentID int, currentTitle string,
 		})
 	}
 	return risks
+}
+
+func reachableProcessCallSCCs(entries map[int]processCallGraphEntry, reachable map[int]bool) [][]int {
+	index := 0
+	indices := map[int]int{}
+	low := map[int]int{}
+	onStack := map[int]bool{}
+	var stack []int
+	var out [][]int
+	var visit func(int)
+	visit = func(id int) {
+		indices[id] = index
+		low[id] = index
+		index++
+		stack = append(stack, id)
+		onStack[id] = true
+		for _, next := range entries[id].Targets {
+			if !reachable[next] {
+				continue
+			}
+			if _, seen := indices[next]; !seen {
+				visit(next)
+				if low[next] < low[id] {
+					low[id] = low[next]
+				}
+			} else if onStack[next] && indices[next] < low[id] {
+				low[id] = indices[next]
+			}
+		}
+		if low[id] != indices[id] {
+			return
+		}
+		var component []int
+		for {
+			next := stack[len(stack)-1]
+			stack = stack[:len(stack)-1]
+			onStack[next] = false
+			component = append(component, next)
+			if next == id {
+				break
+			}
+		}
+		cyclic := len(component) > 1
+		if len(component) == 1 {
+			for _, next := range entries[component[0]].Targets {
+				if next == component[0] {
+					cyclic = true
+					break
+				}
+			}
+		}
+		if cyclic {
+			sort.Ints(component)
+			out = append(out, component)
+		}
+	}
+
+	ids := make([]int, 0, len(reachable))
+	for id := range reachable {
+		ids = append(ids, id)
+	}
+	sort.Ints(ids)
+	for _, id := range ids {
+		if _, seen := indices[id]; !seen {
+			visit(id)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i][0] < out[j][0] })
+	return out
+}
+
+// processCallCyclePath returns one concrete edge-valid cycle for an SCC. The
+// SCC itself is the risk unit; one representative path keeps reports stable
+// without enumerating the potentially exponential set of simple cycles.
+func processCallCyclePath(entries map[int]processCallGraphEntry, component []int) []int {
+	if len(component) == 0 {
+		return nil
+	}
+	inComponent := make(map[int]bool, len(component))
+	for _, id := range component {
+		inComponent[id] = true
+	}
+	start := component[0]
+	for _, next := range entries[start].Targets {
+		if !inComponent[next] {
+			continue
+		}
+		if next == start {
+			return []int{start, start}
+		}
+		if tail, ok := processCallPath(entries, next, start, inComponent, map[int]bool{}); ok {
+			return append([]int{start}, tail...)
+		}
+	}
+	return nil
+}
+
+func processCallPath(entries map[int]processCallGraphEntry, current, target int, allowed, visited map[int]bool) ([]int, bool) {
+	if current == target {
+		return []int{target}, true
+	}
+	if visited[current] || !allowed[current] {
+		return nil, false
+	}
+	visited[current] = true
+	for _, next := range entries[current].Targets {
+		if !allowed[next] {
+			continue
+		}
+		if tail, ok := processCallPath(entries, next, target, allowed, visited); ok {
+			return append([]int{current}, tail...), true
+		}
+	}
+	return nil, false
 }
 
 func safetyFingerprint(category string, value interface{}) string {

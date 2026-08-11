@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"math"
 	"os"
 	"path/filepath"
@@ -9,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 )
 
 func safetyTestNode(id, title string, objType float64, logics, sems []interface{}) map[string]interface{} {
@@ -1063,5 +1065,61 @@ func TestCycleSafety_DuplicateProcessIDsUnionCallTargets(t *testing.T) {
 	risks := findInterprocessCycleRisks(root, 100, "A", parseProcessNodes(nodesRaw))
 	if len(risks) != 1 {
 		t.Fatalf("duplicate exports must be unioned conservatively instead of hiding recursion: %+v", risks)
+	}
+}
+
+func TestInterprocessCycleRisks_BranchingDAGCompletesLinearly(t *testing.T) {
+	const processes = 30
+	entries := make(map[int]processCallGraphEntry, processes)
+	for id := 1; id <= processes; id++ {
+		entry := processCallGraphEntry{ID: id, Title: fmt.Sprintf("P%d", id)}
+		for step := 1; step <= 3 && id+step <= processes; step++ {
+			entry.Targets = append(entry.Targets, id+step)
+		}
+		entries[id] = entry
+	}
+	started := time.Now()
+	if risks := interprocessCycleRisks(entries, 1); len(risks) != 0 {
+		t.Fatalf("acyclic call graph reported recursion: %+v", risks)
+	}
+	if elapsed := time.Since(started); elapsed > 2*time.Second {
+		t.Fatalf("30-process branching DAG took %s; cycle detection must remain O(V+E)", elapsed)
+	}
+}
+
+func TestInterprocessCycleRisks_ReportsEachReachableSCCOnce(t *testing.T) {
+	entries := map[int]processCallGraphEntry{
+		1: {ID: 1, Title: "Root", Targets: []int{2, 4}},
+		2: {ID: 2, Title: "A", Targets: []int{3}},
+		3: {ID: 3, Title: "B", Targets: []int{2}},
+		4: {ID: 4, Title: "Self", Targets: []int{4}},
+	}
+	risks := interprocessCycleRisks(entries, 1)
+	if len(risks) != 2 {
+		t.Fatalf("recursive SCCs = %d, want 2: %+v", len(risks), risks)
+	}
+	if got := fmt.Sprint(risks[0].ProcessIDs); got != "[2 3 2]" {
+		t.Fatalf("first concrete cycle = %s, want [2 3 2]", got)
+	}
+	if got := fmt.Sprint(risks[1].ProcessIDs); got != "[4 4]" {
+		t.Fatalf("self-cycle = %s, want [4 4]", got)
+	}
+}
+
+func BenchmarkInterprocessCycleRisks_TenThousandProcessDAG(b *testing.B) {
+	const processes = 10_000
+	entries := make(map[int]processCallGraphEntry, processes)
+	for id := 1; id <= processes; id++ {
+		entry := processCallGraphEntry{ID: id}
+		for step := 1; step <= 3 && id+step <= processes; step++ {
+			entry.Targets = append(entry.Targets, id+step)
+		}
+		entries[id] = entry
+	}
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if risks := interprocessCycleRisks(entries, 1); len(risks) != 0 {
+			b.Fatalf("acyclic call graph reported recursion: %+v", risks)
+		}
 	}
 }
