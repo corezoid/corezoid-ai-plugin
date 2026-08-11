@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -1248,6 +1249,30 @@ func TestHandleRunTask_CreatesTaskWhenNodeMetadataUnavailable(t *testing.T) {
 	}
 	if !strings.Contains(strings.Join(operations, ","), "task:create") {
 		t.Fatalf("task was never created: %s", strings.Join(operations, ","))
+	}
+	// The degraded path breaks on the first poll, so the summary must not
+	// present that snapshot as a settled result.
+	if !strings.Contains(result, "may still be in flight") {
+		t.Fatalf("degraded summary presents the first observation as final: %s", result)
+	}
+	// The whole point of the fix: no deploy. A node create/modify here would
+	// mean run-task is back to requiring edit rights.
+	for _, op := range operations {
+		if strings.HasPrefix(op, "node:") {
+			t.Fatalf("run-task touched nodes (implicit deploy): %s", strings.Join(operations, ","))
+		}
+	}
+}
+
+// The deadline path has no task snapshot to report, so every unknown field must
+// read as unknown rather than as an empty value.
+func TestRunTaskNoNodeMetaSummary_LabelsMissingFields(t *testing.T) {
+	summary := runTaskNoNodeMetaSummary(&Executor{ProcessID: 42}, "ref-1", "", "", "",
+		errors.New("Access denied"), "its result could not be read")
+	for _, want := range []string{"NodeID: (unknown)", "TaskID: (unknown)", "Data: {}", "ProcessID: 42", "TaskRef: ref-1"} {
+		if !strings.Contains(summary, want) {
+			t.Fatalf("missing %q in summary: %s", want, summary)
+		}
 	}
 }
 

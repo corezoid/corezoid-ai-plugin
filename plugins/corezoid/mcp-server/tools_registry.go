@@ -245,7 +245,7 @@ var toolRegistry = []mcpTool{
 	},
 	{
 		Name:        "run-task",
-		Description: "Run a task on an already-deployed Corezoid process (without re-deploying) and wait for it to reach a final node. Never commits or deploys, so it needs only run access and works on immutable stages; if the deployed node list is unreadable the task is still sent, just reported without node names. Polls up to wait_sec (default 30), so tasks that cross async nodes (api, api_rpc, db_call, delay) still return their final result. On timeout reports the node the task is parked at, plus TaskRef/TaskID for follow-up via list-task-history.",
+		Description: "Run a task on an already-deployed Corezoid process (without re-deploying) and wait for it to reach a final node. Never commits or deploys, so it needs only run access and works on immutable stages; if the deployed node list is unreadable the task is still sent, but reported without node names and without waiting for a final node, so its data may not be the final result. Polls up to wait_sec (default 30), so tasks that cross async nodes (api, api_rpc, db_call, delay) still return their final result. On timeout reports the node the task is parked at, plus TaskRef/TaskID for follow-up via list-task-history.",
 		Annotations: toolHints(hintMutates, hintSafe, hintNonIdempotent, hintOpenWorld),
 		InputSchema: map[string]interface{}{
 			"type": "object",

@@ -663,8 +663,11 @@ func handleRunTask(ctx context.Context, args map[string]interface{}) (string, bo
 	}
 
 	if !nodeMetaOK {
+		// The loop above breaks on the first successful poll in this mode, so
+		// this is a snapshot and not necessarily a final state — say so rather
+		// than let the caller read Data as the process result.
 		return runTaskNoNodeMetaSummary(v, ref, taskID, serverNodeID, string(rspTaskDataBin), nodeMetaErr,
-			"the node it settled on cannot be classified"), false
+			"the node below cannot be classified as final (this is the first observation after creation, so the task may still be in flight)"), false
 	}
 
 	if v.Debug {
@@ -705,6 +708,14 @@ func handleRunTask(ctx context.Context, args map[string]interface{}) (string, bo
 func runTaskNoNodeMetaSummary(v *Executor, ref, taskID, serverNodeID, data string, metaErr error, consequence string) string {
 	if data == "" {
 		data = "{}"
+	}
+	// The deadline path has no task snapshot at all. Spell the gaps out the
+	// same way NodeName/NodeType do — a bare "NodeID:" reads as an empty ID.
+	if serverNodeID == "" {
+		serverNodeID = "(unknown)"
+	}
+	if taskID == "" {
+		taskID = "(unknown)"
 	}
 	return fmt.Sprintf(
 		"Task created, but %s: the deployed node list could not be read (%v). "+
