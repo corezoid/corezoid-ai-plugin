@@ -230,6 +230,31 @@ func TestProjectPolicy_DirectLintPathOutsideCwdStillDefaultsOff(t *testing.T) {
 	}
 }
 
+func TestProjectPolicy_StageMarkerDefinesRootAfterMainRefactor(t *testing.T) {
+	root := t.TempDir()
+	t.Chdir(root)
+	if err := os.WriteFile(filepath.Join(root, "123_Test.stage.json"), []byte(`{}`), 0644); err != nil {
+		t.Fatal(err)
+	}
+	sub := filepath.Join(root, "456_Sub")
+	if err := os.MkdirAll(sub, 0755); err != nil {
+		t.Fatal(err)
+	}
+	policy := defaultProjectPolicy()
+	policy.CycleSafety.Mode = policyModeStrict
+	if _, err := writeProjectPolicy(root, policy); err != nil {
+		t.Fatal(err)
+	}
+
+	effective, err := loadEffectiveProjectPolicy(filepath.Join(sub, "789_Process.conv.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if effective.Root != root || effective.CycleSafety.Mode != policyModeStrict {
+		t.Fatalf("stage-root policy not resolved from nested process: %+v", effective)
+	}
+}
+
 func TestConfigureProjectPolicy_SetsContractDependencyScope(t *testing.T) {
 	dir := t.TempDir()
 	t.Chdir(dir)
