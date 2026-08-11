@@ -90,11 +90,50 @@ func materializeMerge(mineConv string, plan mergePlan, theirsNodes []map[string]
 
 	scheme["nodes"] = merged
 	doc["scheme"] = scheme
+	for _, field := range plan.FieldGrafts {
+		if err := applyFieldGraft(doc, field); err != nil {
+			return "", err
+		}
+	}
 	out, err := json.MarshalIndent(doc, "", "  ")
 	if err != nil {
 		return "", fmt.Errorf("merge: marshal result: %w", err)
 	}
 	return string(out), nil
+}
+
+func applyFieldGraft(doc map[string]any, field mergeField) error {
+	parts := strings.SplitN(field.Path, ".", 2)
+	if len(parts) != 2 {
+		return fmt.Errorf("merge: invalid process field path %q", field.Path)
+	}
+	var target map[string]any
+	switch parts[0] {
+	case "process":
+		target = doc
+	case "scheme":
+		var ok bool
+		target, ok = doc["scheme"].(map[string]any)
+		if !ok {
+			return fmt.Errorf("merge: local file has no scheme object")
+		}
+	default:
+		return fmt.Errorf("merge: unsupported process field path %q", field.Path)
+	}
+	if !field.theirs.Present {
+		delete(target, parts[1])
+		return nil
+	}
+	b, err := json.Marshal(field.theirs.Raw)
+	if err != nil {
+		return fmt.Errorf("merge: copy %s: %w", field.Path, err)
+	}
+	var copied any
+	if err := json.Unmarshal(b, &copied); err != nil {
+		return fmt.Errorf("merge: copy %s: %w", field.Path, err)
+	}
+	target[parts[1]] = copied
+	return nil
 }
 
 // graftEditedNode takes the server's version of a node that exists in mine but
@@ -168,52 +207,71 @@ func rewireList(listRaw any, fields []string, theirsIDToKey, keyToID map[string]
 // changed, what the SERVER changed, and where they OVERLAP — so the reader can
 // see at a glance whether their own edits collide with the concurrent change.
 func formatMergePlan(plan mergePlan) string {
-	if len(plan.Yours) == 0 && len(plan.Grafts) == 0 && len(plan.Conflicts) == 0 {
-		return "No node-level differences — only the version/metadata moved.\n"
+	if len(plan.Yours) == 0 && len(plan.Grafts) == 0 && len(plan.Conflicts) == 0 &&
+		len(plan.FieldYours) == 0 && len(plan.FieldGrafts) == 0 && len(plan.FieldConflicts) == 0 {
+		return "No deployable node or process-field differences — only server version metadata moved.\n"
 	}
 	var sb strings.Builder
 
 	sb.WriteString("Your local edits (what this push would commit):\n")
-	if len(plan.Yours) == 0 {
-		if len(plan.Conflicts) > 0 {
+	if len(plan.Yours) == 0 && len(plan.FieldYours) == 0 {
+		if mergeConflictCount(plan) > 0 {
 			sb.WriteString("  (none outside the overlap below — your edit(s) landed on a node the server also changed)\n")
 		} else {
-			sb.WriteString("  (none — you changed no nodes; the server just has newer content)\n")
+			sb.WriteString("  (none — you changed no nodes or process fields; the server just has newer content)\n")
 		}
 	} else {
 		for _, y := range plan.Yours {
 			fmt.Fprintf(&sb, "  %s %-26s %s\n", changeSign(y.Class), nodeLabel(y), y.Detail)
 		}
+		for _, y := range plan.FieldYours {
+			fmt.Fprintf(&sb, "  ~ %-26s %s\n", y.Path, y.Detail)
+		}
 	}
 
 	sb.WriteString("\nServer changed since your pull:\n")
-	if len(plan.Grafts) == 0 {
-		sb.WriteString("  (no mergeable server node changes — see the overlap below)\n")
+	if len(plan.Grafts) == 0 && len(plan.FieldGrafts) == 0 {
+		sb.WriteString("  (no mergeable server node/field changes — see the overlap below)\n")
 	}
 	for _, g := range plan.Grafts {
 		fmt.Fprintf(&sb, "  %s %-26s %s — no overlap, mergeable\n", changeSign(g.Class), nodeLabel(g), g.Detail)
 	}
+	for _, g := range plan.FieldGrafts {
+		fmt.Fprintf(&sb, "  ~ %-26s %s — no overlap, mergeable\n", g.Path, g.Detail)
+	}
 
-	if len(plan.Conflicts) > 0 {
-		sb.WriteString("\n⚠ Overlap — you and the server BOTH changed these node(s):\n")
+	if mergeConflictCount(plan) > 0 {
+		sb.WriteString("\n⚠ Overlap — you and the server BOTH changed these node/field value(s):\n")
 		untitledConflict := false
+		duplicateTitleConflict := false
 		for _, c := range plan.Conflicts {
 			fmt.Fprintf(&sb, "  ⚠ %-26s you: %s / server: %s\n",
 				nodeLabel(c), sideDetail(c.base, c.mine), sideDetail(c.base, c.theirs))
 			if c.Title == "" {
 				untitledConflict = true
 			}
+			if c.Title != "" && c.Ambiguous {
+				duplicateTitleConflict = true
+			}
+		}
+		for _, c := range plan.FieldConflicts {
+			fmt.Fprintf(&sb, "  ⚠ %-26s you: %s / server: %s — %s\n", c.Path,
+				describeFieldChange(c.base, c.mine), describeFieldChange(c.base, c.theirs), c.Detail)
 		}
 		if untitledConflict {
 			sb.WriteString("    note: untitled nodes are matched by position; inserting/removing an untitled node\n")
 			sb.WriteString("    on one side can shift that match and surface a false overlap — give nodes titles to avoid this.\n")
 		}
+		if duplicateTitleConflict {
+			sb.WriteString("    note: duplicate non-empty node titles are ambiguous across regenerated server IDs;\n")
+			sb.WriteString("    give every repeated title a unique value before attempting an automatic merge.\n")
+		}
 	} else {
-		sb.WriteString("\n✓ No overlap — none of the server's changes touch a node you edited.\n")
+		sb.WriteString("\n✓ No overlap — none of the server's changes touch a node or process field you edited.\n")
 	}
 
 	fmt.Fprintf(&sb, "\nSummary: %d local edit(s), %d mergeable server change(s), %d overlap/conflict(s).\n",
-		len(plan.Yours), len(plan.Grafts), len(plan.Conflicts))
+		len(plan.Yours)+len(plan.FieldYours), len(plan.Grafts)+len(plan.FieldGrafts), mergeConflictCount(plan))
 	return sb.String()
 }
 

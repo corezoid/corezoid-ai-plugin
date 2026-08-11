@@ -198,6 +198,10 @@ func handlePullProcess(ctx context.Context, args map[string]interface{}) (string
 		return "Error: " + err.Error(), true
 	}
 	v := NewValidator(ctx, processID)
+	// Capture the version before exporting. If another user commits while the
+	// export is in flight, this older baseline makes the next push detect the
+	// race instead of pairing old file content with newer metadata.
+	pullBaselineProc, pullBaselineErr := v.GetProcessByID(processID)
 	procInfo1, err := v.ExportProcess()
 	if err != nil {
 		return fmt.Sprintf("Error fetching process: %v", err), true
@@ -264,12 +268,12 @@ func handlePullProcess(ctx context.Context, args map[string]interface{}) (string
 	// detect that someone else changed the process in the meantime (see
 	// baseline.go and the push-process conflict gate). Best-effort: a failure
 	// here only means the push can't verify freshness, never a pull failure.
-	if proc, gerr := v.GetProcessByID(processID); gerr == nil {
-		if berr := writeBaseline(dir, processID, baselineFromServer(proc)); berr != nil {
+	if pullBaselineErr == nil {
+		if berr := writePulledBaseline(dir, processID, baselineFromServer(pullBaselineProc)); berr != nil {
 			logger.Warn("pull-process: could not record baseline for %d: %v", processID, berr)
 		}
 	} else {
-		logger.Warn("pull-process: could not fetch baseline for %d: %v", processID, gerr)
+		logger.Warn("pull-process: could not fetch pre-export baseline for %d: %v", processID, pullBaselineErr)
 	}
 	// Store the pulled scheme as the 3-way merge ancestor (see baseline.go).
 	if aerr := writeAncestorScheme(dir, processID, string(data)); aerr != nil {
@@ -306,20 +310,23 @@ func handlePullFolder(ctx context.Context, args map[string]interface{}) (string,
 	// root view instead. project_id/stage_id are pinned to 0 in the config so
 	// downstream tools resolve context off individual process files.
 	if folderID == 0 {
+		baselineSnapshot := captureWorkspaceBaselineSnapshot(v)
 		if err := downloadWorkspaceRootRecursively(v, dest); err != nil {
 			return fmt.Sprintf("Error fetching workspace root: %v", err), true
 		}
 		if err := writeWorkspaceProvisionedMarkerIfEmpty(dest); err != nil {
 			logger.Warn("pull-folder: could not write %s marker: %v", workspaceProvisionedMarker, err)
 		}
+		captured := recordPulledBaselines(dest, baselineSnapshot)
 		regenerateLocalCLAUDEMDIfNeeded(ctx)
-		return fmt.Sprintf("Workspace root saved to %s", dest), false
+		return fmt.Sprintf("Workspace root saved to %s (%d baseline(s) recorded)", dest, captured), false
 	}
 
 	// Pre-warm project_id cache so push-process never needs an extra API call.
 	// folderID is the stage; its parent is the project.
 	_, _ = resolveAndCacheProjectID(v)
 
+	baselineSnapshot := captureFolderBaselineSnapshot(v, folderID)
 	if err := downloadStageRecursively(v, folderID, dest); err != nil {
 		return fmt.Sprintf("Error fetching folder: %v", err), true
 	}
@@ -333,7 +340,7 @@ func handlePullFolder(ctx context.Context, args map[string]interface{}) (string,
 
 	// Record a pull baseline for every process so push-process can detect a
 	// concurrent server-side change before overwriting it.
-	captured := captureFolderBaselines(v, dest)
+	captured := recordPulledBaselines(dest, baselineSnapshot)
 	return fmt.Sprintf("Folder %d saved to %s (%d baseline(s) recorded)", folderID, dest, captured), false
 }
 

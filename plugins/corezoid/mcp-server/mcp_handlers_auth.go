@@ -516,21 +516,29 @@ func handleLogin(ctx context.Context, args map[string]interface{}) (string, bool
 			f.GitStagePath = ""
 		})
 		pv := NewValidator(ctx, 0)
+		baselineSnapshot := captureWorkspaceBaselineSnapshot(pv)
 		if pullErr := downloadWorkspaceRootRecursively(pv, pullDest); pullErr != nil {
 			logger.Warn("login: auto workspace-root pull failed: %v", pullErr)
 			autoPullErr = pullErr
-		} else if err := writeWorkspaceProvisionedMarkerIfEmpty(pullDest); err != nil {
-			logger.Warn("login: could not write %s marker: %v", workspaceProvisionedMarker, err)
+		} else {
+			recordPulledBaselines(pullDest, baselineSnapshot)
+			if err := writeWorkspaceProvisionedMarkerIfEmpty(pullDest); err != nil {
+				logger.Warn("login: could not write %s marker: %v", workspaceProvisionedMarker, err)
+			}
 		}
 	} else if snapStageID != 0 && snapStageID != snapStageIDBefore {
 		selectedStageID := snapStageID
 		buf.stage(func(f *Folder) { f.StageID = selectedStageID })
 		pv := NewValidator(ctx, 0)
+		baselineSnapshot := captureFolderBaselineSnapshot(pv, snapStageID)
 		if pullErr := downloadStageRecursively(pv, snapStageID, pullDest); pullErr != nil {
 			logger.Warn("login: auto pull-folder failed: %v", pullErr)
 			autoPullErr = pullErr
-		} else if err := writeWorkspaceProvisionedMarkerIfEmpty(pullDest); err != nil {
-			logger.Warn("login: could not write %s marker: %v", workspaceProvisionedMarker, err)
+		} else {
+			recordPulledBaselines(pullDest, baselineSnapshot)
+			if err := writeWorkspaceProvisionedMarkerIfEmpty(pullDest); err != nil {
+				logger.Warn("login: could not write %s marker: %v", workspaceProvisionedMarker, err)
+			}
 		}
 	}
 

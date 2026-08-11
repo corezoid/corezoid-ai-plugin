@@ -184,7 +184,7 @@ var toolRegistry = []mcpTool{
 	},
 	{
 		Name:        "push-process",
-		Description: "Validate and deploy a process file to Corezoid. Runs lint-process first and blocks deploy-breaking findings; advisory findings do not block. Also blocks when the process changed on the server since pull, reporting local edits, server changes, true overlap, and the last known author. Resolve by re-pulling; or merge=true to write a reviewable local 3-way merge without deploying; or force=true to overwrite only after accepting the risk (a server snapshot is attempted first, and recovery is possible only if it succeeds). Active Call Process Stub Mode (obj_type:4) is warning-only on a resolved mutable non-production-like stage, while immutable/prod/unknown stages require allow_active_stub_mode=true after explicit confirmation. force=true does not confirm Stub Mode. The server regenerates node IDs and rewrites the local file with the canonical scheme, so reference nodes by title and re-read the file after push.",
+		Description: "Validate and deploy a process file to Corezoid. Runs lint-process first and blocks deploy-breaking findings; advisory findings do not block. Also blocks when the process changed on the server since pull, reporting local edits, server changes, true overlap, and the last known author. Resolve by re-pulling; or merge=true to write a reviewable local 3-way merge plus a .pre-merge backup without deploying; or force=true to overwrite only after accepting the risk (a server snapshot is attempted first, and recovery is possible only if it succeeds). Active Call Process Stub Mode (obj_type:4) is warning-only on a resolved mutable non-production-like stage, while immutable/prod/unknown stages require allow_active_stub_mode=true after explicit confirmation. force=true does not confirm Stub Mode. The server regenerates node IDs and rewrites the local file with the canonical scheme, so reference nodes by title and re-read the file after push.",
 		Annotations: toolHints(hintMutates, hintDestructive, hintNonIdempotent, hintOpenWorld),
 		InputSchema: map[string]interface{}{
 			"type": "object",
@@ -203,7 +203,7 @@ var toolRegistry = []mcpTool{
 				},
 				"merge": map[string]interface{}{
 					"type":        "boolean",
-					"description": "On a concurrent-change conflict, perform a 3-way merge: graft the non-conflicting server changes into your local file for review (does not deploy). Nodes both sides changed are kept as yours and listed to resolve. Default false.",
+					"description": "On a concurrent-change conflict, perform a 3-way merge: preserve the original as <process>.pre-merge and graft non-conflicting server node/process-field changes into the local file for review (does not deploy). Values changed differently on both sides are kept as yours and listed to resolve. Default false.",
 				},
 			},
 			"required": []string{"process_path"},

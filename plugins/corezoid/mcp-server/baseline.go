@@ -2,11 +2,17 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
+	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
+
+	"github.com/gofrs/flock"
 )
 
 // baselineFileName is the per-folder sidecar recording, for each pulled
@@ -38,7 +44,7 @@ func writeAncestorScheme(dir string, procID int, convJSON string) error {
 	if err := os.MkdirAll(sub, 0755); err != nil {
 		return err
 	}
-	return os.WriteFile(ancestorPath(dir, procID), []byte(convJSON), 0644)
+	return writeFileAtomically(ancestorPath(dir, procID), []byte(convJSON), 0644)
 }
 
 // readAncestorScheme returns the stored ancestor conv JSON; ok is false when
@@ -58,37 +64,143 @@ type baselineEntry struct {
 	PulledAt   int64 `json:"pulled_at,omitempty"` // when this baseline was recorded (unix, for diagnostics)
 }
 
-// readBaselines loads the folder's baseline sidecar. A missing or corrupt file
-// yields an empty map — the caller treats "no baseline" as "cannot verify",
-// never as an error.
-func readBaselines(dir string) map[string]baselineEntry {
+type corruptBaselineError struct {
+	path string
+	err  error
+}
+
+func (e *corruptBaselineError) Error() string { return fmt.Sprintf("parse %s: %v", e.path, e.err) }
+func (e *corruptBaselineError) Unwrap() error { return e.err }
+
+// readBaselines loads the folder's baseline sidecar. A missing file is a valid
+// empty baseline; corrupt content is an error because silently treating it as
+// empty would disable the concurrent-change gate.
+func readBaselines(dir string) (map[string]baselineEntry, error) {
 	m := map[string]baselineEntry{}
-	b, err := os.ReadFile(filepath.Join(dir, baselineFileName))
-	if err != nil {
-		return m
+	path := filepath.Join(dir, baselineFileName)
+	b, err := os.ReadFile(path)
+	if errors.Is(err, fs.ErrNotExist) {
+		return m, nil
 	}
-	_ = json.Unmarshal(b, &m) // corrupt content leaves m empty, which is the safe default
-	return m
+	if err != nil {
+		return nil, fmt.Errorf("read %s: %w", path, err)
+	}
+	if err := json.Unmarshal(b, &m); err != nil {
+		return nil, &corruptBaselineError{path: path, err: err}
+	}
+	if m == nil {
+		m = map[string]baselineEntry{}
+	}
+	return m, nil
 }
 
 // writeBaseline upserts one process's baseline into the folder sidecar,
-// preserving the other entries.
+// preserving the other entries. The full read-modify-write is serialised both
+// within this MCP process and across MCP processes, then committed atomically.
 func writeBaseline(dir string, procID int, e baselineEntry) error {
-	m := readBaselines(dir)
+	return writeBaselineLocked(dir, procID, e, false)
+}
+
+// writePulledBaseline may recover a corrupt sidecar because a successful pull
+// has just produced a fresh authoritative snapshot. The corrupt file is kept
+// beside it for diagnosis; non-pull writers never take this recovery path.
+func writePulledBaseline(dir string, procID int, e baselineEntry) error {
+	return writeBaselineLocked(dir, procID, e, true)
+}
+
+func writeBaselineLocked(dir string, procID int, e baselineEntry, repairCorrupt bool) error {
+	path := filepath.Join(dir, baselineFileName)
+	baselineWriteMu.Lock()
+	defer baselineWriteMu.Unlock()
+
+	lock := flock.New(path + ".lock")
+	if err := lock.Lock(); err != nil {
+		return fmt.Errorf("lock baseline %s: %w", path, err)
+	}
+	defer func() { _ = lock.Unlock() }()
+
+	m, err := readBaselines(dir)
+	corruptBackup := ""
+	if err != nil {
+		var corrupt *corruptBaselineError
+		if !repairCorrupt || !errors.As(err, &corrupt) {
+			return err
+		}
+		backup := path + ".corrupt-" + strconv.FormatInt(time.Now().UnixNano(), 10)
+		if renameErr := os.Rename(path, backup); renameErr != nil {
+			return fmt.Errorf("archive corrupt baseline %s: %w", path, renameErr)
+		}
+		logger.Warn("pull: archived corrupt baseline %s as %s", path, backup)
+		corruptBackup = backup
+		m = map[string]baselineEntry{}
+	}
 	m[strconv.Itoa(procID)] = e
 	b, err := json.MarshalIndent(m, "", "  ")
 	if err != nil {
+		return fmt.Errorf("marshal %s: %w", path, err)
+	}
+	if err := writeFileAtomically(path, append(b, '\n'), 0644); err != nil {
+		if corruptBackup != "" {
+			if restoreErr := os.Rename(corruptBackup, path); restoreErr != nil {
+				return fmt.Errorf("%v; additionally failed to restore corrupt baseline: %w", err, restoreErr)
+			}
+		}
 		return err
 	}
-	path := filepath.Join(dir, baselineFileName)
-	return os.WriteFile(path, append(b, '\n'), 0644)
+	return nil
+}
+
+var baselineWriteMu sync.Mutex
+
+// writeFileAtomically commits data through a same-directory temporary file so
+// readers see either the old complete file or the new complete file.
+func writeFileAtomically(path string, data []byte, mode fs.FileMode) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		return fmt.Errorf("create parent for %s: %w", path, err)
+	}
+	tmp, err := os.CreateTemp(filepath.Dir(path), "."+filepath.Base(path)+".*.tmp")
+	if err != nil {
+		return fmt.Errorf("create temp for %s: %w", path, err)
+	}
+	tmpName := tmp.Name()
+	renamed := false
+	defer func() {
+		if !renamed {
+			_ = os.Remove(tmpName)
+		}
+	}()
+	if err := os.Chmod(tmpName, mode); err != nil {
+		_ = tmp.Close()
+		return fmt.Errorf("chmod temp for %s: %w", path, err)
+	}
+	if _, err := tmp.Write(data); err != nil {
+		_ = tmp.Close()
+		return fmt.Errorf("write temp for %s: %w", path, err)
+	}
+	if err := tmp.Sync(); err != nil {
+		_ = tmp.Close()
+		return fmt.Errorf("fsync temp for %s: %w", path, err)
+	}
+	if err := tmp.Close(); err != nil {
+		return fmt.Errorf("close temp for %s: %w", path, err)
+	}
+	if err := os.Rename(tmpName, path); err != nil {
+		return fmt.Errorf("rename temp for %s: %w", path, err)
+	}
+	renamed = true
+	return nil
 }
 
 // lookupBaseline returns the recorded baseline for a process; ok is false when
-// none exists (never pulled, or a pre-feature local file).
-func lookupBaseline(dir string, procID int) (baselineEntry, bool) {
-	e, ok := readBaselines(dir)[strconv.Itoa(procID)]
-	return e, ok
+// none exists (never pulled, or a pre-feature local file). A corrupt sidecar is
+// returned as an error so push can fail closed instead of disabling the gate.
+func lookupBaseline(dir string, procID int) (baselineEntry, bool, error) {
+	m, err := readBaselines(dir)
+	if err != nil {
+		return baselineEntry{}, false, err
+	}
+	e, ok := m[strconv.Itoa(procID)]
+	return e, ok, nil
 }
 
 // baselineFromServer extracts the version identity of a process from a
@@ -109,11 +221,79 @@ func baselineFromServer(proc map[string]any) baselineEntry {
 	return e
 }
 
-// captureFolderBaselines records a pull baseline for every *.conv.json under
-// root (a folder pull writes a ZIP export that carries no version metadata, so
-// each file's current server version is fetched here). Best-effort: per-file
-// failures are logged, never fatal. Returns how many baselines were recorded.
-func captureFolderBaselines(v *Executor, root string) int {
+// captureFolderBaselineSnapshot records process versions before a folder ZIP
+// export starts. Capturing first is deliberate: a server commit during export
+// must leave the downloaded file on an older baseline so the next push detects
+// the race instead of silently accepting a mixed-time snapshot.
+func captureFolderBaselineSnapshot(v *Executor, folderID int) map[int]baselineEntry {
+	out := map[int]baselineEntry{}
+	captureFolderChildren(v, folderID, out, map[int]bool{})
+	return out
+}
+
+// captureWorkspaceBaselineSnapshot is the No Project equivalent: list the
+// workspace root, capture top-level processes, then recurse through folders.
+func captureWorkspaceBaselineSnapshot(v *Executor) map[int]baselineEntry {
+	out := map[int]baselineEntry{}
+	items, err := v.ListWorkspaceRoot()
+	if err != nil {
+		logger.Warn("pull-folder: baseline root list failed: %v", err)
+		return out
+	}
+	visited := map[int]bool{}
+	for _, item := range items {
+		if err := v.checkCancel(); err != nil {
+			break
+		}
+		switch item.ObjType {
+		case "conv":
+			captureProcessBaseline(v, item.ObjID, out)
+		case "folder":
+			captureFolderChildren(v, item.ObjID, out, visited)
+		}
+	}
+	return out
+}
+
+func captureFolderChildren(v *Executor, folderID int, out map[int]baselineEntry, visited map[int]bool) {
+	if folderID == 0 || visited[folderID] {
+		return
+	}
+	visited[folderID] = true
+	children, err := v.ListFolder(folderID)
+	if err != nil {
+		logger.Warn("pull-folder: baseline list failed for folder %d: %v", folderID, err)
+		return
+	}
+	for _, child := range children {
+		if err := v.checkCancel(); err != nil {
+			return
+		}
+		switch child.Obj {
+		case "conv":
+			captureProcessBaseline(v, child.ObjID, out)
+		case "folder":
+			captureFolderChildren(v, child.ObjID, out, visited)
+		}
+	}
+}
+
+func captureProcessBaseline(v *Executor, procID int, out map[int]baselineEntry) {
+	if procID == 0 {
+		return
+	}
+	proc, err := v.GetProcessByID(procID)
+	if err != nil {
+		logger.Warn("pull-folder: baseline fetch failed for %d: %v", procID, err)
+		return
+	}
+	out[procID] = baselineFromServer(proc)
+}
+
+// recordPulledBaselines pairs the pre-export snapshot with the files produced
+// by that export. The pulled file itself becomes the merge ancestor. Processes
+// absent from the pre-export snapshot intentionally get no baseline.
+func recordPulledBaselines(root string, snapshot map[int]baselineEntry) int {
 	n := 0
 	_ = filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
 		if err != nil || info.IsDir() || !strings.HasSuffix(path, ".conv.json") {
@@ -132,18 +312,18 @@ func captureFolderBaselines(v *Executor, root string) int {
 			return nil
 		}
 		objID := int(f)
-		proc, gerr := v.GetProcessByID(objID)
-		if gerr != nil {
-			logger.Warn("pull-folder: baseline fetch failed for %d: %v", objID, gerr)
-			return nil
-		}
-		if werr := writeBaseline(filepath.Dir(path), objID, baselineFromServer(proc)); werr != nil {
-			logger.Warn("pull-folder: baseline write failed for %d: %v", objID, werr)
-			return nil
-		}
 		// The freshly pulled file content is the merge ancestor.
 		if aerr := writeAncestorScheme(filepath.Dir(path), objID, string(b)); aerr != nil {
 			logger.Warn("pull-folder: ancestor write failed for %d: %v", objID, aerr)
+		}
+		base, ok := snapshot[objID]
+		if !ok {
+			logger.Warn("pull-folder: no pre-export baseline for process %d", objID)
+			return nil
+		}
+		if werr := writePulledBaseline(filepath.Dir(path), objID, base); werr != nil {
+			logger.Warn("pull-folder: baseline write failed for %d: %v", objID, werr)
+			return nil
 		}
 		n++
 		return nil

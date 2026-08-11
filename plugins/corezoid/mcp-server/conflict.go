@@ -33,7 +33,11 @@ type conflictResult struct {
 // push that would otherwise succeed — only a genuine conflict does.
 func resolveConflict(v *Executor, filePath string, procID int, localJSON string, force, merge bool) conflictResult {
 	dir := filepath.Dir(filePath)
-	base, ok := lookupBaseline(dir, procID)
+	base, ok, baselineErr := lookupBaseline(dir, procID)
+	if baselineErr != nil {
+		return conflictResult{conflictBlock, fmt.Sprintf(
+			"Push blocked: the concurrency baseline for process #%d is unreadable: %v. Re-pull the process to rebuild the sidecar before pushing; continuing would disable lost-update protection.", procID, baselineErr)}
+	}
 	if !ok {
 		return conflictResult{conflictProceed, fmt.Sprintf(
 			"Note: no pull baseline recorded for process #%d — concurrent-change detection is off for this file. Re-pull to enable it.", procID)}
@@ -93,6 +97,10 @@ func computeMergePlan(v *Executor, dir string, procID int, localJSON string) (pl
 	mineNodes := localSchemeNodes(localJSON)
 	theirsNodes = localSchemeNodes(tConv)
 	plan = buildMergePlan(baseNodes, theirsNodes, mineNodes)
+	if err := addProcessFields(&plan, ancestorConv, tConv, localJSON); err != nil {
+		logger.Warn("conflict merge: process-level comparison failed: %v", err)
+		return mergePlan{}, nil, "", false
+	}
 	return plan, theirsNodes, tConv, true
 }
 
@@ -125,7 +133,15 @@ func applyMerge(v *Executor, dir, filePath string, procID int, localJSON string,
 	if err != nil {
 		return conflictResult{conflictBlock, fmt.Sprintf("Merge could not be built: %v — re-pull and re-apply your edits instead.", err)}
 	}
-	if err := os.WriteFile(filePath, []byte(merged), 0644); err != nil {
+	mode := os.FileMode(0644)
+	if info, statErr := os.Stat(filePath); statErr == nil {
+		mode = info.Mode().Perm()
+	}
+	backupPath := filePath + ".pre-merge"
+	if err := writeFileAtomically(backupPath, []byte(localJSON), mode); err != nil {
+		return conflictResult{conflictBlock, fmt.Sprintf("Merge built but the local backup could not be written to %s: %v. The original file was not changed.", backupPath, err)}
+	}
+	if err := writeFileAtomically(filePath, []byte(merged), mode); err != nil {
 		return conflictResult{conflictBlock, fmt.Sprintf("Merge built but could not write %s: %v", filePath, err)}
 	}
 
@@ -139,8 +155,9 @@ func applyMerge(v *Executor, dir, filePath string, procID int, localJSON string,
 		}
 	}
 	sb.WriteString("\n")
+	fmt.Fprintf(&sb, "Original local file saved to %s.\n\n", backupPath)
 	sb.WriteString(formatMergePlan(plan))
-	if len(plan.Conflicts) == 0 {
+	if mergeConflictCount(plan) == 0 {
 		if berr := writeBaseline(dir, procID, current); berr != nil {
 			logger.Warn("merge: baseline advance failed for %d: %v", procID, berr)
 		}
@@ -149,8 +166,8 @@ func applyMerge(v *Executor, dir, filePath string, procID int, localJSON string,
 		}
 		fmt.Fprintf(&sb, "\nMerged into %s — no conflicts. Review it, then push again; it will proceed cleanly.\n", filePath)
 	} else {
-		fmt.Fprintf(&sb, "\nGrafted the non-conflicting changes into %s. The %d conflicting node(s) above were kept as YOUR version.\nReview them, then push with force=true to deploy (a snapshot of the server version is attempted first; recoverable only if it succeeds — check the push result).\n",
-			filePath, len(plan.Conflicts))
+		fmt.Fprintf(&sb, "\nGrafted the non-conflicting changes into %s. The %d overlapping node/field value(s) above were kept as YOUR version.\nReview them, then push with force=true to deploy (a snapshot of the server version is attempted first; recoverable only if it succeeds — check the push result).\n",
+			filePath, mergeConflictCount(plan))
 	}
 	return conflictResult{conflictMerged, sb.String()}
 }
@@ -177,14 +194,14 @@ func formatConflict(procID int, base, current baselineEntry, proc map[string]any
 	if havePlan {
 		sb.WriteString(formatMergePlan(plan))
 		sb.WriteString("\nChoose one — nothing has been pushed yet:\n\n")
-		if len(plan.Conflicts) == 0 {
+		if mergeConflictCount(plan) == 0 {
 			sb.WriteString("  [1] merge=true   COMBINE both — recommended (nothing overlaps)\n")
 			sb.WriteString("        keeps ALL your edits AND adds ALL the server's changes above — nothing is lost.\n")
 			sb.WriteString("        Writes the merged file for you to review, then push again → deploys cleanly.\n\n")
 		} else {
 			sb.WriteString("  [1] merge=true   COMBINE what doesn't overlap\n")
 			sb.WriteString("        keeps your edits AND adds the server's NON-overlapping changes above.\n")
-			sb.WriteString("        The overlapping node(s) are KEPT AS YOURS — resolve those by hand, then push with force=true.\n\n")
+			sb.WriteString("        The overlapping node/field value(s) are KEPT AS YOURS — resolve those by hand, then push with force=true.\n\n")
 		}
 		sb.WriteString("  [2] re-pull      THEIRS WINS — take the server version\n")
 		sb.WriteString("        overwrites your local file with the server's; YOUR local edits are DISCARDED and\n")

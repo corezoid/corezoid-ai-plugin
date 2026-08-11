@@ -55,14 +55,15 @@ type nodeCanon struct {
 // mergeNode is one node's classification (matched across versions by Key) and
 // the material for the report.
 type mergeNode struct {
-	Key     string
-	Title   string // display title (may be empty — use nodeLabel for output)
-	ObjType int
-	Class   nodeClass
-	Detail  string // short human hint of what changed ("JS changed", "routing changed", "new node", ...)
-	base    *nodeCanon
-	theirs  *nodeCanon
-	mine    *nodeCanon
+	Key       string
+	Title     string // display title (may be empty — use nodeLabel for output)
+	ObjType   int
+	Class     nodeClass
+	Detail    string // short human hint of what changed ("JS changed", "routing changed", "new node", ...)
+	Ambiguous bool   // duplicate non-empty title on at least one side
+	base      *nodeCanon
+	theirs    *nodeCanon
+	mine      *nodeCanon
 }
 
 // matchKeys returns, for each node in scheme order, the key used to match it
@@ -111,10 +112,40 @@ func objTypeName(ot int) string {
 
 // mergePlan is the full reconciliation.
 type mergePlan struct {
-	Nodes     []mergeNode // every reconciled title, sorted
-	Yours     []mergeNode // nodes only I changed/added/removed — what this push commits
-	Grafts    []mergeNode // theirs-only changes safe to apply (edits, adds, deletes)
-	Conflicts []mergeNode // nodes both sides changed — overlap needing a human
+	Nodes          []mergeNode  // every reconciled title, sorted
+	Yours          []mergeNode  // nodes only I changed/added/removed — what this push commits
+	Grafts         []mergeNode  // theirs-only changes safe to apply (edits, adds, deletes)
+	Conflicts      []mergeNode  // nodes both sides changed — overlap needing a human
+	FieldYours     []mergeField // process/scheme fields changed only locally
+	FieldGrafts    []mergeField // process/scheme fields changed only on the server
+	FieldConflicts []mergeField // process/scheme fields changed differently on both sides
+}
+
+type mergeFieldClass int
+
+const (
+	fieldYours mergeFieldClass = iota
+	fieldGraft
+	fieldConflict
+)
+
+type mergeFieldValue struct {
+	Present bool
+	Body    string
+	Raw     any
+}
+
+// mergeField treats each process-level field (and each non-node scheme field)
+// as one atomic value. This is deliberately conservative: concurrent edits to
+// different members of the same params/web_settings value are reported as an
+// overlap rather than guessed into a potentially invalid process contract.
+type mergeField struct {
+	Path   string
+	Class  mergeFieldClass
+	Detail string
+	base   mergeFieldValue
+	theirs mergeFieldValue
+	mine   mergeFieldValue
 }
 
 // buildMergePlan classifies every node across the three schemes.
@@ -168,6 +199,7 @@ func buildMergePlan(baseNodes, theirsNodes, mineNodes []map[string]any) mergePla
 			mm := m
 			mn.mine = &mm
 		}
+		mn.Ambiguous = (hasB && b.Ambiguous) || (hasT && t.Ambiguous) || (hasM && m.Ambiguous)
 		classify(&mn, hasB, hasT, hasM, b, t, m)
 		plan.Nodes = append(plan.Nodes, mn)
 		switch mn.Class {
@@ -180,6 +212,127 @@ func buildMergePlan(baseNodes, theirsNodes, mineNodes []map[string]any) mergePla
 		}
 	}
 	return plan
+}
+
+var ignoredMergeRootFields = map[string]bool{
+	"obj_id":                 true,
+	"change_time":            true,
+	"create_time":            true,
+	"last_confirmed_version": true,
+	"version":                true,
+	"commits":                true,
+	"uuid":                   true,
+}
+
+// addProcessFields extends a node merge plan with all process-level fields and
+// non-node scheme fields. Identity/version metadata is intentionally excluded:
+// those values describe the server object and are not deployable user edits.
+func addProcessFields(plan *mergePlan, baseConv, theirsConv, mineConv string) error {
+	base, err := processMergeFields(baseConv)
+	if err != nil {
+		return fmt.Errorf("parse merge ancestor fields: %w", err)
+	}
+	theirs, err := processMergeFields(theirsConv)
+	if err != nil {
+		return fmt.Errorf("parse server fields: %w", err)
+	}
+	mine, err := processMergeFields(mineConv)
+	if err != nil {
+		return fmt.Errorf("parse local fields: %w", err)
+	}
+
+	keys := map[string]bool{}
+	for k := range base {
+		keys[k] = true
+	}
+	for k := range theirs {
+		keys[k] = true
+	}
+	for k := range mine {
+		keys[k] = true
+	}
+	sorted := make([]string, 0, len(keys))
+	for k := range keys {
+		sorted = append(sorted, k)
+	}
+	sort.Strings(sorted)
+
+	for _, path := range sorted {
+		b := base[path]
+		t := theirs[path]
+		m := mine[path]
+		bt := equalMergeFieldValue(b, t)
+		bm := equalMergeFieldValue(b, m)
+		tm := equalMergeFieldValue(t, m)
+		if bt && bm {
+			continue
+		}
+		mf := mergeField{Path: path, base: b, theirs: t, mine: m}
+		switch {
+		case !bt && bm:
+			mf.Class, mf.Detail = fieldGraft, describeFieldChange(b, t)
+			plan.FieldGrafts = append(plan.FieldGrafts, mf)
+		case bt && !bm:
+			mf.Class, mf.Detail = fieldYours, describeFieldChange(b, m)
+			plan.FieldYours = append(plan.FieldYours, mf)
+		case tm:
+			// Both sides made the same edit. Mine already contains it, so no
+			// graft is needed; list it as a local edit for an honest report.
+			mf.Class, mf.Detail = fieldYours, describeFieldChange(b, m)+" (same on server)"
+			plan.FieldYours = append(plan.FieldYours, mf)
+		default:
+			mf.Class, mf.Detail = fieldConflict, "changed differently on both sides"
+			plan.FieldConflicts = append(plan.FieldConflicts, mf)
+		}
+	}
+	return nil
+}
+
+func processMergeFields(conv string) (map[string]mergeFieldValue, error) {
+	var doc map[string]any
+	if err := json.Unmarshal([]byte(conv), &doc); err != nil {
+		return nil, err
+	}
+	out := map[string]mergeFieldValue{}
+	for key, value := range doc {
+		if key == "scheme" || ignoredMergeRootFields[key] {
+			continue
+		}
+		out["process."+key] = newMergeFieldValue(value)
+	}
+	if scheme, ok := doc["scheme"].(map[string]any); ok {
+		for key, value := range scheme {
+			if key == "nodes" {
+				continue
+			}
+			out["scheme."+key] = newMergeFieldValue(value)
+		}
+	}
+	return out, nil
+}
+
+func newMergeFieldValue(raw any) mergeFieldValue {
+	b, _ := json.Marshal(raw)
+	return mergeFieldValue{Present: true, Body: string(b), Raw: raw}
+}
+
+func equalMergeFieldValue(a, b mergeFieldValue) bool {
+	return a.Present == b.Present && (!a.Present || a.Body == b.Body)
+}
+
+func describeFieldChange(base, side mergeFieldValue) string {
+	switch {
+	case !base.Present && side.Present:
+		return "added"
+	case base.Present && !side.Present:
+		return "removed"
+	default:
+		return "changed"
+	}
+}
+
+func mergeConflictCount(plan mergePlan) int {
+	return len(plan.Conflicts) + len(plan.FieldConflicts)
 }
 
 // classify fills Class and Detail for one node following 3-way merge semantics.

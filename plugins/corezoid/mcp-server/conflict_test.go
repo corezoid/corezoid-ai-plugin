@@ -1,6 +1,7 @@
 package main
 
 import (
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -47,6 +48,19 @@ func TestConflict_NoBaselineIsAdvisory(t *testing.T) {
 	blocked, msg := blockedResult(resolveConflict(e, fp, 1, twoNodeLocal, false, false))
 	if blocked || !strings.Contains(msg, "no pull baseline") {
 		t.Fatalf("no baseline must be advisory, got blocked=%v msg=%q", blocked, msg)
+	}
+}
+
+func TestConflict_CorruptBaselineBlocks(t *testing.T) {
+	dir := t.TempDir()
+	fp := filepath.Join(dir, "1_x.conv.json")
+	if err := os.WriteFile(filepath.Join(dir, baselineFileName), []byte("{broken"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	_, e := mockAPIServer(t, convResp(map[string]interface{}{"change_time": float64(200)}))
+	blocked, msg := blockedResult(resolveConflict(e, fp, 1, twoNodeLocal, true, false))
+	if !blocked || !strings.Contains(msg, "baseline") || !strings.Contains(msg, "unreadable") {
+		t.Fatalf("corrupt baseline must fail closed even with force=true, got blocked=%v msg=%q", blocked, msg)
 	}
 }
 
@@ -153,5 +167,48 @@ func TestConflict_DeletedOnServerBlocks(t *testing.T) {
 	blocked, msg := blockedResult(resolveConflict(e, fp, 1, twoNodeLocal, false, false))
 	if !blocked || !strings.Contains(msg, "no longer on the server") {
 		t.Fatalf("deleted process must block with a stale hint, got blocked=%v msg=%q", blocked, msg)
+	}
+}
+
+func TestApplyMergeBacksUpExactLocalFile(t *testing.T) {
+	dir := t.TempDir()
+	fp := filepath.Join(dir, "1_x.conv.json")
+	local := `{"obj_id":1,"description":"mine","scheme":{"nodes":[]}}`
+	theirs := `{"obj_id":1,"description":"server","scheme":{"nodes":[]}}`
+	if err := os.WriteFile(fp, []byte(local), 0600); err != nil {
+		t.Fatal(err)
+	}
+	plan := buildMergePlan(nil, nil, nil)
+	if err := addProcessFields(&plan, local, theirs, local); err != nil {
+		t.Fatal(err)
+	}
+
+	res := applyMerge(nil, dir, fp, 1, local, baselineEntry{ChangeTime: 200, Version: 20}, theirs, plan, nil, "", 0)
+	if res.action != conflictMerged {
+		t.Fatalf("merge action = %v, message=%s", res.action, res.message)
+	}
+	backup, err := os.ReadFile(fp + ".pre-merge")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(backup) != local {
+		t.Fatalf("backup changed local content: got %q want %q", backup, local)
+	}
+	merged, err := os.ReadFile(fp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(merged), `"description": "server"`) {
+		t.Fatalf("merged file did not graft server field:\n%s", merged)
+	}
+	if !strings.Contains(res.message, fp+".pre-merge") {
+		t.Fatalf("result must disclose backup path:\n%s", res.message)
+	}
+	info, err := os.Stat(fp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm() != 0600 {
+		t.Fatalf("merged file mode = %v, want 0600", info.Mode().Perm())
 	}
 }

@@ -408,4 +408,69 @@ func TestMerge_DuplicateTitleIsConflict(t *testing.T) {
 	if c, _ := classOf(plan, "Compute"); c != clsConflict {
 		t.Fatalf("ambiguous duplicate title must be a conflict, not an auto-merge, got %v", c)
 	}
+	if report := formatMergePlan(plan); !strings.Contains(report, "duplicate non-empty node titles") {
+		t.Fatalf("duplicate-title conflict needs distinct remediation:\n%s", report)
+	}
+}
+
+func TestMerge_ProcessFieldsGraftServerOnlyChanges(t *testing.T) {
+	base := `{"obj_id":1,"title":"Orders","description":"base","status":"active","params":[],"ref_mask":true,"scheme":{"nodes":[],"web_settings":[[]]}}`
+	theirs := `{"obj_id":1,"title":"Orders v2","description":"server","status":"active","params":[{"name":"order_id","type":"string"}],"ref_mask":true,"scheme":{"nodes":[],"web_settings":[["server"]]}}`
+	mine := `{"obj_id":1,"title":"Orders","description":"base","status":"active","params":[],"ref_mask":false,"scheme":{"nodes":[],"web_settings":[[]]}}`
+
+	plan := buildMergePlan(nil, nil, nil)
+	if err := addProcessFields(&plan, base, theirs, mine); err != nil {
+		t.Fatal(err)
+	}
+	if len(plan.FieldGrafts) != 4 {
+		t.Fatalf("server field grafts = %d, want 4: %+v", len(plan.FieldGrafts), plan.FieldGrafts)
+	}
+	if len(plan.FieldYours) != 1 || plan.FieldYours[0].Path != "process.ref_mask" {
+		t.Fatalf("local fields = %+v, want process.ref_mask", plan.FieldYours)
+	}
+	if mergeConflictCount(plan) != 0 {
+		t.Fatalf("disjoint process fields must not conflict: %+v", plan.FieldConflicts)
+	}
+
+	merged, err := materializeMerge(mine, plan, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc map[string]any
+	if err := json.Unmarshal([]byte(merged), &doc); err != nil {
+		t.Fatal(err)
+	}
+	if doc["title"] != "Orders v2" || doc["description"] != "server" || doc["ref_mask"] != false {
+		t.Fatalf("merged process fields wrong: %+v", doc)
+	}
+	params, _ := doc["params"].([]any)
+	web, _ := doc["scheme"].(map[string]any)["web_settings"].([]any)
+	if len(params) != 1 || len(web) != 1 {
+		t.Fatalf("params/web_settings were not grafted: params=%v web=%v", params, web)
+	}
+}
+
+func TestMerge_ProcessFieldConflictKeepsMine(t *testing.T) {
+	base := `{"obj_id":1,"description":"base","scheme":{"nodes":[]}}`
+	theirs := `{"obj_id":1,"description":"server","scheme":{"nodes":[]}}`
+	mine := `{"obj_id":1,"description":"mine","scheme":{"nodes":[]}}`
+
+	plan := buildMergePlan(nil, nil, nil)
+	if err := addProcessFields(&plan, base, theirs, mine); err != nil {
+		t.Fatal(err)
+	}
+	if mergeConflictCount(plan) != 1 || plan.FieldConflicts[0].Path != "process.description" {
+		t.Fatalf("expected description conflict, got %+v", plan.FieldConflicts)
+	}
+	merged, err := materializeMerge(mine, plan, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(merged, `"description": "mine"`) {
+		t.Fatalf("field conflict must keep mine for manual resolution:\n%s", merged)
+	}
+	report := formatMergePlan(plan)
+	if !strings.Contains(report, "process.description") || !strings.Contains(report, "changed differently") {
+		t.Fatalf("field conflict missing from report:\n%s", report)
+	}
 }
