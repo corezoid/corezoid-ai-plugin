@@ -139,7 +139,8 @@ func handleMoveFolder(ctx context.Context, args map[string]interface{}) (string,
 		return fmt.Sprintf("Error: show folder #%d returned metadata for #%d", folderID, info.ObjID), true
 	}
 	if info.ObjType != 0 {
-		return fmt.Sprintf("Error: folder #%d %q is kind %s. move-folder only moves normal folders; projects and stages require their dedicated lifecycle tools.", folderID, info.Title, folderKind(info.ObjType)), true
+		kind := folderKind(info.ObjType)
+		return fmt.Sprintf("Error: folder #%d %q is kind %s. move-folder only moves normal folders; %s containers cannot be reparented by this tool.", folderID, info.Title, kind, kind), true
 	}
 	return moveWithConfirmation(v, args, moveSubject{
 		kind:          "folder",

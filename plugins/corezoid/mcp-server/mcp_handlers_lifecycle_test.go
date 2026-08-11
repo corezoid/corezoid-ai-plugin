@@ -466,15 +466,29 @@ func TestMoveFolder_RejectsSelfAndDescendantBeforeAPI(t *testing.T) {
 	}
 }
 
-func TestMoveFolder_RejectsProjectAndStageObjects(t *testing.T) {
-	for _, id := range []int{100, 200} {
-		m := newLifecycleMock()
-		result, isErr := callLifecycleTool(t, m, "move-folder", map[string]interface{}{
-			"folder_id": id, "destination_folder_id": 300,
+func TestMoveFolder_RejectsNonFolderContainersWithAccurateKind(t *testing.T) {
+	tests := []struct {
+		id   int
+		kind string
+	}{
+		{id: 100, kind: "project"},
+		{id: 200, kind: "stage"},
+		{id: 700, kind: "root"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.kind, func(t *testing.T) {
+			m := newLifecycleMock()
+			if tt.kind == "root" {
+				m.folders[tt.id] = &lifecycleFolderState{title: "User root", kind: 1, parent: 0}
+			}
+			result, isErr := callLifecycleTool(t, m, "move-folder", map[string]interface{}{
+				"folder_id": tt.id, "destination_folder_id": 300,
+			})
+			want := fmt.Sprintf("%s containers cannot be reparented by this tool", tt.kind)
+			if !isErr || m.moveCalls != 0 || !strings.Contains(result, want) {
+				t.Fatalf("container #%d should be rejected as %s, isErr=%v calls=%d: %s", tt.id, tt.kind, isErr, m.moveCalls, result)
+			}
 		})
-		if !isErr || m.moveCalls != 0 || !strings.Contains(result, "only moves normal folders") {
-			t.Fatalf("container #%d should be rejected, isErr=%v calls=%d: %s", id, isErr, m.moveCalls, result)
-		}
 	}
 }
 
