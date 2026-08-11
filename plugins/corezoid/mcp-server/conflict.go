@@ -75,7 +75,7 @@ func resolveConflict(v *Executor, filePath string, procID int, localJSON string,
 			return conflictResult{conflictBlock, "Cannot merge: no pull ancestor recorded for this file (pre-feature or capture failed). Re-pull the process, re-apply your edits, then push.\n\n" +
 				formatConflict(procID, base, current, proc, localJSON, mergePlan{}, false, editorName, editorTime)}
 		}
-		return applyMerge(v, dir, filePath, procID, localJSON, current, theirsConv, plan, theirsNodes, editorName, editorTime)
+		return applyMerge(dir, filePath, procID, localJSON, current, theirsConv, plan, theirsNodes, editorName, editorTime)
 	}
 
 	return conflictResult{conflictBlock, formatConflict(procID, base, current, proc, localJSON, plan, havePlan, editorName, editorTime)}
@@ -128,7 +128,7 @@ func exportConv(v *Executor) (string, bool) {
 // push proceeds cleanly; when conflicts remain the baseline is left untouched so
 // the user must consciously resolve them and force (the auto-snapshot protects
 // the server version either way).
-func applyMerge(v *Executor, dir, filePath string, procID int, localJSON string, current baselineEntry, theirsConv string, plan mergePlan, theirsNodes []map[string]any, editorName string, editorTime int64) conflictResult {
+func applyMerge(dir, filePath string, procID int, localJSON string, current baselineEntry, theirsConv string, plan mergePlan, theirsNodes []map[string]any, editorName string, editorTime int64) conflictResult {
 	merged, err := materializeMerge(localJSON, plan, theirsNodes)
 	if err != nil {
 		return conflictResult{conflictBlock, fmt.Sprintf("Merge could not be built: %v — re-pull and re-apply your edits instead.", err)}

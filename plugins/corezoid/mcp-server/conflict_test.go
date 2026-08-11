@@ -183,7 +183,7 @@ func TestApplyMergeBacksUpExactLocalFile(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	res := applyMerge(nil, dir, fp, 1, local, baselineEntry{ChangeTime: 200, Version: 20}, theirs, plan, nil, "", 0)
+	res := applyMerge(dir, fp, 1, local, baselineEntry{ChangeTime: 200, Version: 20}, theirs, plan, nil, "", 0)
 	if res.action != conflictMerged {
 		t.Fatalf("merge action = %v, message=%s", res.action, res.message)
 	}
