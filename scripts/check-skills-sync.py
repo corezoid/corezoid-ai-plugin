@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """
 Verify that the list of skills in plugins/corezoid/skills/ matches the lists
-in CLAUDE.md (Architecture section) and README.md (skills table).
+in CLAUDE.md (Architecture section), README.md (skills table), and POWER.md
+(Kiro Power skill list).
 
 Exits 0 on match, 1 on mismatch with a diff printed to stderr.
 
@@ -17,11 +18,12 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SKILLS_DIR = os.path.join(ROOT, "plugins", "corezoid", "skills")
 CLAUDE_MD = os.path.join(ROOT, "CLAUDE.md")
 README_MD = os.path.join(ROOT, "README.md")
+POWER_MD = os.path.join(ROOT, "POWER.md")
 
 # Skill-name regex: matches kebab-case identifiers (corezoid, corezoid-*, or
 # marketplace-publish-validation) either inside backticks or as a bare
 # directory reference terminated by `/` in a code block. Both forms appear in
-# CLAUDE.md and README.md, so we accept both.
+# the checked documentation files, so we accept both.
 SKILL_TOKEN = re.compile(
     r"(?:`|(?<=\s)|(?<=^))(corezoid(?:-[a-z0-9]+)*|marketplace-publish-validation)(?:`|/)",
     re.MULTILINE,
@@ -74,10 +76,12 @@ def main():
     disk = fs_skills()
     claude = extract_skills(CLAUDE_MD)
     readme = extract_skills(README_MD)
+    power = extract_skills(POWER_MD)
 
     errors = []
     errors += diff_report("CLAUDE.md", disk, claude)
     errors += diff_report("README.md", disk, readme)
+    errors += diff_report("POWER.md", disk, power)
 
     if errors:
         for line in errors:
@@ -89,7 +93,10 @@ def main():
         )
         sys.exit(1)
 
-    print(f"OK: {len(disk)} skills consistent across filesystem, CLAUDE.md, README.md")
+    print(
+        f"OK: {len(disk)} skills consistent across filesystem, "
+        "CLAUDE.md, README.md, POWER.md"
+    )
 
 
 if __name__ == "__main__":
