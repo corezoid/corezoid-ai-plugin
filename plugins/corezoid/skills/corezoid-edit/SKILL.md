@@ -101,11 +101,19 @@ If the parent folder was structurally affected (process added, removed, or renam
 
 ---
 
-## Step 4: Deploy the Changes
+## Step 4: Get Developer Approval, Then Deploy the Changes
 
-**MANDATORY: Always run this step whenever any changes were made to the process file — even if there are open questions or the work is not fully complete. Without deploying, all changes are lost.**
+**MANDATORY: Always execute this step whenever any changes were made to the process file — even if there are open questions or the work is not fully complete. Without deploying, all changes are lost.**
 
-Deploy the modified process by calling MCP tool **`push-process`** with `process_path: "<PROCESS_PATH>"`.
+**⛔ Do NOT call `push-process` without explicit developer approval.**
+
+Run `lint-process` first (if not already done). Then present a summary of the changes and ask for a go-ahead:
+
+> "Lint passed ✅. Ready to deploy changes to **[Process Name]** (`<PROCESS_PATH>`)? (yes/no)"
+
+**Group push:** If the session involves multiple related processes that need to be pushed together, list all of them in a single prompt and use **one approval for the entire group** — do not ask separately for each process.
+
+After receiving explicit approval ("yes", "go", "деплой", "deploy", or equivalent), deploy the modified process by calling MCP tool **`push-process`** with `process_path: "<PROCESS_PATH>"`.
 
 If deployment fails, fix the reported errors and re-run `push-process` until it succeeds. Do not skip this step or postpone it — changes exist only in memory until pushed.
 
