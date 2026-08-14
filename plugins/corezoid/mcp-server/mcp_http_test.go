@@ -379,3 +379,163 @@ func TestHTTPMCPEndpoint_Post_BadJSON(t *testing.T) {
 		t.Errorf("expected parse error in body, got %q", body)
 	}
 }
+
+// ---- authWrap --------------------------------------------------------------
+
+// withAuthToken swaps the shared bearer token for the duration of one test.
+// authWrap reads httpAuthToken globally, so tests need a stable known value
+// instead of whatever initHTTPAuthToken left in place.
+func withAuthToken(t *testing.T, token string) {
+	t.Helper()
+	prev := httpAuthToken
+	httpAuthToken = token
+	t.Cleanup(func() { httpAuthToken = prev })
+}
+
+func TestAuthWrap_MissingHeader_Returns401(t *testing.T) {
+	withAuthToken(t, "secret-token")
+	called := false
+	handler := authWrap(func(w http.ResponseWriter, r *http.Request) { called = true })
+
+	req := httptest.NewRequest(http.MethodPost, "/mcp", nil)
+	w := httptest.NewRecorder()
+	handler(w, req)
+
+	if w.Code != http.StatusUnauthorized {
+		t.Errorf("expected 401 for missing Authorization header, got %d", w.Code)
+	}
+	if called {
+		t.Error("inner handler must not run without a valid token")
+	}
+}
+
+func TestAuthWrap_WrongToken_Returns401(t *testing.T) {
+	withAuthToken(t, "secret-token")
+	called := false
+	handler := authWrap(func(w http.ResponseWriter, r *http.Request) { called = true })
+
+	req := httptest.NewRequest(http.MethodPost, "/mcp", nil)
+	req.Header.Set("Authorization", "Bearer wrong-token")
+	w := httptest.NewRecorder()
+	handler(w, req)
+
+	if w.Code != http.StatusUnauthorized {
+		t.Errorf("expected 401 for wrong token, got %d", w.Code)
+	}
+	if called {
+		t.Error("inner handler must not run when token mismatches")
+	}
+}
+
+func TestAuthWrap_WrongScheme_Returns401(t *testing.T) {
+	withAuthToken(t, "secret-token")
+	handler := authWrap(func(w http.ResponseWriter, r *http.Request) {})
+
+	req := httptest.NewRequest(http.MethodPost, "/mcp", nil)
+	// Correct value, wrong scheme — must still 401 so we don't accidentally
+	// accept "Basic <base64-of-token>" or similar.
+	req.Header.Set("Authorization", "Basic secret-token")
+	w := httptest.NewRecorder()
+	handler(w, req)
+
+	if w.Code != http.StatusUnauthorized {
+		t.Errorf("expected 401 for non-Bearer scheme, got %d", w.Code)
+	}
+}
+
+func TestAuthWrap_CorrectToken_PassesThrough(t *testing.T) {
+	withAuthToken(t, "secret-token")
+	called := false
+	handler := authWrap(func(w http.ResponseWriter, r *http.Request) {
+		called = true
+		w.WriteHeader(http.StatusOK)
+	})
+
+	req := httptest.NewRequest(http.MethodPost, "/mcp", nil)
+	req.Header.Set("Authorization", "Bearer secret-token")
+	w := httptest.NewRecorder()
+	handler(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("expected 200 after valid token, got %d", w.Code)
+	}
+	if !called {
+		t.Error("expected inner handler to run with a valid token")
+	}
+}
+
+// ---- initHTTPAuthToken -----------------------------------------------------
+
+func TestInitHTTPAuthToken_UsesEnvVar(t *testing.T) {
+	prev := httpAuthToken
+	t.Cleanup(func() { httpAuthToken = prev })
+
+	t.Setenv("COREZOID_HTTP_TOKEN", "  configured-token  ")
+	initHTTPAuthToken()
+
+	if httpAuthToken != "configured-token" {
+		t.Errorf("expected COREZOID_HTTP_TOKEN to win (trimmed), got %q", httpAuthToken)
+	}
+}
+
+func TestInitHTTPAuthToken_GeneratesRandomWhenEnvEmpty(t *testing.T) {
+	prev := httpAuthToken
+	t.Cleanup(func() { httpAuthToken = prev })
+
+	t.Setenv("COREZOID_HTTP_TOKEN", "")
+	initHTTPAuthToken()
+
+	// hex-encoded 32-byte token => 64 hex chars.
+	if len(httpAuthToken) != 64 {
+		t.Errorf("expected 64-char hex token, got %d chars: %q", len(httpAuthToken), httpAuthToken)
+	}
+	for _, r := range httpAuthToken {
+		if !((r >= '0' && r <= '9') || (r >= 'a' && r <= 'f')) {
+			t.Errorf("token contains non-hex char %q", r)
+			break
+		}
+	}
+}
+
+// ---- MaxBytesReader on POST /mcp -------------------------------------------
+
+func TestHTTPHandlePost_BodyOverLimit_ReturnsError(t *testing.T) {
+	prev := httpMaxBodyBytes
+	httpMaxBodyBytes = 128
+	t.Cleanup(func() { httpMaxBodyBytes = prev })
+
+	// A JSON body well over the (lowered) limit. Content is valid JSON so
+	// the failure has to come from MaxBytesReader, not from Decode.
+	oversized := `{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{"padding":"` + strings.Repeat("A", 512) + `"}}`
+	req := httptest.NewRequest(http.MethodPost, "/mcp", strings.NewReader(oversized))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	httpHandlePost(w, req)
+
+	body := w.Body.String()
+	if !strings.Contains(body, "request body too large") {
+		t.Errorf("expected 'request body too large' in body, got %q", body)
+	}
+}
+
+func TestHTTPHandlePost_BodyWithinLimit_Passes(t *testing.T) {
+	prev := httpMaxBodyBytes
+	httpMaxBodyBytes = 1024
+	t.Cleanup(func() { httpMaxBodyBytes = prev })
+
+	body := `{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}`
+	req := httptest.NewRequest(http.MethodPost, "/mcp", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	httpHandlePost(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("expected 200 for a body under the limit, got %d", w.Code)
+	}
+	respBody := w.Body.String()
+	if strings.Contains(respBody, "request body too large") {
+		t.Errorf("did not expect body-too-large error, got %q", respBody)
+	}
+}
