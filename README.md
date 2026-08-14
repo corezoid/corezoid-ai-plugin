@@ -15,6 +15,7 @@ The plugin bundles a Go MCP server that exposes Corezoid operations as MCP tools
 | `corezoid-logout`              | "logout", "sign out", "disconnect", "выйти" | Remove saved Corezoid credentials for the current workspace |
 | `corezoid-create`              | "create a process", "new process"        | Building processes from scratch                   |
 | `corezoid-edit`                | "edit", "modify", "update" a process     | Modifying existing `.conv.json` files             |
+| `corezoid-lifecycle`           | "pause/resume process", "move process/folder", "сними с паузы", "перемести процесс" | Explicit, confirm-gated process lifecycle and server-side reparenting |
 | `corezoid-state-diagram-create` | "create state diagram", "build a state machine", "conv_type state" | Building state diagrams from scratch (`conv_type: "state"`) |
 | `corezoid-state-diagram-edit`  | "edit state diagram", "add a state", "change transitions" | Modifying existing state diagrams — states, transitions, side effects |
 | `corezoid-review`              | "review", "audit", "check" a process     | Analysis, dead code, best-practice violations     |
@@ -266,6 +267,10 @@ validation errors, and summarize what each process does.
 | `modify-folder`     | Rename a folder or update its description          |
 | `delete-folder`     | Move a folder to the recycle bin                   |
 | `delete-process`    | Move a process or state diagram to the recycle bin |
+| `pause-process`     | Preview and explicitly pause a process so Corezoid rejects new tasks |
+| `resume-process`    | Preview and explicitly reactivate a paused/debug process |
+| `move-process`      | Preview and explicitly reparent a process without copying or deploying it |
+| `move-folder`       | Preview and explicitly reparent a normal folder with hierarchy-cycle protection |
 | `create-alias`      | Create a short alias for a process                 |
 | `create-variable`   | Create a Corezoid environment variable             |
 | `list-variables`    | List a stage's environment variables (secrets masked) |

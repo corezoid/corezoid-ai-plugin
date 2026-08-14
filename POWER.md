@@ -2,7 +2,7 @@
 name: corezoid
 displayName: Corezoid
 version: 3.0.0
-description: Corezoid BPM platform assistant. Exposes the Corezoid REST API as MCP tools (`convctl`) plus 23 skills covering process creation, editing, review, validation, dashboards, state diagrams, variables, access, layout, docs, and custom-code git_call. Ships JSON schemas and per-node-type documentation for all 24 Corezoid node types.
+description: Corezoid BPM platform assistant. Exposes the Corezoid REST API as MCP tools (`convctl`) plus 24 skills covering process creation, editing, lifecycle operations, review, validation, dashboards, state diagrams, variables, access, layout, docs, and custom-code git_call. Ships JSON schemas and per-node-type documentation for all 24 Corezoid node types.
 author:
   name: Corezoid
   url: https://corezoid.com
@@ -49,6 +49,8 @@ need a post-extract substitution step on every machine.
   `.conv.json` process files.
 - **Process design** — start from a connector or logic template; lift
   existing Corezoid processes from the cloud and edit them locally.
+- **Lifecycle and moves** — explicitly pause/resume processes or reparent
+  existing processes and folders through guarded dry-run/apply workflows.
 - **State diagrams** — design and edit state-machine processes
   (`conv_type: "state"`).
 - **Project review** — audit a process for orphaned nodes, noop conditions,
@@ -68,6 +70,8 @@ need a post-extract substitution step on every machine.
 | `lint-process` | Static checks: orphaned nodes, noop conditions, unused params. |
 | `run-task` | Execute a task on a deployed process. |
 | `create-process` / `create-folder` / `create-variable` | Bootstrap resources. |
+| `pause-process` / `resume-process` | Preview and explicitly change process admission state. |
+| `move-process` / `move-folder` | Preview and explicitly reparent existing objects without copying them. |
 | `create-dashboard` / `add-chart` | Visualise node metrics. |
 | `list-workspaces` / `list-projects` / `list-stages` | Workspace navigation. |
 | `modify-task` / `delete-task` | Per-task ops on deployed processes. |
@@ -81,6 +85,7 @@ Each skill is auto-loaded from `.kiro/skills/<name>/SKILL.md`:
 - `corezoid-init` — first-time environment setup.
 - `corezoid-logout` — remove saved Corezoid credentials for the current workspace.
 - `corezoid-create` / `corezoid-edit` — process JSON authoring.
+- `corezoid-lifecycle` — confirm-gated process pause/resume and process/folder moves.
 - `corezoid-review` / `corezoid-project-review` — single-process / whole-project audits.
 - `corezoid-state-diagram-create` / `corezoid-state-diagram-edit` — state-machine processes.
 - `corezoid-process-optimizer` — tact reduction, resilience patterns.

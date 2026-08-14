@@ -1028,12 +1028,12 @@ func handleShowFolder(ctx context.Context, args map[string]interface{}) (string,
 	}
 
 	kind := "folder"
-	switch info.ObjType {
-	case 1:
+	switch {
+	case info.ObjType == 1:
 		kind = "root"
-	case 2:
+	case isFolderProjectObjType(info.ObjType):
 		kind = "project"
-	case 3:
+	case isFolderStageObjType(info.ObjType):
 		kind = "stage"
 	}
 	return fmt.Sprintf("Folder #%d %q (kind=%s, parent=%s#%d)",

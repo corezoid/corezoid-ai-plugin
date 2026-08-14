@@ -280,7 +280,7 @@ func TestMCPProtocol_ToolsList(t *testing.T) {
 	for _, tool := range result.Tools {
 		names[tool.Name] = true
 	}
-	for _, required := range []string{"login", "logout", "lint-process", "pull-process", "push-process"} {
+	for _, required := range []string{"login", "logout", "lint-process", "pull-process", "push-process", "pause-process", "resume-process", "move-process", "move-folder"} {
 		if !names[required] {
 			t.Errorf("expected tool %q in tools/list", required)
 		}
@@ -290,6 +290,8 @@ func TestMCPProtocol_ToolsList(t *testing.T) {
 	// them off the wire, not off the Go struct.
 	wantHints := map[string]struct{ readOnly, destructive bool }{
 		"delete-process": {readOnly: false, destructive: true},
+		"pause-process":  {readOnly: false, destructive: true},
+		"move-folder":    {readOnly: false, destructive: true},
 		"list-variables": {readOnly: true, destructive: false},
 	}
 	for _, tool := range result.Tools {

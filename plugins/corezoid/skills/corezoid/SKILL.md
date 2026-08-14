@@ -30,6 +30,8 @@ You have access to the Corezoid API via the `corezoid` MCP server.
 | `create-process` | Create a new empty process (`conv_type: "process"`) in a folder |
 | `create-state-diagram` | Create a new empty state diagram (`conv_type: "state"`) in a folder |
 | `create-folder` | Create a new subfolder |
+| `pause-process` / `resume-process` | Explicitly pause or reactivate one process; dry-run + exact confirmation required |
+| `move-process` / `move-folder` | Explicitly reparent an existing object without copying/deploying; dry-run + exact confirmation required |
 | `create-alias` | Create a short alias for a process |
 | `create-variable` | Create a Corezoid environment variable |
 | `create-dashboard` | Create a new dashboard for process metrics |
@@ -133,6 +135,7 @@ For domain-specific workflows use the specialized skills:
 - `/corezoid-logout` — remove saved Corezoid credentials for the current workspace
 - `/corezoid-create` — creating a new process from scratch
 - `/corezoid-edit` — modifying an existing process
+- `/corezoid-lifecycle` — explicitly pause/resume a process or move a process/folder; never inferred from review/refactoring
 - `/corezoid-state-diagram-create` — creating a new state diagram (`conv_type: "state"`) from scratch
 - `/corezoid-state-diagram-edit` — modifying an existing state diagram
 - `/corezoid-review` — auditing and analyzing a single process
@@ -165,6 +168,7 @@ Use the `Read` tool to load these files when you need deeper detail:
 | `${CLAUDE_PLUGIN_ROOT}/docs/nodes/end-node.md` | End node success/error configuration |
 | `${CLAUDE_PLUGIN_ROOT}/docs/process/process-json-validation.md` | Validation rules and common errors |
 | `${CLAUDE_PLUGIN_ROOT}/docs/process/error-handling.md` | Error handling patterns |
+| `${CLAUDE_PLUGIN_ROOT}/docs/process/process-lifecycle-and-move.md` | Verified pause/resume semantics, move wire contract, confirmation and cross-stage safety rules |
 | `${CLAUDE_PLUGIN_ROOT}/docs/state-diagrams/state-diagram-overview.md` | State diagram concepts and allowed nodes |
 | `${CLAUDE_PLUGIN_ROOT}/docs/state-diagrams/state-diagram-node-structures.md` | JSON schemas for nodes inside a state diagram |
 | `${CLAUDE_PLUGIN_ROOT}/docs/state-diagrams/state-diagram-process-interaction.md` | How driver processes read / create / modify state tasks |
