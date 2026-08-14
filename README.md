@@ -402,10 +402,10 @@ corezoid-ai-plugin/
 
 ## Debugging
 
-The MCP server always writes debug output to `/tmp/corezoid.log` when running in MCP mode. View it with:
+The MCP server always writes debug output to `~/.corezoid/mcp.log` when running in MCP mode. View it with:
 
 ```bash
-tail -f /tmp/corezoid.log
+tail -f ~/.corezoid/mcp.log
 ```
 
 In CLI mode, enable verbose output with:

@@ -114,7 +114,7 @@ The default task timeout is determined by the process configuration in Corezoid.
 
 1. Confirm Go ≥ 1.24 is installed: `go version`
 2. Check that the `mcp-server` source compiles: `cd plugins/corezoid/mcp-server && go build ./...`
-3. Look at the debug log: `cat /tmp/corezoid.log`
+3. Look at the debug log: `cat ~/.corezoid/mcp.log`
 
 ---
 
@@ -136,7 +136,7 @@ With `GOTOOLCHAIN=local`, Go will use whatever version is installed and refuse t
 
 ### How to enable debug logs
 
-The MCP server always writes debug output to `/tmp/corezoid.log` when running in MCP mode. In CLI mode, set `COREZOID_DEBUG=1`:
+The MCP server always writes debug output to `~/.corezoid/mcp.log` when running in MCP mode. In CLI mode, set `COREZOID_DEBUG=1`:
 
 ```bash
 COREZOID_DEBUG=1 go run . pull-process process_id=123
