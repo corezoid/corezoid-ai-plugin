@@ -174,6 +174,17 @@ func (v *Executor) ModifyNodes(nodes []any) error {
 					nodeIDStr, _ := nodeMap["id"].(string)
 					return fmt.Errorf("error in the %s node, Each node in the condition.logics array must always have a logic with \"type\": \"go\" at the end. This is necessary in case none of the conditions are met, so the request is redirected by default to the specified node.", nodeIDStr)
 				}
+				// The default `go` must be the *last* logic, not merely present:
+				// the server rejects the commit otherwise. Mirrors
+				// findMissingDefaultGo in lint.go, including its exemption for
+				// final nodes (obj_type:2), so that a push with force=true —
+				// which downgrades that lint finding to a warning — still fails
+				// locally instead of on a vague server error.
+				if objType != 2 && len(logics) > 0 {
+					if t, _ := logics[len(logics)-1]["type"].(string); t != "go" {
+						return fmt.Errorf("error in the %s node (%s): the last logic in condition.logics must have \"type\": \"go\" (found %q). Move the \"go\" logic to the end of the array so unmatched requests are routed by default.", objID, title, t)
+					}
+				}
 				if actionCount > 1 {
 					return fmt.Errorf("error in the %s node (%s): condition.logics must not contain more than one action logic (types other than \"go\" and \"go_if_const\"). Found %d action logics.", objID, title, actionCount)
 				}
