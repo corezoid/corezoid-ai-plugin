@@ -128,7 +128,13 @@ grep -rl '"conv_id": 1834583' . --include="*.conv.json"
 ```
 
 For each file found, replace `"conv_id": 1834583` with `"conv_id": "@payment-checkout"`.
-Then for each modified file, run **`lint-process`** and on success **`push-process`**.
+For each modified file, run **`lint-process`** to validate it.
+
+**⛔ Do NOT call `push-process` without explicit developer approval.** After all files pass lint, ask for one approval covering the whole group:
+
+> "Lint passed ✅ for [N] file(s). Ready to deploy them all? (yes/no)"
+
+After receiving explicit approval ("yes", "go", "деплой", "deploy", or equivalent), call **`push-process`** for each file.
 
 > After pushing, tell the user: "Changes deployed. Please **refresh the page** in Corezoid to see the updated process."
 

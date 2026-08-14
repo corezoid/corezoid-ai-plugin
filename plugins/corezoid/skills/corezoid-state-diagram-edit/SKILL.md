@@ -119,11 +119,17 @@ Only these logics may appear inside a state diagram. Adding anything else will f
 
 ---
 
-## Step 4: Deploy the Changes
+## Step 4: Get Developer Approval, Then Deploy the Changes
 
-**MANDATORY: Always push after any change — even if work is in-flight. Without push, the changes exist only on disk.**
+**MANDATORY: Always execute this step after any change — even if work is in-flight. Without push, the changes exist only on disk.**
 
-Call MCP tool **`push-process`** with `process_path: "<PROCESS_PATH>"`.
+**⛔ Do NOT call `push-process` without explicit developer approval.**
+
+After lint passes (run `lint-process` if not already done), ask for a go-ahead:
+
+> "Lint passed ✅. Ready to deploy changes to **[Name]** (`<PROCESS_PATH>`)? (yes/no)"
+
+After receiving explicit approval ("yes", "go", "деплой", "deploy", or equivalent), call MCP tool **`push-process`** with `process_path: "<PROCESS_PATH>"`.
 
 If push fails:
 - Re-read the file and confirm `"conv_type": "state"` is still at the root (a stray editor save or auto-format may have flipped it).

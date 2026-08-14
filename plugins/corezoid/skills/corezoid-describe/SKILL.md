@@ -89,8 +89,12 @@ Write 1–2 sentences describing the project's overall purpose and the main syst
 
 **For a process:**
 1. Update the `description` field at the root of the `.conv.json` file
-2. Call MCP tool **`push-process`** with `process_path`
-3. Confirm: *"Description updated and deployed."*
+2. **⛔ Do NOT call `push-process` without explicit developer approval.** Ask for a go-ahead:
+
+   > "Ready to push the updated description for **[Process Name]**? (yes/no)"
+
+3. After receiving explicit approval, call MCP tool **`push-process`** with `process_path`
+4. Confirm: *"Description updated and deployed."*
 
 **For a folder:**
 Use the `folder_id` resolved in Step 2a. If it was not resolved (source 4 — not found), skip this step.
