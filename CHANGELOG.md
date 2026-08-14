@@ -1,5 +1,9 @@
 # Changelog
 
+## [Unreleased]
+
+- Feat: **concurrent-change detection with 3-way merge** on `push-process`. `pull-process`/`pull-folder` record a pre-export server version and merge ancestor. A later push blocks when the server changed, reports local/server/overlap buckets across nodes and process-level fields, and supports re-pull, `merge=true` for a local reviewable merge with a `.pre-merge` backup, or an explicitly forced overwrite after attempting a server snapshot. Nodes match by title, or by `obj_type` plus ordinal when untitled. Baseline writes are locked and atomic; corrupt sidecars fail closed. Corezoid has no atomic compare-and-swap for process deploys, so this is a client-side read/compare/write guard and does not claim transactional isolation.
+
 ## [3.0.0]
 
 - **Breaking / auth**: MCP-server persisted state has moved from per-project `.env` files plus `~/.corezoid/credentials` into a single `~/.corezoid/config.json` (mode `0600`) keyed by working directory. Each entry holds `account_url`, `corezoid_url`, `apigw_url`, `workspace_id`, `access_token`, `api_login`, `api_secret`, `git_url`, `git_stage_path`; `stage_id` and `project_id` are read from the on-disk `<id>_<name>.stage.json` marker and never persisted in config. Cross-process safety uses `gofrs/flock` plus an in-process mutex; writes go through a serialised read-modify-write. Codex/Kiro subprocesses that do not inherit `cwd` fall back to `$COREZOID_WORK_DIR`. **All users must re-authenticate after upgrade** (run `/corezoid-init` or the login flow again); existing `.env`/`credentials` files are no longer read.
@@ -66,7 +70,6 @@
 - Fix: widen node `x`/`y` schema bounds from ±10000 to ±100000. Large real-world processes (a 760-node process was observed with nodes at ~25500 / -10920) legitimately lay out beyond ±10000, and schema validation happens *before* the lint force override, so `force=true` couldn't rescue them; push now accepts them.
 - CI: `scripts/check-skills-sync.py` verifies that every directory under `plugins/corezoid/skills/` is referenced in both `CLAUDE.md` (Architecture section) and `README.md` (skills table), and vice versa — so new skills can't silently drift out of the docs.
 - Docs: `CLAUDE.md` and `README.md` skill lists brought back in sync with the current skill set (state-diagram-create/edit, node-layout, describe, alias-manager, variable-manager, api-connector, gitcall, retro, feedback, process-optimizer, process-tech-writer); `CLAUDE.md` gains the MCP-server build/test/lint commands and a summary of repo-level CI checks.
-
 ## [2.9.0]
 
 - Feat: `push-process` now runs `lint-process` before deploying and blocks on issues that would break the deploy or its callers (broken node links, old-format nodes, RPC paths without reply, nodes missing a default `go`, sub-30s timers, literal reply values); advisory findings are shown but do not block, and `force=true` overrides. Advisory findings from `lint-process` are also surfaced back on a successful push instead of silently swallowed.

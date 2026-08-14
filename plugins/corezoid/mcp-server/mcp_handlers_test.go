@@ -527,6 +527,70 @@ func TestPushProcessToolSchema_DocumentsStubModeConfirmation(t *testing.T) {
 
 // ---- pull-process ----------------------------------------------------------
 
+func TestHandlePullProcessCapturesBaselineBeforeExport(t *testing.T) {
+	resetGlobals(t)
+	dir := t.TempDir()
+	orig, _ := os.Getwd()
+	if err := os.Chdir(dir); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(orig) })
+
+	var calls []string
+	var srv *httptest.Server
+	srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.Method == http.MethodGet {
+			calls = append(calls, "download-file")
+			_, _ = w.Write([]byte(`[{"obj_id":42,"parent_id":0,"title":"Wire","scheme":{"nodes":[{"id":"aaaaaaaaaaaaaaaaaaaaaaaa","obj_type":1,"condition":{"logics":[],"semaphors":[]}}]}}]`))
+			return
+		}
+		var body struct {
+			Ops []map[string]interface{} `json:"ops"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Errorf("decode request: %v", err)
+			return
+		}
+		if strings.HasSuffix(r.URL.Path, "/json") {
+			calls = append(calls, "baseline-metadata")
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
+				"request_proc": "ok",
+				"ops": []interface{}{map[string]interface{}{
+					"proc": "ok", "change_time": float64(100), "last_confirmed_version": float64(10),
+				}},
+			})
+			return
+		}
+		calls = append(calls, "export-request")
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"request_proc": "ok",
+			"ops": []interface{}{map[string]interface{}{
+				"proc": "ok", "download_url": srv.URL + "/file",
+			}},
+		})
+	}))
+	t.Cleanup(srv.Close)
+
+	apiURL = srv.URL
+	apiToken = "test-token"
+	workspaceID = "test-workspace"
+	stageID = 0
+
+	result, isErr := handlePullProcess(context.Background(), map[string]interface{}{"process_id": float64(42)})
+	if isErr {
+		t.Fatalf("pull-process failed: %s", result)
+	}
+	wantCalls := []string{"baseline-metadata", "export-request", "download-file"}
+	if strings.Join(calls, ",") != strings.Join(wantCalls, ",") {
+		t.Fatalf("wire order = %v, want %v", calls, wantCalls)
+	}
+	base, ok, err := lookupBaseline(dir, 42)
+	if err != nil || !ok || base.ChangeTime != 100 || base.Version != 10 {
+		t.Fatalf("recorded baseline = %+v ok=%v err=%v", base, ok, err)
+	}
+}
+
 func TestHandleToolCall_PullProcess_MissingArg(t *testing.T) {
 	resetGlobals(t)
 	result, isErr := handleToolCall(context.Background(), "pull-process", map[string]interface{}{})

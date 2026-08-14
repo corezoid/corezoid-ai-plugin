@@ -22,3 +22,9 @@ __pycache__/
 # Kiro Power build output
 .kiro
 /power-corezoid/
+
+# push-process concurrency baseline (per-folder, runtime; see baseline.go)
+.corezoid-baseline.json
+.corezoid-baseline.json.lock
+.corezoid-baseline.json.corrupt-*
+.corezoid-baseline/
