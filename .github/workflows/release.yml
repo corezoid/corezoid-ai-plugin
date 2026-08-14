@@ -10,7 +10,7 @@ jobs:
     name: Pre-release gate (version sync + tests)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Parse JSON manifests
         run: |
@@ -81,7 +81,7 @@ jobs:
           print(f"All six manifests match tag {tag!r}: {claude_ver}")
           EOF
 
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         with:
           go-version-file: plugins/corezoid/mcp-server/go.mod
           cache: true
@@ -96,9 +96,9 @@ jobs:
     needs: guard
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         with:
           go-version-file: plugins/corezoid/mcp-server/go.mod
           cache: true
@@ -119,7 +119,7 @@ jobs:
           done
 
       - name: Upload artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: mcp-binaries
           path: plugins/corezoid/mcp-server/convctl-*
@@ -133,12 +133,12 @@ jobs:
       id-token: write
       attestations: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
       - name: Download binaries
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: mcp-binaries
           path: dist/
@@ -151,7 +151,7 @@ jobs:
         run: python3 scripts/generate-discovery.py
 
       - name: Attest binary provenance
-        uses: actions/attest-build-provenance@v2
+        uses: actions/attest-build-provenance@v4
         with:
           subject-path: dist/convctl-*
 
@@ -173,7 +173,7 @@ jobs:
           printf '%s\n' "$NOTES" > release_notes.txt
 
       - name: Create Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           name: "v${{ steps.version.outputs.version }}"
           body_path: release_notes.txt

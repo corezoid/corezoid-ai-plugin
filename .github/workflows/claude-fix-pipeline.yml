@@ -70,7 +70,7 @@ jobs:
           echo "branch=$HEAD_BRANCH" >> "$GITHUB_OUTPUT"
           echo "sha=$HEAD_SHA"       >> "$GITHUB_OUTPUT"
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         if: steps.pr.outputs.skip != 'true'
         with:
           # ref by SHA (not branch name) — SHA is an immutable, safe identifier
@@ -86,7 +86,7 @@ jobs:
           set -euo pipefail
           git checkout -B "$BRANCH" "$SHA"
 
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         if: steps.pr.outputs.skip != 'true'
         with:
           go-version-file: plugins/corezoid/mcp-server/go.mod
