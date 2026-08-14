@@ -1,5 +1,9 @@
 # Changelog
 
+## [3.1.1]
+
+- Fix(mcp-server): `pull-folder` no longer clobbers the merge ancestor of locally-edited processes that live outside the pulled folder. The walk now skips files absent from the pre-export snapshot, preventing a later 3-way merge from seeing `base == mine` and silently dropping unpushed local edits.
+
 ## [3.1.0]
 
 - Feat: **concurrent-change detection with 3-way merge** on `push-process`. `pull-process`/`pull-folder` record a pre-export server version and merge ancestor. A later push blocks when the server changed, reports local/server/overlap buckets across nodes and process-level fields, and supports re-pull, `merge=true` for a local reviewable merge with a `.pre-merge` backup, or an explicitly forced overwrite after attempting a server snapshot. Nodes match by title, or by `obj_type` plus ordinal when untitled. Baseline writes are locked and atomic; corrupt sidecars fail closed. Corezoid has no atomic compare-and-swap for process deploys, so this is a client-side read/compare/write guard and does not claim transactional isolation.
