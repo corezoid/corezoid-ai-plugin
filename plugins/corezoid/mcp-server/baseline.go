@@ -312,14 +312,17 @@ func recordPulledBaselines(root string, snapshot map[int]baselineEntry) int {
 			return nil
 		}
 		objID := int(f)
-		// The freshly pulled file content is the merge ancestor.
-		if aerr := writeAncestorScheme(filepath.Dir(path), objID, string(b)); aerr != nil {
-			logger.Warn("pull-folder: ancestor write failed for %d: %v", objID, aerr)
-		}
+		// Only touch ancestor/baseline for processes this export actually
+		// produced (i.e. present in the pre-export snapshot). Otherwise the
+		// walk would rewrite the ancestor of an unrelated, locally-edited file
+		// with its own WIP content, and a later 3-way merge would see
+		// base == mine and silently drop the local edits.
 		base, ok := snapshot[objID]
 		if !ok {
-			logger.Warn("pull-folder: no pre-export baseline for process %d", objID)
 			return nil
+		}
+		if aerr := writeAncestorScheme(filepath.Dir(path), objID, string(b)); aerr != nil {
+			logger.Warn("pull-folder: ancestor write failed for %d: %v", objID, aerr)
 		}
 		if werr := writePulledBaseline(filepath.Dir(path), objID, base); werr != nil {
 			logger.Warn("pull-folder: baseline write failed for %d: %v", objID, werr)

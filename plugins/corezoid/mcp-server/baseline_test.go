@@ -117,6 +117,52 @@ func TestRecordPulledBaselinesUsesPreExportSnapshot(t *testing.T) {
 	}
 }
 
+// A pull-folder walking the whole stage root must not touch a locally-edited
+// file that belongs to a *different* folder (i.e. not in this export's
+// pre-snapshot). Rewriting its ancestor with the local WIP content would make
+// a later 3-way merge see base == mine and silently drop the local edits.
+func TestRecordPulledBaselinesSkipsFilesOutsideSnapshot(t *testing.T) {
+	dir := t.TempDir()
+	otherFolder := filepath.Join(dir, "other-folder")
+	if err := os.MkdirAll(otherFolder, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	// Process 10 was actually pulled by this export.
+	mustWrite(t, filepath.Join(dir, "10_a.conv.json"), `{"obj_id":10,"scheme":{"nodes":[]}}`)
+
+	// Process 30 lives in an unrelated folder, was edited locally, and has a
+	// pre-existing ancestor from an earlier real pull.
+	localWIP := `{"obj_id":30,"scheme":{"nodes":[{"local":"wip"}]}}`
+	serverTruth := `{"obj_id":30,"scheme":{"nodes":[]}}`
+	mustWrite(t, filepath.Join(otherFolder, "30_c.conv.json"), localWIP)
+	if err := writeAncestorScheme(otherFolder, 30, serverTruth); err != nil {
+		t.Fatal(err)
+	}
+
+	// This export's snapshot contains only process 10.
+	snapshot := map[int]baselineEntry{
+		10: {ChangeTime: 100, Version: 10},
+	}
+	if n := recordPulledBaselines(dir, snapshot); n != 1 {
+		t.Fatalf("expected 1 baseline recorded (only process 10), got %d", n)
+	}
+
+	// Process 30's ancestor must NOT have been overwritten with the local WIP.
+	got, ok := readAncestorScheme(otherFolder, 30)
+	if !ok {
+		t.Fatal("process 30 ancestor was deleted, expected preserved")
+	}
+	if got != serverTruth {
+		t.Fatalf("process 30 ancestor was rewritten with local content:\ngot:  %s\nwant: %s", got, serverTruth)
+	}
+
+	// And no baseline should have been written for it.
+	if _, ok, err := lookupBaseline(otherFolder, 30); err != nil || ok {
+		t.Fatalf("process 30 must have no baseline, got ok=%v err=%v", ok, err)
+	}
+}
+
 func TestCaptureFolderBaselineSnapshotRecursesBeforeExport(t *testing.T) {
 	var calls []string
 	_, e := mockAPIServer(t, func(ops []map[string]interface{}) interface{} {
