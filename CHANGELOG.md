@@ -1,8 +1,19 @@
 # Changelog
 
-## [Unreleased]
+## [3.1.0]
 
 - Feat: **concurrent-change detection with 3-way merge** on `push-process`. `pull-process`/`pull-folder` record a pre-export server version and merge ancestor. A later push blocks when the server changed, reports local/server/overlap buckets across nodes and process-level fields, and supports re-pull, `merge=true` for a local reviewable merge with a `.pre-merge` backup, or an explicitly forced overwrite after attempting a server snapshot. Nodes match by title, or by `obj_type` plus ordinal when untitled. Baseline writes are locked and atomic; corrupt sidecars fail closed. Corezoid has no atomic compare-and-swap for process deploys, so this is a client-side read/compare/write guard and does not claim transactional isolation.
+- Feat: new `corezoid-lifecycle` skill plus `pause-process`, `resume-process`, `move-process` and `move-folder` MCP tools. All four require explicit user intent — a review or refactor in progress is not authorization to mutate lifecycle or location; unsupported folder-container errors are named clearly instead of surfacing as opaque server rejections.
+- Feat: **developer approval gate on every push**. `push-process` now requires explicit confirmation before deploying, so an automated or accidental tool call cannot silently redeploy a live process.
+- Feat: MCP HTTP transport now **requires a bearer token** on every request and **caps request body size**, closing the previous unauthenticated-loopback attack surface. The stdio transport is unaffected.
+- Fix(push-process): self-referencing `api_copy` (a Copy node whose target is itself) is detected offline and reported with the exact node name instead of surfacing as a generic server error.
+- Fix(executor_nodes): `condition.logics` now enforces the trailing default `go` at execution time, matching the lint rule — a missing default `go` no longer slips through when the process is edited via MCP.
+- Fix(run-task): a task is now created even when the deployed node list is unreadable (issue #143). Previously a transient read failure aborted the run instead of degrading gracefully.
+- Fix(skills): Kiro skill inventory kept in sync with Claude and Codex; skill-sync CI check tightened.
+- Docs: MCP debug log path corrected to `~/.corezoid/mcp.log` across docs and troubleshooting.
+- CI: `govulncheck`, GitHub dependency-review and Dependabot enabled — Go vulnerabilities and supply-chain regressions are caught in PR CI.
+- Security: Claude PR-reviewer workflow hardened — checkout split from the model step, `git`/`gh` dropped from model tools, credential-exfil vectors closed, and code-execution primitives removed from the reviewer job.
+- Build: Go directive bumped to `1.26.6` to clear `govulncheck`.
 
 ## [3.0.0]
 
