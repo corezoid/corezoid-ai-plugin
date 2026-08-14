@@ -120,15 +120,11 @@ Add a 30-second timeout semaphor to the API Call node.
 
 ---
 
-## Step 5: Validate, Get Approval, and Deploy
+## Step 5: Validate and Deploy
 
-1. Run `lint-process` — fix all errors before proceeding.
-2. **⛔ Do NOT call `push-process` without explicit developer approval.** After lint passes, ask:
-
-   > "Lint passed ✅. Ready to deploy **[Process Name]** (`<PROCESS_PATH>`)? (yes/no)"
-
-3. After receiving explicit approval ("yes", "go", "деплой", "deploy", or equivalent), run `push-process`.
-4. Run `run-task` as a smoke test.
+```
+lint-process → fix errors → push-process → run-task (smoke test)
+```
 
 ---
 
