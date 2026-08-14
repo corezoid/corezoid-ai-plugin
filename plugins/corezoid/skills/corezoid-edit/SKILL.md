@@ -25,6 +25,10 @@ You are a specialist in modifying Corezoid BPM processes using the `corezoid` MC
 3. If the user gave a **name or ID** (not a file path), search the local working directory for the matching `.conv.json` file using the `find` or `grep` Bash tools (the project is already pulled locally).
 4. Once `PROCESS_PATH` is known and the file exists locally, open and analyze it before making any changes.
 
+Then call `show-project-policy` for `PROCESS_PATH`. If both opt-in protections are off, offer cycle
+safety and strict process contracts once, following the universal `corezoid` skill. Never enable a
+policy without explicit user consent.
+
 ---
 
 ## Step 1: Analyze the Process
@@ -34,6 +38,8 @@ Open and analyze `PROCESS_PATH` to understand the current structure and logic. P
 - Processes related to the requested changes
 - IDs of processes that may be called from the target process
 - Existing naming conventions and patterns
+- Existing top-level `params`, reachable success Replies, and direct Call/Copy Process contracts
+- Existing cycles, including retry paths and static/unresolved process-call recursion risk
 
 ---
 
@@ -48,6 +54,23 @@ Apply changes to `PROCESS_PATH`.
 - Node IDs must be unique 24-character hex strings: `^[0-9a-f]{24}$`. **Always `pull-process` before editing** and reference only canonical, server-assigned IDs — IDs you invented in a previous push were reassigned by the server and no longer exist. New nodes added now get placeholder IDs that the server will likewise reassign on push. Existing nodes' IDs are preserved. See [Node ID Lifecycle](${CLAUDE_PLUGIN_ROOT}/docs/process/process-development-guide.md#node-id-lifecycle-server-assignment--stability-on-push).
 - Use descriptive node `title` values (e.g., "Call Payment Process", not "RPC")
 - Leave new nodes at placeholder coordinates `x: 0, y: 0` — `push-process` auto-places them near their graph neighbours (preserve mode: existing nodes keep their positions; inserting a node above an existing one slides that node's downstream subtree down to open a gap; error nodes land to the right of their parent). **Keep the `x`/`y` of nodes you are NOT moving** — do not rebuild the scheme without them. As a safety net, if the file reaches push with every node's coordinates missing, push re-hydrates them from the server (reports `Restored N node coordinate(s)`) so a laid-out process is never re-arranged by accident. Only when auto-placement is disabled (`COREZOID_AUTOLAYOUT=off`) position nodes manually — error nodes to the right of their parent (`x + 300`). Do NOT re-layout the whole process unless the user asks — see the `corezoid-node-layout` skill's authorship policy
+
+### Enabled project policy
+
+- With strict `process_contracts`, every changed or newly used external input must be reflected in
+  top-level `params` with type, non-empty description, and required/optional status. Every changed
+  success Reply output must be declared with the same type. If the process had no contract, infer it
+  from the full reachable graph and inspect directly called local processes before pushing.
+- With strict `cycle_safety`, every new or changed cycle needs a provable count/deadline bound within
+  the configured project ceiling. External retries need a static Delay of at least 30 seconds on
+  every iteration; every deadline-bounded cycle needs the same pacing because time alone does not
+  bound tact count. API response mappings, Call Process outputs, Code nodes, and other opaque
+  data-producing actions cannot be trusted to preserve a guard variable. Dynamic `conv_id`, aliases,
+  and unavailable, unreadable, or ambiguous targets in
+  the reachable local call graph are allowed; explain the possible recursive-call/tact risk and pass
+  `confirm_unresolved_call_risk` only after explicit user acceptance.
+- An intentional unbounded cycle is allowed for valid business logic. Do not silently add the
+  confirmation: show the exact risk and obtain explicit approval for the current graph fingerprint.
 
 ### Variables for constants
 

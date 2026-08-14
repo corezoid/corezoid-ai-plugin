@@ -232,13 +232,15 @@ func TestToolAnnotations_UnsetHintsAreOmitted(t *testing.T) {
 // that clients and reviewers are most likely to check by hand.
 func TestToolAnnotations_Representative(t *testing.T) {
 	want := map[string]struct{ readOnly, destructive, idempotent, openWorld bool }{
-		"delete-process": {false, true, false, true},
-		"push-process":   {false, true, false, true},
-		"deploy-stage":   {false, true, false, true},
-		"list-variables": {true, false, true, true},
-		"pull-process":   {true, false, true, true},
-		"lint-process":   {true, false, true, false},
-		"layout-process": {false, false, true, false},
+		"delete-process":           {false, true, false, true},
+		"push-process":             {false, true, false, true},
+		"deploy-stage":             {false, true, false, true},
+		"list-variables":           {true, false, true, true},
+		"pull-process":             {true, false, true, true},
+		"lint-process":             {true, false, true, false},
+		"layout-process":           {false, false, true, false},
+		"show-project-policy":      {true, false, true, false},
+		"configure-project-policy": {false, false, true, false},
 	}
 	byName := make(map[string]mcpTool, len(toolRegistry))
 	for _, tool := range toolRegistry {

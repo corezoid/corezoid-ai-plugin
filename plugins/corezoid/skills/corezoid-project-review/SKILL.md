@@ -19,6 +19,10 @@ Per-process analysis follows the same steps as the `corezoid-review` skill (lint
 
 ## Phase 0 — Project Discovery
 
+Call `show-project-policy` once at project scope. If both protections are off, offer cycle safety
+and strict process contracts once; do not configure them without explicit user consent. Record the
+effective modes and ceilings in the review report.
+
 ### Step 0.1: Verify Environment
 
 Check whether the workspace root contains a `<id>_<name>.stage.json` marker file (its `obj_id` is the stage ID). Practical test: call any Corezoid MCP tool with no arguments (e.g. `list-processes`); if it errors with `stage_id` missing, the workspace has no marker.
@@ -80,6 +84,7 @@ Build a directed graph — nodes: all processes; edges: every `api_rpc` / `api_c
 
 Flag:
 - ⚠️ **Circular dependencies** — A calls B which calls A
+- ⚠️ **Dynamic targets** — unresolved `conv_id` call graphs; explain possible recursion/tact risk
 - ⚠️ **Orphaned processes** — never called and no direct external input
 - ⚠️ **High fan-in** — called by > 5 other processes (single point of failure)
 - ⚠️ **High fan-out** — calls > 7 other processes (coupling risk)

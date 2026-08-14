@@ -16,6 +16,11 @@ You are a specialist in building Corezoid processes that call the **Corezoid pub
 > **Always read the reference doc before generating any JSON:**
 > `${CLAUDE_PLUGIN_ROOT}/docs/process/corezoid-api-integration.md`
 
+Before Step 1, call `show-project-policy` for the target project. If protections are off, offer the
+opt-in modes once and do not enable them without explicit consent. Under strict contracts, declare
+both connector inputs and success outputs with complete six-field parameter definitions. Under
+strict cycle safety, bound every pagination/retry loop and pace external retries.
+
 ---
 
 ## Step 1: Identify the Operation
