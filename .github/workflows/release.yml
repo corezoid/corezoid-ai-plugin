@@ -85,6 +85,7 @@ jobs:
         with:
           go-version-file: plugins/corezoid/mcp-server/go.mod
           cache: true
+          cache-dependency-path: plugins/corezoid/mcp-server/go.sum
 
       - name: MCP server tests
         working-directory: plugins/corezoid/mcp-server
@@ -101,6 +102,7 @@ jobs:
         with:
           go-version-file: plugins/corezoid/mcp-server/go.mod
           cache: true
+          cache-dependency-path: plugins/corezoid/mcp-server/go.sum
 
       - name: Build all platform binaries
         working-directory: plugins/corezoid/mcp-server

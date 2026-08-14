@@ -238,6 +238,7 @@ jobs:
         with:
           go-version-file: plugins/corezoid/mcp-server/go.mod
           cache: true
+          cache-dependency-path: plugins/corezoid/mcp-server/go.sum
 
       - name: Build
         run: go build ./...
@@ -253,3 +254,35 @@ jobs:
 
       - name: Smoke test --version
         run: go run . --version
+
+  govulncheck:
+    name: Go vulnerability scan
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: plugins/corezoid/mcp-server
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: plugins/corezoid/mcp-server/go.mod
+          cache: true
+          cache-dependency-path: plugins/corezoid/mcp-server/go.sum
+
+      - name: Install govulncheck
+        run: go install golang.org/x/vuln/cmd/govulncheck@latest
+
+      - name: Run govulncheck
+        run: govulncheck ./...
+
+  dependency-review:
+    name: Dependency review
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/dependency-review-action@v4
+        with:
+          fail-on-severity: high
