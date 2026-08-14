@@ -289,8 +289,12 @@ Always apply in this sequence:
 
 1. Write updated JSON to `PROCESS_PATH`.
 2. Call **`lint-process`** — fix any errors before proceeding.
-3. Call **`push-process`**.
-4. Notify the user: "Deployed. Please **refresh the page** in Corezoid to see the updated process."
+3. **⛔ Do NOT call `push-process` without explicit developer approval.** After lint passes, ask:
+
+   > "Lint passed ✅. Ready to deploy optimized **[Process Name]** (`PROCESS_PATH`)? (yes/no)"
+
+4. After receiving explicit approval ("yes", "go", "деплой", "deploy", or equivalent), call **`push-process`**.
+5. Notify the user: "Deployed. Please **refresh the page** in Corezoid to see the updated process."
 
 ---
 

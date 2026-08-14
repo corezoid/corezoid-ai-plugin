@@ -27,6 +27,7 @@ type LintResult struct {
 	UnderspecifiedAPINodes []UnderspecifiedAPINode
 	StubModeNodes          []StubModeNode
 	GitCallUsages          []GitCallUsage
+	SelfReferenceCopies    []SelfReferenceCopy
 	TotalNodes             int
 	ReachableCount         int
 	SchemaValid            bool
@@ -238,6 +239,11 @@ func lintProcess(filePath string) (*LintResult, error) {
 
 	title, _ := proc["title"].(string)
 
+	var processID int
+	if id, ok := proc["obj_id"].(float64); ok {
+		processID = int(id)
+	}
+
 	result := &LintResult{ProcessTitle: title, TotalNodes: len(nodes)}
 
 	typed := parseProcessNodes(nodes)
@@ -255,6 +261,7 @@ func lintProcess(filePath string) (*LintResult, error) {
 	result.UnderspecifiedAPINodes = findUnderspecifiedAPINodes(typed)
 	result.StubModeNodes = findStubModeNodes(typed)
 	result.GitCallUsages = findGitCallUsages(typed)
+	result.SelfReferenceCopies = findSelfReferenceCopies(typed, processID)
 
 	schemaErr := ValidateJSONSchema(filePath, debug)
 	if schemaErr != nil {
@@ -809,6 +816,62 @@ func findBrokenLinks(nodes []processNode) []BrokenLink {
 	return result
 }
 
+// SelfReferenceCopy is an api_copy or api_rpc logic whose conv_id equals the
+// process's own obj_id — a self-referencing "infinite-loop" pattern. The native
+// Corezoid UI deploys such processes, but push-process's pre-deployment validation
+// rejects them and force=true does NOT bypass that check.
+// Recommended replacement: a time-semaphore delay node (≥30s) with a bare go back
+// to the loop entry point — the existing task cycles in-place without spawning a new one.
+type SelfReferenceCopy struct {
+	NodeID    string
+	NodeTitle string
+	NodeType  string // "api_copy" or "api_rpc"
+	Issue     string
+}
+
+// findSelfReferenceCopies detects api_copy or api_rpc logics whose conv_id
+// equals the process's own processID — the self-referencing loop pattern that
+// the Corezoid UI allows but push-process rejects (force=true cannot override it).
+// If processID is 0 (unknown / new process), no findings are emitted.
+func findSelfReferenceCopies(nodes []processNode, processID int) []SelfReferenceCopy {
+	if processID == 0 {
+		return nil
+	}
+	var result []SelfReferenceCopy
+	for _, n := range nodes {
+		for _, lg := range n.logics {
+			lgType, _ := lg["type"].(string)
+			if lgType != "api_copy" && lgType != "api_rpc" {
+				continue
+			}
+			convID, ok := lg["conv_id"].(float64)
+			if !ok || int(convID) != processID {
+				continue
+			}
+			title := n.title
+			if title == "" {
+				title = "(untitled)"
+			}
+			kindName := "Copy Task"
+			if lgType == "api_rpc" {
+				kindName = "Call a Process"
+			}
+			result = append(result, SelfReferenceCopy{
+				NodeID:    n.id,
+				NodeTitle: title,
+				NodeType:  lgType,
+				Issue: fmt.Sprintf(
+					"node %q (id=%s) uses %s (type=%s, conv_id=%d) to send tasks into this same process — "+
+						"push-process blocks this regardless of force=true. "+
+						"Fix: replace with a time-semaphore delay node (≥30s) → bare `go` back to the loop entry; "+
+						"the task cycles in-place without spawning a new one.",
+					title, n.id, kindName, lgType, processID),
+			})
+		}
+	}
+	return result
+}
+
 // findUnrepliedTerminals detects final nodes reachable from Start without
 // crossing any api_rpc_reply, in processes that reply somewhere else. A process
 // that replies on its error paths but ends its success path in a bare final is
@@ -1322,6 +1385,15 @@ func FormatLintResult(result *LintResult) string {
 		}
 	}
 
+	if len(result.SelfReferenceCopies) > 0 {
+		hasIssues = true
+		sb.WriteString(fmt.Sprintf("\n=== SELF-REFERENCING COPY/CALL NODES (%d) — push-process blocks these; force=true does NOT bypass ===\n", len(result.SelfReferenceCopies)))
+		for _, sr := range result.SelfReferenceCopies {
+			sb.WriteString(fmt.Sprintf("  [%s] %s  (type: %s)\n", sr.NodeID, sr.NodeTitle, sr.NodeType))
+			sb.WriteString(fmt.Sprintf("  Issue: %s\n", sr.Issue))
+		}
+	}
+
 	if !hasIssues {
 		sb.WriteString("\nNo issues found.")
 	} else {
@@ -1329,7 +1401,7 @@ func FormatLintResult(result *LintResult) string {
 		if !result.SchemaValid {
 			schemaIssues = 1
 		}
-		total := len(result.NoopConditions) + len(result.UnusedSetParams) + len(result.OrphanedNodes) + len(result.RpcReplyMismatches) + len(result.PassthroughEscalations) + len(result.LiteralReplyValues) + len(result.SharedErrorClusters) + len(result.OldFormatNodes) + len(result.UnrepliedTerminals) + len(result.MissingDefaultGo) + len(result.ShortTimers) + len(result.BrokenLinks) + len(result.UnderspecifiedAPINodes) + len(result.StubModeNodes) + len(result.GitCallUsages) + schemaIssues
+		total := len(result.NoopConditions) + len(result.UnusedSetParams) + len(result.OrphanedNodes) + len(result.RpcReplyMismatches) + len(result.PassthroughEscalations) + len(result.LiteralReplyValues) + len(result.SharedErrorClusters) + len(result.OldFormatNodes) + len(result.UnrepliedTerminals) + len(result.MissingDefaultGo) + len(result.ShortTimers) + len(result.BrokenLinks) + len(result.UnderspecifiedAPINodes) + len(result.StubModeNodes) + len(result.GitCallUsages) + len(result.SelfReferenceCopies) + schemaIssues
 		sb.WriteString(fmt.Sprintf("\nTotal issues: %d\n", total))
 	}
 
