@@ -176,15 +176,9 @@ Fix every reported error and re-run until the output is clean. Do not proceed wi
 
 ---
 
-## Step 6: Get Developer Approval, Then Deploy
+## Step 6: Deploy
 
-**⛔ Do NOT call `push-process` without explicit developer approval.**
-
-After lint passes, ask for a go-ahead:
-
-> "Lint passed ✅. Ready to deploy state diagram **[Name]** (`<PROCESS_PATH>`)? (yes/no)"
-
-After receiving explicit approval ("yes", "go", "деплой", "deploy", or equivalent), call MCP tool **`push-process`** with `process_path: "<PROCESS_PATH>"`.
+Call MCP tool **`push-process`** with `process_path: "<PROCESS_PATH>"`.
 
 If the push fails:
 - Re-read the file and confirm `"conv_type": "state"` is present at the root.

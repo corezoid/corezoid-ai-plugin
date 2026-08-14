@@ -182,17 +182,9 @@ Fix all reported errors and re-run until the output is clean. Do not proceed wit
 
 ---
 
-## Step 7: Get Developer Approval, Then Deploy and Test
+## Step 7: Deploy and Test
 
-**⛔ Do NOT call `push-process` without explicit developer approval.**
-
-After lint passes (Step 6), present a summary to the developer and ask for a go-ahead:
-
-> "Lint passed ✅. Ready to deploy **[Process Name]** (`<PROCESS_PATH>`)? (yes/no)"
-
-**Group push:** If you are deploying a set of related processes together in the same session, list all of them in a single prompt and wait for **one approval** covering the whole group — do not ask separately for each process.
-
-After receiving explicit approval ("yes", "go", "деплой", "deploy", or equivalent), call MCP tool **`push-process`** with `process_path: "<PROCESS_PATH>"`.
+Call MCP tool **`push-process`** with `process_path: "<PROCESS_PATH>"`.
 
 After a successful deploy, run a test task to verify the process behaves as expected:
 

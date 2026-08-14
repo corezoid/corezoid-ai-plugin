@@ -185,18 +185,6 @@ Summary:
 
 ---
 
-## Push Approval Rule
-
-**Every `push-process` call requires explicit developer approval — no exceptions.**
-
-After lint passes, present the lint result and a brief summary of what will be deployed, then ask:
-
-> "Lint passed ✅. Ready to deploy **[Process Name]** (`path/to/file.conv.json`)? (yes/no)"
-
-Wait for the user to reply with an explicit "yes", "go", "деплой", "deploy", or equivalent before calling `push-process`. Do **not** push automatically.
-
-**Group push:** When multiple related processes are being deployed in the same session (e.g. a refactor that touches several files), list all of them in a single approval prompt. **One "yes" covers the entire group** — do not ask for separate confirmation per process.
-
 ## Tips
 
 - Always `lint-process` before `push-process` to catch errors early
@@ -204,7 +192,6 @@ Wait for the user to reply with an explicit "yes", "go", "деплой", "deploy
 - Node IDs are 24-char hex — generate with `crypto.randomBytes(12).toString('hex')`
 - Variables are workspace-scoped — check `_ENV_VARS_.json` before creating new ones
 - `push-process` is mandatory after any edit — changes exist only in memory until pushed
-- **Never call `push-process` without developer approval** — see the Push Approval Rule above
 
 ## Proactive improvement/bug reporting
 
