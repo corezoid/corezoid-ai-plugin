@@ -54,12 +54,25 @@ func materializeMerge(mineConv string, plan mergePlan, theirsNodes []map[string]
 			keyToID[mineKeys[i]] = id
 		}
 	}
+	// Which mine keys exist so we can tell "conflict node mine kept" apart from
+	// "conflict node mine dropped" (Scenario B — we still need to keep it).
+	mineHas := make(map[string]bool, len(mineNodes))
+	for _, k := range mineKeys {
+		mineHas[k] = true
+	}
 	for _, mn := range plan.Nodes {
 		switch mn.Class {
 		case clsDeletedTheirs:
 			delete(keyToID, mn.Key)
 		case clsAddedTheirs:
 			keyToID[mn.Key] = placeholderID(mn.Key)
+		case clsDeleteEditConflict:
+			// If mine dropped the node but promoteReferenceConflicts kept it
+			// so a grafted theirs referrer can still resolve, prime an id for
+			// the resurrected theirs body.
+			if !mineHas[mn.Key] {
+				keyToID[mn.Key] = placeholderID(mn.Key)
+			}
 		}
 	}
 
@@ -87,6 +100,15 @@ func materializeMerge(mineConv string, plan mergePlan, theirsNodes []map[string]
 		}
 		merged = append(merged, graftNewNode(mn.theirs.Raw, keyToID[mn.Key], theirsIDToKey, keyToID))
 	}
+	// Resurrect theirs's copy of any delete-edit conflict node that mine
+	// dropped — a grafted theirs node above may still reference it, and
+	// materializeMerge must not leave a hole.
+	for _, mn := range plan.Nodes {
+		if mn.Class != clsDeleteEditConflict || mineHas[mn.Key] || mn.theirs == nil {
+			continue
+		}
+		merged = append(merged, graftNewNode(mn.theirs.Raw, keyToID[mn.Key], theirsIDToKey, keyToID))
+	}
 
 	scheme["nodes"] = merged
 	doc["scheme"] = scheme
@@ -99,7 +121,82 @@ func materializeMerge(mineConv string, plan mergePlan, theirsNodes []map[string]
 	if err != nil {
 		return "", fmt.Errorf("merge: marshal result: %w", err)
 	}
-	return string(out), nil
+	result := string(out)
+	if verr := verifyGraphClosure(result); verr != nil {
+		return "", verr
+	}
+	return result, nil
+}
+
+// verifyGraphClosure walks the merged scheme and returns an error if any
+// intra-process link points at a non-existent node. Layer-1
+// promoteReferenceConflicts should prevent this before we get here; this is a
+// hard invariant so an unforeseen merge path can never silently write a graph
+// with dangling refs.
+func verifyGraphClosure(mergedJSON string) error {
+	var doc map[string]any
+	if err := json.Unmarshal([]byte(mergedJSON), &doc); err != nil {
+		return fmt.Errorf("merge: verify graph closure: %w", err)
+	}
+	scheme, _ := doc["scheme"].(map[string]any)
+	if scheme == nil {
+		return nil
+	}
+	nodesRaw, _ := scheme["nodes"].([]any)
+	ids := make(map[string]bool, len(nodesRaw))
+	for _, r := range nodesRaw {
+		if n, ok := r.(map[string]any); ok {
+			if id, _ := n["id"].(string); id != "" {
+				ids[id] = true
+			}
+		}
+	}
+	var broken []string
+	check := func(title string, list any, fields []string) {
+		arr, ok := list.([]any)
+		if !ok {
+			return
+		}
+		for _, e := range arr {
+			m, ok := e.(map[string]any)
+			if !ok {
+				continue
+			}
+			for _, f := range fields {
+				tgt, ok := m[f].(string)
+				if !ok || tgt == "" {
+					continue
+				}
+				if _, static := isStaticNodeID(tgt); !static {
+					continue
+				}
+				if !ids[tgt] {
+					label := title
+					if label == "" {
+						label = "(untitled)"
+					}
+					broken = append(broken, fmt.Sprintf("%s.%s → %s", label, f, tgt))
+				}
+			}
+		}
+	}
+	for _, r := range nodesRaw {
+		n, ok := r.(map[string]any)
+		if !ok {
+			continue
+		}
+		title, _ := n["title"].(string)
+		cond, ok := n["condition"].(map[string]any)
+		if !ok {
+			continue
+		}
+		check(title, cond["logics"], linkFields)
+		check(title, cond["semaphors"], semLinkFields)
+	}
+	if len(broken) == 0 {
+		return nil
+	}
+	return fmt.Errorf("merge would produce a graph with %d dangling link(s): %s", len(broken), strings.Join(broken, "; "))
 }
 
 func applyFieldGraft(doc map[string]any, field mergeField) error {

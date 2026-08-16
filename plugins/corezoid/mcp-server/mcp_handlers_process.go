@@ -393,6 +393,25 @@ func handleCreateVariable(ctx context.Context, args map[string]interface{}) (str
 	return fmt.Sprintf("Environment variable '%s' created successfully in stage %d", name, v.StageID), false
 }
 
+// categorizeLintForPush splits push-gate lint findings into three buckets:
+//   - structural: an invalid graph the server itself rejects (BrokenLinks,
+//     OldFormatNodes, SelfReferenceCopies). force=true does NOT bypass these
+//     because "override" is not a possible resolution — the file must be fixed.
+//   - overridable: contract/warning-level issues that block by default and
+//     force=true can waive (MissingDefaultGo, ShortTimers, RpcReplyMismatches,
+//     LiteralReplyValues, UnrepliedTerminals).
+//   - advisory: never block; surfaced in the response so the user sees them.
+func categorizeLintForPush(lintRes *LintResult) (structural, overridable, advisory int) {
+	structural = len(lintRes.BrokenLinks) + len(lintRes.OldFormatNodes) + len(lintRes.SelfReferenceCopies)
+	overridable = len(lintRes.MissingDefaultGo) + len(lintRes.ShortTimers) +
+		len(lintRes.RpcReplyMismatches) + len(lintRes.LiteralReplyValues) +
+		len(lintRes.UnrepliedTerminals)
+	advisory = len(lintRes.NoopConditions) + len(lintRes.UnusedSetParams) +
+		len(lintRes.OrphanedNodes) + len(lintRes.PassthroughEscalations) +
+		len(lintRes.SharedErrorClusters) + len(lintRes.GitCallUsages)
+	return structural, overridable, advisory
+}
+
 // handlePushProcess validates a local .conv.json and deploys it to Corezoid.
 func handlePushProcess(ctx context.Context, args map[string]interface{}) (string, bool) {
 	filePath, err := resolveProcessPath(args, "process_path")
@@ -452,14 +471,19 @@ func handlePushProcess(ctx context.Context, args map[string]interface{}) (string
 	}
 
 	// Structural lint gate: catch deploy-breaking / caller-breaking shapes
-	// offline before mutating the live process. Hard findings block the push;
-	// advisory findings (noop, unused set_param, orphans, passthrough, shared
-	// clusters) are surfaced but do not stop it. force=true overrides generic
-	// hard findings. Active Stub Mode has its own stage-aware gate because it
-	// bypasses the real called process at runtime.
+	// offline before mutating the live process.
+	//   • structural findings (BrokenLinks, OldFormatNodes, SelfReferenceCopies)
+	//     describe an invalid graph the server itself rejects — force=true does
+	//     NOT bypass them, because "override" is not a possible resolution.
+	//   • overridable hard findings (contract/warning-level) block by default
+	//     but force=true can waive them for known-good pushes.
+	//   • advisory findings (noop, unused set_param, orphans, passthrough,
+	//     shared clusters) never block; they are surfaced so the user sees them.
+	// Active Stub Mode has its own stage-aware gate because it bypasses the real
+	// called process at runtime.
 	force, _ := args["force"].(bool)
 	allowStubMode, _ := args["allow_active_stub_mode"].(bool)
-	var lintNote string // advisory findings surfaced on a proceeding push (see below)
+	var lintNote string // findings surfaced on a proceeding push (see below)
 	if lintRes, lintErr := lintProcess(filePath); lintErr == nil {
 		stubMode := len(lintRes.StubModeNodes)
 		if stubMode > 0 {
@@ -474,24 +498,22 @@ func handlePushProcess(ctx context.Context, args map[string]interface{}) (string
 				fmt.Fprintf(os.Stderr, "[lint] %d active Stub Mode node(s) are warning-only for this push (%s)\n", stubMode, policy.reason)
 			}
 		}
-		hard := len(lintRes.BrokenLinks) + len(lintRes.OldFormatNodes) +
-			len(lintRes.MissingDefaultGo) + len(lintRes.ShortTimers) +
-			len(lintRes.RpcReplyMismatches) + len(lintRes.LiteralReplyValues) +
-			len(lintRes.UnrepliedTerminals) + len(lintRes.SelfReferenceCopies)
-		advisory := len(lintRes.NoopConditions) + len(lintRes.UnusedSetParams) +
-			len(lintRes.OrphanedNodes) + len(lintRes.PassthroughEscalations) +
-			len(lintRes.SharedErrorClusters) + len(lintRes.GitCallUsages)
-		if hard > 0 && !force {
-			return fmt.Sprintf("Push blocked: lint found %d issue(s) that would break the deploy or its callers. Fix them, or re-run with force=true to override.\n\n%s",
-				hard, FormatLintResult(lintRes)), true
+		structural, overridable, advisory := categorizeLintForPush(lintRes)
+		if structural > 0 {
+			return fmt.Sprintf("Push blocked: lint found %d structural issue(s) — the resulting graph is invalid and the server rejects it. force=true does NOT bypass these; the graph itself must be fixed (broken links, old-format nodes, self-referencing api_copy/api_rpc).\n\n%s",
+				structural, FormatLintResult(lintRes)), true
 		}
-		if hard > 0 && force {
-			fmt.Fprintf(os.Stderr, "[lint] %d blocking issue(s) overridden with force=true\n", hard)
+		if overridable > 0 && !force {
+			return fmt.Sprintf("Push blocked: lint found %d issue(s) that would break the deploy or its callers. Fix them, or re-run with force=true to override.\n\n%s",
+				overridable, FormatLintResult(lintRes)), true
+		}
+		if overridable > 0 && force {
+			fmt.Fprintf(os.Stderr, "[lint] %d blocking issue(s) overridden with force=true\n", overridable)
 		}
 		// The push proceeds. Surface any findings so the promise "advisory
 		// findings are shown but do not block" is actually kept — otherwise
 		// advisory-only issues would deploy silently and never be seen.
-		if hard+advisory+stubMode > 0 {
+		if overridable+advisory+stubMode > 0 {
 			lintNote = FormatLintResult(lintRes)
 		}
 	}
@@ -516,16 +538,27 @@ func handlePushProcess(ctx context.Context, args map[string]interface{}) (string
 		}
 	}
 
-	// Auto-snapshot: if process already exists on server (obj_id != null/0),
-	// capture current server state before overwriting. Never blocks on failure.
+	// Auto-snapshot: if the process already exists on the server (obj_id != 0),
+	// capture the current server state before overwriting. There are three
+	// outcomes:
+	//   • snapshot succeeded → note it, push proceeds.
+	//   • snapshot skipped because project/stage aren't resolved → warning
+	//     only; the workspace isn't wired for snapshots (misconfigured env),
+	//     blocking would be a false positive.
+	//   • snapshot was attempted and the API returned an error → BLOCK. Without
+	//     git for .conv.json files the previous server version is unrecoverable
+	//     once ProcessJSON overwrites it, and the same Corezoid API that just
+	//     failed here is the one ProcessJSON is about to call anyway.
 	var snapshotNote string
 	if existingObjID := extractObjIDFromJSON(jsonContent); existingObjID != 0 {
 		if projectID, envNotice := resolveAndCacheProjectID(v); projectID != 0 && v.StageID != 0 {
 			name := extractProcessNameFromPath(filePath)
 			title := fmt.Sprintf("pre-push %s %s", name, time.Now().UTC().Format("2006-01-02 15:04"))
 			if snapObjID, snapVer, snapErr := v.CreateSnapshot(existingObjID, projectID, v.StageID, title); snapErr != nil {
-				logger.Warn("[snapshot] auto-snapshot failed, continuing: %v", snapErr)
-				snapshotNote = fmt.Sprintf("Warning: auto-snapshot failed (%v).", snapErr)
+				logger.Warn("[snapshot] auto-snapshot failed: %v", snapErr)
+				return fmt.Sprintf(
+					"Push blocked: the pre-push snapshot of process #%d failed (%v). Without a snapshot the previous server version cannot be restored after this push. Retry once the Corezoid API is reachable — the deploy call that follows would fail against the same endpoint anyway.",
+					existingObjID, snapErr), true
 			} else {
 				logger.Info("[snapshot] created version %d (obj_id=%d) for process %d", snapVer, snapObjID, existingObjID)
 				snapshotNote = fmt.Sprintf("Snapshot created before push (version %d, obj_id=%d).", snapVer, snapObjID)
@@ -534,7 +567,7 @@ func handlePushProcess(ctx context.Context, args map[string]interface{}) (string
 				snapshotNote += " " + envNotice
 			}
 		} else {
-			snapshotNote = "Warning: auto-snapshot skipped (project_id unresolved)."
+			snapshotNote = "Warning: auto-snapshot skipped (project_id/stage_id not resolved). No rollback point exists — fix the workspace configuration to enable snapshots."
 		}
 	}
 

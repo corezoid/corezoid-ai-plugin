@@ -170,6 +170,48 @@ func TestConflict_DeletedOnServerBlocks(t *testing.T) {
 	}
 }
 
+// TestConflict_ServerUnreachableBlocks pins the P1.1 policy: when a baseline
+// exists but the server-state fetch fails (network, 5xx, timeout — anything
+// other than a genuine "not found"), the push MUST block. Silently proceeding
+// would leave lost-update detection off exactly when the API is degraded, and
+// the deploy call that follows would hit the same failing endpoint anyway.
+func TestConflict_ServerUnreachableBlocks(t *testing.T) {
+	_, e := mockAPIServer(t, func(ops []map[string]interface{}) interface{} {
+		return map[string]interface{}{
+			"request_proc": "ok",
+			"ops": []interface{}{map[string]interface{}{
+				"proc": "error", "description": "internal server error",
+			}},
+		}
+	})
+	_, fp := setupConflict(t, baselineEntry{ChangeTime: 100, Version: 10}, twoNodeLocal)
+	blocked, msg := blockedResult(resolveConflict(e, fp, 1, twoNodeLocal, false, false))
+	if !blocked {
+		t.Fatalf("unreachable server + baseline must block, got blocked=%v msg=%q", blocked, msg)
+	}
+	if !strings.Contains(msg, "could not fetch the current server state") {
+		t.Fatalf("block message must name the failure:\n%s", msg)
+	}
+}
+
+// force=true is about overriding a KNOWN conflict; it must NOT double as
+// "server state unknown, proceed anyway". If the fetch failed, we still block.
+func TestConflict_ServerUnreachableForceStillBlocks(t *testing.T) {
+	_, e := mockAPIServer(t, func(ops []map[string]interface{}) interface{} {
+		return map[string]interface{}{
+			"request_proc": "ok",
+			"ops": []interface{}{map[string]interface{}{
+				"proc": "error", "description": "internal server error",
+			}},
+		}
+	})
+	_, fp := setupConflict(t, baselineEntry{ChangeTime: 100, Version: 10}, twoNodeLocal)
+	blocked, _ := blockedResult(resolveConflict(e, fp, 1, twoNodeLocal, true, false))
+	if !blocked {
+		t.Fatalf("force=true must NOT waive the unknown-server-state block")
+	}
+}
+
 func TestApplyMergeBacksUpExactLocalFile(t *testing.T) {
 	dir := t.TempDir()
 	fp := filepath.Join(dir, "1_x.conv.json")

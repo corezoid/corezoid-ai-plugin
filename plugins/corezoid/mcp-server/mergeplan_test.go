@@ -165,18 +165,148 @@ func TestMerge_Case4_TheirsAddsNode(t *testing.T) {
 }
 
 func TestMerge_Case5_TheirsDeletesNode(t *testing.T) {
+	// A clean server-side delete: theirs BOTH removes Err AND updates Compute
+	// to null the err_node_id that pointed at Err. With no surviving link into
+	// Err, the delete has no reference conflict and is grafted safely.
 	base := baseFourNode()
 	mine := baseFourNode()
-	// colleague removes the Err node
-	theirs := tScheme(base[0], base[1], base[2])
+	theirs := tScheme(
+		base[0],
+		tNode("c0000000000000000000000b", "Compute", 0, tLogic(map[string]any{
+			"type": "api_code", "src": "return 1;", "to_node_id": "d0000000000000000000000c",
+		})),
+		base[2],
+	)
 
 	plan := buildMergePlan(base, theirs, mine)
 	if c, _ := classOf(plan, "Err"); c != clsDeletedTheirs {
 		t.Fatalf("Err should be deleted-theirs, got %v", c)
 	}
-	merged, _ := materializeMerge(tConv(mine), plan, theirs)
+	merged, err := materializeMerge(tConv(mine), plan, theirs)
+	if err != nil {
+		t.Fatalf("materialize: %v", err)
+	}
 	if mergedNode(t, merged, "Err") != nil {
 		t.Fatalf("merged scheme must drop the server-deleted node")
+	}
+}
+
+// TestMerge_Case5b: theirs deletes Err WITHOUT nulling the incoming err_node_id
+// in Compute. Under the reference-integrity rule this becomes a delete-edit
+// conflict — dropping Err would leave Compute pointing at a nonexistent node.
+func TestMerge_Case5b_TheirsDeletesReferencedNode_IsConflict(t *testing.T) {
+	base := baseFourNode()
+	mine := baseFourNode()
+	// colleague removes Err but leaves Compute's err_node_id pointing at it
+	theirs := tScheme(base[0], base[1], base[2])
+
+	plan := buildMergePlan(base, theirs, mine)
+	if c, _ := classOf(plan, "Err"); c != clsDeleteEditConflict {
+		t.Fatalf("Err should be a delete-edit conflict (Compute.err_node_id still points at it), got %v", c)
+	}
+	if mergeConflictCount(plan) != 1 {
+		t.Fatalf("expected exactly 1 conflict, got %d", mergeConflictCount(plan))
+	}
+	merged, err := materializeMerge(tConv(mine), plan, theirs)
+	if err != nil {
+		t.Fatalf("materialize: %v", err)
+	}
+	if mergedNode(t, merged, "Err") == nil {
+		t.Fatalf("promoted delete-edit conflict must keep Err in the merged scheme")
+	}
+}
+
+// TestMerge_MineAddsRef_TheirsDeletesTarget: mine adds an err_node_id pointing
+// at Err (not present in base), theirs removes Err. Left alone this is the
+// canonical "dangling link after merge" scenario the review flagged.
+func TestMerge_MineAddsRef_TheirsDeletesTarget_IsConflict(t *testing.T) {
+	// Base: Compute has NO err_node_id yet.
+	base := tScheme(
+		tNode("s0000000000000000000000a", "Start", 1, tLogic(map[string]any{"type": "go", "to_node_id": "c0000000000000000000000b"})),
+		tNode("c0000000000000000000000b", "Compute", 0, tLogic(map[string]any{
+			"type": "api_code", "src": "return 1;", "to_node_id": "d0000000000000000000000c",
+		})),
+		tNode("d0000000000000000000000c", "Done", 2),
+		tNode("e0000000000000000000000d", "Err", 2),
+	)
+	// Mine: I wire Compute's error path to Err.
+	mine := tScheme(
+		base[0],
+		tNode("c0000000000000000000000b", "Compute", 0, tLogic(map[string]any{
+			"type": "api_code", "src": "return 1;", "to_node_id": "d0000000000000000000000c", "err_node_id": "e0000000000000000000000d",
+		})),
+		base[2], base[3],
+	)
+	// Theirs: colleague deletes Err.
+	theirs := tScheme(base[0], base[1], base[2])
+
+	plan := buildMergePlan(base, theirs, mine)
+	if c, _ := classOf(plan, "Err"); c != clsDeleteEditConflict {
+		t.Fatalf("Err deletion + surviving mine ref must promote to delete-edit conflict, got %v", c)
+	}
+	merged, err := materializeMerge(tConv(mine), plan, theirs)
+	if err != nil {
+		t.Fatalf("materialize: %v", err)
+	}
+	if mergedNode(t, merged, "Err") == nil {
+		t.Fatalf("Err must survive the merge so mine's err_node_id resolves")
+	}
+}
+
+// TestMerge_VerifyGraphClosure directly exercises the post-materialize safety
+// net so a bug in the classifier can never silently ship a graph with dangling
+// links. Both a dangling logic link and a dangling semaphor target must be
+// surfaced with the offending field named.
+func TestMerge_VerifyGraphClosure_Direct(t *testing.T) {
+	good := `{"scheme":{"nodes":[
+        {"id":"a00000000000000000000001","title":"A","condition":{"logics":[{"type":"go","to_node_id":"a00000000000000000000002"}]}},
+        {"id":"a00000000000000000000002","title":"B","condition":{"logics":[]}}
+    ]}}`
+	if err := verifyGraphClosure(good); err != nil {
+		t.Fatalf("valid graph must not report broken links: %v", err)
+	}
+
+	broken := `{"scheme":{"nodes":[
+        {"id":"a00000000000000000000001","title":"A","condition":{"logics":[
+            {"type":"api_code","err_node_id":"ffffffffffffffffffffffff"}
+        ],"semaphors":[{"type":"time","value":30,"to_node_id":"eeeeeeeeeeeeeeeeeeeeeeee"}]}}
+    ]}}`
+	err := verifyGraphClosure(broken)
+	if err == nil {
+		t.Fatal("dangling logic + semaphor links must be rejected")
+	}
+	if !strings.Contains(err.Error(), "err_node_id") || !strings.Contains(err.Error(), "to_node_id") {
+		t.Fatalf("error must name every dangling field: %v", err)
+	}
+
+	// Dynamic ({{...}} / @alias) targets are not static ids and must not fire.
+	dyn := `{"scheme":{"nodes":[
+        {"id":"a00000000000000000000001","title":"A","condition":{"logics":[
+            {"type":"api_rpc","conv_id":"{{env_var[@x]}}","to_node_id":"@some-alias"}
+        ]}}
+    ]}}`
+	if err := verifyGraphClosure(dyn); err != nil {
+		t.Fatalf("dynamic targets must be ignored: %v", err)
+	}
+}
+
+// TestMerge_MineDeletes_TheirsAddsRef: the mirror case — mine deletes Err
+// locally, theirs adds a new node whose link points at Err's theirs-side id.
+// Grafting the new node while dropping Err would dangle; must become a conflict.
+func TestMerge_MineDeletes_TheirsAddsRef_IsConflict(t *testing.T) {
+	base := baseFourNode()
+	// Mine drops Err (server didn't touch it).
+	mine := tScheme(base[0], base[1], base[2])
+	// Theirs adds a Retry node whose err path points at the existing Err id.
+	theirs := append(baseFourNode(),
+		tNode("f000000000000000000000ff", "Retry", 0, tLogic(map[string]any{
+			"type": "api_code", "src": "return 2;", "to_node_id": "d0000000000000000000000c", "err_node_id": "e0000000000000000000000d",
+		})),
+	)
+
+	plan := buildMergePlan(base, theirs, mine)
+	if c, _ := classOf(plan, "Err"); c != clsDeleteEditConflict {
+		t.Fatalf("mine-delete of a target still referenced by a theirs-added node must be a conflict, got %v", c)
 	}
 }
 
@@ -237,9 +367,11 @@ func TestMerge_Case8_Rename(t *testing.T) {
 	theirs[2]["title"] = "Completed"
 
 	plan := buildMergePlan(base, theirs, mine)
-	// a rename reads as delete of the old title + add of the new one
-	if c, _ := classOf(plan, "Done"); c != clsDeletedTheirs {
-		t.Fatalf("renamed-away title should read as deleted-theirs, got %v", c)
+	// A rename reads as delete of the old title + add of the new one. Compute
+	// still references Done's id in mine, so the reference-integrity rule
+	// promotes the delete to a conflict — the user must update the reference.
+	if c, _ := classOf(plan, "Done"); c != clsDeleteEditConflict {
+		t.Fatalf("renamed-away title with a live incoming ref must be a delete-edit conflict, got %v", c)
 	}
 	if c, _ := classOf(plan, "Completed"); c != clsAddedTheirs {
 		t.Fatalf("renamed-to title should read as added-theirs, got %v", c)

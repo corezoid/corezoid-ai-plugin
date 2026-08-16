@@ -29,8 +29,11 @@ type conflictResult struct {
 // when the server has moved, either blocks with a 3-way impact report, grafts a
 // merge (merge=true), or overrides (force=true).
 //
-// A check that cannot run (no baseline, unreachable server) must never stop a
-// push that would otherwise succeed — only a genuine conflict does.
+// A missing baseline (this file was never pulled) is advisory: we can't detect
+// concurrent changes and the push proceeds. But an UNREACHABLE server when we
+// DO have a baseline means the check cannot run and lost-update detection is
+// silently off — we block, because the same Corezoid API that just failed here
+// is the one ProcessJSON is about to call anyway. Retry once the API recovers.
 func resolveConflict(v *Executor, filePath string, procID int, localJSON string, force, merge bool) conflictResult {
 	dir := filepath.Dir(filePath)
 	base, ok, baselineErr := lookupBaseline(dir, procID)
@@ -49,8 +52,8 @@ func resolveConflict(v *Executor, filePath string, procID int, localJSON string,
 			return conflictResult{conflictBlock, fmt.Sprintf(
 				"Push blocked: process #%d is no longer on the server (deleted since your pull). The local file is stale — re-pull the folder to reconcile before pushing.", procID)}
 		}
-		logger.Warn("conflict check: could not fetch server state for %d: %v", procID, err)
-		return conflictResult{conflictProceed, ""}
+		return conflictResult{conflictBlock, fmt.Sprintf(
+			"Push blocked: could not fetch the current server state for process #%d (%v). Concurrent-change detection cannot run, so a lost update would be silent. Retry once the Corezoid API is reachable — the deploy call that follows would fail against the same endpoint anyway.", procID, err)}
 	}
 
 	current := baselineFromServer(proc)

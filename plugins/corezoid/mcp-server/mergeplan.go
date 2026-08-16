@@ -202,6 +202,179 @@ func buildMergePlan(baseNodes, theirsNodes, mineNodes []map[string]any) mergePla
 		mn.Ambiguous = (hasB && b.Ambiguous) || (hasT && t.Ambiguous) || (hasM && m.Ambiguous)
 		classify(&mn, hasB, hasT, hasM, b, t, m)
 		plan.Nodes = append(plan.Nodes, mn)
+	}
+	promoteReferenceConflicts(&plan, theirsNodes, mineNodes)
+	rebuildMergeBuckets(&plan)
+	return plan
+}
+
+// promoteReferenceConflicts turns a one-sided node deletion into a
+// delete-edit conflict when a surviving node on the OTHER side still links to
+// the deleted target. Without this, materializeMerge would drop the target and
+// the merged graph would carry a static link to a nonexistent node — a push
+// that fails the server's reference check or silently deploys a wrong graph.
+//
+//   - Scenario A: theirs deletes Y and a node whose merged body comes from
+//     mine still links to Y's mine-side id → clsDeletedTheirs is promoted so
+//     mine's Y stays in the merge and the user resolves the reference by hand.
+//   - Scenario B: mine deletes Y and a node whose merged body comes from
+//     theirs (grafted) still links to Y's theirs-side id → clsDeletedMine is
+//     promoted so theirs's referrer doesn't graft over a hole.
+//
+// A node's "effective side" in the merge is determined by its class: clsTheirs
+// and clsAddedTheirs bodies come from theirs; everything else that survives
+// (mine, unchanged, conflict, added-mine, added-conflict) comes from mine. A
+// node that is being dropped from the merge contributes no surviving refs.
+func promoteReferenceConflicts(plan *mergePlan, theirsNodes, mineNodes []map[string]any) {
+	classByKey := make(map[string]nodeClass, len(plan.Nodes))
+	for _, mn := range plan.Nodes {
+		classByKey[mn.Key] = mn.Class
+	}
+
+	mineKeys := matchKeys(mineNodes)
+	theirsKeys := matchKeys(theirsNodes)
+	// Resolve a raw link target id (as it appears in a node body) to the
+	// merge key it points at. Base/mine/theirs share ids for pre-existing
+	// nodes, so a link surviving from either side identifies the same key.
+	mineIDToKey := make(map[string]string, len(mineNodes))
+	theirsIDToKey := make(map[string]string, len(theirsNodes))
+	for i, n := range mineNodes {
+		if id, _ := n["id"].(string); id != "" {
+			mineIDToKey[id] = mineKeys[i]
+		}
+	}
+	for i, n := range theirsNodes {
+		if id, _ := n["id"].(string); id != "" {
+			theirsIDToKey[id] = theirsKeys[i]
+		}
+	}
+	resolveKey := func(id string) (string, bool) {
+		if k, ok := mineIDToKey[id]; ok {
+			return k, true
+		}
+		if k, ok := theirsIDToKey[id]; ok {
+			return k, true
+		}
+		return "", false
+	}
+
+	// Any delete anywhere is a candidate for promotion.
+	haveDeletes := false
+	for _, mn := range plan.Nodes {
+		if mn.Class == clsDeletedTheirs || mn.Class == clsDeletedMine {
+			haveDeletes = true
+			break
+		}
+	}
+	if !haveDeletes {
+		return
+	}
+
+	danglingA := map[string]bool{} // clsDeletedTheirs keys still referenced
+	danglingB := map[string]bool{} // clsDeletedMine keys still referenced
+	record := func(k string) {
+		switch classByKey[k] {
+		case clsDeletedTheirs:
+			danglingA[k] = true
+		case clsDeletedMine:
+			danglingB[k] = true
+		}
+	}
+	for i, n := range mineNodes {
+		if !bodyComesFromMine(classByKey[mineKeys[i]]) {
+			continue
+		}
+		for _, tgt := range collectLinkTargets(n, nil) {
+			if k, ok := resolveKey(tgt); ok {
+				record(k)
+			}
+		}
+	}
+	for i, n := range theirsNodes {
+		if !bodyComesFromTheirs(classByKey[theirsKeys[i]]) {
+			continue
+		}
+		for _, tgt := range collectLinkTargets(n, nil) {
+			if k, ok := resolveKey(tgt); ok {
+				record(k)
+			}
+		}
+	}
+	if len(danglingA) == 0 && len(danglingB) == 0 {
+		return
+	}
+
+	for i := range plan.Nodes {
+		mn := &plan.Nodes[i]
+		switch {
+		case mn.Class == clsDeletedTheirs && danglingA[mn.Key]:
+			mn.Class = clsDeleteEditConflict
+			mn.Detail = "server deleted this node; a link in the merged scheme still points at it"
+		case mn.Class == clsDeletedMine && danglingB[mn.Key]:
+			mn.Class = clsDeleteEditConflict
+			mn.Detail = "you deleted this node; a link in the merged scheme still points at it"
+		}
+	}
+}
+
+// bodyComesFromMine reports whether a node with this class contributes its
+// mine-side links to the final merge. clsTheirs and clsAddedTheirs come from
+// theirs; the drop classes contribute nothing.
+func bodyComesFromMine(c nodeClass) bool {
+	switch c {
+	case clsUnchanged, clsMine, clsConflict, clsAddedMine, clsAddedConflict, clsDeleteEditConflict:
+		return true
+	}
+	return false
+}
+
+// bodyComesFromTheirs reports whether a theirs-side node contributes its
+// theirs-side links to the final merge (grafted server nodes).
+func bodyComesFromTheirs(c nodeClass) bool {
+	return c == clsTheirs || c == clsAddedTheirs
+}
+
+// collectLinkTargets appends every static node-id reference in a node's
+// logics/semaphors to out and returns the extended slice.
+func collectLinkTargets(node map[string]any, out []string) []string {
+	cond, ok := node["condition"].(map[string]any)
+	if !ok {
+		return out
+	}
+	out = appendListTargets(cond["logics"], linkFields, out)
+	out = appendListTargets(cond["semaphors"], semLinkFields, out)
+	return out
+}
+
+func appendListTargets(list any, fields []string, out []string) []string {
+	arr, ok := list.([]any)
+	if !ok {
+		return out
+	}
+	for _, e := range arr {
+		m, ok := e.(map[string]any)
+		if !ok {
+			continue
+		}
+		for _, f := range fields {
+			tgt, ok := m[f].(string)
+			if !ok || tgt == "" {
+				continue
+			}
+			out = append(out, tgt)
+		}
+	}
+	return out
+}
+
+// rebuildMergeBuckets recomputes Yours/Grafts/Conflicts from plan.Nodes. Used
+// after promoteReferenceConflicts reclassifies nodes so the buckets reflect
+// the final classification.
+func rebuildMergeBuckets(plan *mergePlan) {
+	plan.Yours = plan.Yours[:0]
+	plan.Grafts = plan.Grafts[:0]
+	plan.Conflicts = plan.Conflicts[:0]
+	for _, mn := range plan.Nodes {
 		switch mn.Class {
 		case clsMine, clsAddedMine, clsDeletedMine:
 			plan.Yours = append(plan.Yours, mn)
@@ -211,7 +384,6 @@ func buildMergePlan(baseNodes, theirsNodes, mineNodes []map[string]any) mergePla
 			plan.Conflicts = append(plan.Conflicts, mn)
 		}
 	}
-	return plan
 }
 
 var ignoredMergeRootFields = map[string]bool{
