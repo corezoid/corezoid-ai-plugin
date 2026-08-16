@@ -164,39 +164,78 @@ func TestRecordPulledBaselinesSkipsFilesOutsideSnapshot(t *testing.T) {
 }
 
 func TestCaptureFolderBaselineSnapshotRecursesBeforeExport(t *testing.T) {
+	// After the pull-folder baseline refactor, list-folder responses already
+	// carry change_time per conv, so no follow-up GetProcessByID is made per
+	// process. The wire log must show ONLY folder-list calls — one per folder.
 	var calls []string
 	_, e := mockAPIServer(t, func(ops []map[string]interface{}) interface{} {
 		op := ops[0]
 		obj, _ := op["obj"].(string)
 		id := int(op["obj_id"].(float64))
 		calls = append(calls, fmt.Sprintf("%s:%d", obj, id))
-		if obj == "folder" {
-			var list []interface{}
-			switch id {
-			case 1:
-				list = []interface{}{
-					map[string]interface{}{"obj": "conv", "obj_id": float64(10)},
-					map[string]interface{}{"obj": "folder", "obj_id": float64(2)},
-				}
-			case 2:
-				list = []interface{}{map[string]interface{}{"obj": "conv", "obj_id": float64(20)}}
+		if obj != "folder" {
+			t.Fatalf("unexpected non-folder call: %s:%d — pull-folder baseline should reuse list-folder responses, not fetch per-process", obj, id)
+		}
+		var list []interface{}
+		switch id {
+		case 1:
+			list = []interface{}{
+				map[string]interface{}{"obj": "conv", "obj_id": float64(10), "change_time": float64(100), "version": float64(11)},
+				map[string]interface{}{"obj": "folder", "obj_id": float64(2)},
 			}
-			return map[string]interface{}{"request_proc": "ok", "ops": []interface{}{
-				map[string]interface{}{"proc": "ok", "list": list},
-			}}
+		case 2:
+			list = []interface{}{map[string]interface{}{"obj": "conv", "obj_id": float64(20), "change_time": float64(200), "is_deployed": true}}
 		}
 		return map[string]interface{}{"request_proc": "ok", "ops": []interface{}{
-			map[string]interface{}{"proc": "ok", "change_time": float64(id * 10), "last_confirmed_version": float64(id)},
+			map[string]interface{}{"proc": "ok", "list": list},
 		}}
 	})
 
 	got := captureFolderBaselineSnapshot(e, 1)
-	if len(got) != 2 || got[10].ChangeTime != 100 || got[20].Version != 20 {
+	if len(got) != 2 || got[10].ChangeTime != 100 || got[10].Version != 11 || got[20].ChangeTime != 200 {
 		t.Fatalf("unexpected snapshot: %+v", got)
 	}
-	want := []string{"folder:1", "conv:10", "folder:2", "conv:20"}
+	want := []string{"folder:1", "folder:2"}
 	if fmt.Sprint(calls) != fmt.Sprint(want) {
-		t.Fatalf("wire order = %v, want %v", calls, want)
+		t.Fatalf("wire order = %v, want %v (no per-process GetProcessByID)", calls, want)
+	}
+}
+
+// TestCaptureWorkspaceBaselineSnapshotUsesRootList pins the No-Project pull
+// path: convs living at the workspace root take their baseline from the
+// list-workspace-root response directly (like folder children do from
+// list-folder), and folders under the root recurse through list-folder. No
+// per-process GetProcessByID.
+func TestCaptureWorkspaceBaselineSnapshotUsesRootList(t *testing.T) {
+	var calls []string
+	_, e := mockAPIServer(t, func(ops []map[string]interface{}) interface{} {
+		op := ops[0]
+		typ, _ := op["type"].(string)
+		obj, _ := op["obj"].(string)
+		id, _ := op["obj_id"].(float64)
+		calls = append(calls, fmt.Sprintf("%s:%s:%d", typ, obj, int(id)))
+		if typ != "list" || obj != "folder" {
+			t.Fatalf("unexpected call %s:%s:%d — root/folder listing only", typ, obj, int(id))
+		}
+		if int(id) == 0 { // workspace root
+			return map[string]interface{}{"request_proc": "ok", "ops": []interface{}{
+				map[string]interface{}{"proc": "ok", "list": []interface{}{
+					map[string]interface{}{"obj_type": "conv", "obj_id": float64(11), "change_time": float64(111), "version": float64(1), "conv_type": "process"},
+					map[string]interface{}{"obj_type": "folder", "obj_id": float64(5), "conv_type": ""},
+				}},
+			}}
+		}
+		// folder 5
+		return map[string]interface{}{"request_proc": "ok", "ops": []interface{}{
+			map[string]interface{}{"proc": "ok", "list": []interface{}{
+				map[string]interface{}{"obj": "conv", "obj_id": float64(22), "change_time": float64(222)},
+			}},
+		}}
+	})
+
+	got := captureWorkspaceBaselineSnapshot(e)
+	if len(got) != 2 || got[11].ChangeTime != 111 || got[11].Version != 1 || got[22].ChangeTime != 222 {
+		t.Fatalf("unexpected snapshot: %+v", got)
 	}
 }
 
@@ -239,8 +278,14 @@ func TestBaseline_ServerMovedSince(t *testing.T) {
 	if !serverMovedSince(base, baselineEntry{ChangeTime: 101, Version: 10}) {
 		t.Fatal("advanced change_time must be flagged")
 	}
-	// same second, different version (tiebreak)
-	if !serverMovedSince(base, baselineEntry{ChangeTime: 100, Version: 11}) {
-		t.Fatal("same change_time but different version must be flagged")
+	// Version tiebreak was removed: baselines built from ListFolder ("version"
+	// = draft timestamp) and current state fetched via GetProcessByID
+	// ("commits.version" = commit counter) don't share semantics, so comparing
+	// them produced false positives. change_time is authoritative.
+	if serverMovedSince(base, baselineEntry{ChangeTime: 100, Version: 11}) {
+		t.Fatal("same change_time must NOT be flagged even if version differs (mixed-source safeguard)")
+	}
+	if serverMovedSince(base, baselineEntry{ChangeTime: 99, Version: 10}) {
+		t.Fatal("older change_time must not be flagged as moved")
 	}
 }

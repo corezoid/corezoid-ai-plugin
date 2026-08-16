@@ -76,14 +76,19 @@ func isFolderStageObjType(objType int) bool {
 
 // FolderChild describes one entry returned by ListFolder. Folders and convs
 // share the same response slice, distinguished by Obj ("folder" | "conv") and
-// — for convs — ConvType ("process" | "state").
+// — for convs — ConvType ("process" | "state"). ChangeTime/Version/IsDeployed
+// are populated from the same list response so a pull-folder baseline snapshot
+// can be built without a follow-up GetProcessByID per conv.
 type FolderChild struct {
-	Obj      string // "folder" | "conv"
-	ObjID    int
-	Title    string
-	ObjType  int    // folders: 0 normal; project/stage are 5/10 (legacy 2/3)
-	ConvType string // for convs only
-	Status   string
+	Obj        string // "folder" | "conv"
+	ObjID      int
+	Title      string
+	ObjType    int    // folders: 0 normal; project/stage are 5/10 (legacy 2/3)
+	ConvType   string // for convs only
+	Status     string
+	ChangeTime int64 // server last-modified (advances on every server commit)
+	Version    int64 // draft version timestamp for undeployed convs, 0 when deployed or absent
+	IsDeployed bool  // true when the process is currently deployed (no pending draft)
 }
 
 // ListFolder returns the immediate children of folderID (subfolders + convs).
@@ -132,6 +137,15 @@ func (v *Executor) ListFolder(folderID int) ([]FolderChild, error) {
 		if s, ok := m["status"].(string); ok {
 			child.Status = s
 		}
+		if f, ok := m["change_time"].(float64); ok {
+			child.ChangeTime = int64(f)
+		}
+		if f, ok := m["version"].(float64); ok {
+			child.Version = int64(f)
+		}
+		if b, ok := m["is_deployed"].(bool); ok {
+			child.IsDeployed = b
+		}
 		out = append(out, child)
 	}
 	return out, nil
@@ -141,12 +155,16 @@ func (v *Executor) ListFolder(folderID int) ([]FolderChild, error) {
 // a conv (process / state diagram) or a dashboard living directly at the
 // workspace root (project_id=0, stage_id=0). Used by ListWorkspaceRoot and
 // BatchExportSchemes to mirror the workspace UI's root view onto disk when the
-// user selects "No Project".
+// user selects "No Project". ChangeTime/Version/IsDeployed mirror FolderChild
+// so a No-Project baseline snapshot builds without extra GetProcessByID calls.
 type WorkspaceRootItem struct {
-	ObjID    int
-	Title    string
-	ObjType  string // "folder" | "conv" | "dashboard"
-	ConvType string // for convs only: "process" | "state"
+	ObjID      int
+	Title      string
+	ObjType    string // "folder" | "conv" | "dashboard"
+	ConvType   string // for convs only: "process" | "state"
+	ChangeTime int64
+	Version    int64
+	IsDeployed bool
 }
 
 // ListWorkspaceRoot lists the top-level items (folders, convs, dashboards) in
@@ -191,6 +209,15 @@ func (v *Executor) ListWorkspaceRoot() ([]WorkspaceRootItem, error) {
 		}
 		if s, ok := m["conv_type"].(string); ok {
 			it.ConvType = s
+		}
+		if f, ok := m["change_time"].(float64); ok {
+			it.ChangeTime = int64(f)
+		}
+		if f, ok := m["version"].(float64); ok {
+			it.Version = int64(f)
+		}
+		if b, ok := m["is_deployed"].(bool); ok {
+			it.IsDeployed = b
 		}
 		if it.ObjID == 0 || it.ObjType == "" {
 			continue

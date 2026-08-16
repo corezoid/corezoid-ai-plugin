@@ -225,6 +225,11 @@ func baselineFromServer(proc map[string]any) baselineEntry {
 // export starts. Capturing first is deliberate: a server commit during export
 // must leave the downloaded file on an older baseline so the next push detects
 // the race instead of silently accepting a mixed-time snapshot.
+//
+// The baseline is built from ListFolder responses directly — the list
+// endpoint already returns change_time per conv, so no per-process
+// GetProcessByID round-trips are needed. This drops pull-folder capture from
+// O(N processes) API calls to O(N folders).
 func captureFolderBaselineSnapshot(v *Executor, folderID int) map[int]baselineEntry {
 	out := map[int]baselineEntry{}
 	captureFolderChildren(v, folderID, out, map[int]bool{})
@@ -247,7 +252,9 @@ func captureWorkspaceBaselineSnapshot(v *Executor) map[int]baselineEntry {
 		}
 		switch item.ObjType {
 		case "conv":
-			captureProcessBaseline(v, item.ObjID, out)
+			if item.ObjID != 0 {
+				out[item.ObjID] = baselineFromWorkspaceRootItem(item)
+			}
 		case "folder":
 			captureFolderChildren(v, item.ObjID, out, visited)
 		}
@@ -271,23 +278,37 @@ func captureFolderChildren(v *Executor, folderID int, out map[int]baselineEntry,
 		}
 		switch child.Obj {
 		case "conv":
-			captureProcessBaseline(v, child.ObjID, out)
+			if child.ObjID != 0 {
+				out[child.ObjID] = baselineFromFolderChild(child)
+			}
 		case "folder":
 			captureFolderChildren(v, child.ObjID, out, visited)
 		}
 	}
 }
 
-func captureProcessBaseline(v *Executor, procID int, out map[int]baselineEntry) {
-	if procID == 0 {
-		return
+// baselineFromFolderChild builds a baseline entry from a ListFolder child
+// entry. change_time is the primary lost-update signal — the same field
+// baselineFromServer prefers. Version comes from the list response too but its
+// semantics differ from GetProcessByID (draft timestamp vs commits.version),
+// so serverMovedSince deliberately ignores it for list-sourced baselines and
+// compares change_time only.
+func baselineFromFolderChild(c FolderChild) baselineEntry {
+	return baselineEntry{
+		ChangeTime: c.ChangeTime,
+		Version:    c.Version,
+		PulledAt:   time.Now().Unix(),
 	}
-	proc, err := v.GetProcessByID(procID)
-	if err != nil {
-		logger.Warn("pull-folder: baseline fetch failed for %d: %v", procID, err)
-		return
+}
+
+// baselineFromWorkspaceRootItem is the No-Project sibling of
+// baselineFromFolderChild — same fields, same rationale.
+func baselineFromWorkspaceRootItem(it WorkspaceRootItem) baselineEntry {
+	return baselineEntry{
+		ChangeTime: it.ChangeTime,
+		Version:    it.Version,
+		PulledAt:   time.Now().Unix(),
 	}
-	out[procID] = baselineFromServer(proc)
 }
 
 // recordPulledBaselines pairs the pre-export snapshot with the files produced
@@ -336,11 +357,13 @@ func recordPulledBaselines(root string, snapshot map[int]baselineEntry) int {
 
 // serverMovedSince reports whether the server's current version has advanced
 // past the recorded baseline — i.e. someone committed a change since the pull.
-// change_time is the primary signal (it advances on every server commit);
-// version is the tiebreak when timestamps collide within a second.
+// change_time is authoritative: it advances on every server commit. We used to
+// tiebreak on version when timestamps collided within a second, but the
+// baseline is now built from ListFolder responses (whose "version" field is a
+// draft timestamp) while current comes from GetProcessByID (commits.version /
+// last_confirmed_version). Comparing mixed-source versions produces false
+// positives, so we compare change_time only — the sub-second tiebreak was
+// defensive rather than correctness-critical.
 func serverMovedSince(base baselineEntry, current baselineEntry) bool {
-	if current.ChangeTime != base.ChangeTime {
-		return current.ChangeTime > base.ChangeTime
-	}
-	return current.Version != base.Version
+	return current.ChangeTime > base.ChangeTime
 }
