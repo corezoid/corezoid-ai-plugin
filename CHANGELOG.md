@@ -1,5 +1,14 @@
 # Changelog
 
+## [3.1.2]
+
+- Revert(push-process): remove the developer approval gate introduced in 3.1.0. The extra confirmation on every push disrupted the normal dev iteration cycle in Corezoid workspaces without adding a meaningful safety guarantee — `push-process` is already an explicit tool invocation.
+- Fix(mcp-server): merge no longer emits a graph with dangling links. A server-side node delete whose target is still referenced by a retained node is promoted to a delete-edit conflict, and a post-materialize graph-closure invariant runs as a hard safety net so an unforeseen classifier miss cannot silently write a broken merge.
+- Fix(push-process): `force=true` no longer bypasses structural lint findings (broken links, old-format nodes, self-referencing `api_copy`/`api_rpc`). Those describe an invalid graph the server itself rejects — "override" is not a valid resolution.
+- Fix(push-process): the concurrency gate now fails closed when the server-state fetch returns any error other than a genuine "not found". Silently proceeding when the Corezoid API is degraded disabled lost-update detection exactly when it was needed.
+- Fix(push-process): the pre-push server snapshot is required for existing processes. A snapshot API failure now blocks the push instead of writing a warning and overwriting anyway — without a git safety net for `.conv.json` files, a failed snapshot means the previous server version is unrecoverable.
+- Perf(mcp-server): `pull-folder` baseline capture reads `change_time` directly from the `list-folder` response instead of calling `GetProcessByID` per process, dropping baseline capture from O(N processes) API calls to O(folders).
+
 ## [3.1.1]
 
 - Fix(mcp-server): `pull-folder` no longer clobbers the merge ancestor of locally-edited processes that live outside the pulled folder. The walk now skips files absent from the pre-export snapshot, preventing a later 3-way merge from seeing `base == mine` and silently dropping unpushed local edits.
