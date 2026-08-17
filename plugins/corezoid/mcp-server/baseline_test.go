@@ -271,21 +271,58 @@ func mustWrite(t *testing.T, path, content string) {
 }
 
 func TestBaseline_ServerMovedSince(t *testing.T) {
-	base := baselineEntry{ChangeTime: 100, Version: 10}
-	if serverMovedSince(base, baselineEntry{ChangeTime: 100, Version: 10}) {
+	// change_time is authoritative regardless of source.
+	base := baselineEntry{ChangeTime: 100, Version: 10, Source: baselineSourceDetail}
+	current := baselineEntry{ChangeTime: 100, Version: 10, Source: baselineSourceDetail}
+	if serverMovedSince(base, current) {
 		t.Fatal("identical baseline must not be flagged as moved")
 	}
-	if !serverMovedSince(base, baselineEntry{ChangeTime: 101, Version: 10}) {
+	if !serverMovedSince(base, baselineEntry{ChangeTime: 101, Version: 10, Source: baselineSourceDetail}) {
 		t.Fatal("advanced change_time must be flagged")
 	}
-	// Version tiebreak was removed: baselines built from ListFolder ("version"
-	// = draft timestamp) and current state fetched via GetProcessByID
-	// ("commits.version" = commit counter) don't share semantics, so comparing
-	// them produced false positives. change_time is authoritative.
-	if serverMovedSince(base, baselineEntry{ChangeTime: 100, Version: 11}) {
-		t.Fatal("same change_time must NOT be flagged even if version differs (mixed-source safeguard)")
-	}
-	if serverMovedSince(base, baselineEntry{ChangeTime: 99, Version: 10}) {
+	if serverMovedSince(base, baselineEntry{ChangeTime: 99, Version: 10, Source: baselineSourceDetail}) {
 		t.Fatal("older change_time must not be flagged as moved")
+	}
+}
+
+// TestBaseline_ServerMovedSince_SameSecondTiebreak locks in the pull-process
+// regression fix for issue #152: when both baseline and current came from
+// GetProcessByID (Source=detail), a same-second concurrent commit still
+// advances commits.version and must be caught as a conflict.
+func TestBaseline_ServerMovedSince_SameSecondTiebreak(t *testing.T) {
+	base := baselineEntry{ChangeTime: 100, Version: 10, Source: baselineSourceDetail}
+	current := baselineEntry{ChangeTime: 100, Version: 11, Source: baselineSourceDetail}
+	if !serverMovedSince(base, current) {
+		t.Fatal("same change_time + advanced version from detail-sourced baseline must be flagged (issue #152)")
+	}
+	// Detail-sourced version going backwards is a server anomaly, not a conflict signal.
+	older := baselineEntry{ChangeTime: 100, Version: 9, Source: baselineSourceDetail}
+	if serverMovedSince(base, older) {
+		t.Fatal("version going backwards on equal change_time must not be flagged as moved")
+	}
+}
+
+// TestBaseline_ServerMovedSince_ListSourceNoTiebreak asserts the pull-folder
+// path stays free of the mixed-semantics false positive: ListFolder's
+// "version" is a draft timestamp, not comparable to commits.version, so a
+// list-sourced baseline skips the tiebreak and accepts the sub-second blind
+// spot rather than block on non-changes.
+func TestBaseline_ServerMovedSince_ListSourceNoTiebreak(t *testing.T) {
+	base := baselineEntry{ChangeTime: 100, Version: 10, Source: baselineSourceList}
+	current := baselineEntry{ChangeTime: 100, Version: 999, Source: baselineSourceDetail}
+	if serverMovedSince(base, current) {
+		t.Fatal("list-sourced baseline must not tiebreak on version (mixed semantics)")
+	}
+}
+
+// TestBaseline_ServerMovedSince_LegacySourceMissing asserts that a sidecar
+// written before the Source field existed (Source="") does NOT tiebreak on
+// version. We can't tell whether the entry was list- or detail-sourced, so
+// the safe default is no tiebreak.
+func TestBaseline_ServerMovedSince_LegacySourceMissing(t *testing.T) {
+	base := baselineEntry{ChangeTime: 100, Version: 10} // no Source
+	current := baselineEntry{ChangeTime: 100, Version: 11, Source: baselineSourceDetail}
+	if serverMovedSince(base, current) {
+		t.Fatal("legacy baseline (no Source) must not tiebreak on version")
 	}
 }
