@@ -57,7 +57,24 @@ func resolveConflict(v *Executor, filePath string, procID int, localJSON string,
 	}
 
 	current := baselineFromServer(proc)
-	if !serverMovedSince(base, current) {
+	serverChanged := serverMovedSince(base, current)
+	// Equal-timestamp fallback: for list-sourced (pull-folder) or legacy
+	// (pre-Source-tag) baselines, serverMovedSince intentionally skips the
+	// sub-second version tiebreak because the two Version fields don't share
+	// semantics. That leaves a same-second lost-update blind spot when a
+	// concurrent commit lands in the same second as our pull. Close the gap
+	// by content-diffing the recorded ancestor against the live server scheme
+	// only in the suspicious case — no extra work on the common in-sync path.
+	if !serverChanged && base.ChangeTime == current.ChangeTime && base.Source != baselineSourceDetail {
+		changed, decided := serverContentChangedSince(v, dir, procID)
+		switch {
+		case decided && changed:
+			serverChanged = true
+		case !decided:
+			logger.Warn("conflict: equal-timestamp content check for process #%d could not run (no ancestor or export failed) — proceeding without the extra safety net", procID)
+		}
+	}
+	if !serverChanged {
 		return conflictResult{conflictProceed, ""} // in sync
 	}
 
@@ -82,6 +99,47 @@ func resolveConflict(v *Executor, filePath string, procID int, localJSON string,
 	}
 
 	return conflictResult{conflictBlock, formatConflict(procID, base, current, proc, localJSON, plan, havePlan, editorName, editorTime)}
+}
+
+// serverContentChangedSince decides whether the live server scheme differs
+// from the ancestor recorded at pull time. It's the supplementary check for
+// the equal-timestamp case where serverMovedSince cannot decide — list-sourced
+// baselines (pull-folder) and legacy sidecars written before the Source tag
+// existed both skip the version tiebreak because their Version field isn't
+// comparable to the current detail response.
+//
+// Returns (changed, decided). decided is false when the ancestor is missing
+// (best-effort at pull time) or the current server scheme cannot be exported;
+// the caller then falls back to today's behaviour rather than blocking on a
+// check that could not run.
+func serverContentChangedSince(v *Executor, dir string, procID int) (changed, decided bool) {
+	ancestorConv, hasAnc := readAncestorScheme(dir, procID)
+	if !hasAnc {
+		return false, false
+	}
+	theirsConv, hasT := exportConv(v)
+	if !hasT {
+		return false, false
+	}
+	baseNodes := localSchemeNodes(ancestorConv)
+	theirsNodes := localSchemeNodes(theirsConv)
+	// mine==base isolates server-only changes: any node different from the
+	// ancestor becomes a theirs-side class; everything else clsUnchanged.
+	plan := buildMergePlan(baseNodes, theirsNodes, baseNodes)
+	if err := addProcessFields(&plan, ancestorConv, theirsConv, ancestorConv); err != nil {
+		logger.Warn("equal-timestamp content check: process-field diff failed for #%d: %v", procID, err)
+		return false, false
+	}
+	for _, n := range plan.Nodes {
+		switch n.Class {
+		case clsTheirs, clsAddedTheirs, clsDeletedTheirs, clsDeleteEditConflict:
+			return true, true
+		}
+	}
+	if len(plan.FieldGrafts) > 0 || len(plan.FieldConflicts) > 0 {
+		return true, true
+	}
+	return false, true
 }
 
 // computeMergePlan gathers base (ancestor) / theirs (live export) / mine (local)

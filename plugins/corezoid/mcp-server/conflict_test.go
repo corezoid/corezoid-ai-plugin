@@ -1,6 +1,10 @@
 package main
 
 import (
+	"context"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -252,6 +256,135 @@ func TestApplyMergeBacksUpExactLocalFile(t *testing.T) {
 	}
 	if info.Mode().Perm() != 0600 {
 		t.Fatalf("merged file mode = %v, want 0600", info.Mode().Perm())
+	}
+}
+
+// dualEndpointServer wires up a Corezoid-style mock that answers both the JSON
+// RPC ops endpoint (get_process on /json) and the export endpoint (on
+// /download → download_url pointing back to /file). Used to exercise the
+// equal-timestamp content-diff fallback in resolveConflict.
+//
+// The mock routes by URL path because that's how the real Executor.req routes:
+// export_process goes to /download, everything else to /json.
+func dualEndpointServer(t *testing.T, changeTime float64, version float64, schemeJSON string) *Executor {
+	t.Helper()
+	var srv *httptest.Server
+	handler := http.NewServeMux()
+	handler.HandleFunc("/file", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		// ExportProcess unmarshals into []any so wrap the scheme in a list.
+		_, _ = w.Write([]byte("[" + schemeJSON + "]"))
+	})
+	handler.HandleFunc("/api/2/download", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"request_proc": "ok",
+			"ops": []interface{}{map[string]interface{}{
+				"proc":         "ok",
+				"download_url": srv.URL + "/file",
+			}},
+		})
+	})
+	handler.HandleFunc("/api/2/json", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"request_proc": "ok",
+			"ops": []interface{}{map[string]interface{}{
+				"proc":                   "ok",
+				"change_time":            changeTime,
+				"last_confirmed_version": version,
+			}},
+		})
+	})
+	srv = httptest.NewServer(handler)
+	t.Cleanup(srv.Close)
+	return &Executor{Ctx: context.Background(), APIUrl: srv.URL, Token: "test-token", NodeIDMap: make(map[string]NodeInfo)}
+}
+
+// TestConflict_EqualTimestamp_ListSource_ContentDiffers locks in the safety
+// commit that closes the pull-folder equal-timestamp blind spot: a list-sourced
+// baseline whose change_time matches the current server's but whose ancestor
+// scheme differs from the live server scheme must be treated as a conflict —
+// two developers writing in the same second can otherwise silently overwrite
+// each other because ListFolder and GetProcessByID versions aren't comparable.
+func TestConflict_EqualTimestamp_ListSource_ContentDiffers(t *testing.T) {
+	dir := t.TempDir()
+	fp := filepath.Join(dir, "1_x.conv.json")
+	ancestor := `{"obj_id":1,"scheme":{"nodes":[
+	 {"id":"aaaaaaaaaaaaaaaaaaaaaaaa","obj_type":1,"title":"Start"},
+	 {"id":"bbbbbbbbbbbbbbbbbbbbbbbb","obj_type":0,"title":"A"}]}}`
+	serverScheme := `{"obj_id":1,"scheme":{"nodes":[
+	 {"id":"aaaaaaaaaaaaaaaaaaaaaaaa","obj_type":1,"title":"Start"},
+	 {"id":"bbbbbbbbbbbbbbbbbbbbbbbb","obj_type":0,"title":"A"},
+	 {"id":"cccccccccccccccccccccccc","obj_type":0,"title":"C-server-added"}]}}`
+	if err := writeAncestorScheme(dir, 1, ancestor); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeBaseline(dir, 1, baselineEntry{ChangeTime: 100, Version: 42, Source: baselineSourceList}); err != nil {
+		t.Fatal(err)
+	}
+	e := dualEndpointServer(t, 100, 999, serverScheme) // same change_time, different (incomparable) version
+
+	blocked, msg := blockedResult(resolveConflict(e, fp, 1, ancestor, false, false))
+	if !blocked {
+		t.Fatalf("list-sourced base + equal change_time + differing server scheme must block, got blocked=%v msg=%q", blocked, msg)
+	}
+	if !strings.Contains(msg, "C-server-added") {
+		t.Fatalf("block report should surface the server-only node C-server-added:\n%s", msg)
+	}
+}
+
+// TestConflict_EqualTimestamp_ListSource_ContentSame is the negative case: same
+// change_time, list-sourced base, and identical server scheme → nothing has
+// actually changed, push must proceed. Guards against the content check turning
+// into a false positive on genuinely in-sync pull-folder baselines.
+func TestConflict_EqualTimestamp_ListSource_ContentSame(t *testing.T) {
+	dir := t.TempDir()
+	fp := filepath.Join(dir, "1_x.conv.json")
+	scheme := `{"obj_id":1,"scheme":{"nodes":[
+	 {"id":"aaaaaaaaaaaaaaaaaaaaaaaa","obj_type":1,"title":"Start"},
+	 {"id":"bbbbbbbbbbbbbbbbbbbbbbbb","obj_type":0,"title":"A"}]}}`
+	if err := writeAncestorScheme(dir, 1, scheme); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeBaseline(dir, 1, baselineEntry{ChangeTime: 100, Version: 42, Source: baselineSourceList}); err != nil {
+		t.Fatal(err)
+	}
+	e := dualEndpointServer(t, 100, 999, scheme)
+
+	blocked, msg := blockedResult(resolveConflict(e, fp, 1, scheme, false, false))
+	if blocked {
+		t.Fatalf("list-sourced base + equal change_time + matching server scheme must proceed, got blocked=%v msg=%q", blocked, msg)
+	}
+}
+
+// TestConflict_EqualTimestamp_LegacyBase_ContentDiffers exercises the same
+// safety net for sidecars written before the Source tag existed (Source="").
+// The pre-Source-tag baseline can't be distinguished from a list-sourced one at
+// read time; both must fall through to the ancestor content check.
+func TestConflict_EqualTimestamp_LegacyBase_ContentDiffers(t *testing.T) {
+	dir := t.TempDir()
+	fp := filepath.Join(dir, "1_x.conv.json")
+	ancestor := `{"obj_id":1,"scheme":{"nodes":[
+	 {"id":"aaaaaaaaaaaaaaaaaaaaaaaa","obj_type":1,"title":"Start"}]}}`
+	serverScheme := `{"obj_id":1,"scheme":{"nodes":[
+	 {"id":"aaaaaaaaaaaaaaaaaaaaaaaa","obj_type":1,"title":"Start"},
+	 {"id":"dddddddddddddddddddddddd","obj_type":0,"title":"D-server-added"}]}}`
+	if err := writeAncestorScheme(dir, 1, ancestor); err != nil {
+		t.Fatal(err)
+	}
+	// Note: Source omitted — simulates a legacy sidecar.
+	if err := writeBaseline(dir, 1, baselineEntry{ChangeTime: 100, Version: 10}); err != nil {
+		t.Fatal(err)
+	}
+	e := dualEndpointServer(t, 100, 11, serverScheme)
+
+	blocked, msg := blockedResult(resolveConflict(e, fp, 1, ancestor, false, false))
+	if !blocked {
+		t.Fatalf("legacy baseline + equal change_time + differing server scheme must block, got blocked=%v msg=%q", blocked, msg)
+	}
+	if !strings.Contains(msg, "D-server-added") {
+		t.Fatalf("block report should surface the server-only node D-server-added:\n%s", msg)
 	}
 }
 
