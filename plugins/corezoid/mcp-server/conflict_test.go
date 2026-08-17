@@ -254,3 +254,38 @@ func TestApplyMergeBacksUpExactLocalFile(t *testing.T) {
 		t.Fatalf("merged file mode = %v, want 0600", info.Mode().Perm())
 	}
 }
+
+// TestApplyMerge_BaselineWriteFailureDoesNotClaimClean locks in the issue #151
+// fix: when applyMerge lands a conflict-free merge but the baseline sidecar
+// can't be updated (here: pre-existing corrupt sidecar the non-recovery writer
+// refuses to overwrite), the message must NOT promise "proceed cleanly".
+// Otherwise the user would push and get the same conflict re-reported, or —
+// worse — assume the concurrency state is fresh when it isn't.
+func TestApplyMerge_BaselineWriteFailureDoesNotClaimClean(t *testing.T) {
+	dir := t.TempDir()
+	fp := filepath.Join(dir, "1_x.conv.json")
+	local := `{"obj_id":1,"description":"mine","scheme":{"nodes":[]}}`
+	theirs := `{"obj_id":1,"description":"server","scheme":{"nodes":[]}}`
+	if err := os.WriteFile(fp, []byte(local), 0600); err != nil {
+		t.Fatal(err)
+	}
+	// Corrupt baseline sidecar → writeBaseline (non-recovery path) will fail.
+	if err := os.WriteFile(filepath.Join(dir, baselineFileName), []byte("{broken"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	plan := buildMergePlan(nil, nil, nil)
+	if err := addProcessFields(&plan, local, theirs, local); err != nil {
+		t.Fatal(err)
+	}
+
+	res := applyMerge(dir, fp, 1, local, baselineEntry{ChangeTime: 200, Version: 20, Source: baselineSourceDetail}, theirs, plan, nil, "", 0)
+	if res.action != conflictMerged {
+		t.Fatalf("merge action = %v, message=%s", res.action, res.message)
+	}
+	if strings.Contains(res.message, "proceed cleanly") {
+		t.Fatalf("message must NOT claim 'proceed cleanly' when baseline write failed (#151):\n%s", res.message)
+	}
+	if !strings.Contains(res.message, "baseline") || !strings.Contains(res.message, "could not be updated") {
+		t.Fatalf("message must surface the baseline write failure (#151):\n%s", res.message)
+	}
+}

@@ -161,13 +161,33 @@ func applyMerge(dir, filePath string, procID int, localJSON string, current base
 	fmt.Fprintf(&sb, "Original local file saved to %s.\n\n", backupPath)
 	sb.WriteString(formatMergePlan(plan))
 	if mergeConflictCount(plan) == 0 {
-		if berr := writeBaseline(dir, procID, current); berr != nil {
-			logger.Warn("merge: baseline advance failed for %d: %v", procID, berr)
+		// Both writes must succeed to declare the merge fully reconciled: baseline
+		// advance is what makes the next push proceed cleanly, and the ancestor
+		// advance is what a later 3-way merge relies on. If either fails we still
+		// leave the materialised merge on disk (the user's work is preserved) but
+		// tell them the state is not clean and the next push will re-report the
+		// conflict — better than the earlier silent "proceed cleanly" claim (#151).
+		baselineErr := writeBaseline(dir, procID, current)
+		if baselineErr != nil {
+			logger.Warn("merge: baseline advance failed for %d: %v", procID, baselineErr)
 		}
-		if aerr := writeAncestorScheme(dir, procID, theirsConv); aerr != nil {
-			logger.Warn("merge: ancestor advance failed for %d: %v", procID, aerr)
+		ancestorErr := writeAncestorScheme(dir, procID, theirsConv)
+		if ancestorErr != nil {
+			logger.Warn("merge: ancestor advance failed for %d: %v", procID, ancestorErr)
 		}
-		fmt.Fprintf(&sb, "\nMerged into %s — no conflicts. Review it, then push again; it will proceed cleanly.\n", filePath)
+		switch {
+		case baselineErr != nil && ancestorErr != nil:
+			fmt.Fprintf(&sb, "\nMerged into %s — no conflicts, BUT baseline and ancestor could not be updated (%v; %v). Your merged file is safe, but the next push will re-report this conflict until the sidecar can be written. Fix the local filesystem/permissions and re-run.\n",
+				filePath, baselineErr, ancestorErr)
+		case baselineErr != nil:
+			fmt.Fprintf(&sb, "\nMerged into %s — no conflicts, BUT the baseline sidecar could not be updated (%v). The next push will re-report this conflict; force=true would still overwrite the server. Fix the sidecar (permissions/disk) and re-run, or accept that a repeat push needs force=true.\n",
+				filePath, baselineErr)
+		case ancestorErr != nil:
+			fmt.Fprintf(&sb, "\nMerged into %s — no conflicts, BUT the merge ancestor could not be refreshed (%v). Push will proceed cleanly, but a future 3-way merge will fall back to the delete-only impact report until the ancestor file is writable again.\n",
+				filePath, ancestorErr)
+		default:
+			fmt.Fprintf(&sb, "\nMerged into %s — no conflicts. Review it, then push again; it will proceed cleanly.\n", filePath)
+		}
 	} else {
 		fmt.Fprintf(&sb, "\nGrafted the non-conflicting changes into %s. The %d overlapping node/field value(s) above were kept as YOUR version.\nReview them, then push with force=true to deploy (a snapshot of the server version is attempted first; recoverable only if it succeeds — check the push result).\n",
 			filePath, mergeConflictCount(plan))
