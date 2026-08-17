@@ -1,5 +1,11 @@
 # Changelog
 
+## [3.1.3]
+
+- Fix(mcp-server): `serverMovedSince` is source-aware again. v3.1.2 removed the version tiebreak globally so a `ListFolder`-derived baseline would stop producing false positives on `pull-folder`, but the same change silently disabled same-second lost-update detection on the `pull-process` path where both sides come from `GetProcessByID` and versions ARE comparable. Baselines now carry a `source` tag (`detail` vs `list`); the tiebreak applies only when both sides are `detail`. Fixes #152.
+- Fix(mcp-server): `push --merge` no longer claims "proceed cleanly" when the baseline sidecar could not be updated. The materialised merge is still preserved on disk, but the message now reports the baseline/ancestor write failure and warns that the next push will re-report the conflict. Fixes #151.
+- Docs: README telemetry blurb aligned with `SECURITY.md` — both references now list the same fields (tool name, duration, error type, API hostname).
+
 ## [3.1.2]
 
 - Revert(push-process): remove the developer approval gate introduced in 3.1.0. The extra confirmation on every push disrupted the normal dev iteration cycle in Corezoid workspaces without adding a meaningful safety guarantee — `push-process` is already an explicit tool invocation.
