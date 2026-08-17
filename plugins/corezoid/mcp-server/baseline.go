@@ -59,10 +59,17 @@ func readAncestorScheme(dir string, procID int) (string, bool) {
 
 // baselineEntry is one process's pulled-at version identity.
 type baselineEntry struct {
-	ChangeTime int64 `json:"change_time"`         // server process last-modified (advances on every server commit)
-	Version    int64 `json:"version"`             // last_confirmed_version (fallback: commits.version)
-	PulledAt   int64 `json:"pulled_at,omitempty"` // when this baseline was recorded (unix, for diagnostics)
+	ChangeTime int64  `json:"change_time"`         // server process last-modified (advances on every server commit)
+	Version    int64  `json:"version"`             // last_confirmed_version (fallback: commits.version)
+	PulledAt   int64  `json:"pulled_at,omitempty"` // when this baseline was recorded (unix, for diagnostics)
+	Source     string `json:"source,omitempty"`    // "detail" (GetProcessByID) or "list" (ListFolder). Empty = legacy sidecar written before the source tag existed; treated as unknown.
 }
+
+// baseline source tags — see serverMovedSince for why they matter.
+const (
+	baselineSourceDetail = "detail" // commits-derived version (GetProcessByID, last_confirmed_version)
+	baselineSourceList   = "list"   // ListFolder version (draft timestamp; not comparable to detail)
+)
 
 type corruptBaselineError struct {
 	path string
@@ -207,7 +214,7 @@ func lookupBaseline(dir string, procID int) (baselineEntry, bool, error) {
 // GetProcessByID (list conv) response. Prefers last_confirmed_version; falls
 // back to commits.version. PulledAt is stamped now.
 func baselineFromServer(proc map[string]any) baselineEntry {
-	e := baselineEntry{PulledAt: time.Now().Unix()}
+	e := baselineEntry{PulledAt: time.Now().Unix(), Source: baselineSourceDetail}
 	if ct, ok := proc["change_time"].(float64); ok {
 		e.ChangeTime = int64(ct)
 	}
@@ -291,13 +298,14 @@ func captureFolderChildren(v *Executor, folderID int, out map[int]baselineEntry,
 // entry. change_time is the primary lost-update signal — the same field
 // baselineFromServer prefers. Version comes from the list response too but its
 // semantics differ from GetProcessByID (draft timestamp vs commits.version),
-// so serverMovedSince deliberately ignores it for list-sourced baselines and
-// compares change_time only.
+// so we tag the entry with Source=list and serverMovedSince skips the version
+// tiebreak for list-sourced baselines to avoid mixed-semantics false positives.
 func baselineFromFolderChild(c FolderChild) baselineEntry {
 	return baselineEntry{
 		ChangeTime: c.ChangeTime,
 		Version:    c.Version,
 		PulledAt:   time.Now().Unix(),
+		Source:     baselineSourceList,
 	}
 }
 
@@ -308,6 +316,7 @@ func baselineFromWorkspaceRootItem(it WorkspaceRootItem) baselineEntry {
 		ChangeTime: it.ChangeTime,
 		Version:    it.Version,
 		PulledAt:   time.Now().Unix(),
+		Source:     baselineSourceList,
 	}
 }
 
@@ -357,13 +366,25 @@ func recordPulledBaselines(root string, snapshot map[int]baselineEntry) int {
 
 // serverMovedSince reports whether the server's current version has advanced
 // past the recorded baseline — i.e. someone committed a change since the pull.
-// change_time is authoritative: it advances on every server commit. We used to
-// tiebreak on version when timestamps collided within a second, but the
-// baseline is now built from ListFolder responses (whose "version" field is a
-// draft timestamp) while current comes from GetProcessByID (commits.version /
-// last_confirmed_version). Comparing mixed-source versions produces false
-// positives, so we compare change_time only — the sub-second tiebreak was
-// defensive rather than correctness-critical.
+// change_time is authoritative: it advances on every server commit.
+//
+// Sub-second commits are tiebroken by version, but ONLY when both sides come
+// from a commit-derived source (GetProcessByID). ListFolder's "version" field
+// is a draft timestamp, not a commit counter — comparing it against the
+// commits-derived version produces false positives, so a list-sourced baseline
+// (pull-folder) falls back to change_time-only and accepts the sub-second blind
+// spot. A detail-sourced baseline (pull-process, push refresh, merge advance)
+// keeps the tiebreak so same-second concurrent commits are still caught.
+//
+// A missing Source tag means the sidecar predates this field; treat it as
+// unknown-provenance and skip the tiebreak to stay on the safe (no-false-
+// positive) side.
 func serverMovedSince(base baselineEntry, current baselineEntry) bool {
-	return current.ChangeTime > base.ChangeTime
+	if current.ChangeTime != base.ChangeTime {
+		return current.ChangeTime > base.ChangeTime
+	}
+	if base.Source == baselineSourceDetail && current.Source == baselineSourceDetail {
+		return current.Version > base.Version
+	}
+	return false
 }

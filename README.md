@@ -85,7 +85,7 @@ codex plugin add corezoid@corezoid
 
 No build step, no extra setup. The MCP server starts automatically on first use.
 
-> **Telemetry:** the plugin collects anonymous usage data (tool name, duration, error type, transport version) to improve reliability. No tokens, workspace IDs, or process content are ever sent. To opt out:
+> **Telemetry:** the plugin collects anonymous usage data (tool name, duration, error type, API hostname) to improve reliability. No tokens, workspace IDs, or process content are ever sent. To opt out:
 > ```bash
 > export COREZOID_ANALYTICS_DISABLED=1   # add to ~/.zshrc or ~/.bashrc to persist
 > ```
