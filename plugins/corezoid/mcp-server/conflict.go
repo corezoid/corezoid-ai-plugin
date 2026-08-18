@@ -66,12 +66,20 @@ func resolveConflict(v *Executor, filePath string, procID int, localJSON string,
 	// by content-diffing the recorded ancestor against the live server scheme
 	// only in the suspicious case — no extra work on the common in-sync path.
 	if !serverChanged && base.ChangeTime == current.ChangeTime && base.Source != baselineSourceDetail {
-		changed, decided := serverContentChangedSince(v, dir, procID)
-		switch {
-		case decided && changed:
+		switch serverContentChangedSince(v, dir, procID) {
+		case contentCheckChanged:
 			serverChanged = true
-		case !decided:
-			logger.Warn("conflict: equal-timestamp content check for process #%d could not run (no ancestor or export failed) — proceeding without the extra safety net", procID)
+		case contentCheckNoAncestor:
+			// Legacy sidecars predate the ancestor snapshot; without a recorded
+			// scheme we can't run the content diff. Preserve the old warn+proceed
+			// behaviour so pre-v3.1.3 pulls don't regress into a hard block.
+			logger.Warn("conflict: equal-timestamp content check for process #%d skipped (no ancestor recorded — legacy sidecar) — proceeding without the extra safety net", procID)
+		case contentCheckExportFailed:
+			if !force {
+				return conflictResult{conflictBlock, fmt.Sprintf(
+					"Push blocked: process #%d has an equal-timestamp baseline (list-sourced or legacy) and the supplementary content diff could not complete (export or parse failed). A concurrent same-second overwrite cannot be ruled out. Retry once the export endpoint responds, or pass force=true to override at your own risk.", procID)}
+			}
+			logger.Warn("conflict: equal-timestamp content check for process #%d failed (export or parse) — force=true overrides the block", procID)
 		}
 	}
 	if !serverChanged {
@@ -101,25 +109,34 @@ func resolveConflict(v *Executor, filePath string, procID int, localJSON string,
 	return conflictResult{conflictBlock, formatConflict(procID, base, current, proc, localJSON, plan, havePlan, editorName, editorTime)}
 }
 
+// contentCheckResult classifies the outcome of the equal-timestamp content diff.
+// The caller reacts differently to each: an actual change blocks, a legacy
+// sidecar (no ancestor) warns-and-proceeds for pre-v3.1.3 compatibility, and an
+// export/parse failure blocks unless the user forces because the same API path
+// is about to be used to deploy — a broken export usually foreshadows trouble.
+type contentCheckResult int
+
+const (
+	contentCheckUnchanged     contentCheckResult = iota // ancestor == server scheme
+	contentCheckChanged                                 // server scheme differs from ancestor
+	contentCheckNoAncestor                              // legacy sidecar: nothing to diff against
+	contentCheckExportFailed                            // export or parse could not complete
+)
+
 // serverContentChangedSince decides whether the live server scheme differs
 // from the ancestor recorded at pull time. It's the supplementary check for
 // the equal-timestamp case where serverMovedSince cannot decide — list-sourced
 // baselines (pull-folder) and legacy sidecars written before the Source tag
 // existed both skip the version tiebreak because their Version field isn't
 // comparable to the current detail response.
-//
-// Returns (changed, decided). decided is false when the ancestor is missing
-// (best-effort at pull time) or the current server scheme cannot be exported;
-// the caller then falls back to today's behaviour rather than blocking on a
-// check that could not run.
-func serverContentChangedSince(v *Executor, dir string, procID int) (changed, decided bool) {
+func serverContentChangedSince(v *Executor, dir string, procID int) contentCheckResult {
 	ancestorConv, hasAnc := readAncestorScheme(dir, procID)
 	if !hasAnc {
-		return false, false
+		return contentCheckNoAncestor
 	}
 	theirsConv, hasT := exportConv(v)
 	if !hasT {
-		return false, false
+		return contentCheckExportFailed
 	}
 	baseNodes := localSchemeNodes(ancestorConv)
 	theirsNodes := localSchemeNodes(theirsConv)
@@ -128,18 +145,73 @@ func serverContentChangedSince(v *Executor, dir string, procID int) (changed, de
 	plan := buildMergePlan(baseNodes, theirsNodes, baseNodes)
 	if err := addProcessFields(&plan, ancestorConv, theirsConv, ancestorConv); err != nil {
 		logger.Warn("equal-timestamp content check: process-field diff failed for #%d: %v", procID, err)
-		return false, false
+		return contentCheckExportFailed
 	}
+	hasAmbiguous := false
 	for _, n := range plan.Nodes {
+		// Ambiguous keys (duplicate non-empty titles) cannot be safely classified
+		// per-key: canonicalizeNodes keeps only the first occurrence's body, so a
+		// server change to a later duplicate can hide as clsUnchanged. Skip the
+		// class check for these and rely on the whole-scheme multiset compare
+		// below — that catches any change without false-positiving in-sync
+		// schemes that legitimately contain duplicate titles.
+		if n.Ambiguous {
+			hasAmbiguous = true
+			continue
+		}
 		switch n.Class {
-		case clsTheirs, clsAddedTheirs, clsDeletedTheirs, clsDeleteEditConflict:
-			return true, true
+		// clsConflict is possible in the mine==base call only via the duplicate-
+		// title path in classify() — include it so a server edit that shifts a
+		// duplicate's first occurrence is not silently ignored.
+		case clsTheirs, clsAddedTheirs, clsDeletedTheirs, clsDeleteEditConflict, clsConflict:
+			return contentCheckChanged
 		}
 	}
 	if len(plan.FieldGrafts) > 0 || len(plan.FieldConflicts) > 0 {
-		return true, true
+		return contentCheckChanged
 	}
-	return false, true
+	if hasAmbiguous && !schemeNodesEqual(baseNodes, theirsNodes) {
+		return contentCheckChanged
+	}
+	return contentCheckUnchanged
+}
+
+// schemeNodesEqual compares two node lists as multisets of canonical bodies.
+// It exists so serverContentChangedSince can rule out false positives when the
+// scheme has duplicate titles: canonicalizeNodes deduplicates by key and hides
+// changes to later duplicates, but a sorted multiset of every node's canonical
+// body sees every occurrence and stays stable under id regeneration.
+func schemeNodesEqual(a, b []map[string]any) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	ab := schemeCanonBodies(a)
+	bb := schemeCanonBodies(b)
+	for i := range ab {
+		if ab[i] != bb[i] {
+			return false
+		}
+	}
+	return true
+}
+
+// schemeCanonBodies returns every node's canonical body, sorted, so two scheme
+// snapshots with the same semantic content produce identical slices regardless
+// of node order or id regeneration.
+func schemeCanonBodies(nodes []map[string]any) []string {
+	keys := matchKeys(nodes)
+	idToKey := map[string]string{}
+	for i, n := range nodes {
+		if id, _ := n["id"].(string); id != "" {
+			idToKey[id] = keys[i]
+		}
+	}
+	out := make([]string, 0, len(nodes))
+	for _, n := range nodes {
+		out = append(out, canonNodeBody(n, idToKey))
+	}
+	sort.Strings(out)
+	return out
 }
 
 // computeMergePlan gathers base (ancestor) / theirs (live export) / mine (local)

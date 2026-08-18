@@ -388,6 +388,254 @@ func TestConflict_EqualTimestamp_LegacyBase_ContentDiffers(t *testing.T) {
 	}
 }
 
+// TestConflict_EqualTimestamp_DuplicateTitle_ServerEditsFirst covers the
+// duplicate-title blind spot in the equal-timestamp content check: when two
+// nodes share a title, canonicalizeNodes keeps only the first occurrence's body
+// and flags the key as Ambiguous. If the server edits that first occurrence,
+// the classifier can still return clsConflict (via the ambiguous-and-changed
+// path) — the check must count that as a real change, not silently pass.
+func TestConflict_EqualTimestamp_DuplicateTitle_ServerEditsFirst(t *testing.T) {
+	dir := t.TempDir()
+	fp := filepath.Join(dir, "1_x.conv.json")
+	ancestor := `{"obj_id":1,"scheme":{"nodes":[
+	 {"id":"aaaaaaaaaaaaaaaaaaaaaaaa","obj_type":1,"title":"Start"},
+	 {"id":"bbbbbbbbbbbbbbbbbbbbbbbb","obj_type":0,"title":"Payment","description":"first-original"},
+	 {"id":"cccccccccccccccccccccccc","obj_type":0,"title":"Payment","description":"second"}]}}`
+	// Server changed the FIRST "Payment" node's description.
+	serverScheme := `{"obj_id":1,"scheme":{"nodes":[
+	 {"id":"aaaaaaaaaaaaaaaaaaaaaaaa","obj_type":1,"title":"Start"},
+	 {"id":"bbbbbbbbbbbbbbbbbbbbbbbb","obj_type":0,"title":"Payment","description":"first-edited-by-server"},
+	 {"id":"cccccccccccccccccccccccc","obj_type":0,"title":"Payment","description":"second"}]}}`
+	if err := writeAncestorScheme(dir, 1, ancestor); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeBaseline(dir, 1, baselineEntry{ChangeTime: 100, Version: 42, Source: baselineSourceList}); err != nil {
+		t.Fatal(err)
+	}
+	e := dualEndpointServer(t, 100, 999, serverScheme)
+
+	blocked, msg := blockedResult(resolveConflict(e, fp, 1, ancestor, false, false))
+	if !blocked {
+		t.Fatalf("duplicate title + server edit on first occurrence must block, got blocked=%v msg=%q", blocked, msg)
+	}
+}
+
+// TestConflict_EqualTimestamp_DuplicateTitle_ServerEditsSecond covers the
+// harder half of the same blind spot: canonicalizeNodes keeps only the first
+// duplicate's body, so a change to the SECOND duplicate would classify as
+// clsUnchanged if we relied on class alone. Guarded by the Ambiguous flag —
+// any duplicate title on either side means we can't prove in-sync and must
+// treat the state as changed.
+func TestConflict_EqualTimestamp_DuplicateTitle_ServerEditsSecond(t *testing.T) {
+	dir := t.TempDir()
+	fp := filepath.Join(dir, "1_x.conv.json")
+	ancestor := `{"obj_id":1,"scheme":{"nodes":[
+	 {"id":"aaaaaaaaaaaaaaaaaaaaaaaa","obj_type":1,"title":"Start"},
+	 {"id":"bbbbbbbbbbbbbbbbbbbbbbbb","obj_type":0,"title":"Payment","description":"first"},
+	 {"id":"cccccccccccccccccccccccc","obj_type":0,"title":"Payment","description":"second-original"}]}}`
+	// Server changed only the SECOND "Payment" — canonicalization would hide it.
+	serverScheme := `{"obj_id":1,"scheme":{"nodes":[
+	 {"id":"aaaaaaaaaaaaaaaaaaaaaaaa","obj_type":1,"title":"Start"},
+	 {"id":"bbbbbbbbbbbbbbbbbbbbbbbb","obj_type":0,"title":"Payment","description":"first"},
+	 {"id":"cccccccccccccccccccccccc","obj_type":0,"title":"Payment","description":"second-edited-by-server"}]}}`
+	if err := writeAncestorScheme(dir, 1, ancestor); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeBaseline(dir, 1, baselineEntry{ChangeTime: 100, Version: 42, Source: baselineSourceList}); err != nil {
+		t.Fatal(err)
+	}
+	e := dualEndpointServer(t, 100, 999, serverScheme)
+
+	blocked, msg := blockedResult(resolveConflict(e, fp, 1, ancestor, false, false))
+	if !blocked {
+		t.Fatalf("duplicate title + server edit on second occurrence must block (Ambiguous safeguard), got blocked=%v msg=%q", blocked, msg)
+	}
+}
+
+// TestConflict_EqualTimestamp_DuplicateTitle_InSync_Proceeds is the negative
+// half: duplicate titles alone must not turn every equal-timestamp pull-folder
+// baseline into a false-positive block. When the ancestor and server scheme
+// are semantically identical (same multiset of canonical bodies), push must
+// proceed even though canonicalizeNodes flags the duplicate key as Ambiguous.
+func TestConflict_EqualTimestamp_DuplicateTitle_InSync_Proceeds(t *testing.T) {
+	dir := t.TempDir()
+	fp := filepath.Join(dir, "1_x.conv.json")
+	scheme := `{"obj_id":1,"scheme":{"nodes":[
+	 {"id":"aaaaaaaaaaaaaaaaaaaaaaaa","obj_type":1,"title":"Start"},
+	 {"id":"bbbbbbbbbbbbbbbbbbbbbbbb","obj_type":0,"title":"Payment","description":"first"},
+	 {"id":"cccccccccccccccccccccccc","obj_type":0,"title":"Payment","description":"second"}]}}`
+	if err := writeAncestorScheme(dir, 1, scheme); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeBaseline(dir, 1, baselineEntry{ChangeTime: 100, Version: 42, Source: baselineSourceList}); err != nil {
+		t.Fatal(err)
+	}
+	e := dualEndpointServer(t, 100, 999, scheme)
+
+	blocked, msg := blockedResult(resolveConflict(e, fp, 1, scheme, false, false))
+	if blocked {
+		t.Fatalf("duplicate titles with an in-sync server must not block, got blocked=%v msg=%q", blocked, msg)
+	}
+}
+
+// TestConflict_EqualTimestamp_DuplicateTitle_ServerAddsThird covers a variant
+// of the duplicate-title change: the server added ANOTHER duplicate instead of
+// editing one. Canonicalizing by title collapses all three into one key, so the
+// per-key merge classifier can't see the addition. The whole-scheme multiset
+// compare catches it because the node counts diverge.
+func TestConflict_EqualTimestamp_DuplicateTitle_ServerAddsThird(t *testing.T) {
+	dir := t.TempDir()
+	fp := filepath.Join(dir, "1_x.conv.json")
+	ancestor := `{"obj_id":1,"scheme":{"nodes":[
+	 {"id":"aaaaaaaaaaaaaaaaaaaaaaaa","obj_type":1,"title":"Start"},
+	 {"id":"bbbbbbbbbbbbbbbbbbbbbbbb","obj_type":0,"title":"Payment","description":"one"},
+	 {"id":"cccccccccccccccccccccccc","obj_type":0,"title":"Payment","description":"two"}]}}`
+	serverScheme := `{"obj_id":1,"scheme":{"nodes":[
+	 {"id":"aaaaaaaaaaaaaaaaaaaaaaaa","obj_type":1,"title":"Start"},
+	 {"id":"bbbbbbbbbbbbbbbbbbbbbbbb","obj_type":0,"title":"Payment","description":"one"},
+	 {"id":"cccccccccccccccccccccccc","obj_type":0,"title":"Payment","description":"two"},
+	 {"id":"dddddddddddddddddddddddd","obj_type":0,"title":"Payment","description":"three-added"}]}}`
+	if err := writeAncestorScheme(dir, 1, ancestor); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeBaseline(dir, 1, baselineEntry{ChangeTime: 100, Version: 42, Source: baselineSourceList}); err != nil {
+		t.Fatal(err)
+	}
+	e := dualEndpointServer(t, 100, 999, serverScheme)
+
+	blocked, msg := blockedResult(resolveConflict(e, fp, 1, ancestor, false, false))
+	if !blocked {
+		t.Fatalf("added third duplicate must block, got blocked=%v msg=%q", blocked, msg)
+	}
+}
+
+// TestConflict_EqualTimestamp_DuplicateTitle_ReorderedProceeds is the strictest
+// negative case for the multiset compare: the server reshuffled duplicates but
+// the semantic content is identical. Order-agnostic multiset compare (sorted
+// canonical bodies) must accept this as in-sync.
+func TestConflict_EqualTimestamp_DuplicateTitle_ReorderedProceeds(t *testing.T) {
+	dir := t.TempDir()
+	fp := filepath.Join(dir, "1_x.conv.json")
+	ancestor := `{"obj_id":1,"scheme":{"nodes":[
+	 {"id":"aaaaaaaaaaaaaaaaaaaaaaaa","obj_type":1,"title":"Start"},
+	 {"id":"bbbbbbbbbbbbbbbbbbbbbbbb","obj_type":0,"title":"Payment","description":"one"},
+	 {"id":"cccccccccccccccccccccccc","obj_type":0,"title":"Payment","description":"two"}]}}`
+	// Server swapped the two Payment nodes' storage order but bodies are identical.
+	serverScheme := `{"obj_id":1,"scheme":{"nodes":[
+	 {"id":"aaaaaaaaaaaaaaaaaaaaaaaa","obj_type":1,"title":"Start"},
+	 {"id":"cccccccccccccccccccccccc","obj_type":0,"title":"Payment","description":"two"},
+	 {"id":"bbbbbbbbbbbbbbbbbbbbbbbb","obj_type":0,"title":"Payment","description":"one"}]}}`
+	if err := writeAncestorScheme(dir, 1, ancestor); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeBaseline(dir, 1, baselineEntry{ChangeTime: 100, Version: 42, Source: baselineSourceList}); err != nil {
+		t.Fatal(err)
+	}
+	e := dualEndpointServer(t, 100, 999, serverScheme)
+
+	blocked, msg := blockedResult(resolveConflict(e, fp, 1, ancestor, false, false))
+	if blocked {
+		t.Fatalf("duplicate-title reorder with identical bodies must proceed, got blocked=%v msg=%q", blocked, msg)
+	}
+}
+
+// TestConflict_EqualTimestamp_ProcessFieldChangeBlocks makes sure the fallback
+// also catches process-level field drift (description, obj_type flags, etc.),
+// not just node changes. addProcessFields writes those into plan.FieldGrafts,
+// which the check surfaces the same way as a node-side change.
+func TestConflict_EqualTimestamp_ProcessFieldChangeBlocks(t *testing.T) {
+	dir := t.TempDir()
+	fp := filepath.Join(dir, "1_x.conv.json")
+	ancestor := `{"obj_id":1,"description":"orig","scheme":{"nodes":[
+	 {"id":"aaaaaaaaaaaaaaaaaaaaaaaa","obj_type":1,"title":"Start"}]}}`
+	// Same nodes, but the process description was changed on the server.
+	serverScheme := `{"obj_id":1,"description":"server-edited","scheme":{"nodes":[
+	 {"id":"aaaaaaaaaaaaaaaaaaaaaaaa","obj_type":1,"title":"Start"}]}}`
+	if err := writeAncestorScheme(dir, 1, ancestor); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeBaseline(dir, 1, baselineEntry{ChangeTime: 100, Version: 42, Source: baselineSourceList}); err != nil {
+		t.Fatal(err)
+	}
+	e := dualEndpointServer(t, 100, 999, serverScheme)
+
+	blocked, msg := blockedResult(resolveConflict(e, fp, 1, ancestor, false, false))
+	if !blocked {
+		t.Fatalf("process-level field change must block, got blocked=%v msg=%q", blocked, msg)
+	}
+}
+
+// TestConflict_EqualTimestamp_ExportFailure_Blocks locks in the fail-closed
+// behaviour: if the equal-timestamp content diff can't run because the export
+// endpoint fails, a same-second concurrent overwrite cannot be ruled out.
+// Older behaviour warn-and-proceeded here; that was fail-open. Now we block
+// unless the user explicitly forces.
+func TestConflict_EqualTimestamp_ExportFailure_Blocks(t *testing.T) {
+	dir := t.TempDir()
+	fp := filepath.Join(dir, "1_x.conv.json")
+	ancestor := `{"obj_id":1,"scheme":{"nodes":[
+	 {"id":"aaaaaaaaaaaaaaaaaaaaaaaa","obj_type":1,"title":"Start"}]}}`
+	if err := writeAncestorScheme(dir, 1, ancestor); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeBaseline(dir, 1, baselineEntry{ChangeTime: 100, Version: 42, Source: baselineSourceList}); err != nil {
+		t.Fatal(err)
+	}
+	// Handler that answers get_process but NOT download → export fails.
+	handler := http.NewServeMux()
+	handler.HandleFunc("/api/2/json", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"request_proc": "ok",
+			"ops": []interface{}{map[string]interface{}{
+				"proc":                   "ok",
+				"change_time":            float64(100),
+				"last_confirmed_version": float64(999),
+			}},
+		})
+	})
+	handler.HandleFunc("/api/2/download", func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "export unavailable", http.StatusServiceUnavailable)
+	})
+	srv := httptest.NewServer(handler)
+	t.Cleanup(srv.Close)
+	e := &Executor{Ctx: context.Background(), APIUrl: srv.URL, Token: "test-token", NodeIDMap: make(map[string]NodeInfo)}
+
+	blocked, msg := blockedResult(resolveConflict(e, fp, 1, ancestor, false, false))
+	if !blocked {
+		t.Fatalf("export failure at equal timestamp must block, got blocked=%v msg=%q", blocked, msg)
+	}
+	if !strings.Contains(msg, "export or parse failed") {
+		t.Fatalf("block message should name the failed content diff:\n%s", msg)
+	}
+	// force=true must override the block: the fallback safety net is optional.
+	blocked, _ = blockedResult(resolveConflict(e, fp, 1, ancestor, true, false))
+	if blocked {
+		t.Fatalf("force=true must override the export-failure block")
+	}
+}
+
+// TestConflict_EqualTimestamp_NoAncestor_LegacyProceeds preserves the
+// legacy-compat path: a sidecar written before v3.1.3 has no ancestor scheme,
+// so the content diff can't run. Treating that as a hard block would regress
+// every pre-upgrade file until the user re-pulls. Warn + proceed instead.
+func TestConflict_EqualTimestamp_NoAncestor_LegacyProceeds(t *testing.T) {
+	dir := t.TempDir()
+	fp := filepath.Join(dir, "1_x.conv.json")
+	local := `{"obj_id":1,"scheme":{"nodes":[
+	 {"id":"aaaaaaaaaaaaaaaaaaaaaaaa","obj_type":1,"title":"Start"}]}}`
+	// No writeAncestorScheme — legacy pre-v3.1.3 sidecar.
+	if err := writeBaseline(dir, 1, baselineEntry{ChangeTime: 100, Version: 10}); err != nil {
+		t.Fatal(err)
+	}
+	e := dualEndpointServer(t, 100, 10, local)
+
+	blocked, msg := blockedResult(resolveConflict(e, fp, 1, local, false, false))
+	if blocked {
+		t.Fatalf("legacy sidecar without ancestor must proceed (warn only), got blocked=%v msg=%q", blocked, msg)
+	}
+}
+
 // TestApplyMerge_BaselineWriteFailureDoesNotClaimClean locks in the issue #151
 // fix: when applyMerge lands a conflict-free merge but the baseline sidecar
 // can't be updated (here: pre-existing corrupt sidecar the non-recovery writer
