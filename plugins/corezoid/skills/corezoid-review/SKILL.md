@@ -117,9 +117,15 @@ A cycle is acceptable only if it contains an explicit break point: a user action
 
 **How to check:**
 
-- Collect all outbound automatic calls from the process
-- For each called `conv_id`, check its own outbound calls (Step 11 dependency review covers this)
-- Flag any chain where the originating process appears as a downstream target without a break point
+1. Collect all outbound automatic calls from the process (direct dependencies).
+2. For each dependency, collect *its* outbound calls (one level deeper than Step 11, which is 1-level deep by default).
+3. Continue tracing until either:
+   - the originating process reappears in the chain → **cycle found**, or
+   - every branch reaches a terminal node or a user-interaction gate → **safe**.
+
+> ⚠️ Step 11 is explicitly 1-level deep and will not surface 3+-hop cycles on its own. For processes that act as dispatchers (high out-degree, parameter-based routing), always trace at least one level deeper manually before concluding no cycle exists.
+
+Flag any chain where the originating process appears as a downstream target without a break point.
 
 Report format:
 
