@@ -227,3 +227,50 @@ $.random(), $.date(), etc.), see
   ]
 }
 ```
+
+## Task Lookup Request Example
+
+Fetch one task's current state by `ref` (or by `obj_id`, the task ID). This is a
+single read-only lookup — it commits nothing, so it also works on immutable
+stages and with view-only access.
+
+```json
+{
+  "ops": [
+    {
+      "type": "show",
+      "obj": "task",
+      "conv_id": 67890,
+      "ref": "REF_98765"
+    }
+  ]
+}
+```
+
+Response — `ops[0]` carries the task itself:
+
+```json
+{
+  "request_proc": "ok",
+  "ops": [
+    {
+      "proc": "ok",
+      "obj_id": "TASK_67890",
+      "ref": "REF_98765",
+      "node_id": "5e3c1a9f8b7d6e4f0a2c3b51",
+      "status": "processing",
+      "data": {
+        "customer_id": "CUS_12345",
+        "amount": 100.5,
+        "currency": "USD"
+      }
+    }
+  ]
+}
+```
+
+Via the MCP server this is the `show-task` tool
+(`show-task(process_id=67890, ref="REF_98765")`). Prefer it over listing a
+node's tasks: `list-node-tasks` requires knowing which node the task is parked
+in and pages through that node, which does not scale on nodes holding tens of
+thousands of tasks.

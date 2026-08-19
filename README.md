@@ -254,6 +254,7 @@ validation errors, and summarize what each process does.
 | `layout-process`    | Auto-arrange node coordinates (waterfall / layered / table-star regions); local, changes only x/y and collapse flags |
 | `lint-process`      | Validate process structure locally (no API call)   |
 | `run-task`          | Send a task to a deployed process                  |
+| `show-task`         | Look up one task by `ref` and/or `task_id` — data, node, status (read-only) |
 | `list-node-tasks`   | List tasks currently sitting in a node             |
 | `list-task-history` | Show task execution history                        |
 | `get-node-stat`     | Return time-series in/out statistics for a node   |
@@ -342,8 +343,8 @@ Claude Code / Codex
         │                 create-alias, create-variable,
         │                 list-variables, modify-variable, delete-variable,
         │                 show-folder, list-folders, modify-folder, delete-folder, delete-process
-        ├── Tasks         run-task, list-node-tasks, list-task-history, get-node-stat,
-        │                 modify-task, delete-task
+        ├── Tasks         run-task, show-task, list-node-tasks, list-task-history,
+        │                 get-node-stat, modify-task, delete-task
         ├── Snapshots     create-snapshot, list-snapshots, delete-snapshot, get-snapshot
         ├── Dashboards    create-dashboard, get-dashboard, add-chart,
         │                 modify-chart, get-chart, set-dashboard-layout

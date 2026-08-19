@@ -131,6 +131,7 @@ selected by `type` + `obj`. Common read operations:
 | List nodes    | `{"type":"list","obj":"node","obj_id":<procId>,"company_id":"{{workspaceId}}"}` |
 | List processes| `{"type":"list","obj":"conv","company_id":"{{workspaceId}}"}`             |
 | Show process  | `{"type":"show","obj":"conv","obj_id":<procId>,"company_id":"{{workspaceId}}"}` |
+| Show task     | `{"type":"show","obj":"task","conv_id":<procId>,"ref":"<ref>"}` — or `"obj_id":"<taskId>"` instead of `ref`. Returns the task's current `data`, `obj_id`, `node_id` and `status`. Read-only: it works on immutable stages and with view-only rights, and it is a single lookup — do **not** page a node with `list`/`obj:"node"` to find one ref. |
 | Create task   | `{"type":"create","obj":"task","conv_id":<procId>,"ref":"<ref>","data":{}}` |
 
 Encode the array as a JSON **string** in `extra.ops`; interpolate params with

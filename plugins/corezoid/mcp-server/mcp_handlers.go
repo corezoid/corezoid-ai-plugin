@@ -59,6 +59,7 @@ var toolHandlers = map[string]toolHandler{
 	"show-project":        handleShowProject,
 
 	// tasks
+	"show-task":         handleShowTask,
 	"list-task-history": handleListTaskHistory,
 	"list-node-tasks":   handleListNodeTasks,
 	"get-node-stat":     handleGetNodeStat,

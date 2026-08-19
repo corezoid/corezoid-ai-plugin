@@ -859,6 +859,164 @@ func TestHandleToolCall_CreateAlias_UsesParentIDFromFile(t *testing.T) {
 	}
 }
 
+// ---- show-task -------------------------------------------------------------
+
+// mockShowTaskServer answers a single show-task op, recording the op it was
+// asked for so the caller can assert on the wire shape.
+func mockShowTaskServer(t *testing.T, reply map[string]interface{}) *[]map[string]interface{} {
+	t.Helper()
+	var seen []map[string]interface{}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Ops []map[string]interface{} `json:"ops"`
+		}
+		json.NewDecoder(r.Body).Decode(&body) //nolint:errcheck
+		seen = append(seen, body.Ops...)
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{ //nolint:errcheck
+			"request_proc": "ok",
+			"ops":          []interface{}{reply},
+		})
+	}))
+	t.Cleanup(srv.Close)
+
+	origAccount := accountURL
+	accountURL = srv.URL
+	t.Cleanup(func() { accountURL = origAccount })
+
+	apiURL = srv.URL
+	apiToken = "test-token"
+	workspaceID = "1"
+	stageID = 10605
+	return &seen
+}
+
+func TestHandleToolCall_ShowTask_MissingProcessID(t *testing.T) {
+	resetGlobals(t)
+	mockShowTaskServer(t, map[string]interface{}{"proc": "ok"})
+	result, isErr := handleToolCall(context.Background(), "show-task", map[string]interface{}{
+		"ref": "abc",
+	})
+	if !isErr {
+		t.Error("expected isError=true when process_id missing")
+	}
+	_ = result
+}
+
+func TestHandleToolCall_ShowTask_MissingRefAndTaskID(t *testing.T) {
+	resetGlobals(t)
+	mockShowTaskServer(t, map[string]interface{}{"proc": "ok"})
+	result, isErr := handleToolCall(context.Background(), "show-task", map[string]interface{}{
+		"process_id": float64(123),
+	})
+	if !isErr {
+		t.Error("expected isError=true when both ref and task_id missing")
+	}
+	if !strings.Contains(result, "task_id or ref") {
+		t.Errorf("expected the message to name both identifiers, got %q", result)
+	}
+}
+
+// The whole point of the tool: a bare ref must resolve without the caller
+// knowing which node the task sits in, and the answer must carry data/obj_id/
+// node_id rather than just an "ok".
+func TestHandleToolCall_ShowTask_ByRefReturnsFullTask(t *testing.T) {
+	resetGlobals(t)
+	seen := mockShowTaskServer(t, map[string]interface{}{
+		"proc":    "ok",
+		"obj_id":  "task-555",
+		"node_id": "a1b2c3d4e5f60718293a4b5c",
+		"status":  "processing",
+		"data":    map[string]interface{}{"amount": float64(100)},
+	})
+
+	result, isErr := handleToolCall(context.Background(), "show-task", map[string]interface{}{
+		"process_id": float64(123),
+		"ref":        "REF_98765",
+	})
+	if isErr {
+		t.Fatalf("expected success, got error: %q", result)
+	}
+	for _, want := range []string{"task-555", "a1b2c3d4e5f60718293a4b5c", "processing", "amount"} {
+		if !strings.Contains(result, want) {
+			t.Errorf("result is missing %q: %s", want, result)
+		}
+	}
+
+	if len(*seen) != 1 {
+		t.Fatalf("expected exactly 1 op (a lookup, not a scan), got %d", len(*seen))
+	}
+	op := (*seen)[0]
+	if op["type"] != "show" || op["obj"] != "task" {
+		t.Errorf("unexpected op kind: %v", op)
+	}
+	if op["ref"] != "REF_98765" {
+		t.Errorf("ref not sent on the wire: %v", op)
+	}
+	if _, ok := op["obj_id"]; ok {
+		t.Errorf("obj_id must be absent when only ref was supplied: %v", op)
+	}
+}
+
+// task_id wins when both identifiers are supplied, and only one lands on the
+// wire — sending both would let the API key the lookup ambiguously.
+func TestHandleToolCall_ShowTask_TaskIDWinsOverRef(t *testing.T) {
+	resetGlobals(t)
+	seen := mockShowTaskServer(t, map[string]interface{}{
+		"proc":   "ok",
+		"obj_id": "task-555",
+	})
+
+	_, isErr := handleToolCall(context.Background(), "show-task", map[string]interface{}{
+		"process_id": float64(123),
+		"task_id":    "task-555",
+		"ref":        "REF_98765",
+	})
+	if isErr {
+		t.Fatal("expected success")
+	}
+	op := (*seen)[0]
+	if op["obj_id"] != "task-555" {
+		t.Errorf("expected obj_id on the wire, got %v", op)
+	}
+	if _, ok := op["ref"]; ok {
+		t.Errorf("ref must not be sent alongside obj_id: %v", op)
+	}
+}
+
+// A ref that matches nothing comes back as an op with proc != "ok"; the API's
+// own description must reach the caller instead of a generic failure.
+func TestHandleToolCall_ShowTask_NotFoundSurfacesAPIDescription(t *testing.T) {
+	resetGlobals(t)
+	mockShowTaskServer(t, map[string]interface{}{
+		"proc":        "error",
+		"description": "Object not found",
+	})
+
+	result, isErr := handleToolCall(context.Background(), "show-task", map[string]interface{}{
+		"process_id": float64(123),
+		"ref":        "nope",
+	})
+	if !isErr {
+		t.Fatalf("expected isError=true for an unresolvable ref, got %q", result)
+	}
+	if !strings.Contains(result, "Object not found") {
+		t.Errorf("expected the API description in the error, got %q", result)
+	}
+}
+
+// showTask must never claim success on a non-ok op that carries no
+// description — that would hand callers a zero-valued snapshot.
+func TestShowTask_NonOkWithoutDescriptionStillErrors(t *testing.T) {
+	resetGlobals(t)
+	mockShowTaskServer(t, map[string]interface{}{"proc": "error"})
+
+	snap, err := showTask(NewValidator(context.Background(), 123), 123, "", "ref")
+	if err == nil {
+		t.Fatalf("expected an error, got snapshot %+v", snap)
+	}
+}
+
 // ---- modify-task / delete-task argument validation -------------------------
 
 func TestHandleToolCall_ModifyTask_MissingProcessID(t *testing.T) {
