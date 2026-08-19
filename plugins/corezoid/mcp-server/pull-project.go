@@ -433,7 +433,7 @@ func renameFiles2Folders(filePath string) error {
 			}
 			err = formatJSON(newPath)
 			if err != nil {
-				return fmt.Errorf("Failed to format json in directory: %v", err)
+				return fmt.Errorf("Failed to format json in directory %s: %v", newPath, err)
 			}
 			err = renameFiles2Folders(newPath)
 			if err != nil {
@@ -462,10 +462,11 @@ func formatJSONWithFallback(e *Executor, filePath string) error {
 
 	for _, f := range files {
 		if f.IsDir() {
-			//fmt.Println("Downloaded folder", filepath.Join(filePath, f.Name()))
-			err := formatJSONWithFallback(e, filepath.Join(filePath, f.Name()))
+			subDir := filepath.Join(filePath, f.Name())
+			//fmt.Println("Downloaded folder", subDir)
+			err := formatJSONWithFallback(e, subDir)
 			if err != nil {
-				return fmt.Errorf("Failed to format json in directory: %v", err)
+				return fmt.Errorf("Failed to format json in directory %s: %v", subDir, err)
 			}
 		}
 		if filepath.Ext(f.Name()) != ".json" {
@@ -479,7 +480,7 @@ func formatJSONWithFallback(e *Executor, filePath string) error {
 		var dataRsp any
 		err = json.Unmarshal(dataJson, &dataRsp)
 		if err != nil {
-			return fmt.Errorf("failed to unmarshal file: %v", err)
+			return fmt.Errorf("failed to unmarshal file %s: %v", filePath1, err)
 		}
 		// везде где есть uuid в scheme.nodes объект удалить
 		if procMap, ok := dataRsp.(map[string]interface{}); ok {
