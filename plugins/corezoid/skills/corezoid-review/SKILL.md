@@ -98,8 +98,41 @@ These are read-only platform metadata, not configuration that should be extracte
 
 ## Step 5: Cycle Verification
 
+### Internal cycles
+
 - Detect nodes with `semaphors` of type `time` or `go_if_const` that create loops
 - Verify exit conditions exist and iteration limits are enforced
+
+### Cross-process cycles
+
+Any automatic action that causes a task to appear in another process is a potential cycle point. Before adding such a call, verify that the called process cannot return control back to the originating process — neither directly nor through a chain of intermediate processes — without user interaction.
+
+A cycle is acceptable only if it contains an explicit break point: a user action, an iteration counter, or a timeout.
+
+**Checklist for every automatic inter-process call (`api_copy`, `api_rpc`, `api`, or any other mechanism that creates a task in another process):**
+
+1. Can the called process return a call to the originating process — directly or through a chain?
+2. If yes — is there a break point?
+3. If no break point — a bypass parameter or a different route is required.
+
+**How to check:**
+
+- Collect all outbound automatic calls from the process
+- For each called `conv_id`, check its own outbound calls (Step 11 dependency review covers this)
+- Flag any chain where the originating process appears as a downstream target without a break point
+
+Report format:
+
+```markdown
+## 4. Cycles
+
+### Internal
+- [ ] Node W: no exit condition → add iteration limit
+
+### Cross-process
+- [ ] conv_id X → conv_id Y → conv_id Z → back to this process without break point
+  → add bypass parameter or change routing
+```
 
 ---
 
