@@ -104,7 +104,17 @@ The default task timeout is determined by the process configuration in Corezoid.
 
 ### `run-task` reports "the deployed node list could not be read"
 
-`run-task` never commits or deploys, so it works with run-only access and on immutable stages. To name the node a task settles on it additionally reads the deployed scheme; when that read is denied the task is still sent, and the summary reports `NodeName: (unknown)`. Follow the task with `list-task-history` or `list-node-tasks`, or ask for read access to the process to get the full report.
+`run-task` never commits or deploys, so it works with run-only access and on immutable stages. To name the node a task settles on it additionally reads the deployed scheme; when that read is denied the task is still sent, and the summary reports `NodeName: (unknown)`. Follow the task with `show-task` (pass the `ref` you sent — it returns the current `node_id`, `status` and `data` in one read-only call), or ask for read access to the process to get the full report.
+
+---
+
+### How do I find one task when I only have its `ref`?
+
+Use `show-task(process_id=..., ref="...")`. It is a single read-only lookup and needs no `node_id`.
+
+Do not scan with `list-node-tasks`: it pages one node at `limit`/`offset`, so on a node holding ~100k tasks finding one `ref` costs thousands of calls. And do not reach for `modify-task` with `deep_merge: true` to peek at the data — it writes the task back and needs modify rights, so it fails on immutable stages and for read-only callers.
+
+`list-task-history` needs the `task_id`, which `show-task` returns as `obj_id`.
 
 ---
 

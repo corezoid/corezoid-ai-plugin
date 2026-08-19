@@ -3,8 +3,91 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 )
+
+// errTaskNotFound is returned by showTask when the API answers with an empty
+// ops array — the task_id/ref resolved to nothing at all. Distinct from an op
+// that came back with proc != "ok", which carries the API's own description.
+var errTaskNotFound = errors.New("task not found")
+
+// taskSnapshot is the resolved read-only view of one task, as returned by the
+// Corezoid {"type":"show","obj":"task"} op. Op holds the raw op result so
+// callers that want every field (status, create_time, user_id, …) can forward
+// it verbatim; the named fields cover what the internal callers need.
+type taskSnapshot struct {
+	ObjID  string
+	NodeID string
+	Data   map[string]interface{}
+	Op     map[string]interface{}
+}
+
+// showTask resolves a single task by task_id and/or ref via the read-only
+// show-task op. It commits nothing, so it works on immutable stages and with
+// read-only access.
+//
+// Exactly one identifier is put on the wire: task_id wins when both are given,
+// matching how the Corezoid API keys the lookup. The caller is responsible for
+// rejecting the both-empty case before calling.
+func showTask(v *Executor, processID int, taskID, ref string) (*taskSnapshot, error) {
+	op := map[string]any{
+		"type":    "show",
+		"obj":     "task",
+		"conv_id": processID,
+	}
+	if taskID != "" {
+		op["obj_id"] = taskID
+	} else {
+		op["ref"] = ref
+	}
+
+	resp, err := v.req("show_task", []map[string]any{op})
+	if err != nil {
+		return nil, err
+	}
+	opsArr, _ := resp["ops"].([]interface{})
+	if len(opsArr) == 0 {
+		return nil, errTaskNotFound
+	}
+	opMap, _ := opsArr[0].(map[string]interface{})
+	if opMap["proc"] != "ok" {
+		desc, _ := opMap["description"].(string)
+		if desc == "" {
+			desc = "show-task returned a non-ok operation"
+		}
+		return nil, errors.New(desc)
+	}
+
+	snap := &taskSnapshot{Op: opMap}
+	snap.ObjID, _ = opMap["obj_id"].(string)
+	snap.NodeID, _ = opMap["node_id"].(string)
+	snap.Data, _ = opMap["data"].(map[string]interface{})
+	return snap, nil
+}
+
+// handleShowTask returns the current state of a single task — data, obj_id,
+// node_id and status — resolved by task_id and/or ref. This is the read-only
+// counterpart to modify-task: it never writes, so it is usable on immutable
+// stages and by callers who only hold view rights.
+func handleShowTask(ctx context.Context, args map[string]interface{}) (string, bool) {
+	processID, err := intArg(args, "process_id")
+	if err != nil {
+		return "Error: " + err.Error(), true
+	}
+	taskID, _ := args["task_id"].(string)
+	ref, _ := args["ref"].(string)
+	if taskID == "" && ref == "" {
+		return "Error: at least one of task_id or ref must be provided", true
+	}
+
+	snap, err := showTask(NewValidator(ctx, processID), processID, taskID, ref)
+	if err != nil {
+		return fmt.Sprintf("Error: %v", err), true
+	}
+	data, _ := json.MarshalIndent(snap.Op, "", "  ")
+	return string(data), false
+}
 
 // handleListTaskHistory dumps the raw transition history for a given task.
 // The response is forwarded verbatim so callers can inspect every step.
@@ -185,31 +268,12 @@ func handleModifyTask(ctx context.Context, args map[string]interface{}) (string,
 	// deep_merge: fetch current task data and recursively merge into it.
 	deepMergeMode, _ := args["deep_merge"].(bool)
 	if deepMergeMode {
-		showOp := map[string]any{
-			"type":    "show",
-			"obj":     "task",
-			"conv_id": processID,
-		}
-		if taskID != "" {
-			showOp["obj_id"] = taskID
-		} else {
-			showOp["ref"] = ref
-		}
-		showResp, err := v.req("show_task", []map[string]any{showOp})
+		snap, err := showTask(v, processID, taskID, ref)
 		if err != nil {
 			return fmt.Sprintf("Error fetching current task for deep merge: %v", err), true
 		}
-		opsArr, _ := showResp["ops"].([]interface{})
-		if len(opsArr) == 0 {
-			return "Error: task not found", true
-		}
-		opMap, _ := opsArr[0].(map[string]interface{})
-		if opMap["proc"] != "ok" {
-			desc, _ := opMap["description"].(string)
-			return fmt.Sprintf("Error resolving task: %s", desc), true
-		}
-		if currentData, ok := opMap["data"].(map[string]interface{}); ok {
-			taskData = deepMerge(currentData, taskData)
+		if snap.Data != nil {
+			taskData = deepMerge(snap.Data, taskData)
 		}
 	}
 
@@ -251,38 +315,17 @@ func handleDeleteTask(ctx context.Context, args map[string]interface{}) (string,
 	v := NewValidator(ctx, processID)
 
 	// Resolve task_id and node_id via show first
-	showOp := map[string]any{
-		"type":    "show",
-		"obj":     "task",
-		"conv_id": processID,
-	}
-	if taskID != "" {
-		showOp["obj_id"] = taskID
-	} else {
-		showOp["ref"] = ref
-	}
-	showResp, err := v.req("show_task", []map[string]any{showOp})
+	snap, err := showTask(v, processID, taskID, ref)
 	if err != nil {
 		return fmt.Sprintf("Error resolving task: %v", err), true
 	}
-	opsArr, _ := showResp["ops"].([]interface{})
-	if len(opsArr) == 0 {
-		return "Error: task not found", true
-	}
-	opMap, _ := opsArr[0].(map[string]interface{})
-	if opMap["proc"] != "ok" {
-		desc, _ := opMap["description"].(string)
-		return fmt.Sprintf("Error: %s", desc), true
-	}
-	resolvedTaskID, _ := opMap["obj_id"].(string)
-	nodeID, _ := opMap["node_id"].(string)
 
 	deleteOp := map[string]any{
 		"type":    "delete",
 		"obj":     "task",
 		"conv_id": processID,
-		"obj_id":  resolvedTaskID,
-		"node_id": nodeID,
+		"obj_id":  snap.ObjID,
+		"node_id": snap.NodeID,
 	}
 	resp, err := v.req("delete_task", []map[string]any{deleteOp})
 	if err != nil {

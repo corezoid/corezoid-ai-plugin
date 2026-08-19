@@ -131,6 +131,7 @@ MCP_TOOLS = [
     ("list-workspaces",  "List Corezoid workspaces available to the authenticated user"),
     ("list-projects",    "List projects inside a workspace"),
     ("list-stages",      "List stages (environments) inside a project"),
+    ("show-task",        "Look up a single task by ref and/or task_id (read-only)"),
     ("modify-task",      "Modify an existing task's data"),
     ("delete-task",      "Delete a task from a process"),
     ("logout",           "Remove saved Corezoid credentials from disk"),

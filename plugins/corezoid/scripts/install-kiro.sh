@@ -297,6 +297,7 @@ ROUTING
 | `create-process` / `create-folder` / `create-variable` | Bootstrap resources. |
 | `create-dashboard` / `add-chart` | Visualise node metrics. |
 | `list-workspaces` / `list-projects` / `list-stages` | Workspace navigation. |
+| `show-task` | Look up one task by `ref` / `task_id` — read-only, works on immutable stages. |
 | `modify-task` / `delete-task` | Per-task ops on deployed processes. |
 | `send-feedback` | Submit feedback/bug reports to the Corezoid team. |
 

@@ -74,6 +74,7 @@ need a post-extract substitution step on every machine.
 | `move-process` / `move-folder` | Preview and explicitly reparent existing objects without copying them. |
 | `create-dashboard` / `add-chart` | Visualise node metrics. |
 | `list-workspaces` / `list-projects` / `list-stages` | Workspace navigation. |
+| `show-task` | Look up one task by `ref` / `task_id` — read-only, works on immutable stages. |
 | `modify-task` / `delete-task` | Per-task ops on deployed processes. |
 | `send-feedback` | Submit feedback/bug reports to the Corezoid team. |
 

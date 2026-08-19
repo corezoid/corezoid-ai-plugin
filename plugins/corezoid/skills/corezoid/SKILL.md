@@ -27,6 +27,7 @@ You have access to the Corezoid API via the `corezoid` MCP server.
 | `lint-process` | Validate process structure locally (no API needed) |
 | `layout-process` | Auto-arrange node coordinates into a clean layout (local; only x/y and collapse flags change) |
 | `run-task` | Run a task on an already-deployed process |
+| `show-task` | Look up one task by `ref` and/or `task_id` — returns its current `data`, `node_id` and status. Read-only; use it instead of paging `list-node-tasks` |
 | `create-process` | Create a new empty process (`conv_type: "process"`) in a folder |
 | `create-state-diagram` | Create a new empty state diagram (`conv_type: "state"`) in a folder |
 | `create-folder` | Create a new subfolder |
@@ -117,6 +118,12 @@ push-process(process_path="./folder/12345_MyProcess.conv.json")
 ```
 run-task(process_path="./folder/12345_MyProcess.conv.json", data={"key": "value"})
 ```
+
+### Inspect a task by its external reference
+```
+show-task(process_id=12345678, ref="ORDER-4711")
+```
+Read-only — never scan a node with `list-node-tasks` to find a known `ref`.
 
 ### Validate locally without deploying
 ```

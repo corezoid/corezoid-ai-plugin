@@ -954,8 +954,31 @@ var toolRegistry = []mcpTool{
 		},
 	},
 	{
+		Name:        "show-task",
+		Description: "Return the current state of a single task — data, obj_id (task_id), node_id and status — resolved by task_id and/or ref. At least one of task_id or ref must be provided; when both are given task_id wins. This is the way to look a task up from an external ref: list-node-tasks needs the node the task is parked in and pages through it, while this is a single lookup. Read-only — it commits nothing, so it also works on immutable stages and with view-only access.",
+		Annotations: toolHints(hintReadOnly, hintSafe, hintIdempotent, hintOpenWorld),
+		InputSchema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"process_id": map[string]interface{}{
+					"type":        "integer",
+					"description": "Corezoid process (conv) ID",
+				},
+				"task_id": map[string]interface{}{
+					"type":        "string",
+					"description": "Task ID (obj_id)",
+				},
+				"ref": map[string]interface{}{
+					"type":        "string",
+					"description": "Task reference string",
+				},
+			},
+			"required": []string{"process_id"},
+		},
+	},
+	{
 		Name:        "list-task-history",
-		Description: "Return the execution history (node path) for a task. Shows each node transition with node_id, node_prev_id, create_time_ms. NOTE: the Corezoid API does not record data snapshots — the data field is always null in history entries. To inspect the current data payload before modifying a task, use modify-task with deep_merge: true (it fetches the live data internally).",
+		Description: "Return the execution history (node path) for a task. Shows each node transition with node_id, node_prev_id, create_time_ms. NOTE: the Corezoid API does not record data snapshots — the data field is always null in history entries. To inspect the current data payload, use show-task (read-only); it also resolves the task_id this tool requires from a ref.",
 		Annotations: toolHints(hintReadOnly, hintSafe, hintIdempotent, hintOpenWorld),
 		InputSchema: map[string]interface{}{
 			"type": "object",
@@ -974,7 +997,7 @@ var toolRegistry = []mcpTool{
 	},
 	{
 		Name:        "list-node-tasks",
-		Description: "Return tasks currently sitting in a specific node of a process.",
+		Description: "Return tasks currently sitting in a specific node of a process. This is a paged scan of one node, not a lookup — to find one task by ref or task_id use show-task instead.",
 		Annotations: toolHints(hintReadOnly, hintSafe, hintIdempotent, hintOpenWorld),
 		InputSchema: map[string]interface{}{
 			"type": "object",

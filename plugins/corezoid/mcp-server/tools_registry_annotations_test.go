@@ -19,7 +19,7 @@ var destructiveExact = []string{"push-process"}
 
 // readOnlyPrefixes are name patterns whose tools MUST declare
 // readOnlyHint: true and MUST NOT declare destructiveHint: true.
-var readOnlyPrefixes = []string{"list-", "get-", "describe-", "lint-", "preview-", "pull-"}
+var readOnlyPrefixes = []string{"list-", "get-", "describe-", "lint-", "preview-", "pull-", "show-"}
 
 func hasAnyPrefix(name string, prefixes []string) bool {
 	for _, p := range prefixes {
@@ -116,7 +116,7 @@ func TestToolAnnotations_ReadOnlyTaxonomy(t *testing.T) {
 			violations = append(violations, tool.Name+": read-only tool must not be destructiveHint: true")
 		}
 	}
-	reportViolations(t, "list-/get-/describe-/lint-/preview-/pull- must be read-only and non-destructive", violations)
+	reportViolations(t, "list-/get-/describe-/lint-/preview-/pull-/show- must be read-only and non-destructive", violations)
 }
 
 // TestToolAnnotations_DestructiveIsNonIdempotent pins the registry-wide rule
@@ -242,6 +242,7 @@ func TestToolAnnotations_Representative(t *testing.T) {
 		"list-variables": {true, false, true, true},
 		"pull-process":   {true, false, true, true},
 		"lint-process":   {true, false, true, false},
+		"show-task":      {true, false, true, true},
 		"layout-process": {false, false, true, false},
 	}
 	byName := make(map[string]mcpTool, len(toolRegistry))
