@@ -87,15 +87,27 @@ func handleDeployStage(ctx context.Context, args map[string]interface{}) (string
 		"project_id":  projectID,
 		"company_id":  companyID,
 	}}
-	cmpResp, err := v.req("compare", cmpOps)
+	// compareWithRetry retries on transient server-side failures (request-level
+	// errors, network timeouts) that occur when the box is under load. Op-level
+	// validation errors ("API op error:") are surfaced immediately — retrying
+	// them cannot help since the payload is idempotent.
+	cmpResp, err := compareWithRetry(v, cmpOps)
 	if err != nil {
 		// A failed compare (e.g. "One or more processes has errors") still returns
 		// a response whose op carries a nested `errors` tree naming the exact
 		// stage → process → node and the reason. Surface it — the bare description
 		// alone is undiagnosable through this tool.
-		msg := fmt.Sprintf("Error (compare): %v", err)
+		msg := fmt.Sprintf("Error (compare stage %d→%d): %v", sourceStage, targetStage, err)
 		if tree := compareErrorsFromResp(cmpResp); tree != "" {
 			msg += "\n" + tree
+		}
+		if isTransientCompareError(err) {
+			msg += fmt.Sprintf(
+				"\n\nℹ The server failed to compute the diff (project %d). "+
+					"This is typically caused by server load or a timeout on large projects — "+
+					"try again in a few minutes. If the error persists, use the Corezoid UI's "+
+					"Partial Merge to deploy individual processes.",
+				projectID)
 		}
 		return msg, true
 	}
@@ -207,6 +219,68 @@ var (
 	deployVerifyAttempts = 3
 	deployVerifyDelayVar = 2 * time.Second
 )
+
+// Retry tuning for the initial compare call. The /api/2/compare endpoint can
+// time out or return a request-level failure when the box is under load — unlike
+// op-level validation errors ("API op error:"), these are transient and worth
+// retrying. Package vars so tests can dial the values down.
+var (
+	compareRetryAttempts = 3
+	compareRetryDelay    = 3 * time.Second
+)
+
+// compareWithRetry calls v.req("compare", ops) and retries on transient
+// server-side failures. The compare payload is idempotent so retrying is safe.
+// Op-level validation errors (prefix "API op error:") are returned immediately
+// because they represent a schema problem the server already diagnosed — no
+// retry can change the outcome.
+func compareWithRetry(v *Executor, ops []map[string]any) (map[string]interface{}, error) {
+	var (
+		resp  map[string]interface{}
+		err   error
+		delay = compareRetryDelay
+	)
+	for attempt := 1; attempt <= compareRetryAttempts; attempt++ {
+		if attempt > 1 {
+			// A previous attempt returned a transient error; wait before retrying.
+			wait := delay + jitter(delay)
+			logger.Warn("compare failed (attempt %d/%d): %v — retrying in %s",
+				attempt-1, compareRetryAttempts, err, wait)
+			timer := time.NewTimer(wait)
+			select {
+			case <-v.Ctx.Done():
+				timer.Stop()
+				return resp, v.Ctx.Err()
+			case <-timer.C:
+			}
+			delay *= 2
+			if delay > 30*time.Second {
+				delay = 30 * time.Second
+			}
+		}
+		r, e := v.req("compare", ops)
+		if r != nil {
+			resp = r // preserve for error-tree extraction on final failure
+		}
+		if e == nil {
+			return r, nil
+		}
+		err = e
+		if !isTransientCompareError(e) {
+			return resp, err
+		}
+	}
+	return resp, err
+}
+
+// isTransientCompareError reports whether a compare error is worth retrying.
+// "API op error:" means the compare ran and found a schema/validation problem —
+// that's a business-logic failure no retry can fix. Everything else (network
+// faults, request_proc failures, JSON parse errors) is a server-side transient
+// failure that may resolve under load.
+func isTransientCompareError(err error) bool {
+	return err != nil && !strings.HasPrefix(err.Error(), "API op error:")
+}
 
 // deployVerifyByCompare answers "did the merge actually land?" when the
 // progress WebSocket could not: it re-runs the same compare and calls the
