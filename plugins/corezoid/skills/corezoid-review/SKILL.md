@@ -251,6 +251,33 @@ graph TD
 N direct dependencies, N total processes mapped.
 ```
 
+### Cross-Process Cycle Detection
+
+After building the graph, traverse it with DFS and flag any back-edges (closed chains).
+
+**A cycle is safe only when every route around it passes through at least one break point:**
+
+| Break point | Example |
+|-------------|---------|
+| ✅ User-initiated action | Waiting-for-Callback, form submit, manual trigger |
+| ✅ Iteration counter with static upper bound | `retry_count` incremented and guarded by `go_if_const ≤ 3` |
+| ✅ Absolute timeout / deadline semaphor | `time` semaphor that terminates the chain |
+
+**Checklist — apply to every cross-process call identified in Step 10:**
+1. Can the called process route a task back to the current process — directly or through a chain?
+2. If yes — which break point terminates the cycle?
+3. If no break point exists — flag 🔴 and recommend a bypass parameter or route restructure.
+
+Mark detected cycle edges in the Mermaid diagram with a `-->|⚠️ CYCLE|` label:
+
+```markdown
+\`\`\`mermaid
+graph TD
+    ProcessA --> |⚠️ CYCLE| ProcessB
+    ProcessB --> ProcessA
+\`\`\`
+```
+
 ---
 
 ## Step 13: Generate Report
@@ -339,6 +366,12 @@ graph TD
 ```
 
 N direct dependencies, N total processes mapped.
+
+## 13. Cross-Process Cycle Analysis
+
+- [ ] 🔴 **A → B → A** — closed cycle with no break point; unbounded tact risk
+- [ ] 🟡 **A → B → C → A** — cycle guarded by `retry_count ≤ 3`; verify bound holds and counter cannot be reset
+- [ ] ℹ️ **Process X → @dynamic-alias** — target unresolvable at design time; verify manually that no return path exists
 ```
 
 ---
