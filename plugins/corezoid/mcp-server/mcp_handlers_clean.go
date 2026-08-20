@@ -32,6 +32,10 @@ func handleCleanProcess(ctx context.Context, args map[string]interface{}) (strin
 	if d, err2 := intArg(args, "days"); err2 == nil && d > 0 {
 		days = d
 	}
+	overwrite := false
+	if ow, ok := args["overwrite"].(bool); ok {
+		overwrite = ow
+	}
 
 	v := NewValidator(ctx, processID)
 
@@ -146,7 +150,8 @@ func handleCleanProcess(ctx context.Context, args map[string]interface{}) (strin
 	initialRemoveCount := len(toRemove)
 
 	// ── Step 4: Delete + cascade with redirect ────────────────────────────────
-	nodes = cleanDeleteAndCascade(nodes, toRemove, origNmap)
+	var droppedErrHandlers []string
+	nodes = cleanDeleteAndCascade(nodes, toRemove, origNmap, &droppedErrHandlers)
 	cascadeCount := len(toRemove) - initialRemoveCount
 
 	// ── Step 5: Pass-through removal ──────────────────────────────────────────
@@ -192,6 +197,15 @@ func handleCleanProcess(ctx context.Context, args map[string]interface{}) (strin
 	}
 	filePath := filepath.Join(dir, cleanedFileName)
 
+	if !overwrite {
+		if _, statErr := os.Stat(filePath); statErr == nil {
+			return fmt.Sprintf(
+				"Error: %s already exists. Delete it first or pass overwrite=true to replace it.",
+				filePath,
+			), true
+		}
+	}
+
 	data, marshalErr := json.MarshalIndent(procMap, "", "  ")
 	if marshalErr != nil {
 		return fmt.Sprintf("Error marshaling cleaned process: %v", marshalErr), true
@@ -220,7 +234,18 @@ func handleCleanProcess(ctx context.Context, args map[string]interface{}) (strin
 		len(validationErrors),
 		filePath,
 	)
-	if len(validationErrors) > 0 {
+	if len(droppedErrHandlers) > 0 {
+		report += fmt.Sprintf("\n\nWarning: %d err_node_id reference(s) were dropped because the handler node was removed and had no unambiguous go-successor. Review these logics manually:", len(droppedErrHandlers))
+		for i, w := range droppedErrHandlers {
+			if i >= 10 {
+				report += fmt.Sprintf("\n  … and %d more", len(droppedErrHandlers)-10)
+				break
+			}
+			report += "\n  - " + w
+		}
+	}
+	isErr := len(validationErrors) > 0
+	if isErr {
 		report += "\n\nValidation issues:"
 		for i, e := range validationErrors {
 			if i >= 10 {
@@ -229,9 +254,8 @@ func handleCleanProcess(ctx context.Context, args map[string]interface{}) (strin
 			}
 			report += "\n  - " + e
 		}
-		return report, true
 	}
-	return report, false
+	return report, isErr
 }
 
 // ── helpers ───────────────────────────────────────────────────────────────────
@@ -491,10 +515,13 @@ func cleanProtectErrChildren(
 // cleanDeleteAndCascade removes nodes in toRemove, fixes all references
 // (redirecting to a removed node's go-successor where possible), and
 // cascades empty condition nodes into toRemove until stable.
+// droppedErrs is populated with a description each time an err_node_id is
+// dropped without a redirect (the handler had no unambiguous go-successor).
 func cleanDeleteAndCascade(
 	nodes []map[string]interface{},
 	toRemove map[string]bool,
 	origNmap map[string]map[string]interface{},
+	droppedErrs *[]string,
 ) []map[string]interface{} {
 	changed := true
 	for changed {
@@ -516,6 +543,7 @@ func cleanDeleteAndCascade(
 			}
 			logics, _ := cond["logics"].([]interface{})
 			sems, _ := cond["semaphors"].([]interface{})
+			nodeID, _ := node["id"].(string)
 
 			newLogics := make([]interface{}, 0, len(logics))
 			for _, l := range logics {
@@ -534,10 +562,15 @@ func cleanDeleteAndCascade(
 					// else drop the logic entirely
 					continue
 				}
-				// Clean dangling err_node_id
+				// Clean dangling err_node_id — record a warning if dropped
 				if errID, _ := logic["err_node_id"].(string); errID != "" && toRemove[errID] {
 					logic = cleanCloneMap(logic)
 					delete(logic, "err_node_id")
+					if droppedErrs != nil {
+						ltype, _ := logic["type"].(string)
+						*droppedErrs = append(*droppedErrs,
+							fmt.Sprintf("node %s logic (type=%s): err_node_id=%s removed (no go-successor)", nodeID, ltype, errID))
+					}
 				}
 				newLogics = append(newLogics, logic)
 			}
@@ -752,7 +785,7 @@ func cleanRemoveDelayToFinal(nodes []map[string]interface{}) ([]map[string]inter
 				continue
 			}
 			allFinal := true
-			firstTarget := ""
+			singleTarget := ""
 			for _, s := range sems {
 				sem, ok := s.(map[string]interface{})
 				if !ok {
@@ -765,14 +798,19 @@ func cleanRemoveDelayToFinal(nodes []map[string]interface{}) ([]map[string]inter
 					allFinal = false
 					break
 				}
-				if firstTarget == "" {
-					firstTarget = tid
+				if singleTarget == "" {
+					singleTarget = tid
+				} else if singleTarget != tid {
+					// Semaphors point to different finals — cannot safely redirect
+					// all callers to one of them; skip this node.
+					allFinal = false
+					break
 				}
 			}
-			if !allFinal || firstTarget == "" {
+			if !allFinal || singleTarget == "" {
 				continue
 			}
-			candidates = append(candidates, struct{ id, target string }{id: node["id"].(string), target: firstTarget})
+			candidates = append(candidates, struct{ id, target string }{id: node["id"].(string), target: singleTarget})
 		}
 
 		if len(candidates) == 0 {

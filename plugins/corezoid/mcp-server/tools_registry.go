@@ -262,6 +262,10 @@ var toolRegistry = []mcpTool{
 					"type":        "integer",
 					"description": "Look-back period in days for node activity statistics. Nodes with no traffic in this window are considered inactive. Default 90.",
 				},
+				"overwrite": map[string]interface{}{
+					"type":        "boolean",
+					"description": "Allow overwriting an existing _cleaned.conv.json file. Default false — the tool refuses to overwrite to protect manual edits made to a previously cleaned file.",
+				},
 			},
 			"required": []string{"process_id"},
 		},
