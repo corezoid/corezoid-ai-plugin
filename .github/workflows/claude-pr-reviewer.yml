@@ -183,7 +183,7 @@ jobs:
 
       - name: Checkout trusted base (workspace root)
         if: steps.prref.outputs.skip != 'true'
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           ref: ${{ github.event.repository.default_branch || 'main' }}
           persist-credentials: false
@@ -191,7 +191,7 @@ jobs:
 
       - name: Checkout untrusted PR head (isolated subdir)
         if: steps.prref.outputs.skip != 'true'
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           # Frozen 40-hex SHA from the label event payload (validated in
           # the Resolve step). Explicit opt-in because pull_request_target
