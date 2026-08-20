@@ -115,10 +115,10 @@ A cycle is acceptable only if it contains an explicit break point: a user action
 2. If yes — is there a break point?
 3. If no break point — a bypass parameter or a different route is required.
 
-**How to check:**
+**How to check** *(apply after Step 11 — outbound call data from Steps 10–11 is required)*:
 
-1. Collect all outbound automatic calls from the process (direct dependencies).
-2. For each dependency, collect *its* outbound calls (one level deeper than Step 11, which is 1-level deep by default).
+1. Using the outbound dependency list from Step 10, collect all direct outbound calls.
+2. For each dependency pulled in Step 11, collect *its* outbound calls (sub-dependencies listed there).
 3. Continue tracing until either:
    - the originating process reappears in the chain → **cycle found**, or
    - every branch reaches a terminal node or a user-interaction gate → **safe**.
@@ -126,6 +126,8 @@ A cycle is acceptable only if it contains an explicit break point: a user action
 > ⚠️ Step 11 is explicitly 1-level deep and will not surface 3+-hop cycles on its own. For processes that act as dispatchers (high out-degree, parameter-based routing), always trace at least one level deeper manually before concluding no cycle exists.
 
 Flag any chain where the originating process appears as a downstream target without a break point.
+
+> **Execution note:** Record the checklist questions now (Step 5) and run the "How to check" trace at the end of Step 11, once all dependency schemes have been pulled.
 
 Report format:
 
@@ -241,6 +243,8 @@ For each dependency:
    - Sub-dependencies (list but do NOT recurse)
    - Flag processes with 200+ nodes as needing their own dedicated review
 
+After pulling all dependencies, apply the **cross-process cycle trace** from Step 5 ("How to check"): use the sub-dependency lists collected above to trace whether any chain leads back to the originating process without a break point.
+
 Report format:
 
 ```markdown
@@ -315,7 +319,12 @@ Produce a Markdown report:
 
 ## 4. Cycles
 
+### Internal
 - [ ] Node W: no exit condition → add iteration limit
+
+### Cross-process
+- [ ] conv_id X → conv_id Y → conv_id Z → back to this process without break point
+  → add bypass parameter or change routing
 
 ## 5. Naming
 
