@@ -251,6 +251,7 @@ validation errors, and summarize what each process does.
 | `pull-folder`       | Export an entire folder/stage to local files       |
 | `pull-process`      | Export a single process to a `.conv.json` file     |
 | `push-process`      | Validate and deploy a `.conv.json` to Corezoid     |
+| `clean-process`     | Remove inactive nodes and save as `<title>_cleaned.conv.json` |
 | `layout-process`    | Auto-arrange node coordinates (waterfall / layered / table-star regions); local, changes only x/y and collapse flags |
 | `lint-process`      | Validate process structure locally (no API call)   |
 | `run-task`          | Send a task to a deployed process                  |
