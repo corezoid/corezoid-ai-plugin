@@ -232,7 +232,11 @@ func handlePullProcess(ctx context.Context, args map[string]interface{}) (string
 			parentID = int(pid)
 		}
 		if parentID != 0 && v.StageID != 0 {
-			resolved, resolveErr := v.resolveFolderPathFromAPI(parentID)
+			segments, resolveErr := v.resolveFolderChainFromAPI(parentID)
+			resolved := ""
+			for _, seg := range segments {
+				resolved = filepath.Join(resolved, seg.DirName())
+			}
 			if resolveErr != nil {
 				logger.Warn("pull-process: could not resolve folder path for parent_id %d: %v", parentID, resolveErr)
 			} else {
@@ -247,6 +251,14 @@ func handlePullProcess(ctx context.Context, args map[string]interface{}) (string
 				// workspace), fall back to the old CWD-relative behaviour.
 				if stageRoot := findStageRootFromCWD(v.StageID); stageRoot != "" {
 					dir = filepath.Join(stageRoot, resolved)
+					// Give every directory we are about to create its folder
+					// marker, so the pulled tree can be used as a create /
+					// push target instead of being a dead end.
+					if merr := ensureFolderMarkers(mirroredPlacement{
+						Dir: dir, StageRoot: stageRoot, Segments: segments,
+					}); merr != nil {
+						logger.Warn("pull-process: could not write folder markers under %s: %v", stageRoot, merr)
+					}
 				} else {
 					dir = resolved
 				}
@@ -980,8 +992,15 @@ func createConv(ctx context.Context, args map[string]interface{}, convType strin
 	// pull-process writes the same object into the folder tree that mirrors its
 	// parent_id — leaving two copies and split baseline sidecars.
 	if optStrArg(args, "folder_path") == "" {
-		if mirrored := mirroredDirForFolder(v, folderID); mirrored != "" {
-			folderPath = mirrored
+		if mirrored := mirroredDirForFolder(v, folderID); mirrored.Dir != "" {
+			folderPath = mirrored.Dir
+			// Materialize the folder markers together with the directories.
+			// Without them the tree we just created is a dead end: the next
+			// create-process run from it can't resolve its folder ID (see
+			// resolveFolderIDFromDir) and fails with "no <id>_<name>.folder.json".
+			if err := ensureFolderMarkers(mirrored); err != nil {
+				logger.Warn("create: could not write folder markers under %s: %v", mirrored.StageRoot, err)
+			}
 		}
 	}
 
@@ -1002,24 +1021,92 @@ func createConv(ctx context.Context, args map[string]interface{}, convType strin
 		label, processName, folderID, resolvedFrom, filePath), false
 }
 
+// mirroredPlacement describes where a Corezoid folder is mirrored on disk:
+// the target directory, the local stage root it is anchored at, and the chain
+// of folders in between (stage root → target). Segments are what makes the
+// directories usable — each one needs its own <id>_<name>.folder.json marker.
+type mirroredPlacement struct {
+	Dir       string
+	StageRoot string
+	Segments  []folderPathSegment
+}
+
 // mirroredDirForFolder returns the local directory that mirrors folderID inside
-// the Corezoid tree — the same placement pull-process uses — or "" when it cannot
-// be determined (no stage marker, unresolvable folder, API error). Callers keep
-// their previous behaviour on "", so this can only improve placement.
-func mirroredDirForFolder(v *Executor, folderID int) string {
+// the Corezoid tree — the same placement pull-process uses — with an empty Dir
+// when it cannot be determined (no stage marker, unresolvable folder, API
+// error). Callers keep their previous behaviour on an empty Dir, so this can
+// only improve placement.
+func mirroredDirForFolder(v *Executor, folderID int) mirroredPlacement {
 	if v == nil || folderID == 0 || v.StageID == 0 {
-		return ""
+		return mirroredPlacement{}
 	}
 	stageRoot := findStageRootFromCWD(v.StageID)
 	if stageRoot == "" {
-		return ""
+		return mirroredPlacement{}
 	}
-	rel, err := v.resolveFolderPathFromAPI(folderID)
+	segments, err := v.resolveFolderChainFromAPI(folderID)
 	if err != nil {
 		logger.Warn("create: could not resolve folder path for %d: %v", folderID, err)
-		return ""
+		return mirroredPlacement{}
 	}
-	return filepath.Join(stageRoot, rel)
+	dir := stageRoot
+	for _, seg := range segments {
+		dir = filepath.Join(dir, seg.DirName())
+	}
+	return mirroredPlacement{Dir: dir, StageRoot: stageRoot, Segments: segments}
+}
+
+// folderMarkerContent is the on-disk shape of a <id>_<name>.folder.json marker,
+// matching what a folder export writes.
+type folderMarkerContent struct {
+	Description string `json:"description"`
+	ObjID       int    `json:"obj_id"`
+	ObjType     int    `json:"obj_type"`
+	ParentID    int    `json:"parent_id"`
+	Title       string `json:"title"`
+}
+
+// writeFolderMarker writes dir's <id>_<name>.folder.json marker, creating dir
+// if needed. Existing markers are left alone: a marker pulled from the server
+// carries a real description we must not clobber.
+func writeFolderMarker(dir string, seg folderPathSegment) error {
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return fmt.Errorf("creating directory '%s': %w", dir, err)
+	}
+	if dirHasFolderMarker(dir) {
+		return nil
+	}
+	data, err := json.MarshalIndent(folderMarkerContent{
+		ObjID:    seg.ID,
+		ObjType:  0,
+		ParentID: seg.ParentID,
+		Title:    seg.Title,
+	}, "", "  ")
+	if err != nil {
+		return fmt.Errorf("marshaling folder marker for %d: %w", seg.ID, err)
+	}
+	name := fmt.Sprintf("%d_%s.folder.json", seg.ID, seg.SafeName)
+	if err := os.WriteFile(filepath.Join(dir, name), data, 0644); err != nil {
+		return fmt.Errorf("writing folder marker '%s': %w", filepath.Join(dir, name), err)
+	}
+	return nil
+}
+
+// ensureFolderMarkers creates every directory level of a mirrored placement and
+// gives each one a folder marker, so a directory this tool materializes can be
+// used as a target by the next create-process / create-folder / push-process.
+func ensureFolderMarkers(p mirroredPlacement) error {
+	if p.StageRoot == "" {
+		return nil
+	}
+	dir := p.StageRoot
+	for _, seg := range p.Segments {
+		dir = filepath.Join(dir, seg.DirName())
+		if err := writeFolderMarker(dir, seg); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // resolveCreateTarget picks the Corezoid folder a create lands in: an explicit
@@ -1066,8 +1153,14 @@ func handleCreateFolder(ctx context.Context, args map[string]interface{}) (strin
 	// parent_path used to mirror the new folder into the CWD, so the on-disk
 	// tree stopped matching the Corezoid tree that pull-folder reproduces.
 	if optStrArg(args, "parent_path") == "" {
-		if mirrored := mirroredDirForFolder(v, parentFolderID); mirrored != "" {
-			parentPath = mirrored
+		if mirrored := mirroredDirForFolder(v, parentFolderID); mirrored.Dir != "" {
+			parentPath = mirrored.Dir
+			// The parent chain we are about to create needs markers too —
+			// otherwise those intermediate directories can't be used as
+			// targets for anything (see ensureFolderMarkers).
+			if err := ensureFolderMarkers(mirrored); err != nil {
+				logger.Warn("create-folder: could not write folder markers under %s: %v", mirrored.StageRoot, err)
+			}
 		}
 	}
 
@@ -1078,14 +1171,7 @@ func handleCreateFolder(ctx context.Context, args map[string]interface{}) (strin
 		return fmt.Sprintf("Error creating directory '%s': %v", dirPath, err), true
 	}
 
-	type folderFileContent struct {
-		Description string `json:"description"`
-		ObjID       int    `json:"obj_id"`
-		ObjType     int    `json:"obj_type"`
-		ParentID    int    `json:"parent_id"`
-		Title       string `json:"title"`
-	}
-	fileContent := folderFileContent{
+	fileContent := folderMarkerContent{
 		Description: "",
 		ObjID:       newFolderID,
 		ObjType:     0,

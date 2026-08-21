@@ -77,6 +77,26 @@ func relativeToCwd(p string) (string, error) {
 	return rel, nil
 }
 
+// folderMarkerFileRe matches the marker file that makes a directory resolvable
+// to a Corezoid folder: <id>_<name>.folder.json or <id>_<name>.stage.json.
+var folderMarkerFileRe = regexp.MustCompile(`^(\d+)_.*\.(folder|stage)\.json$`)
+
+// dirHasFolderMarker reports whether dir already carries a folder/stage marker,
+// so callers that materialize mirrored directories don't overwrite a marker
+// pulled from the server with a synthesized one.
+func dirHasFolderMarker(dir string) bool {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return false
+	}
+	for _, e := range entries {
+		if !e.IsDir() && folderMarkerFileRe.MatchString(e.Name()) {
+			return true
+		}
+	}
+	return false
+}
+
 // resolveFolderIDFromDir looks for a file matching <id>_<name>.folder.json or
 // <id>_<name>.stage.json in the given directory and returns the numeric id
 // together with the marker file name it was resolved from.
@@ -90,7 +110,6 @@ func resolveFolderIDFromDir(dir string) (int, string, error) {
 	if err != nil {
 		return 0, "", fmt.Errorf("failed to read directory '%s': %v", dir, err)
 	}
-	reFolderFile := regexp.MustCompile(`^(\d+)_.*\.(folder|stage)\.json$`)
 	type match struct {
 		id   int
 		name string
@@ -100,7 +119,7 @@ func resolveFolderIDFromDir(dir string) (int, string, error) {
 		if e.IsDir() {
 			continue
 		}
-		m := reFolderFile.FindStringSubmatch(e.Name())
+		m := folderMarkerFileRe.FindStringSubmatch(e.Name())
 		if m == nil {
 			continue
 		}

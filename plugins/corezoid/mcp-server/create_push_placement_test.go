@@ -268,8 +268,16 @@ func TestMirroredDirForFolder_MirrorsPullPlacement(t *testing.T) {
 
 	got := mirroredDirForFolder(e, 42)
 	want := filepath.Join(root, "42_billing")
-	if got != want {
-		t.Errorf("mirrored dir = %q, want %q", got, want)
+	if got.Dir != want {
+		t.Errorf("mirrored dir = %q, want %q", got.Dir, want)
+	}
+	if got.StageRoot != root {
+		t.Errorf("stage root = %q, want %q", got.StageRoot, root)
+	}
+	// The segments carry what a usable folder marker needs.
+	if len(got.Segments) != 1 || got.Segments[0].ID != 42 ||
+		got.Segments[0].Title != "billing" || got.Segments[0].ParentID != 900 {
+		t.Errorf("segments = %+v, want one {42 billing parent 900}", got.Segments)
 	}
 }
 
@@ -288,8 +296,8 @@ func TestMirroredDirForFolder_NoStageFallsBack(t *testing.T) {
 	})
 	e.StageID = 0
 
-	if got := mirroredDirForFolder(e, 42); got != "" {
-		t.Errorf("want fall back to caller's path, got %q", got)
+	if got := mirroredDirForFolder(e, 42); got.Dir != "" {
+		t.Errorf("want fall back to caller's path, got %q", got.Dir)
 	}
 }
 
@@ -304,16 +312,16 @@ func TestMirroredDirForFolder_APIErrorFallsBack(t *testing.T) {
 	})
 	e.StageID = 900
 
-	if got := mirroredDirForFolder(e, 42); got != "" {
-		t.Errorf("an unresolvable folder must fall back, got %q", got)
+	if got := mirroredDirForFolder(e, 42); got.Dir != "" {
+		t.Errorf("an unresolvable folder must fall back, got %q", got.Dir)
 	}
 }
 
 // Fully wired workspace — stage marker, registered root, reachable API — so the
 // only thing standing between folderID 0 and a bogus resolve is the guard.
 func TestMirroredDirForFolder_GuardsNilAndZero(t *testing.T) {
-	if got := mirroredDirForFolder(nil, 42); got != "" {
-		t.Errorf("nil executor must fall back, got %q", got)
+	if got := mirroredDirForFolder(nil, 42); got.Dir != "" {
+		t.Errorf("nil executor must fall back, got %q", got.Dir)
 	}
 	root := tmpHomeAndCWD(t)
 	writeTestStageMarker(t, root, 900, 800, "stage")
@@ -326,7 +334,7 @@ func TestMirroredDirForFolder_GuardsNilAndZero(t *testing.T) {
 	})
 	e.StageID = 900
 
-	if got := mirroredDirForFolder(e, 0); got != "" {
-		t.Errorf("folder 0 must fall back, got %q", got)
+	if got := mirroredDirForFolder(e, 0); got.Dir != "" {
+		t.Errorf("folder 0 must fall back, got %q", got.Dir)
 	}
 }

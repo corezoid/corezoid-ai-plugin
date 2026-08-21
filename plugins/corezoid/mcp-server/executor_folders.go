@@ -395,15 +395,27 @@ func (v *Executor) CreateFolder(parentFolderID int, title, desc string) (int, er
 	return int(objID), nil
 }
 
-// resolveFolderPathFromAPI builds a relative path from the stage root down to folderID
-// by walking up the folder hierarchy via ShowFolder API calls.
-func (v *Executor) resolveFolderPathFromAPI(folderID int) (string, error) {
+// folderPathSegment is one level of the folder chain between the stage root and
+// a target folder: enough to both build the mirrored directory name and write a
+// usable <id>_<name>.folder.json marker into it.
+type folderPathSegment struct {
+	ID       int
+	Title    string
+	SafeName string
+	ParentID int
+}
+
+// DirName returns the mirrored directory name for this segment.
+func (s folderPathSegment) DirName() string {
+	return fmt.Sprintf("%d_%s", s.ID, s.SafeName)
+}
+
+// resolveFolderChainFromAPI walks up the folder hierarchy from folderID via
+// ShowFolder calls and returns the segments from just below the stage root down
+// to folderID itself. An empty slice means folderID *is* the stage root.
+func (v *Executor) resolveFolderChainFromAPI(folderID int) ([]folderPathSegment, error) {
 	const maxDepth = 20
-	type segment struct {
-		id    int
-		title string
-	}
-	var segments []segment
+	var segments []folderPathSegment
 	currentID := folderID
 	for i := 0; i < maxDepth; i++ {
 		if v.StageID != 0 && currentID == v.StageID {
@@ -411,13 +423,17 @@ func (v *Executor) resolveFolderPathFromAPI(folderID int) (string, error) {
 		}
 		info, err := v.ShowFolder(currentID)
 		if err != nil {
-			return "", fmt.Errorf("failed to resolve folder path at id %d: %w", currentID, err)
+			return nil, fmt.Errorf("failed to resolve folder path at id %d: %w", currentID, err)
 		}
 		if isFolderStageObjType(info.ObjType) || (v.StageID != 0 && info.ObjID == v.StageID) {
 			break
 		}
-		safeName := sanitizeFileSegment(info.Title)
-		segments = append(segments, segment{id: info.ObjID, title: safeName})
+		segments = append(segments, folderPathSegment{
+			ID:       info.ObjID,
+			Title:    info.Title,
+			SafeName: sanitizeFileSegment(info.Title),
+			ParentID: info.ParentObjID,
+		})
 		if info.ParentObjID == 0 || info.ParentObjID == currentID {
 			break
 		}
@@ -426,9 +442,19 @@ func (v *Executor) resolveFolderPathFromAPI(folderID int) (string, error) {
 	for i, j := 0, len(segments)-1; i < j; i, j = i+1, j-1 {
 		segments[i], segments[j] = segments[j], segments[i]
 	}
+	return segments, nil
+}
+
+// resolveFolderPathFromAPI builds a relative path from the stage root down to folderID
+// by walking up the folder hierarchy via ShowFolder API calls.
+func (v *Executor) resolveFolderPathFromAPI(folderID int) (string, error) {
+	segments, err := v.resolveFolderChainFromAPI(folderID)
+	if err != nil {
+		return "", err
+	}
 	parts := make([]string, len(segments))
 	for i, s := range segments {
-		parts[i] = fmt.Sprintf("%d_%s", s.id, s.title)
+		parts[i] = s.DirName()
 	}
 	return strings.Join(parts, string(os.PathSeparator)), nil
 }
