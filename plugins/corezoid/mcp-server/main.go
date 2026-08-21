@@ -303,6 +303,43 @@ var schemaDefinitions = []struct{ name, path string }{
 	{"semaphore_count", "json-schema/logics/semaphore_count.json"},
 }
 
+// knownLogicProps maps a logic type to the property names its schema declares.
+// Populated by loadCompiledSchema, consumed by findUnknownLogicProps so lint can
+// still name an unexpected property after the schema itself stopped rejecting it.
+var knownLogicProps = map[string]map[string]bool{}
+
+// relaxAdditionalProps turns "additionalProperties": false into true and returns
+// the declared property names.
+//
+// Why: Corezoid decorates deployed nodes with execution fields of its own
+// (`chunkify` on api_code is the one seen in the wild). A closed schema turns
+// those into hard validation failures on a file the plugin ITSELF produced via
+// pull-process, which breaks the documented pull -> edit -> lint -> push loop for
+// every process containing that node type. Blocking a push on an upstream field
+// we simply have not catalogued yet is the wrong default; naming it is right.
+// Typos stay visible as an UNKNOWN LOGIC PROPERTIES advisory, and push-process
+// remains the authoritative gate because the server validates too.
+func relaxAdditionalProps(doc any) map[string]bool {
+	m, ok := doc.(map[string]any)
+	if !ok {
+		return nil
+	}
+	if ap, present := m["additionalProperties"]; present {
+		if b, isBool := ap.(bool); isBool && !b {
+			m["additionalProperties"] = true
+		}
+	}
+	props, _ := m["properties"].(map[string]any)
+	if len(props) == 0 {
+		return nil
+	}
+	known := make(map[string]bool, len(props))
+	for name := range props {
+		known[name] = true
+	}
+	return known
+}
+
 // loadCompiledSchema parses the embedded schema files and compiles the
 // combined draft-07 schema. The result is cached for the lifetime of the
 // process — schemas are static, so we pay the parsing cost exactly once.
@@ -319,6 +356,11 @@ func loadCompiledSchema() (*jsonschema.Schema, error) {
 			if err != nil {
 				compiledSchemaErr = fmt.Errorf("failed to parse %s: %v", d.path, err)
 				return
+			}
+			if strings.HasPrefix(d.path, "json-schema/logics/") {
+				if known := relaxAdditionalProps(doc); known != nil {
+					knownLogicProps[d.name] = known
+				}
 			}
 			defs[d.name] = doc
 		}

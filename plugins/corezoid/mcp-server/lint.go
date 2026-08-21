@@ -28,6 +28,7 @@ type LintResult struct {
 	StubModeNodes          []StubModeNode
 	GitCallUsages          []GitCallUsage
 	SelfReferenceCopies    []SelfReferenceCopy
+	UnknownLogicProps      []UnknownLogicProp
 	TotalNodes             int
 	ReachableCount         int
 	SchemaValid            bool
@@ -262,6 +263,7 @@ func lintProcess(filePath string) (*LintResult, error) {
 	result.StubModeNodes = findStubModeNodes(typed)
 	result.GitCallUsages = findGitCallUsages(typed)
 	result.SelfReferenceCopies = findSelfReferenceCopies(typed, processID)
+	result.UnknownLogicProps = findUnknownLogicProps(typed)
 
 	schemaErr := ValidateJSONSchema(filePath, debug)
 	if schemaErr != nil {
@@ -433,6 +435,60 @@ func isIdentChar(c byte) bool {
 		(c >= '0' && c <= '9') ||
 		(c >= 'a' && c <= 'z') ||
 		(c >= 'A' && c <= 'Z')
+}
+
+// UnknownLogicProp records a property present on a logic block that its schema
+// does not declare. Since the logics schemas are loaded with
+// additionalProperties relaxed (see relaxAdditionalProps), this advisory is what
+// keeps a typo'd field visible — it just no longer blocks the file.
+type UnknownLogicProp struct {
+	NodeID    string
+	NodeTitle string
+	LogicType string
+	Props     []string
+	Issue     string
+}
+
+// findUnknownLogicProps reports properties a logic carries that its schema does
+// not declare. Two very different things land here, which is why it advises
+// rather than fails: a field Corezoid added to a deployed node (harmless, and
+// preserved on round-trip), and a hand-authored typo (not harmless). Naming the
+// property lets the reader tell them apart in one glance.
+func findUnknownLogicProps(nodes []processNode) []UnknownLogicProp {
+	var out []UnknownLogicProp
+	for _, n := range nodes {
+		for _, lg := range n.logics {
+			logicType, _ := lg["type"].(string)
+			known, ok := knownLogicProps[logicType]
+			if !ok || len(known) == 0 {
+				continue // no schema for this logic type — nothing to compare against
+			}
+			var extras []string
+			for name := range lg {
+				if !known[name] {
+					extras = append(extras, name)
+				}
+			}
+			if len(extras) == 0 {
+				continue
+			}
+			sort.Strings(extras)
+			title := n.title
+			if title == "" {
+				title = "(untitled)"
+			}
+			out = append(out, UnknownLogicProp{
+				NodeID:    n.id,
+				NodeTitle: title,
+				LogicType: logicType,
+				Props:     extras,
+				Issue: fmt.Sprintf("%s carries %v, which its schema does not declare — "+
+					"a server-added field is fine and round-trips safely; a typo is not",
+					logicType, extras),
+			})
+		}
+	}
+	return out
 }
 
 // findSharedErrorClusters flags error-cluster nodes shared between the error
@@ -1451,6 +1507,18 @@ func FormatLintResult(result *LintResult) string {
 		}
 		total := len(result.NoopConditions) + len(result.UnusedSetParams) + len(result.OrphanedNodes) + len(result.RpcReplyMismatches) + len(result.PassthroughEscalations) + len(result.LiteralReplyValues) + len(result.SharedErrorClusters) + len(result.OldFormatNodes) + len(result.UnrepliedTerminals) + len(result.MissingDefaultGo) + len(result.ShortTimers) + len(result.BrokenLinks) + len(result.UnderspecifiedAPINodes) + len(result.StubModeNodes) + len(result.GitCallUsages) + len(result.SelfReferenceCopies) + schemaIssues
 		sb.WriteString(fmt.Sprintf("\nTotal issues: %d\n", total))
+	}
+
+	// Advisory, printed after the verdict and deliberately NOT counted in
+	// "Total issues": an unrecognised property is usually a field Corezoid added
+	// to a deployed node, and letting that mark the file dirty would recreate
+	// exactly the round-trip breakage this check replaced.
+	if len(result.UnknownLogicProps) > 0 {
+		sb.WriteString(fmt.Sprintf("\n=== UNKNOWN LOGIC PROPERTIES (%d) — advisory, not counted ===\n", len(result.UnknownLogicProps)))
+		for _, u := range result.UnknownLogicProps {
+			sb.WriteString(fmt.Sprintf("  [%s] %s\n", u.NodeID, u.NodeTitle))
+			sb.WriteString(fmt.Sprintf("  Issue: %s\n", u.Issue))
+		}
 	}
 
 	return sb.String()
