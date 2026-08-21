@@ -29,12 +29,24 @@ type conflictResult struct {
 // when the server has moved, either blocks with a 3-way impact report, grafts a
 // merge (merge=true), or overrides (force=true).
 //
-// A missing baseline (this file was never pulled) is advisory: we can't detect
-// concurrent changes and the push proceeds. But an UNREACHABLE server when we
-// DO have a baseline means the check cannot run and lost-update detection is
-// silently off — we block, because the same Corezoid API that just failed here
-// is the one ProcessJSON is about to call anyway. Retry once the API recovers.
-func resolveConflict(v *Executor, filePath string, procID int, localJSON string, force, merge bool) conflictResult {
+// An UNREACHABLE server when we DO have a baseline means the check cannot run
+// and lost-update detection is silently off — we block, because the same
+// Corezoid API that just failed here is the one ProcessJSON is about to call
+// anyway. Retry once the API recovers.
+//
+// A missing baseline means this file was never pulled, so there is nothing to
+// compare against. What that implies depends entirely on the server:
+//
+//   - the process has no deployed version yet (the create-process → push-process
+//     flow, or a re-push of a never-deployed conv): nothing can be lost, so the
+//     push proceeds with a note;
+//   - the process IS deployed: the local file is an import, a hand-copy or a
+//     file whose sidecar was lost, and pushing it overwrites a live version with
+//     no idea what that version contains. That is the exact silent overwrite the
+//     whole baseline subsystem exists to prevent, so it blocks and asks for a
+//     pull (or an explicit adopt_existing waiver);
+//   - the server could not answer: fail closed, same as above.
+func resolveConflict(v *Executor, filePath string, procID int, localJSON string, force, merge, adoptExisting bool) conflictResult {
 	dir := filepath.Dir(filePath)
 	base, ok, baselineErr := lookupBaseline(dir, procID)
 	if baselineErr != nil {
@@ -42,8 +54,17 @@ func resolveConflict(v *Executor, filePath string, procID int, localJSON string,
 			"Push blocked: the concurrency baseline for process #%d is unreadable: %v. Re-pull the process to rebuild the sidecar before pushing; continuing would disable lost-update protection.", procID, baselineErr)}
 	}
 	if !ok {
-		return conflictResult{conflictProceed, fmt.Sprintf(
-			"Note: no pull baseline recorded for process #%d — concurrent-change detection is off for this file. Re-pull to enable it.", procID)}
+		switch {
+		case processNeverDeployed(v, procID):
+			return conflictResult{conflictProceed, fmt.Sprintf(
+				"Note: no pull baseline recorded for process #%d, but it has no deployed version yet, so there is nothing a concurrent edit could overwrite.", procID)}
+		case adoptExisting:
+			return conflictResult{conflictProceed, fmt.Sprintf(
+				"Warning: no pull baseline recorded for process #%d and adopt_existing=true was passed — this push overwrites the deployed version WITHOUT knowing what it contains. Concurrent-change detection was off for this push.", procID)}
+		default:
+			return conflictResult{conflictBlock, fmt.Sprintf(
+				"Push blocked: process #%d already has a deployed version on the server, but this file has no pull baseline — so lost-update detection cannot run and pushing would overwrite that version blind. Run pull-process for #%d first (that records the baseline and lets a real conflict be reported), or re-run with adopt_existing=true to overwrite the server version deliberately. adopt_existing is separate from force on purpose: force resolves a conflict you have been shown, this one declares you have no idea what is on the server.", procID, procID)}
+		}
 	}
 
 	proc, err := v.GetProcessByID(procID)

@@ -250,7 +250,7 @@ validation errors, and summarize what each process does.
 | `show-project`      | Show a project's stages and parent folder          |
 | `pull-folder`       | Export an entire folder/stage to local files       |
 | `pull-process`      | Export a single process to a `.conv.json` file     |
-| `push-process`      | Validate and deploy a `.conv.json` to Corezoid     |
+| `push-process`      | Validate and deploy a `.conv.json` to Corezoid. Blocks when the graph is structurally invalid, when the server changed since pull, when no rollback point could be taken, or when the file has no pull baseline but the process is already deployed |
 | `layout-process`    | Auto-arrange node coordinates (waterfall / layered / table-star regions); local, changes only x/y and collapse flags |
 | `lint-process`      | Validate process structure locally (no API call)   |
 | `run-task`          | Send a task to a deployed process                  |
@@ -299,7 +299,7 @@ validation errors, and summarize what each process does.
 | `find-principal`    | Resolve user / group / API-key name to obj_id      |
 | `invite-user`       | Invite an external email and share an object in one call |
 | `send-feedback`     | Submit feedback about plugin behavior (returns ticket id) |
-| `create-snapshot`   | Create a snapshot of the current server state of a process (auto-created before every push-process on existing processes) |
+| `create-snapshot`   | Create a snapshot of the current server state of a process. Also auto-created before `push-process` overwrites an existing process: if the snapshot fails the push is blocked, and if the target project/stage cannot be resolved the push is blocked too unless `allow_no_snapshot=true` on a resolved mutable stage. Skipped only where there is nothing to preserve — a process with no deployed version, or an installation whose API has no snapshot object |
 | `list-snapshots`    | List all snapshots for a process with version, title, author and creation time |
 | `delete-snapshot`   | Delete a snapshot by its obj_id |
 | `get-snapshot`      | Get the node list of a specific snapshot for diff comparison |

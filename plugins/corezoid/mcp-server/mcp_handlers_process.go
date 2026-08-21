@@ -496,6 +496,7 @@ func handlePushProcess(ctx context.Context, args map[string]interface{}) (string
 	// called process at runtime.
 	force, _ := args["force"].(bool)
 	allowStubMode, _ := args["allow_active_stub_mode"].(bool)
+	allowNoSnapshot, _ := args["allow_no_snapshot"].(bool)
 	var lintNote string // findings surfaced on a proceeding push (see below)
 	if lintRes, lintErr := lintProcess(filePath); lintErr == nil {
 		stubMode := len(lintRes.StubModeNodes)
@@ -537,8 +538,9 @@ func handlePushProcess(ctx context.Context, args map[string]interface{}) (string
 	// Block with an impact report unless force=true. New/never-pulled processes
 	// have no baseline and are unaffected.
 	merge, _ := args["merge"].(bool)
+	adoptExisting, _ := args["adopt_existing"].(bool)
 	if objID := extractObjIDFromJSON(jsonContent); objID != 0 {
-		res := resolveConflict(v, filePath, objID, jsonContent, force, merge)
+		res := resolveConflict(v, filePath, objID, jsonContent, force, merge, adoptExisting)
 		switch res.action {
 		case conflictBlock:
 			return res.message, true
@@ -557,9 +559,12 @@ func handlePushProcess(ctx context.Context, args map[string]interface{}) (string
 	//   • snapshot succeeded → note it, push proceeds.
 	//   • the environment has no snapshot feature at all → note it, push
 	//     proceeds; CreateSnapshot is never called (see snapshot_support.go).
-	//   • snapshot skipped because project/stage aren't resolved → warning
-	//     only; the workspace isn't wired for snapshots (misconfigured env),
-	//     blocking would be a false positive.
+	//   • snapshot skipped because project/stage aren't resolved → BLOCK, unless
+	//     the process has never been deployed or the caller passes
+	//     allow_no_snapshot=true on a resolved mutable stage. An unresolved
+	//     target is not evidence that this environment needs no rollback point;
+	//     it is an unknown safety configuration, and proceeding overwrites a
+	//     live process with no way back. See snapshotWaiverAllowed.
 	//   • snapshot was attempted and the API returned an error → BLOCK, unless the
 	//     process has never been deployed. Without git for .conv.json files the
 	//     previous server version is unrecoverable once ProcessJSON overwrites it,
@@ -595,8 +600,16 @@ func handlePushProcess(ctx context.Context, args map[string]interface{}) (string
 			if envNotice != "" && snapshotNote != "" {
 				snapshotNote += " " + envNotice
 			}
+		} else if processNeverDeployed(v, existingObjID) {
+			// Nothing deployed yet, so there is no previous state a snapshot
+			// could preserve. This is the create-process → push-process flow.
+			snapshotNote = fmt.Sprintf("Auto-snapshot skipped: process #%d has no deployed version yet, so there is no previous state to restore.", existingObjID)
+		} else if allowed, why := snapshotWaiverAllowed(v, jsonContent, allowNoSnapshot); !allowed {
+			return fmt.Sprintf(
+				"Push blocked: process #%d already exists on the server, but no pre-push snapshot could be taken because project_id/stage_id could not be resolved%s — so there is no rollback point for the version this push would overwrite. %s\n\nFix the workspace configuration (re-run corezoid-init, or push from the folder whose stage marker names the target stage) so snapshots work, or re-run with allow_no_snapshot=true to accept an irreversible push. allow_no_snapshot is separate from force on purpose: force overrides a *known* conflict, this waives the ability to undo.",
+				existingObjID, envNoticeSuffix(envNotice), why), true
 		} else {
-			snapshotNote = "Warning: auto-snapshot skipped (project_id/stage_id not resolved). No rollback point exists — fix the workspace configuration to enable snapshots."
+			snapshotNote = fmt.Sprintf("Warning: auto-snapshot skipped for process #%d (project_id/stage_id not resolved) and allow_no_snapshot=true was passed. NO ROLLBACK POINT EXISTS for the version this push overwrote (%s).", existingObjID, why)
 		}
 	}
 
@@ -611,21 +624,38 @@ func handlePushProcess(ctx context.Context, args map[string]interface{}) (string
 	// committed, so the next push starts current instead of re-flagging our own
 	// change, and a later concurrent-edit conflict still has a 3-way ancestor
 	// (without this, a push→edit→push flow degrades to the delete-only report).
+	//
+	// A failure here cannot be undone (the deploy already happened) but it must
+	// not be silent: the local sidecars are what lost-update protection reads,
+	// so leaving them stale while reporting a clean deploy makes the next push
+	// either re-flag our own change as someone else's or lose the 3-way
+	// ancestor. The user has to know the local state is no longer trustworthy,
+	// so every failure is collected and reported alongside the success.
+	var staleStateNotes []string
 	if v.ProcessID != 0 {
 		dir := filepath.Dir(filePath)
-		if proc, gerr := v.GetProcessByID(v.ProcessID); gerr == nil {
-			if berr := writeBaseline(dir, v.ProcessID, baselineFromServer(proc)); berr != nil {
-				logger.Warn("push: could not refresh baseline for %d: %v", v.ProcessID, berr)
-			}
+		if proc, gerr := v.GetProcessByID(v.ProcessID); gerr != nil {
+			logger.Warn("push: could not read back process %d to refresh baseline: %v", v.ProcessID, gerr)
+			staleStateNotes = append(staleStateNotes, fmt.Sprintf("the deployed version of process #%d could not be read back (%v), so the concurrency baseline still points at the pre-push version", v.ProcessID, gerr))
+		} else if berr := writeBaseline(dir, v.ProcessID, baselineFromServer(proc)); berr != nil {
+			logger.Warn("push: could not refresh baseline for %d: %v", v.ProcessID, berr)
+			staleStateNotes = append(staleStateNotes, fmt.Sprintf("the concurrency baseline could not be written (%v)", berr))
 		}
-		if theirsConv, ok := exportConv(v); ok {
-			if aerr := writeAncestorScheme(dir, v.ProcessID, theirsConv); aerr != nil {
-				logger.Warn("push: could not refresh ancestor for %d: %v", v.ProcessID, aerr)
-			}
+		if theirsConv, ok := exportConv(v); !ok {
+			logger.Warn("push: could not export process %d to refresh the merge ancestor", v.ProcessID)
+			staleStateNotes = append(staleStateNotes, "the deployed scheme could not be exported, so the 3-way merge ancestor is stale")
+		} else if aerr := writeAncestorScheme(dir, v.ProcessID, theirsConv); aerr != nil {
+			logger.Warn("push: could not refresh ancestor for %d: %v", v.ProcessID, aerr)
+			staleStateNotes = append(staleStateNotes, fmt.Sprintf("the merge ancestor could not be written (%v)", aerr))
 		}
 	}
 
 	result := fmt.Sprintf("Process deployed successfully, ProcessID: %d", procID)
+	if len(staleStateNotes) > 0 {
+		result += fmt.Sprintf(
+			"\n\nWARNING: the deploy succeeded, but the local concurrency state was NOT updated — %s. Lost-update protection now compares against stale data: re-pull this process before editing it again, otherwise the next push may report your own change as someone else's conflict or fall back to a delete-only impact report.",
+			strings.Join(staleStateNotes, "; "))
+	}
 	if rehydrateNote != "" {
 		result += "\n" + rehydrateNote
 	}
@@ -1513,6 +1543,39 @@ func processNeverDeployed(v *Executor, objID int) bool {
 		return false
 	}
 	return commitsConfirmedEmpty(data) && nodeListConfirmedEmpty(data)
+}
+
+// snapshotWaiverAllowed decides whether allow_no_snapshot may be honoured for a
+// push whose project/stage could not be resolved, and always returns the reason
+// so both the block and the waiver can state it.
+//
+// Waiving the rollback point is only ever acceptable somewhere a lost version
+// is cheap to recreate, so the waiver is gated on the same stage policy the
+// Stub Mode gate uses: it is honoured only on a stage that resolved and is
+// mutable. Anywhere that policy wants confirmation — an immutable stage, a
+// production-looking name, or a stage that could not be resolved or read at all
+// — the waiver is refused, because that is exactly where an irreversible
+// overwrite is least recoverable and where "I could not determine the target"
+// must not be allowed to mean "so anything goes".
+func snapshotWaiverAllowed(v *Executor, jsonContent string, allowNoSnapshot bool) (bool, string) {
+	policy := stubModeStagePolicyForPush(v, jsonContent)
+	switch {
+	case policy.requiresConfirmation:
+		return false, fmt.Sprintf("Target policy: %s — a rollback waiver is not accepted here even with allow_no_snapshot=true.", policy.reason)
+	case !allowNoSnapshot:
+		return false, fmt.Sprintf("Target policy: %s.", policy.reason)
+	default:
+		return true, policy.reason
+	}
+}
+
+// envNoticeSuffix renders resolveAndCacheProjectID's notice as a parenthetical,
+// so a block message can carry the reason the lookup came back empty.
+func envNoticeSuffix(envNotice string) string {
+	if envNotice == "" {
+		return ""
+	}
+	return " (" + envNotice + ")"
 }
 
 // commitsConfirmedEmpty reports whether the response states that the process

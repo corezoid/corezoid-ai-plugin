@@ -270,8 +270,12 @@ jobs:
           cache: true
           cache-dependency-path: plugins/corezoid/mcp-server/go.sum
 
+      # Pinned, not @latest: a release gate that silently changes tool version
+      # between runs cannot be reproduced, and a new govulncheck release can
+      # turn a green tag into a red one (or the reverse) with no change on our
+      # side. Bump this deliberately.
       - name: Install govulncheck
-        run: go install golang.org/x/vuln/cmd/govulncheck@latest
+        run: go install golang.org/x/vuln/cmd/govulncheck@v1.7.0
 
       - name: Run govulncheck
         run: govulncheck ./...

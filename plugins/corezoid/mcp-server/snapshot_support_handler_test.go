@@ -124,6 +124,10 @@ func TestHandlePushProcess_SnapshotAPIErrorBlocksPush(t *testing.T) {
 
 	result, isErr := handlePushProcess(context.Background(), map[string]interface{}{
 		"process_path": name,
+		// These tests exercise the snapshot gate, not the baseline gate: the
+		// fixture was never pulled, so adopt_existing carries it past the
+		// missing-baseline block (see TestConflict_NoBaseline*).
+		"adopt_existing": true,
 	})
 	if !isErr {
 		t.Fatalf("a failed pre-push snapshot must block the push, got success:\n%s", result)
@@ -185,6 +189,10 @@ func TestHandlePushProcess_EnvironmentWithoutSnapshotsPushesWithWarning(t *testi
 
 	result, isErr := handlePushProcess(context.Background(), map[string]interface{}{
 		"process_path": name,
+		// These tests exercise the snapshot gate, not the baseline gate: the
+		// fixture was never pulled, so adopt_existing carries it past the
+		// missing-baseline block (see TestConflict_NoBaseline*).
+		"adopt_existing": true,
 	})
 	if isErr {
 		t.Fatalf("a missing snapshot feature must not block the push, got error:\n%s", result)
@@ -196,6 +204,205 @@ func TestHandlePushProcess_EnvironmentWithoutSnapshotsPushesWithWarning(t *testi
 	} {
 		if !strings.Contains(result, want) {
 			t.Fatalf("expected result to contain %q, got:\n%s", want, result)
+		}
+	}
+}
+
+// The third outcome of the snapshot gate: the target could not be resolved, so
+// no snapshot could even be attempted. For a process that already has a
+// deployed version this is not a "misconfigured environment, carry on" — it is
+// an unknown safety configuration, and pushing anyway destroys the previous
+// version with no way back. It must block.
+func TestHandlePushProcess_UnresolvedTargetBlocksSnapshotlessPush(t *testing.T) {
+	resetGlobals(t)
+	t.Cleanup(resetSnapshotSupportCache)
+	name := writeDeployedConv(t)
+
+	srv, _ := mockAPIServer(t, func(ops []map[string]interface{}) interface{} {
+		op := ops[0]
+		typ, _ := op["type"].(string)
+		obj, _ := op["obj"].(string)
+		if typ == "create" && obj == "snapshot" {
+			t.Error("no snapshot can be attempted when the target is unresolved")
+		}
+		if typ == "list" && obj == "conv" {
+			return wrapOp(deployedProcessOp())
+		}
+		return okResponse(ops)
+	})
+	setProjectAuth(t, srv.URL)
+	// Neither is configured: resolveAndCacheProjectID comes back empty.
+	stageID = 0
+	cachedProjectID = 0
+
+	result, isErr := handlePushProcess(context.Background(), map[string]interface{}{
+		"process_path":   name,
+		"adopt_existing": true,
+	})
+	if !isErr {
+		t.Fatalf("an unresolved target must block the push of a deployed process, got:\n%s", result)
+	}
+	for _, want := range []string{
+		"no pre-push snapshot could be taken",
+		"project_id/stage_id could not be resolved",
+		"allow_no_snapshot=true",
+	} {
+		if !strings.Contains(result, want) {
+			t.Errorf("expected result to contain %q, got:\n%s", want, result)
+		}
+	}
+}
+
+// The waiver is refused exactly where an irreversible overwrite is least
+// recoverable: a target whose stage cannot be resolved or read at all. "I could
+// not determine where this goes" must never be allowed to mean "so anything
+// goes", so allow_no_snapshot does not help here.
+func TestHandlePushProcess_NoSnapshotWaiverRefusedOnUnresolvedStage(t *testing.T) {
+	resetGlobals(t)
+	t.Cleanup(resetSnapshotSupportCache)
+	name := writeDeployedConv(t)
+
+	srv, _ := mockAPIServer(t, func(ops []map[string]interface{}) interface{} {
+		op := ops[0]
+		typ, _ := op["type"].(string)
+		obj, _ := op["obj"].(string)
+		switch {
+		case typ == "create" && obj == "snapshot":
+			t.Error("no snapshot can be attempted when the target is unresolved")
+		case typ == "list" && obj == "conv":
+			return wrapOp(deployedProcessOp())
+		case typ == "show" && obj == "folder":
+			// The stage behind parent_id 20 cannot be read, so the stage policy
+			// cannot clear this target as a mutable dev stage.
+			return wrapOp(map[string]interface{}{"proc": "error", "description": "no access to folder"})
+		}
+		return okResponse(ops)
+	})
+	setProjectAuth(t, srv.URL)
+	stageID = 0
+	cachedProjectID = 0
+
+	result, isErr := handlePushProcess(context.Background(), map[string]interface{}{
+		"process_path":      name,
+		"adopt_existing":    true,
+		"allow_no_snapshot": true,
+	})
+	if !isErr {
+		t.Fatalf("allow_no_snapshot must not be honoured on an unresolvable stage, got:\n%s", result)
+	}
+	if !strings.Contains(result, "not accepted here even with allow_no_snapshot=true") {
+		t.Errorf("the refusal must say the waiver does not apply, got:\n%s", result)
+	}
+}
+
+// A never-deployed process is the documented exception: there is no previous
+// version, so an unresolved target costs nothing and the create-process →
+// push-process flow keeps working without any waiver.
+func TestHandlePushProcess_UnresolvedTargetAllowsNeverDeployedProcess(t *testing.T) {
+	resetGlobals(t)
+	t.Cleanup(resetSnapshotSupportCache)
+	name := writeDeployedConv(t)
+
+	srv, _ := mockAPIServer(t, func(ops []map[string]interface{}) interface{} {
+		op := ops[0]
+		typ, _ := op["type"].(string)
+		obj, _ := op["obj"].(string)
+		switch {
+		case typ == "create" && obj == "snapshot":
+			t.Error("a never-deployed process has no previous state to snapshot")
+		case typ == "list" && obj == "conv":
+			return wrapOp(map[string]interface{}{
+				"proc":    "ok",
+				"obj_id":  float64(123),
+				"commits": map[string]interface{}{"version": float64(0)},
+				"list":    []interface{}{},
+			})
+		case typ == "create" && obj == "node":
+			results := make([]interface{}, len(ops))
+			for i, nodeOp := range ops {
+				localID, _ := nodeOp["id"].(string)
+				results[i] = map[string]interface{}{"proc": "ok", "id": localID, "obj_id": localID}
+			}
+			return map[string]interface{}{"request_proc": "ok", "ops": results}
+		}
+		return okResponse(ops)
+	})
+	setProjectAuth(t, srv.URL)
+	stageID = 0
+	cachedProjectID = 0
+
+	result, isErr := handlePushProcess(context.Background(), map[string]interface{}{
+		"process_path": name,
+	})
+	if isErr {
+		t.Fatalf("a never-deployed process must push without waivers, got:\n%s", result)
+	}
+	if !strings.Contains(result, "no deployed version yet") {
+		t.Errorf("the reason must be stated, got:\n%s", result)
+	}
+}
+
+// After a successful deploy the sidecars are refreshed so the next push starts
+// current. That write can fail (permissions, full disk, a read-back error), and
+// when it does the local concurrency state is stale while the deploy really did
+// happen. Reporting a bare success there is what makes the next push either
+// re-flag the user's own change or lose its 3-way ancestor, so the failure has
+// to reach the caller and not just the log.
+func TestHandlePushProcess_StaleConcurrencyStateIsReported(t *testing.T) {
+	resetGlobals(t)
+	t.Cleanup(resetSnapshotSupportCache)
+	name := writeDeployedConv(t)
+
+	srv, _ := mockAPIServer(t, func(ops []map[string]interface{}) interface{} {
+		op := ops[0]
+		typ, _ := op["type"].(string)
+		obj, _ := op["obj"].(string)
+		switch {
+		case typ == "list" && obj == "snapshots":
+			return wrapOp(map[string]interface{}{"proc": "ok", "list": []interface{}{}})
+		case typ == "create" && obj == "snapshot":
+			return wrapOp(map[string]interface{}{"proc": "ok", "obj_id": float64(77), "version": float64(6)})
+		case typ == "list" && obj == "conv":
+			return wrapOp(deployedProcessOp())
+		case typ == "create" && obj == "node":
+			results := make([]interface{}, len(ops))
+			for i, nodeOp := range ops {
+				localID, _ := nodeOp["id"].(string)
+				results[i] = map[string]interface{}{"proc": "ok", "id": localID, "obj_id": localID}
+			}
+			return map[string]interface{}{"request_proc": "ok", "ops": results}
+		}
+		return okResponse(ops)
+	})
+	setProjectAuth(t, srv.URL)
+	stageID = 20
+	cachedProjectID = 10
+
+	// Make the post-deploy ancestor write fail without disturbing the pre-push
+	// baseline read: writeAncestorScheme has to MkdirAll its directory, and a
+	// regular file already sitting at that path stops it.
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(cwd, ancestorDirName), []byte("not a directory"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	result, isErr := handlePushProcess(context.Background(), map[string]interface{}{
+		"process_path":   name,
+		"adopt_existing": true,
+	})
+	if isErr {
+		t.Fatalf("the deploy itself succeeded, so this must not be an error result:\n%s", result)
+	}
+	for _, want := range []string{
+		"Process deployed successfully",
+		"the local concurrency state was NOT updated",
+		"re-pull this process before editing it again",
+	} {
+		if !strings.Contains(result, want) {
+			t.Errorf("expected result to contain %q, got:\n%s", want, result)
 		}
 	}
 }

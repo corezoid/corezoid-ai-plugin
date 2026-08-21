@@ -69,6 +69,53 @@ func TestClassifySnapshotRejection_SnapshotNamedIsConclusive(t *testing.T) {
 	}
 }
 
+// The dangerous middle ground: the message names snapshots AND says something
+// that sounds like absence, but scopes it to one stage, project, user or to
+// access rights. Those are policy and permission statements from a build that
+// does implement snapshots. Classifying them as feature-absence caches
+// snapshotSupportNo for the whole project+stage and silently drops the pre-push
+// rollback point for every push that follows, so each one must stay ordinary
+// and leave the real CreateSnapshot call to decide.
+func TestClassifySnapshotRejection_ScopedSnapshotComplaintNeverDisablesSnapshots(t *testing.T) {
+	for _, description := range []string{
+		"Snapshots are disabled for this stage",
+		"Snapshot access is disabled",
+		"Snapshots are not available for this user",
+		"Snapshots are unsupported for this project type",
+		"Snapshots are not supported for this project",
+		"Snapshot creation is disabled for your user",
+		"Snapshots not available: permission denied",
+		"Snapshots are disabled for company 42",
+		"Snapshots unsupported for conv_id 5",
+	} {
+		t.Run(description, func(t *testing.T) {
+			op := map[string]any{"proc": "error", "description": description}
+			if got := classifySnapshotRejection(op); got != rejectionOrdinary {
+				t.Errorf("classified %v, want rejectionOrdinary — a scoped complaint must keep snapshots enabled", got)
+			}
+		})
+	}
+}
+
+// The counterpart: worded installation-wide, with no target named, the same
+// markers ARE the answer. Absent this, pushes on a snapshot-less build would be
+// blocked forever by a CreateSnapshot that can never succeed.
+func TestClassifySnapshotRejection_InstallationWideAbsenceStaysConclusive(t *testing.T) {
+	for _, description := range []string{
+		"Snapshots are disabled on this installation",
+		"snapshot object is not available here",
+		"Snapshots are not supported",
+		"Snapshots are not supported by this build",
+	} {
+		t.Run(description, func(t *testing.T) {
+			op := map[string]any{"proc": "error", "description": description}
+			if got := classifySnapshotRejection(op); got != rejectionUnknownObjSnapshot {
+				t.Errorf("classified %v, want rejectionUnknownObjSnapshot", got)
+			}
+		})
+	}
+}
+
 func TestClassifySnapshotRejection_TemporarySnapshotFailureStaysOrdinary(t *testing.T) {
 	for _, description := range []string{
 		"snapshot service temporarily not available",

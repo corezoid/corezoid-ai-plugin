@@ -361,6 +361,16 @@ var snapshotUnknownObjMarkers = []string{
 
 // snapshotFeatureAbsentMarkers are only consulted once the message already
 // names snapshots, where a plain "not supported" is unambiguous.
+//
+// "disabled" and "not available" are the load-bearing ones to be careful with.
+// Installation-wide, they are the honest wording for a build that does not
+// offer snapshots ("Snapshots are disabled on this installation") and reading
+// them is what keeps push working there. Scoped to one target, they mean the
+// opposite — "Snapshots are disabled for this stage" is a policy statement from
+// a build that does implement snapshots. What separates the two is not the
+// marker but whether the message also names a stage, project, user or access,
+// so both stay in this list and the request-specific veto in
+// classifySnapshotRejection rule (2) does the separating.
 var snapshotFeatureAbsentMarkers = []string{
 	"unknown",
 	"unsupported",
@@ -446,10 +456,16 @@ func classifySnapshotRejection(op map[string]any) snapshotRejection {
 		return rejectionOrdinary
 	}
 
-	// (2) The API named the snapshot object in its refusal — conclusive, and
-	// checked before the request-specific rule so a message like "unknown obj
-	// snapshots for conv 5" is not discarded by that veto.
-	if strings.Contains(hay, "snapshot") && containsAnyMarker(hay, snapshotFeatureAbsentMarkers) {
+	// (2) The API named the snapshot object in its refusal — conclusive, but
+	// only when the same message does not also name a concrete thing the
+	// request carried. "Snapshots are unsupported for this project type" and
+	// "Snapshots are not supported for this user" are scoped complaints about
+	// one target, not evidence that the installation lacks the object; without
+	// this veto they would be cached as snapshotSupportNo and disable the
+	// pre-push rollback point for the whole project+stage.
+	if strings.Contains(hay, "snapshot") &&
+		containsAnyMarker(hay, snapshotFeatureAbsentMarkers) &&
+		!requestSpecificRejection(hay) {
 		return rejectionUnknownObjSnapshot
 	}
 

@@ -165,6 +165,21 @@ func TestHandlePushProcess_GitCallAdvisoryDoesNotBlock(t *testing.T) {
 
 	calls := 0
 	srv, _ := mockAPIServer(t, func(ops []map[string]interface{}) interface{} {
+		op := ops[0]
+		typ, _ := op["type"].(string)
+		obj, _ := op["obj"].(string)
+		// The fixture is a created-but-never-deployed conv. Saying so keeps this
+		// test on the gate it is about: with no committed version and no nodes
+		// there is nothing for the baseline or snapshot gates to protect, so
+		// neither fires and neither needs a waiver here.
+		if typ == "list" && obj == "conv" {
+			return wrapOp(map[string]interface{}{
+				"proc":    "ok",
+				"obj_id":  float64(123),
+				"commits": map[string]interface{}{"version": float64(0)},
+				"list":    []interface{}{},
+			})
+		}
 		calls++
 		return wrapOp(map[string]interface{}{
 			"proc":        "error",
@@ -363,6 +378,13 @@ func TestHandlePushProcess_WarnsOnlyForDevelopStageStubMode(t *testing.T) {
 
 	result, isErr := handlePushProcess(context.Background(), map[string]interface{}{
 		"process_path": filepath.Base(p),
+		// This test is about the Stub Mode gate. Its fixture was never pulled and
+		// its mock cannot resolve a project id, so both safety waivers are needed
+		// to reach that gate. allow_no_snapshot is only honoured here because the
+		// target resolves to mutable stage 321 ("develop") — see
+		// TestHandlePushProcess_NoSnapshotWaiverRefusedOnUnresolvedStage.
+		"adopt_existing":    true,
+		"allow_no_snapshot": true,
 	})
 	if !isErr {
 		t.Fatalf("expected downstream deploy error from mock API, got success: %q", result)
@@ -475,6 +497,9 @@ func TestHandlePushProcess_AllowStubModeContinuesPastStubGate(t *testing.T) {
 	result, isErr := handlePushProcess(context.Background(), map[string]interface{}{
 		"process_path":           filepath.Base(p),
 		"allow_active_stub_mode": true,
+		// See the note on the other push tests: this one is about the Stub Mode
+		// waiver, and its fixture has no pull baseline.
+		"adopt_existing": true,
 	})
 	if !isErr {
 		t.Fatalf("expected downstream deploy error from mock API, got success: %q", result)

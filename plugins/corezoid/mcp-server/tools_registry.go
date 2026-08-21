@@ -205,6 +205,14 @@ var toolRegistry = []mcpTool{
 					"type":        "boolean",
 					"description": "On a concurrent-change conflict, perform a 3-way merge: preserve the original as <process>.pre-merge and graft non-conflicting server node/process-field changes into the local file for review (does not deploy). Values changed differently on both sides are kept as yours and listed to resolve. Default false.",
 				},
+				"allow_no_snapshot": map[string]interface{}{
+					"type":        "boolean",
+					"description": "Deploy over an existing process even though no pre-push snapshot could be taken because project_id/stage_id could not be resolved — i.e. accept that the overwritten version cannot be restored. Honoured ONLY on a stage that resolves and is mutable; refused on immutable, production-like or unresolvable stages. Separate from force on purpose: force overrides a conflict you were shown, this waives the ability to undo. Prefer fixing the workspace configuration (corezoid-init). Default false.",
+				},
+				"adopt_existing": map[string]interface{}{
+					"type":        "boolean",
+					"description": "Deploy a file that has no pull baseline over a process that already has a deployed version — overwriting server state without knowing what it contains. Use only when the local file is deliberately authoritative (an import or a restored copy); otherwise run pull-process first so real conflicts can be detected. Not needed for processes that were never deployed. Separate from force on purpose. Default false.",
+				},
 			},
 			"required": []string{"process_path"},
 		},

@@ -46,12 +46,73 @@ func blockedResult(r conflictResult) (bool, string) {
 	return r.action == conflictBlock, r.message
 }
 
-func TestConflict_NoBaselineIsAdvisory(t *testing.T) {
+// No baseline means lost-update detection cannot run at all. Whether that is
+// harmless depends on the server: with nothing deployed there is nothing to
+// lose, but over a deployed version it is the blind overwrite the whole
+// baseline subsystem exists to prevent.
+func TestConflict_NoBaselineOnDeployedProcessBlocks(t *testing.T) {
 	_, e := mockAPIServer(t, convResp(map[string]interface{}{"change_time": float64(200)}))
 	_, fp := setupConflict(t, baselineEntry{}, twoNodeLocal) // no baseline written
-	blocked, msg := blockedResult(resolveConflict(e, fp, 1, twoNodeLocal, false, false))
-	if blocked || !strings.Contains(msg, "no pull baseline") {
-		t.Fatalf("no baseline must be advisory, got blocked=%v msg=%q", blocked, msg)
+	blocked, msg := blockedResult(resolveConflict(e, fp, 1, twoNodeLocal, false, false, false))
+	if !blocked || !strings.Contains(msg, "no pull baseline") {
+		t.Fatalf("a deployed process with no baseline must block, got blocked=%v msg=%q", blocked, msg)
+	}
+	if !strings.Contains(msg, "pull-process") || !strings.Contains(msg, "adopt_existing") {
+		t.Errorf("block message must name both ways out, got %q", msg)
+	}
+}
+
+// force is for a conflict the user was shown; it must not stand in for "I have
+// no idea what is on the server".
+func TestConflict_NoBaselineIsNotWaivedByForce(t *testing.T) {
+	_, e := mockAPIServer(t, convResp(map[string]interface{}{"change_time": float64(200)}))
+	_, fp := setupConflict(t, baselineEntry{}, twoNodeLocal)
+	blocked, _ := blockedResult(resolveConflict(e, fp, 1, twoNodeLocal, true, false, false))
+	if !blocked {
+		t.Fatal("force=true must not waive a missing baseline on a deployed process")
+	}
+}
+
+func TestConflict_NoBaselineProceedsWithAdoptExisting(t *testing.T) {
+	_, e := mockAPIServer(t, convResp(map[string]interface{}{"change_time": float64(200)}))
+	_, fp := setupConflict(t, baselineEntry{}, twoNodeLocal)
+	blocked, msg := blockedResult(resolveConflict(e, fp, 1, twoNodeLocal, false, false, true))
+	if blocked {
+		t.Fatalf("adopt_existing=true must allow the push, got %q", msg)
+	}
+	if !strings.Contains(msg, "adopt_existing") {
+		t.Errorf("the waiver must be stated in the result, got %q", msg)
+	}
+}
+
+// The create-process → push-process flow: the conv exists but carries no
+// committed version and no nodes, so there is nothing a concurrent edit could
+// have overwritten and no baseline is needed.
+func TestConflict_NoBaselineOnNeverDeployedProcessProceeds(t *testing.T) {
+	_, e := mockAPIServer(t, convResp(map[string]interface{}{
+		"change_time": float64(200),
+		"commits":     map[string]interface{}{"version": float64(0)},
+		"list":        []interface{}{},
+	}))
+	_, fp := setupConflict(t, baselineEntry{}, twoNodeLocal)
+	blocked, msg := blockedResult(resolveConflict(e, fp, 1, twoNodeLocal, false, false, false))
+	if blocked {
+		t.Fatalf("a never-deployed process must not need a baseline, got %q", msg)
+	}
+	if !strings.Contains(msg, "no deployed version") {
+		t.Errorf("the reason must be stated, got %q", msg)
+	}
+}
+
+// An unanswerable server is not evidence that nothing is deployed: fail closed.
+func TestConflict_NoBaselineFailsClosedWhenServerCannotAnswer(t *testing.T) {
+	_, e := mockAPIServer(t, func([]map[string]interface{}) interface{} {
+		return map[string]interface{}{"request_proc": "error"}
+	})
+	_, fp := setupConflict(t, baselineEntry{}, twoNodeLocal)
+	blocked, _ := blockedResult(resolveConflict(e, fp, 1, twoNodeLocal, false, false, false))
+	if !blocked {
+		t.Fatal("an unreadable server state must not be read as 'nothing deployed'")
 	}
 }
 
@@ -62,7 +123,7 @@ func TestConflict_CorruptBaselineBlocks(t *testing.T) {
 		t.Fatal(err)
 	}
 	_, e := mockAPIServer(t, convResp(map[string]interface{}{"change_time": float64(200)}))
-	blocked, msg := blockedResult(resolveConflict(e, fp, 1, twoNodeLocal, true, false))
+	blocked, msg := blockedResult(resolveConflict(e, fp, 1, twoNodeLocal, true, false, false))
 	if !blocked || !strings.Contains(msg, "baseline") || !strings.Contains(msg, "unreadable") {
 		t.Fatalf("corrupt baseline must fail closed even with force=true, got blocked=%v msg=%q", blocked, msg)
 	}
@@ -72,7 +133,7 @@ func TestConflict_InSyncProceeds(t *testing.T) {
 	conv := map[string]interface{}{"change_time": float64(100), "last_confirmed_version": float64(10)}
 	_, e := mockAPIServer(t, convResp(conv))
 	_, fp := setupConflict(t, baselineEntry{ChangeTime: 100, Version: 10}, twoNodeLocal)
-	blocked, msg := blockedResult(resolveConflict(e, fp, 1, twoNodeLocal, false, false))
+	blocked, msg := blockedResult(resolveConflict(e, fp, 1, twoNodeLocal, false, false, false))
 	if blocked || msg != "" {
 		t.Fatalf("in-sync must proceed silently, got blocked=%v msg=%q", blocked, msg)
 	}
@@ -95,7 +156,7 @@ func TestConflict_ChangedBlocksWithImpact(t *testing.T) {
 	}
 	_, e := mockAPIServer(t, convResp(conv))
 	_, fp := setupConflict(t, baselineEntry{ChangeTime: 100, Version: 10}, twoNodeLocal)
-	blocked, msg := blockedResult(resolveConflict(e, fp, 1, twoNodeLocal, false, false))
+	blocked, msg := blockedResult(resolveConflict(e, fp, 1, twoNodeLocal, false, false, false))
 	if !blocked {
 		t.Fatalf("changed server must block, got blocked=%v", blocked)
 	}
@@ -110,7 +171,7 @@ func TestConflict_ForceOverrides(t *testing.T) {
 	conv := map[string]interface{}{"change_time": float64(300), "last_confirmed_version": float64(30)}
 	_, e := mockAPIServer(t, convResp(conv))
 	_, fp := setupConflict(t, baselineEntry{ChangeTime: 100, Version: 10}, twoNodeLocal)
-	blocked, msg := blockedResult(resolveConflict(e, fp, 1, twoNodeLocal, true, false))
+	blocked, msg := blockedResult(resolveConflict(e, fp, 1, twoNodeLocal, true, false, false))
 	if blocked || msg != "" {
 		t.Fatalf("force must override the conflict, got blocked=%v msg=%q", blocked, msg)
 	}
@@ -168,7 +229,7 @@ func TestConflict_DeletedOnServerBlocks(t *testing.T) {
 		}
 	})
 	_, fp := setupConflict(t, baselineEntry{ChangeTime: 100, Version: 10}, twoNodeLocal)
-	blocked, msg := blockedResult(resolveConflict(e, fp, 1, twoNodeLocal, false, false))
+	blocked, msg := blockedResult(resolveConflict(e, fp, 1, twoNodeLocal, false, false, false))
 	if !blocked || !strings.Contains(msg, "no longer on the server") {
 		t.Fatalf("deleted process must block with a stale hint, got blocked=%v msg=%q", blocked, msg)
 	}
@@ -189,7 +250,7 @@ func TestConflict_ServerUnreachableBlocks(t *testing.T) {
 		}
 	})
 	_, fp := setupConflict(t, baselineEntry{ChangeTime: 100, Version: 10}, twoNodeLocal)
-	blocked, msg := blockedResult(resolveConflict(e, fp, 1, twoNodeLocal, false, false))
+	blocked, msg := blockedResult(resolveConflict(e, fp, 1, twoNodeLocal, false, false, false))
 	if !blocked {
 		t.Fatalf("unreachable server + baseline must block, got blocked=%v msg=%q", blocked, msg)
 	}
@@ -210,7 +271,7 @@ func TestConflict_ServerUnreachableForceStillBlocks(t *testing.T) {
 		}
 	})
 	_, fp := setupConflict(t, baselineEntry{ChangeTime: 100, Version: 10}, twoNodeLocal)
-	blocked, _ := blockedResult(resolveConflict(e, fp, 1, twoNodeLocal, true, false))
+	blocked, _ := blockedResult(resolveConflict(e, fp, 1, twoNodeLocal, true, false, false))
 	if !blocked {
 		t.Fatalf("force=true must NOT waive the unknown-server-state block")
 	}
@@ -325,7 +386,7 @@ func TestConflict_EqualTimestamp_ListSource_ContentDiffers(t *testing.T) {
 	}
 	e := dualEndpointServer(t, 100, 999, serverScheme) // same change_time, different (incomparable) version
 
-	blocked, msg := blockedResult(resolveConflict(e, fp, 1, ancestor, false, false))
+	blocked, msg := blockedResult(resolveConflict(e, fp, 1, ancestor, false, false, false))
 	if !blocked {
 		t.Fatalf("list-sourced base + equal change_time + differing server scheme must block, got blocked=%v msg=%q", blocked, msg)
 	}
@@ -352,7 +413,7 @@ func TestConflict_EqualTimestamp_ListSource_ContentSame(t *testing.T) {
 	}
 	e := dualEndpointServer(t, 100, 999, scheme)
 
-	blocked, msg := blockedResult(resolveConflict(e, fp, 1, scheme, false, false))
+	blocked, msg := blockedResult(resolveConflict(e, fp, 1, scheme, false, false, false))
 	if blocked {
 		t.Fatalf("list-sourced base + equal change_time + matching server scheme must proceed, got blocked=%v msg=%q", blocked, msg)
 	}
@@ -379,7 +440,7 @@ func TestConflict_EqualTimestamp_LegacyBase_ContentDiffers(t *testing.T) {
 	}
 	e := dualEndpointServer(t, 100, 11, serverScheme)
 
-	blocked, msg := blockedResult(resolveConflict(e, fp, 1, ancestor, false, false))
+	blocked, msg := blockedResult(resolveConflict(e, fp, 1, ancestor, false, false, false))
 	if !blocked {
 		t.Fatalf("legacy baseline + equal change_time + differing server scheme must block, got blocked=%v msg=%q", blocked, msg)
 	}
@@ -414,7 +475,7 @@ func TestConflict_EqualTimestamp_DuplicateTitle_ServerEditsFirst(t *testing.T) {
 	}
 	e := dualEndpointServer(t, 100, 999, serverScheme)
 
-	blocked, msg := blockedResult(resolveConflict(e, fp, 1, ancestor, false, false))
+	blocked, msg := blockedResult(resolveConflict(e, fp, 1, ancestor, false, false, false))
 	if !blocked {
 		t.Fatalf("duplicate title + server edit on first occurrence must block, got blocked=%v msg=%q", blocked, msg)
 	}
@@ -446,7 +507,7 @@ func TestConflict_EqualTimestamp_DuplicateTitle_ServerEditsSecond(t *testing.T) 
 	}
 	e := dualEndpointServer(t, 100, 999, serverScheme)
 
-	blocked, msg := blockedResult(resolveConflict(e, fp, 1, ancestor, false, false))
+	blocked, msg := blockedResult(resolveConflict(e, fp, 1, ancestor, false, false, false))
 	if !blocked {
 		t.Fatalf("duplicate title + server edit on second occurrence must block (Ambiguous safeguard), got blocked=%v msg=%q", blocked, msg)
 	}
@@ -472,7 +533,7 @@ func TestConflict_EqualTimestamp_DuplicateTitle_InSync_Proceeds(t *testing.T) {
 	}
 	e := dualEndpointServer(t, 100, 999, scheme)
 
-	blocked, msg := blockedResult(resolveConflict(e, fp, 1, scheme, false, false))
+	blocked, msg := blockedResult(resolveConflict(e, fp, 1, scheme, false, false, false))
 	if blocked {
 		t.Fatalf("duplicate titles with an in-sync server must not block, got blocked=%v msg=%q", blocked, msg)
 	}
@@ -503,7 +564,7 @@ func TestConflict_EqualTimestamp_DuplicateTitle_ServerAddsThird(t *testing.T) {
 	}
 	e := dualEndpointServer(t, 100, 999, serverScheme)
 
-	blocked, msg := blockedResult(resolveConflict(e, fp, 1, ancestor, false, false))
+	blocked, msg := blockedResult(resolveConflict(e, fp, 1, ancestor, false, false, false))
 	if !blocked {
 		t.Fatalf("added third duplicate must block, got blocked=%v msg=%q", blocked, msg)
 	}
@@ -533,7 +594,7 @@ func TestConflict_EqualTimestamp_DuplicateTitle_ReorderedProceeds(t *testing.T) 
 	}
 	e := dualEndpointServer(t, 100, 999, serverScheme)
 
-	blocked, msg := blockedResult(resolveConflict(e, fp, 1, ancestor, false, false))
+	blocked, msg := blockedResult(resolveConflict(e, fp, 1, ancestor, false, false, false))
 	if blocked {
 		t.Fatalf("duplicate-title reorder with identical bodies must proceed, got blocked=%v msg=%q", blocked, msg)
 	}
@@ -559,7 +620,7 @@ func TestConflict_EqualTimestamp_ProcessFieldChangeBlocks(t *testing.T) {
 	}
 	e := dualEndpointServer(t, 100, 999, serverScheme)
 
-	blocked, msg := blockedResult(resolveConflict(e, fp, 1, ancestor, false, false))
+	blocked, msg := blockedResult(resolveConflict(e, fp, 1, ancestor, false, false, false))
 	if !blocked {
 		t.Fatalf("process-level field change must block, got blocked=%v msg=%q", blocked, msg)
 	}
@@ -601,7 +662,7 @@ func TestConflict_EqualTimestamp_ExportFailure_Blocks(t *testing.T) {
 	t.Cleanup(srv.Close)
 	e := &Executor{Ctx: context.Background(), APIUrl: srv.URL, Token: "test-token", NodeIDMap: make(map[string]NodeInfo)}
 
-	blocked, msg := blockedResult(resolveConflict(e, fp, 1, ancestor, false, false))
+	blocked, msg := blockedResult(resolveConflict(e, fp, 1, ancestor, false, false, false))
 	if !blocked {
 		t.Fatalf("export failure at equal timestamp must block, got blocked=%v msg=%q", blocked, msg)
 	}
@@ -609,7 +670,7 @@ func TestConflict_EqualTimestamp_ExportFailure_Blocks(t *testing.T) {
 		t.Fatalf("block message should name the failed content diff:\n%s", msg)
 	}
 	// force=true must override the block: the fallback safety net is optional.
-	blocked, _ = blockedResult(resolveConflict(e, fp, 1, ancestor, true, false))
+	blocked, _ = blockedResult(resolveConflict(e, fp, 1, ancestor, true, false, false))
 	if blocked {
 		t.Fatalf("force=true must override the export-failure block")
 	}
@@ -630,7 +691,7 @@ func TestConflict_EqualTimestamp_NoAncestor_LegacyProceeds(t *testing.T) {
 	}
 	e := dualEndpointServer(t, 100, 10, local)
 
-	blocked, msg := blockedResult(resolveConflict(e, fp, 1, local, false, false))
+	blocked, msg := blockedResult(resolveConflict(e, fp, 1, local, false, false, false))
 	if blocked {
 		t.Fatalf("legacy sidecar without ancestor must proceed (warn only), got blocked=%v msg=%q", blocked, msg)
 	}
