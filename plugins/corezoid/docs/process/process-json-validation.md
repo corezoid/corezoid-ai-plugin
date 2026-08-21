@@ -199,6 +199,42 @@ requirements:
 
 Below is a complete list of validation rules for Corezoid process JSON files.
 
+## Server-emitted node fields
+
+Corezoid adds execution fields of its own to **deployed** nodes. They are part of
+what the platform runs, not part of what you author, and they come back in the
+JSON that `pull-process` writes.
+
+Known field:
+
+| Field | Node type | Meaning |
+|---|---|---|
+| `chunkify` | `api_code` (Code node) | Execution flag Corezoid sets on a deployed Code node |
+
+Rules:
+
+1. **Never write one by hand.** These describe how the platform executes a node;
+   asserting one locally claims a decision that is not yours to make.
+2. **Never strip one on edit.** It arrived with the deployed node; removing it
+   means pushing back something other than what is running. `push-process` sends
+   it back unchanged.
+3. **Expect fields not on this list.** There is no published catalogue of what
+   the platform may add, and the list above grew from a single field discovered
+   when it broke a push.
+
+Because of rule 3, an undeclared property is **not** a validation error.
+`lint-process` reports it under `UNKNOWN LOGIC PROPERTIES` as an advisory that is
+deliberately not counted in `Total issues` — a freshly pulled file must never read
+as dirty. Treat the advisory as a question rather than a verdict:
+
+- the property looks like a platform field on a node you pulled → leave it alone;
+- the property is on a node you just wrote by hand → it is a typo. Compare it
+  against the node's field list in [Node Structures](../node-structures.md).
+
+`push-process` remains the authoritative check: the Corezoid API validates the
+process independently, so a genuine mistake is refused at deploy time regardless
+of what the local schema accepted.
+
 ## Process Schema Structure
 
 The Corezoid process JSON schema defines that a process must always be an object with the following structure:
@@ -271,6 +307,10 @@ Common validation errors for Code Execution nodes:
 - Missing the required `err_node_id` parameter
 - Using an unsupported language (only "js" and "erl" are supported)
 - Syntax errors in the source code
+
+A Code node pulled from a deployed process also carries `chunkify`, which
+Corezoid sets and you do not author. Leave it as-is on edit — see
+[Server-emitted node fields](#server-emitted-node-fields).
 
 #### Error Handling in Code Execution Nodes
 

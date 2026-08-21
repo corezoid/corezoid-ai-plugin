@@ -32,6 +32,23 @@
    - Default: 1000ms (1 second)
    - Validation: Must be a positive integer.
 
+### Server-emitted (never author these)
+
+1. **chunkify** (Boolean)
+   - An execution flag Corezoid sets on a deployed Code node. It is not part of
+     the node's authored configuration.
+   - You will see it on any Code node that came back from `pull-process` against
+     a deployed process. You will not see it on a node you just created locally.
+   - **Do not add it by hand, and do not strip it.** Removing it on edit means
+     pushing back something different from what the platform runs; adding it by
+     hand asserts an execution detail you do not control.
+   - Simply leave it where it is: `push-process` sends it back unchanged.
+
+Corezoid may decorate deployed nodes with fields like this one beyond the list
+here — there is no published catalogue. That is why `lint-process` reports an
+undeclared property as an advisory rather than an error; see
+[Process JSON Validation](../process/process-json-validation.md#server-emitted-node-fields).
+
 ## Available Libraries
 
 Code nodes have access to several built-in libraries that can be imported using the `require()`
