@@ -74,6 +74,10 @@ Complete JSON structures for all node types used when modifying Corezoid process
 - Modify the `data` object directly: `data.myParam = value;`
 - Use `try/catch` inside `src` for internal error handling
 - `console.log()` has no effect — use `data._ = []; data._.push("log")` for debugging
+- `chunkify` is **server-emitted**: Corezoid sets it on a deployed Code node, so it
+  appears in `pull-process` output but is absent from the example above on purpose.
+  Never author it, never strip it on edit — see
+  [Server-emitted node fields](process/process-json-validation.md#server-emitted-node-fields)
 
 ---
 
