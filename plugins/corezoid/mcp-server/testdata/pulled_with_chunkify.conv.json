@@ -1,0 +1,89 @@
+{
+  "obj_type": 1,
+  "obj_id": 1180234,
+  "parent_id": 1180200,
+  "title": "chunkify round-trip fixture",
+  "description": "Shape produced by pull-process for a deployed process containing a Code node: Corezoid decorates the api_code logic with its own execution field `chunkify`, which no author writes by hand.",
+  "status": "active",
+  "params": [],
+  "ref_mask": true,
+  "conv_type": "process",
+  "scheme": {
+    "nodes": [
+      {
+        "id": "5f2a11c4e552e8da3d32d901",
+        "obj_type": 1,
+        "title": "Start",
+        "description": "",
+        "x": 0,
+        "y": 0,
+        "extra": "{\"modeForm\":\"expand\"}",
+        "options": null,
+        "condition": {
+          "logics": [
+            {
+              "type": "go",
+              "to_node_id": "5f2a11c4e552e8da3d32d902"
+            }
+          ],
+          "semaphors": []
+        }
+      },
+      {
+        "id": "5f2a11c4e552e8da3d32d902",
+        "obj_type": 0,
+        "title": "Normalize payload",
+        "description": "",
+        "x": 0,
+        "y": 160,
+        "extra": "{\"modeForm\":\"expand\",\"icon\":\"\"}",
+        "options": null,
+        "condition": {
+          "logics": [
+            {
+              "type": "api_code",
+              "lang": "js",
+              "src": "data.normalized = String(data.raw || \"\").trim();",
+              "err_node_id": "5f2a11c4e552e8da3d32d904",
+              "chunkify": false
+            },
+            {
+              "type": "go",
+              "to_node_id": "5f2a11c4e552e8da3d32d903"
+            }
+          ],
+          "semaphors": []
+        }
+      },
+      {
+        "id": "5f2a11c4e552e8da3d32d903",
+        "obj_type": 2,
+        "title": "Done",
+        "description": "",
+        "x": 0,
+        "y": 320,
+        "extra": "{\"modeForm\":\"collapse\",\"icon\":\"success\"}",
+        "options": "{\"save_task\":true}",
+        "condition": {
+          "logics": [],
+          "semaphors": []
+        }
+      },
+      {
+        "id": "5f2a11c4e552e8da3d32d904",
+        "obj_type": 2,
+        "title": "Normalize failed",
+        "description": "",
+        "x": 260,
+        "y": 320,
+        "extra": "{\"modeForm\":\"collapse\",\"icon\":\"error\"}",
+        "options": "{\"save_task\":true}",
+        "condition": {
+          "logics": [],
+          "semaphors": []
+        }
+      }
+    ],
+    "web_settings": [[], []]
+  }
+}
