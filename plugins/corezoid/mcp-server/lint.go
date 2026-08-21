@@ -1496,6 +1496,15 @@ func FormatLintResult(result *LintResult) string {
 		}
 	}
 
+	if len(result.UnknownLogicProps) > 0 {
+		hasIssues = true
+		sb.WriteString(fmt.Sprintf("\n=== UNKNOWN LOGIC PROPERTIES (%d) — push-process blocks these; force=true bypasses ===\n", len(result.UnknownLogicProps)))
+		for _, u := range result.UnknownLogicProps {
+			sb.WriteString(fmt.Sprintf("  [%s] %s\n", u.NodeID, u.NodeTitle))
+			sb.WriteString(fmt.Sprintf("  Issue: %s\n", u.Issue))
+		}
+	}
+
 	if len(result.SelfReferenceCopies) > 0 {
 		hasIssues = true
 		sb.WriteString(fmt.Sprintf("\n=== SELF-REFERENCING COPY/CALL NODES (%d) — push-process blocks these; force=true does NOT bypass ===\n", len(result.SelfReferenceCopies)))
@@ -1512,20 +1521,8 @@ func FormatLintResult(result *LintResult) string {
 		if !result.SchemaValid {
 			schemaIssues = 1
 		}
-		total := len(result.NoopConditions) + len(result.UnusedSetParams) + len(result.OrphanedNodes) + len(result.RpcReplyMismatches) + len(result.PassthroughEscalations) + len(result.LiteralReplyValues) + len(result.SharedErrorClusters) + len(result.OldFormatNodes) + len(result.UnrepliedTerminals) + len(result.MissingDefaultGo) + len(result.ShortTimers) + len(result.BrokenLinks) + len(result.UnderspecifiedAPINodes) + len(result.StubModeNodes) + len(result.GitCallUsages) + len(result.SelfReferenceCopies) + schemaIssues
+		total := len(result.NoopConditions) + len(result.UnusedSetParams) + len(result.OrphanedNodes) + len(result.RpcReplyMismatches) + len(result.PassthroughEscalations) + len(result.LiteralReplyValues) + len(result.SharedErrorClusters) + len(result.OldFormatNodes) + len(result.UnrepliedTerminals) + len(result.MissingDefaultGo) + len(result.ShortTimers) + len(result.BrokenLinks) + len(result.UnderspecifiedAPINodes) + len(result.StubModeNodes) + len(result.GitCallUsages) + len(result.SelfReferenceCopies) + len(result.UnknownLogicProps) + schemaIssues
 		sb.WriteString(fmt.Sprintf("\nTotal issues: %d\n", total))
-	}
-
-	// Advisory, printed after the verdict and deliberately NOT counted in
-	// "Total issues": an unrecognised property is usually a field Corezoid added
-	// to a deployed node, and letting that mark the file dirty would recreate
-	// exactly the round-trip breakage this check replaced.
-	if len(result.UnknownLogicProps) > 0 {
-		sb.WriteString(fmt.Sprintf("\n=== UNKNOWN LOGIC PROPERTIES (%d) — advisory, not counted ===\n", len(result.UnknownLogicProps)))
-		for _, u := range result.UnknownLogicProps {
-			sb.WriteString(fmt.Sprintf("  [%s] %s\n", u.NodeID, u.NodeTitle))
-			sb.WriteString(fmt.Sprintf("  Issue: %s\n", u.Issue))
-		}
 	}
 
 	return sb.String()

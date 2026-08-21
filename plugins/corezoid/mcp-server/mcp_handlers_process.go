@@ -409,7 +409,48 @@ func categorizeLintForPush(lintRes *LintResult) (structural, overridable, adviso
 	advisory = len(lintRes.NoopConditions) + len(lintRes.UnusedSetParams) +
 		len(lintRes.OrphanedNodes) + len(lintRes.PassthroughEscalations) +
 		len(lintRes.SharedErrorClusters) + len(lintRes.GitCallUsages)
+	// UnknownLogicProps is deliberately NOT in any of the three sums: it gets its
+	// own gate in handlePushProcess, because it needs a different message. Adding
+	// it here would also be wrong twice over — as advisory it would deploy a typo
+	// silently, and as overridable it would claim the deploy is what breaks.
 	return structural, overridable, advisory
+}
+
+// unknownPropsPushBlock returns the message to block a push on properties no
+// schema declares, or "" when the push may proceed.
+//
+// Split out of handlePushProcess so the decision is directly testable. It has to
+// be: this finding is deliberately absent from the categorizeLintForPush sums, so
+// a test of those sums cannot notice it going silent — which is exactly how it
+// went silent in the first place.
+//
+// Blocks by default, waived by force. The logics schemas are loaded with
+// additionalProperties relaxed so a field Corezoid adds to a deployed node cannot
+// break the pull -> push round-trip, and that relaxation removed the only thing
+// standing between a typo and a live process: `issync` for `is_sync` sits in no
+// `required` list, so it used to fail schema validation and now passes. Unlike
+// the closed schema it replaces, this stop is waivable — a genuine platform field
+// is one force=true away instead of a dead end.
+func unknownPropsPushBlock(lintRes *LintResult, force bool) string {
+	n := len(lintRes.UnknownLogicProps)
+	if n == 0 || force {
+		return ""
+	}
+	return fmt.Sprintf("Push blocked: %d node(s) carry a property their schema does not declare. "+
+		"Two things land here and they need opposite responses:\n\n"+
+		"  • a typo (`issync` for `is_sync`) — fix the property name; nothing else catches it, "+
+		"since it is in no required list;\n"+
+		"  • a field Corezoid added to a deployed node — leave it as-is and re-run with force=true, "+
+		"then report it so the schema can declare it and future pushes stop asking.\n\n%s",
+		n, FormatLintResult(lintRes))
+}
+
+// lintNoteWanted reports whether a proceeding push should print the lint report,
+// keeping the promise that findings which do not block are still seen. Undeclared
+// properties count here too: on a forced push they are the whole reason the
+// report matters.
+func lintNoteWanted(lintRes *LintResult, overridable, advisory, stubMode int) bool {
+	return overridable+advisory+stubMode+len(lintRes.UnknownLogicProps) > 0
 }
 
 // handlePushProcess validates a local .conv.json and deploys it to Corezoid.
@@ -479,6 +520,9 @@ func handlePushProcess(ctx context.Context, args map[string]interface{}) (string
 	//     but force=true can waive them for known-good pushes.
 	//   • advisory findings (noop, unused set_param, orphans, passthrough,
 	//     shared clusters) never block; they are surfaced so the user sees them.
+	//   • undeclared logic properties have their own gate below: they block by
+	//     default but force=true waives them, because the same finding covers
+	//     both a typo and a platform-added field.
 	// Active Stub Mode has its own stage-aware gate because it bypasses the real
 	// called process at runtime.
 	force, _ := args["force"].(bool)
@@ -510,10 +554,26 @@ func handlePushProcess(ctx context.Context, args map[string]interface{}) (string
 		if overridable > 0 && force {
 			fmt.Fprintf(os.Stderr, "[lint] %d blocking issue(s) overridden with force=true\n", overridable)
 		}
+		// Undeclared logic properties: block by default, waivable with force.
+		//
+		// The logics schemas are loaded with additionalProperties relaxed so a
+		// field Corezoid added to a deployed node cannot break the pull -> push
+		// round-trip. That relaxation removed the ONLY thing standing between a
+		// typo and a live process: `issync` for `is_sync` is in no `required`
+		// list, so it used to fail schema validation and now passes. This gate is
+		// what puts a stop back in front of it — waivable, unlike the closed
+		// schema it replaced, so a genuine platform field is a force=true away
+		// rather than a dead end.
+		if msg := unknownPropsPushBlock(lintRes, force); msg != "" {
+			return msg, true
+		}
+		if n := len(lintRes.UnknownLogicProps); n > 0 && force {
+			fmt.Fprintf(os.Stderr, "[lint] %d undeclared logic property(ies) overridden with force=true\n", n)
+		}
 		// The push proceeds. Surface any findings so the promise "advisory
 		// findings are shown but do not block" is actually kept — otherwise
 		// advisory-only issues would deploy silently and never be seen.
-		if overridable+advisory+stubMode > 0 {
+		if lintNoteWanted(lintRes, overridable, advisory, stubMode) {
 			lintNote = FormatLintResult(lintRes)
 		}
 	}

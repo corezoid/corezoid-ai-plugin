@@ -222,18 +222,33 @@ Rules:
    the platform may add, and the list above grew from a single field discovered
    when it broke a push.
 
-Because of rule 3, an undeclared property is **not** a validation error.
-`lint-process` reports it under `UNKNOWN LOGIC PROPERTIES` as an advisory that is
-deliberately not counted in `Total issues` — a freshly pulled file must never read
-as dirty. Treat the advisory as a question rather than a verdict:
+### How an undeclared property is handled
 
-- the property looks like a platform field on a node you pulled → leave it alone;
-- the property is on a node you just wrote by hand → it is a typo. Compare it
+Because of rule 3, the JSON schema does not reject a property it has never heard
+of — a field the platform added must not break the round-trip. But the same
+relaxation would let a **typo** through, and a misspelled property is in no
+`required` list, so nothing else catches it: `issync` instead of `is_sync` on an
+`api_rpc` node parses, validates, and silently leaves the call asynchronous.
+
+So the check moved to where the consequence is:
+
+| Step | Behaviour |
+|---|---|
+| `lint-process` | Reports it under `UNKNOWN LOGIC PROPERTIES`, counted in `Total issues` |
+| `push-process` | **Blocks.** `force=true` waives it |
+
+Read the finding as a question with two opposite answers:
+
+- **A field on a node you pulled from a deployed process** → a platform field.
+  Leave it exactly as it is, re-run with `force=true`, and report it so the schema
+  can declare it and future pushes stop asking.
+- **A property on a node you wrote by hand** → a typo. Fix the name; compare it
   against the node's field list in [Node Structures](../node-structures.md).
+  Do not reach for `force=true` here — it is the one case where the block is right.
 
-`push-process` remains the authoritative check: the Corezoid API validates the
-process independently, so a genuine mistake is refused at deploy time regardless
-of what the local schema accepted.
+The block is waivable on purpose. A closed schema was not: it turned an
+undocumented platform field into a dead end on a file the plugin itself produced,
+with no way forward short of hand-editing generated JSON.
 
 ## Process Schema Structure
 

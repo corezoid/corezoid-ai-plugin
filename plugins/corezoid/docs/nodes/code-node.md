@@ -45,9 +45,10 @@
    - Simply leave it where it is: `push-process` sends it back unchanged.
 
 Corezoid may decorate deployed nodes with fields like this one beyond the list
-here — there is no published catalogue. That is why `lint-process` reports an
-undeclared property as an advisory rather than an error; see
-[Process JSON Validation](../process/process-json-validation.md#server-emitted-node-fields).
+here — there is no published catalogue. An undeclared property therefore does not
+fail schema validation, but `push-process` blocks on it and `force=true` waives
+it; see
+[Server-emitted node fields](../process/process-json-validation.md#server-emitted-node-fields).
 
 ## Available Libraries
 

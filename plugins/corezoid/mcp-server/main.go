@@ -372,8 +372,17 @@ func logicTypeNames(doc any, defName string) []string {
 // pull-process, which breaks the documented pull -> edit -> lint -> push loop for
 // every process containing that node type. Blocking a push on an upstream field
 // we simply have not catalogued yet is the wrong default; naming it is right.
-// Typos stay visible as an UNKNOWN LOGIC PROPERTIES advisory, and push-process
-// remains the authoritative gate because the server validates too.
+// What this deliberately gives up, and where it is paid back: closing the schema
+// was the only thing stopping a typo, since a misspelled property is in no
+// `required` list. That check does not disappear — it moves to
+// unknownPropsPushBlock, which blocks the push and is waived by force=true. So a
+// typo is still refused before it reaches a live process, and an undocumented
+// platform field is one flag away instead of a dead end.
+//
+// Do NOT justify this by "the Corezoid API validates too" — that was asserted
+// here once and never verified; an API that ignores unknown fields would let the
+// typo through. The local gate is the one we control, so it is the one that has
+// to hold.
 func relaxAdditionalProps(doc any) map[string]bool {
 	m, ok := doc.(map[string]any)
 	if !ok {
