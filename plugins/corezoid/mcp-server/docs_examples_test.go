@@ -78,6 +78,7 @@ func TestDocExamplesMatchSchema(t *testing.T) {
 						i+1, logicType, name)
 				}
 			}
+			checkConditionalConstraints(t, i+1, logicType, lg)
 		}
 	}
 	if checkedLogics == 0 {
@@ -112,4 +113,33 @@ func requiredPropsFor(t *testing.T, logicType string) []string {
 		t.Fatalf("parse schema for %s: %v", logicType, err)
 	}
 	return sch.Required
+}
+
+// checkConditionalConstraints covers rules a draft-07 `properties` block cannot
+// express, so neither the schema nor the checks above can catch them.
+//
+// api_copy's `group` is the case that motivated it: both "all" and "" pass the
+// enum, but which one is correct is decided by `data`. "" with a populated `data`
+// is invalid and silently so — the exact shape a reader would produce from prose
+// that describes `group` as choosing how much of the task gets copied. (It does
+// not; `send_parent_data` does.)
+func checkConditionalConstraints(t *testing.T, block int, logicType string, lg map[string]any) {
+	t.Helper()
+	if logicType != "api_copy" {
+		return
+	}
+	group, hasGroup := lg["group"].(string)
+	if !hasGroup {
+		return // absence is already reported as a missing required property
+	}
+	data, _ := lg["data"].(map[string]any)
+	switch {
+	case len(data) > 0 && group != "all":
+		t.Errorf("doc block #%d: api_copy example pairs group=%q with a populated `data` — "+
+			"the schema requires \"all\" there, and the enum accepts both so nothing else catches it",
+			block, group)
+	case len(data) == 0 && group != "":
+		t.Errorf("doc block #%d: api_copy example pairs group=%q with an empty `data` — "+
+			"the schema requires \"\" there", block, group)
+	}
 }
