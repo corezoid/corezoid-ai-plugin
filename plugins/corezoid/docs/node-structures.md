@@ -225,6 +225,7 @@ Complete JSON structures for all node types used when modifying Corezoid process
         "conv_id": "@process-alias",
         "ref": "{{unique_ref}}",
         "mode": "create",
+        "group": "all",
         "is_sync": false,
         "data": {
           "field1": "{{value1}}",
@@ -257,6 +258,13 @@ Complete JSON structures for all node types used when modifying Corezoid process
 - Use for async fan-out, logging, notifications, background processing
 - Use `api_rpc` instead when you need the output from the called process
 - `conv_id`: use `@alias` (preferred) or numeric process ID
+- `group` is **required** by the schema, and its value is dictated by `data`, not by how
+  much of the task you want copied:
+  - `"all"` when `data` carries key/value mappings — the case in the example above
+  - `""` only when `data` is an empty object
+  Omitting it fails validation with `missing property 'group'`. Pairing `""` with a
+  non-empty `data` passes the enum but is invalid, so nothing catches it — use `"all"`.
+- copying the **whole task** is controlled by `send_parent_data`, not by `group`
 - `data` / `data_type` instead of `extra` / `extra_type` (unlike `api_rpc`)
 - `err_node_id` is **required**
 
