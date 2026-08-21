@@ -861,6 +861,30 @@ func TestHandleToolCall_CreateAlias_UsesParentIDFromFile(t *testing.T) {
 
 // ---- show-task -------------------------------------------------------------
 
+func TestShowTaskSchemaRequiresNonEmptyIdentifier(t *testing.T) {
+	var schema map[string]interface{}
+	for _, tool := range toolRegistry {
+		if tool.Name == "show-task" {
+			schema, _ = tool.InputSchema.(map[string]interface{})
+			break
+		}
+	}
+	if schema == nil {
+		t.Fatal("show-task schema not found")
+	}
+	anyOf, ok := schema["anyOf"].([]map[string]interface{})
+	if !ok || len(anyOf) != 2 {
+		t.Fatalf("show-task schema must require task_id or ref, got %#v", schema["anyOf"])
+	}
+	properties := schema["properties"].(map[string]interface{})
+	for _, key := range []string{"task_id", "ref"} {
+		property := properties[key].(map[string]interface{})
+		if property["minLength"] != 1 {
+			t.Errorf("%s minLength = %#v, want 1", key, property["minLength"])
+		}
+	}
+}
+
 // mockShowTaskServer answers a single show-task op, recording the op it was
 // asked for so the caller can assert on the wire shape.
 func mockShowTaskServer(t *testing.T, reply map[string]interface{}) *[]map[string]interface{} {

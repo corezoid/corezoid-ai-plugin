@@ -331,6 +331,96 @@ func TestEnsureFolderMarkers_KeepsExistingMarker(t *testing.T) {
 	}
 }
 
+func TestEnsureFolderMarkers_RejectsStaleMarker(t *testing.T) {
+	root := t.TempDir()
+	dir := filepath.Join(root, "10_billing")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	stale := filepath.Join(dir, "37_old.folder.json")
+	if err := os.WriteFile(stale, []byte(`{"obj_id":37,"obj_type":0,"parent_id":900,"title":"old"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	err := ensureFolderMarkers(mirroredPlacement{
+		Dir: dir, StageRoot: root,
+		Segments: []folderPathSegment{{ID: 10, Title: "billing", SafeName: "billing", ParentID: 900}},
+	})
+	if err == nil || !strings.Contains(err.Error(), "expected folder 10") {
+		t.Fatalf("expected stale marker error, got %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "10_billing.folder.json")); !os.IsNotExist(err) {
+		t.Fatalf("must not create a second marker after stale marker error, stat err=%v", err)
+	}
+}
+
+// Only a marker's NAME decides which folder a directory resolves to
+// (resolveFolderIDFromDir never parses the body). Markers inside a pulled
+// workspace come out of a server ZIP export, so an unfamiliar body must not
+// stop mirroring — the correctly-named marker is kept and the directory still
+// resolves. Bodies the exporter may legitimately emit are covered here: an
+// empty object, a parent_id we cannot corroborate, and outright corruption.
+func TestEnsureFolderMarkers_KeepsCorrectlyNamedMarkerWithUnexpectedBody(t *testing.T) {
+	for name, body := range map[string]string{
+		"malformed":       `{not-json`,
+		"empty-object":    `{}`,
+		"no-parent-id":    `{"obj_id":10,"obj_type":0,"title":"billing"}`,
+		"other-parent":    `{"obj_id":10,"obj_type":0,"parent_id":37,"title":"billing"}`,
+		"obj-id-mismatch": `{"obj_id":77,"obj_type":0,"parent_id":900,"title":"billing"}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			root := t.TempDir()
+			dir := filepath.Join(root, "10_billing")
+			if err := os.MkdirAll(dir, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			marker := filepath.Join(dir, "10_billing.folder.json")
+			if err := os.WriteFile(marker, []byte(body), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			if err := ensureFolderMarkers(mirroredPlacement{
+				Dir: dir, StageRoot: root,
+				Segments: []folderPathSegment{{ID: 10, Title: "billing", SafeName: "billing", ParentID: 900}},
+			}); err != nil {
+				t.Fatalf("an unexpected marker body must not fail mirroring: %v", err)
+			}
+			got, err := os.ReadFile(marker)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if string(got) != body {
+				t.Errorf("marker was rewritten:\n got %s\nwant %s", got, body)
+			}
+			id, _, err := resolveFolderIDFromDir(dir)
+			if err != nil || id != 10 {
+				t.Errorf("resolveFolderIDFromDir = (%d, %v), want (10, nil)", id, err)
+			}
+		})
+	}
+}
+
+// A marker whose NAME points at another folder is the case that actually
+// misroutes a later create/push, so it stays fatal.
+func TestEnsureFolderMarkers_RejectsAmbiguousMarkerSet(t *testing.T) {
+	root := t.TempDir()
+	dir := filepath.Join(root, "10_billing")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"10_billing.folder.json", "37_old.folder.json"} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(`{}`), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	err := ensureFolderMarkers(mirroredPlacement{
+		Dir: dir, StageRoot: root,
+		Segments: []folderPathSegment{{ID: 10, Title: "billing", SafeName: "billing", ParentID: 900}},
+	})
+	if err == nil || !strings.Contains(err.Error(), "markers") {
+		t.Fatalf("expected ambiguous marker set to be rejected, got %v", err)
+	}
+}
+
 // Nothing to anchor at (no local stage root) and nothing to create (the target
 // IS the stage root) must both be no-ops rather than writes into the void.
 func TestEnsureFolderMarkers_NoopCases(t *testing.T) {

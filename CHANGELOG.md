@@ -1,5 +1,13 @@
 # Changelog
 
+## [3.2.1]
+
+- Fix(mcp-server): `show-task` now declares the same contract in its MCP JSON Schema as at runtime: `process_id` plus a non-empty `task_id` or `ref` are required.
+- Fix(mcp-server): mirrored folder markers are validated before reuse. A directory whose existing marker names a different folder, or that holds several markers, now stops local-tree materialisation instead of silently routing a later operation to a different Corezoid folder. A correctly named marker is still kept as-is — only its name decides which folder the directory resolves to, so an unfamiliar body (as a server export may produce) is logged rather than treated as fatal. New markers are written atomically.
+- Fix(mcp-server): `pull-process` reports failure when it cannot prepare the required local mirror; `create-process` and `create-folder` surface an explicit warning when their already-created server object could not be fully mirrored locally.
+- Build: `convctl --version` now includes the release version and short source commit SHA.
+- CI: Release waits for the complete CI workflow, including documentation validation, build/vet/test and `govulncheck`; publishing an existing release tag is rejected.
+
 ## [3.2.0]
 
 - Fix(mcp-server): mirrored directories now receive their `<id>_<name>.folder.json` markers when created by `create-process`, `create-folder`, or `pull-process`. A process or folder created in such a directory can therefore be resolved and used by subsequent create, pull, and push operations.

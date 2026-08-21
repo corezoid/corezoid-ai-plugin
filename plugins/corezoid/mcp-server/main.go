@@ -25,6 +25,20 @@ var schemaFS embed.FS
 // Falls back to "dev" for local builds.
 var Version = "dev"
 
+// Commit is injected by release builds from github.sha. It makes binaries
+// distinguishable when a release tag is ever accidentally reused.
+var Commit = ""
+
+func buildIdentity() string {
+	if Commit == "" {
+		return Version
+	}
+	if len(Commit) > 12 {
+		return fmt.Sprintf("%s (%s)", Version, Commit[:12])
+	}
+	return fmt.Sprintf("%s (%s)", Version, Commit)
+}
+
 // Global logger instance
 var logger = &Logger{}
 
@@ -200,7 +214,7 @@ func main() {
 	}
 
 	if len(os.Args) >= 2 && (os.Args[1] == "--version" || os.Args[1] == "-version" || os.Args[1] == "version") {
-		fmt.Println(Version)
+		fmt.Println(buildIdentity())
 		os.Exit(0)
 	}
 

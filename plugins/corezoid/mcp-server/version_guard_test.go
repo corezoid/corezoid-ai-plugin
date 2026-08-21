@@ -157,3 +157,12 @@ func TestServerVersionStripsTagPrefix(t *testing.T) {
 		}
 	}
 }
+
+func TestBuildIdentityIncludesShortCommit(t *testing.T) {
+	orig := Commit
+	t.Cleanup(func() { Commit = orig })
+	Commit = "4ad80c00e91d81efda95b59c4808dd4db7ee0cb8"
+	if got, want := buildIdentity(), Version+" (4ad80c00e91d)"; got != want {
+		t.Errorf("buildIdentity() = %q, want %q", got, want)
+	}
+}

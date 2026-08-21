@@ -6,11 +6,25 @@ on:
       - "v*"
 
 jobs:
+  full-ci:
+    name: Full CI
+    uses: ./.github/workflows/ci.yml
+
   guard:
-    name: Pre-release gate (version sync + tests)
+    name: Pre-release gate (version sync + immutable release)
+    needs: full-ci
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+
+      - name: Reject an existing release tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
+            echo "ERROR: release $GITHUB_REF_NAME already exists; publish a new immutable version instead."
+            exit 1
+          fi
 
       - name: Parse JSON manifests
         run: |
@@ -81,16 +95,6 @@ jobs:
           print(f"All six manifests match tag {tag!r}: {claude_ver}")
           EOF
 
-      - uses: actions/setup-go@v7
-        with:
-          go-version-file: plugins/corezoid/mcp-server/go.mod
-          cache: true
-          cache-dependency-path: plugins/corezoid/mcp-server/go.sum
-
-      - name: MCP server tests
-        working-directory: plugins/corezoid/mcp-server
-        run: go test -race ./...
-
   build-binaries:
     name: Build MCP server binaries
     needs: guard
@@ -108,13 +112,14 @@ jobs:
         working-directory: plugins/corezoid/mcp-server
         env:
           VERSION: ${{ github.ref_name }}
+          COMMIT: ${{ github.sha }}
         run: |
           for GOOS in darwin linux windows; do
             for GOARCH in amd64 arm64; do
               EXT=""
               if [ "$GOOS" = "windows" ]; then EXT=".exe"; fi
               CGO_ENABLED=0 GOOS=$GOOS GOARCH=$GOARCH \
-                go build -ldflags="-s -w -X main.Version=${VERSION}" -o "convctl-${GOOS}-${GOARCH}${EXT}" .
+                go build -ldflags="-s -w -X main.Version=${VERSION} -X main.Commit=${COMMIT}" -o "convctl-${GOOS}-${GOARCH}${EXT}" .
             done
           done
 

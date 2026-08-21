@@ -258,6 +258,7 @@ func handlePullProcess(ctx context.Context, args map[string]interface{}) (string
 						Dir: dir, StageRoot: stageRoot, Segments: segments,
 					}); merr != nil {
 						logger.Warn("pull-process: could not write folder markers under %s: %v", stageRoot, merr)
+						return fmt.Sprintf("Error preparing local mirror under %s: %v", stageRoot, merr), true
 					}
 				} else {
 					dir = resolved
@@ -964,6 +965,7 @@ func createConv(ctx context.Context, args map[string]interface{}, convType strin
 	}
 
 	v := NewValidator(ctx, 0)
+	markerWarning := ""
 	processID, cerr := v.CreateEmptyConv(folderID, processName, "", convType)
 	if processID == 0 {
 		// Pass the server's reason through: "Stage is immutable" in the tool
@@ -1000,6 +1002,7 @@ func createConv(ctx context.Context, args map[string]interface{}, convType strin
 			// resolveFolderIDFromDir) and fails with "no <id>_<name>.folder.json".
 			if err := ensureFolderMarkers(mirrored); err != nil {
 				logger.Warn("create: could not write folder markers under %s: %v", mirrored.StageRoot, err)
+				markerWarning = fmt.Sprintf("Local mirror warning: could not prepare folder markers under %s: %v", mirrored.StageRoot, err)
 			}
 		}
 	}
@@ -1017,8 +1020,12 @@ func createConv(ctx context.Context, args map[string]interface{}, convType strin
 	if convType == "state" {
 		label = "State diagram"
 	}
-	return fmt.Sprintf("%s '%s' created in Corezoid folder #%d (%s) and saved to %s",
-		label, processName, folderID, resolvedFrom, filePath), false
+	result := fmt.Sprintf("%s '%s' created in Corezoid folder #%d (%s) and saved to %s",
+		label, processName, folderID, resolvedFrom, filePath)
+	if markerWarning != "" {
+		result += "\nWarning: " + markerWarning
+	}
+	return result, false
 }
 
 // mirroredPlacement describes where a Corezoid folder is mirrored on disk:
@@ -1067,15 +1074,53 @@ type folderMarkerContent struct {
 }
 
 // writeFolderMarker writes dir's <id>_<name>.folder.json marker, creating dir
-// if needed. Existing markers are left alone: a marker pulled from the server
-// carries a real description we must not clobber.
+// if needed. A server-pulled marker is preserved only after proving its *name*
+// identifies the folder this directory is meant to mirror: silently accepting
+// any marker here can direct the next create/push operation at a different
+// Corezoid folder after a copied or stale local directory is encountered.
+//
+// Only the file name is load-bearing — resolveFolderIDFromDir reads the ID from
+// it and never parses the body. An unexpected body is therefore logged and the
+// marker kept, not treated as fatal: markers inside a pulled workspace come out
+// of a server ZIP export whose exact shape is the server's to choose, and
+// refusing to mirror on an unfamiliar one would break healthy workspaces.
 func writeFolderMarker(dir string, seg folderPathSegment) error {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return fmt.Errorf("creating directory '%s': %w", dir, err)
 	}
-	if dirHasFolderMarker(dir) {
+
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return fmt.Errorf("reading directory '%s': %w", dir, err)
+	}
+	var markers []string
+	for _, entry := range entries {
+		if !entry.IsDir() && folderMarkerFileRe.MatchString(entry.Name()) {
+			markers = append(markers, entry.Name())
+		}
+	}
+	if len(markers) > 1 {
+		return fmt.Errorf("directory '%s' contains %d folder/stage markers (%s)", dir, len(markers), strings.Join(markers, ", "))
+	}
+	if len(markers) == 1 {
+		match := folderMarkerFileRe.FindStringSubmatch(markers[0])
+		markerID, _ := strconv.Atoi(match[1])
+		if markerID != seg.ID {
+			return fmt.Errorf("existing marker '%s' identifies folder %d, expected folder %d", markers[0], markerID, seg.ID)
+		}
+		if raw, err := os.ReadFile(filepath.Join(dir, markers[0])); err != nil {
+			logger.Warn("folder marker '%s' in '%s' could not be read: %v", markers[0], dir, err)
+		} else {
+			var marker folderMarkerContent
+			if err := json.Unmarshal(raw, &marker); err != nil {
+				logger.Warn("folder marker '%s' in '%s' is not valid JSON: %v", markers[0], dir, err)
+			} else if marker.ObjID != 0 && marker.ObjID != seg.ID {
+				logger.Warn("folder marker '%s' in '%s' has obj_id=%d, expected folder %d", markers[0], dir, marker.ObjID, seg.ID)
+			}
+		}
 		return nil
 	}
+
 	data, err := json.MarshalIndent(folderMarkerContent{
 		ObjID:    seg.ID,
 		ObjType:  0,
@@ -1086,8 +1131,25 @@ func writeFolderMarker(dir string, seg folderPathSegment) error {
 		return fmt.Errorf("marshaling folder marker for %d: %w", seg.ID, err)
 	}
 	name := fmt.Sprintf("%d_%s.folder.json", seg.ID, seg.SafeName)
-	if err := os.WriteFile(filepath.Join(dir, name), data, 0644); err != nil {
-		return fmt.Errorf("writing folder marker '%s': %w", filepath.Join(dir, name), err)
+	tmp, err := os.CreateTemp(dir, ".folder-marker-*.tmp")
+	if err != nil {
+		return fmt.Errorf("creating temporary marker in '%s': %w", dir, err)
+	}
+	tmpName := tmp.Name()
+	defer os.Remove(tmpName)
+	if err := tmp.Chmod(0o644); err != nil {
+		tmp.Close()
+		return fmt.Errorf("setting permissions on temporary marker: %w", err)
+	}
+	if _, err := tmp.Write(data); err != nil {
+		tmp.Close()
+		return fmt.Errorf("writing temporary marker: %w", err)
+	}
+	if err := tmp.Close(); err != nil {
+		return fmt.Errorf("closing temporary marker: %w", err)
+	}
+	if err := os.Rename(tmpName, filepath.Join(dir, name)); err != nil {
+		return fmt.Errorf("installing folder marker '%s': %w", filepath.Join(dir, name), err)
 	}
 	return nil
 }
@@ -1144,6 +1206,7 @@ func handleCreateFolder(ctx context.Context, args map[string]interface{}) (strin
 	}
 
 	v := NewValidator(ctx, 0)
+	markerWarning := ""
 	newFolderID, err := v.CreateFolder(parentFolderID, folderName, "")
 	if err != nil {
 		return fmt.Sprintf("Error creating folder '%s': %v", folderName, err), true
@@ -1160,6 +1223,7 @@ func handleCreateFolder(ctx context.Context, args map[string]interface{}) (strin
 			// targets for anything (see ensureFolderMarkers).
 			if err := ensureFolderMarkers(mirrored); err != nil {
 				logger.Warn("create-folder: could not write folder markers under %s: %v", mirrored.StageRoot, err)
+				markerWarning = fmt.Sprintf("Local mirror warning: could not prepare folder markers under %s: %v", mirrored.StageRoot, err)
 			}
 		}
 	}
@@ -1188,8 +1252,12 @@ func handleCreateFolder(ctx context.Context, args map[string]interface{}) (strin
 		return fmt.Sprintf("Error writing folder file: %v", err), true
 	}
 
-	return fmt.Sprintf("Folder '%s' created in Corezoid folder #%d (%s) and saved to %s",
-		folderName, parentFolderID, parentResolvedFrom, filePath), false
+	result := fmt.Sprintf("Folder '%s' created in Corezoid folder #%d (%s) and saved to %s",
+		folderName, parentFolderID, parentResolvedFrom, filePath)
+	if markerWarning != "" {
+		result += "\nWarning: " + markerWarning
+	}
+	return result, false
 }
 
 // handleShowFolder returns metadata for a single folder (title, obj_type,

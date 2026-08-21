@@ -966,14 +966,20 @@ var toolRegistry = []mcpTool{
 				},
 				"task_id": map[string]interface{}{
 					"type":        "string",
+					"minLength":   1,
 					"description": "Task ID (obj_id)",
 				},
 				"ref": map[string]interface{}{
 					"type":        "string",
+					"minLength":   1,
 					"description": "Task reference string",
 				},
 			},
 			"required": []string{"process_id"},
+			"anyOf": []map[string]interface{}{
+				{"required": []string{"task_id"}},
+				{"required": []string{"ref"}},
+			},
 		},
 	},
 	{
