@@ -8,6 +8,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -47,6 +48,13 @@ type Folder struct {
 	ExpiresAt    time.Time `json:"expires_at,omitempty"`
 	APILogin     string    `json:"api_login"`
 	APISecret    string    `json:"api_secret"`
+
+	// sourcePath is the config file this Folder was read from. Unexported, so
+	// encoding/json never persists it. LoadConfig sets it on every Folder it
+	// returns; UpdateCurrent and RemoveCurrent use it to write a Folder back
+	// to the file that defined it instead of always to the primary
+	// config.json.
+	sourcePath string
 }
 
 // Config is the whole ~/.corezoid/config.json.
@@ -55,10 +63,8 @@ type Config struct {
 	Folders []Folder `json:"folders"`
 }
 
-// configFilePath returns ~/.corezoid/config.json, creating the parent
-// directory with mode 0700 on first use. It is the single source of auth +
-// workspace state for this MCP server — no other files are read or written.
-func configFilePath() (string, error) {
+// configDirPath returns ~/.corezoid, creating it with mode 0700 on first use.
+func configDirPath() (string, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return "", fmt.Errorf("cannot determine home directory: %w", err)
@@ -67,7 +73,86 @@ func configFilePath() (string, error) {
 	if err := os.MkdirAll(dir, 0700); err != nil {
 		return "", fmt.Errorf("cannot create %s: %w", dir, err)
 	}
+	return dir, nil
+}
+
+// configFilePath returns ~/.corezoid/config.json — the primary config file.
+// It is the only file this server creates, and the one that wins whenever a
+// workspace is described by more than one file (see LoadConfig).
+func configFilePath() (string, error) {
+	dir, err := configDirPath()
+	if err != nil {
+		return "", err
+	}
 	return filepath.Join(dir, "config.json"), nil
+}
+
+// auxConfigFilePaths returns the secondary config files —
+// ~/.corezoid/config-<anything>.json, sorted by name. They are read and
+// merged into the effective config (LoadConfig) and written back to when they
+// own the matched workspace, but never created by this server: they exist so
+// an operator or another tool can drop in extra workspace bindings without
+// touching config.json.
+func auxConfigFilePaths() ([]string, error) {
+	dir, err := configDirPath()
+	if err != nil {
+		return nil, err
+	}
+	matches, err := filepath.Glob(filepath.Join(dir, "config-*.json"))
+	if err != nil {
+		return nil, fmt.Errorf("glob %s: %w", dir, err)
+	}
+	out := make([]string, 0, len(matches))
+	for _, m := range matches {
+		info, err := os.Stat(m)
+		if err != nil || !info.Mode().IsRegular() {
+			continue
+		}
+		out = append(out, m)
+	}
+	sort.Strings(out)
+	return out, nil
+}
+
+// configFilePaths returns every config file that participates in the merge,
+// primary first, then the aux files in name order. The order is also the
+// precedence order used by LoadConfig.
+func configFilePaths() ([]string, error) {
+	primary, err := configFilePath()
+	if err != nil {
+		return nil, err
+	}
+	aux, err := auxConfigFilePaths()
+	if err != nil {
+		return nil, err
+	}
+	return append([]string{primary}, aux...), nil
+}
+
+// normalizeRootPath canonicalises a Folder.RootPath for identity comparison
+// across config files: two entries with the same normalized root describe the
+// same workspace, so only the highest-precedence one is used.
+func normalizeRootPath(root string) string {
+	if root == "" {
+		return ""
+	}
+	return strings.TrimRight(filepath.Clean(root), string(filepath.Separator))
+}
+
+// currentConfigFilePath returns the config file that owns the workspace
+// matching the current cwd — the aux config-<name>.json that declared it, or
+// the primary config.json otherwise (including when nothing matches yet, since
+// that is where a new Folder would be created). For user-facing messages that
+// name the file being written.
+func currentConfigFilePath() string {
+	if f := Current(); f != nil && f.sourcePath != "" {
+		return f.sourcePath
+	}
+	path, err := configFilePath()
+	if err != nil {
+		return ""
+	}
+	return path
 }
 
 // resolveWorkDir returns the absolute path used to match a Folder.
@@ -122,23 +207,20 @@ func matchFolder(folders []Folder, cwd string) int {
 	return best
 }
 
-// LoadConfig reads ~/.corezoid/config.json. A missing file returns an empty
-// Config — the fresh-install state, not an error. A malformed file returns
-// an error so callers do not silently overwrite user data.
-func LoadConfig() (*Config, error) {
-	path, err := configFilePath()
-	if err != nil {
-		return nil, err
-	}
+// loadConfigFile reads one config file. A missing or empty file returns an
+// empty Config — the fresh-install state, not an error. A malformed file
+// returns an error so callers do not silently overwrite user data. Every
+// returned Folder carries sourcePath == path.
+func loadConfigFile(path string) (*Config, error) {
 	data, err := os.ReadFile(path)
 	if errors.Is(err, fs.ErrNotExist) {
-		return &Config{Version: currentConfigVersion}, nil
+		return &Config{Version: currentConfigVersion, Folders: []Folder{}}, nil
 	}
 	if err != nil {
 		return nil, fmt.Errorf("read %s: %w", path, err)
 	}
 	if len(bytes.TrimSpace(data)) == 0 {
-		return &Config{Version: currentConfigVersion}, nil
+		return &Config{Version: currentConfigVersion, Folders: []Folder{}}, nil
 	}
 	var c Config
 	if err := json.Unmarshal(data, &c); err != nil {
@@ -150,7 +232,76 @@ func LoadConfig() (*Config, error) {
 	if c.Folders == nil {
 		c.Folders = []Folder{}
 	}
+	for i := range c.Folders {
+		c.Folders[i].sourcePath = path
+	}
 	return &c, nil
+}
+
+// LoadConfig reads ~/.corezoid/config.json and merges every
+// ~/.corezoid/config-*.json on top of it, producing the effective config.
+//
+// Precedence: config.json first, then the aux files in name order. A workspace
+// (Folder.RootPath, normalized) that appears in more than one file is taken
+// from the first file that declared it — so config.json always wins, and an
+// earlier aux file wins over a later one.
+//
+// A malformed primary config.json is an error: it is the file this server
+// writes, and silently treating it as empty would overwrite the user's
+// credentials on the next write. A malformed aux file is logged and skipped
+// instead — a stray file dropped into ~/.corezoid must not take the server
+// down.
+func LoadConfig() (*Config, error) {
+	paths, err := configFilePaths()
+	if err != nil {
+		return nil, err
+	}
+	return mergeConfigFiles(paths)
+}
+
+// mergeConfigFiles merges the given config files in order — paths[0] is the
+// primary (strict: a parse error is returned), the rest are aux files
+// (lenient: a parse error is logged and the file skipped). Split out from
+// LoadConfig so writers can merge exactly the set of files they hold locks
+// on, instead of re-globbing the directory inside the critical section.
+func mergeConfigFiles(paths []string) (*Config, error) {
+	if len(paths) == 0 {
+		return &Config{Version: currentConfigVersion, Folders: []Folder{}}, nil
+	}
+	merged, err := loadConfigFile(paths[0])
+	if err != nil {
+		return nil, err
+	}
+	aux := paths[1:]
+	if len(aux) == 0 {
+		return merged, nil
+	}
+
+	seen := make(map[string]struct{}, len(merged.Folders))
+	for _, f := range merged.Folders {
+		if key := normalizeRootPath(f.RootPath); key != "" {
+			seen[key] = struct{}{}
+		}
+	}
+	for _, path := range aux {
+		c, err := loadConfigFile(path)
+		if err != nil {
+			logger.Warn("mergeConfigFiles: skipping %s: %v", path, err)
+			continue
+		}
+		for _, f := range c.Folders {
+			key := normalizeRootPath(f.RootPath)
+			if key != "" {
+				if _, dup := seen[key]; dup {
+					logger.Debug("mergeConfigFiles: %s: folder %q already defined with higher precedence, ignoring", path, f.RootPath)
+					continue
+				}
+				seen[key] = struct{}{}
+			}
+			merged.Folders = append(merged.Folders, f)
+		}
+	}
+	return merged, nil
 }
 
 // writeConfigAtomically writes c to path via temp file + fsync + rename.
@@ -168,7 +319,7 @@ func writeConfigAtomically(path string, c *Config) error {
 	}
 	data = append(data, '\n')
 
-	tmp, err := os.CreateTemp(filepath.Dir(path), ".config.json.*.tmp")
+	tmp, err := os.CreateTemp(filepath.Dir(path), "."+filepath.Base(path)+".*.tmp")
 	if err != nil {
 		return fmt.Errorf("create temp: %w", err)
 	}
@@ -209,28 +360,51 @@ func writeConfigAtomically(path string, c *Config) error {
 // MCP server started from another IDE window).
 var configWriteMu sync.Mutex
 
-// withConfigLock acquires the in-process mutex and the cross-process flock,
-// then runs fn with the resolved config path. Blocks until both locks are
-// available.
-func withConfigLock(fn func(path string) error) error {
-	path, err := configFilePath()
+// withConfigLock acquires the in-process mutex and the cross-process flock on
+// every config file that takes part in the merge (primary + aux), then runs
+// fn. All files are locked, not just the one about to be written, because the
+// write target is only known after the merged config has been read — and the
+// read must not race a writer in another process. Locks are taken in a stable
+// (sorted) order so two processes cannot deadlock against each other.
+//
+// fn receives the exact list of locked files, primary first — it must not
+// re-scan the directory, or it could end up writing a file appearing after
+// the locks were taken.
+func withConfigLock(fn func(paths []string) error) error {
+	paths, err := configFilePaths()
 	if err != nil {
 		return err
 	}
+	ordered := append([]string(nil), paths...)
+	sort.Strings(ordered)
+
 	configWriteMu.Lock()
 	defer configWriteMu.Unlock()
 
-	lock := flock.New(path + ".lock")
-	if err := lock.Lock(); err != nil {
-		return fmt.Errorf("flock %s.lock: %w", path, err)
+	var held []*flock.Flock
+	defer func() {
+		for i := len(held) - 1; i >= 0; i-- {
+			_ = held[i].Unlock()
+		}
+	}()
+	for _, p := range ordered {
+		lock := flock.New(p + ".lock")
+		if err := lock.Lock(); err != nil {
+			return fmt.Errorf("flock %s.lock: %w", p, err)
+		}
+		held = append(held, lock)
 	}
-	defer func() { _ = lock.Unlock() }()
-	return fn(path)
+	return fn(paths)
 }
 
 // UpdateCurrent applies mutator to the Folder matching the current working
 // directory, creating a new Folder rooted at cwd if none matches. The whole
 // read-modify-write cycle is atomic + serialised across processes.
+//
+// The mutation is written back to the file that defined the matched Folder —
+// so a workspace declared in ~/.corezoid/config-<name>.json keeps its
+// credentials there (token refresh, stage selection) instead of being copied
+// into config.json. New Folders always go to config.json.
 func UpdateCurrent(mutator func(*Folder)) error {
 	if mutator == nil {
 		return errors.New("UpdateCurrent: nil mutator")
@@ -239,39 +413,116 @@ func UpdateCurrent(mutator func(*Folder)) error {
 	if cwd == "" {
 		return errors.New("UpdateCurrent: cannot resolve working directory")
 	}
-	return withConfigLock(func(path string) error {
-		c, err := LoadConfig()
+	return withConfigLock(func(paths []string) error {
+		merged, err := mergeConfigFiles(paths)
 		if err != nil {
 			return err
 		}
-		idx := matchFolder(c.Folders, cwd)
+		idx := matchFolder(merged.Folders, cwd)
+
+		// No binding for this cwd anywhere: create one in the primary file.
 		if idx < 0 {
+			primary := paths[0]
+			c, err := loadConfigFile(primary)
+			if err != nil {
+				return err
+			}
 			c.Folders = append(c.Folders, Folder{RootPath: cwd})
-			idx = len(c.Folders) - 1
+			mutator(&c.Folders[len(c.Folders)-1])
+			return writeConfigAtomically(primary, c)
 		}
-		mutator(&c.Folders[idx])
-		return writeConfigAtomically(path, c)
+
+		// Otherwise mutate the entry in place, in the file that declared it.
+		target := merged.Folders[idx].sourcePath
+		if target == "" {
+			target = paths[0]
+		}
+		c, err := loadConfigFile(target)
+		if err != nil {
+			return err
+		}
+		tIdx := indexOfRootPath(c.Folders, merged.Folders[idx].RootPath)
+		if tIdx < 0 {
+			// Unreachable while target is the file the Folder was read from
+			// under the same lock; guard rather than index out of range.
+			return fmt.Errorf("UpdateCurrent: folder %q vanished from %s", merged.Folders[idx].RootPath, target)
+		}
+		mutator(&c.Folders[tIdx])
+		return writeConfigAtomically(target, c)
 	})
 }
 
-// RemoveCurrent removes the Folder that matches the current cwd from the
-// config file. No-op if no Folder matches.
-func RemoveCurrent() error {
+// indexOfRootPath returns the index of the Folder whose RootPath is the same
+// workspace as root (normalized comparison), or -1.
+func indexOfRootPath(folders []Folder, root string) int {
+	key := normalizeRootPath(root)
+	if key == "" {
+		return -1
+	}
+	for i, f := range folders {
+		if normalizeRootPath(f.RootPath) == key {
+			return i
+		}
+	}
+	return -1
+}
+
+// RemoveCurrent removes the Folder that matches the current cwd from every
+// config file that declares it, not only from the highest-precedence one:
+// logout must actually drop the credentials, and leaving a shadowed copy in an
+// aux file would resurrect them on the next read. No-op if no Folder matches.
+func RemoveCurrent() error { return removeCurrent(false) }
+
+// removeCurrentFromPrimary removes the Folder matching the current cwd from
+// ~/.corezoid/config.json only, leaving any aux config-<name>.json untouched.
+// For automatic cleanup paths, which must never mutate files this server did
+// not create.
+func removeCurrentFromPrimary() error { return removeCurrent(true) }
+
+func removeCurrent(primaryOnly bool) error {
 	cwd := resolveWorkDir()
 	if cwd == "" {
 		return errors.New("RemoveCurrent: cannot resolve working directory")
 	}
-	return withConfigLock(func(path string) error {
-		c, err := LoadConfig()
+	return withConfigLock(func(paths []string) error {
+		merged, err := mergeConfigFiles(paths)
 		if err != nil {
 			return err
 		}
-		idx := matchFolder(c.Folders, cwd)
+		idx := matchFolder(merged.Folders, cwd)
 		if idx < 0 {
 			return nil
 		}
-		c.Folders = append(c.Folders[:idx], c.Folders[idx+1:]...)
-		return writeConfigAtomically(path, c)
+		key := normalizeRootPath(merged.Folders[idx].RootPath)
+
+		if primaryOnly {
+			paths = paths[:1]
+		}
+		for _, path := range paths {
+			c, err := loadConfigFile(path)
+			if err != nil {
+				if path == paths[0] {
+					return err
+				}
+				logger.Warn("RemoveCurrent: skipping %s: %v", path, err)
+				continue
+			}
+			kept := make([]Folder, 0, len(c.Folders))
+			for _, f := range c.Folders {
+				if normalizeRootPath(f.RootPath) == key {
+					continue
+				}
+				kept = append(kept, f)
+			}
+			if len(kept) == len(c.Folders) {
+				continue
+			}
+			c.Folders = kept
+			if err := writeConfigAtomically(path, c); err != nil {
+				return err
+			}
+		}
+		return nil
 	})
 }
 
@@ -354,7 +605,8 @@ func isRootPathAbandoned(rootPath string) bool {
 }
 
 // pruneAbandonedFolder removes the current Folder from
-// ~/.corezoid/config.json when its RootPath looks abandoned (see
+// ~/.corezoid/config.json — and only from there, never from an aux
+// config-<name>.json — when its RootPath looks abandoned (see
 // isRootPathAbandoned) and refreshes the in-memory auth globals so
 // downstream ensureAuth() sees a fresh, un-authenticated state. Returns
 // true when a Folder was pruned. No-op when no Folder matches the current
@@ -367,8 +619,16 @@ func pruneAbandonedFolder() bool {
 	if !isRootPathAbandoned(f.RootPath) {
 		return false
 	}
-	if err := RemoveCurrent(); err != nil {
-		logger.Warn("pruneAbandonedFolder: RemoveCurrent failed: %v", err)
+	// Never auto-delete a binding declared in an aux config-<name>.json: those
+	// files are provisioned by hand (or by another tool), and an empty
+	// RootPath there usually means "provisioned but not pulled yet", not
+	// "abandoned". Explicit logout still clears them (see RemoveCurrent).
+	if primary, err := configFilePath(); err == nil && f.sourcePath != "" && f.sourcePath != primary {
+		logger.Debug("pruneAbandonedFolder: %q looks abandoned but is declared in %s — leaving it alone", f.RootPath, f.sourcePath)
+		return false
+	}
+	if err := removeCurrentFromPrimary(); err != nil {
+		logger.Warn("pruneAbandonedFolder: removeCurrentFromPrimary failed: %v", err)
 		return false
 	}
 	syncGlobalsFromCurrent()

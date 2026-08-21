@@ -123,6 +123,8 @@ On the first Corezoid operation Claude detects that no credentials are present f
 
 All credentials plus per-workspace config (account URL, workspace ID, stage ID, cached project ID, git mirror URL) are stored in a single user-level file `~/.corezoid/config.json` (mode `0600`). Each entry in `folders[]` is keyed by an absolute `root_path`; the MCP server picks the longest-prefix match against the current working directory, so sub-agents launched deep in the workspace pick up the right credentials automatically.
 
+Additional config files are supported: any `~/.corezoid/config-<name>.json` (e.g. `config-team.json`, `config-onprem.json`) is read and merged on top of `config.json`, so extra workspace bindings can be dropped in without touching the main file. If the same `root_path` is declared in several files, `config.json` wins, and among the `config-*.json` files the first in alphabetical order wins. Writes (token refresh, stage selection) go back to the file that declared the matched workspace; new workspaces are always added to `config.json`. `logout` removes the workspace from every file that declares it, while the automatic cleanup of a deleted/emptied workspace directory only ever touches `config.json` — a hand-provisioned `config-*.json` is never modified behind your back.
+
 You can trigger login manually at any time:
 
 ```

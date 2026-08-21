@@ -546,7 +546,7 @@ func handleLogin(ctx context.Context, args map[string]interface{}) (string, bool
 	// buffer is authoritative for what would be persisted).
 	finalStageID := buf.folder.StageID
 
-	cfgPath, _ := configFilePath()
+	cfgPath := currentConfigFilePath()
 	if cfgPath == "" {
 		cfgPath = "~/.corezoid/config.json"
 	}
@@ -635,15 +635,18 @@ func handleLogin(ctx context.Context, args map[string]interface{}) (string, bool
 func handleLogout(_ context.Context, _ map[string]interface{}) (string, bool) {
 	_, _, _, snapAccountURL, _ := authSnapshot()
 
+	// Resolve the owning file before the removal — afterwards there is no
+	// Folder left to ask, and the workspace may have been declared in an aux
+	// ~/.corezoid/config-<name>.json rather than config.json.
+	cfgPath := currentConfigFilePath()
+	if cfgPath == "" {
+		cfgPath = "~/.corezoid/config.json"
+	}
+
 	if err := RemoveCurrent(); err != nil {
 		return fmt.Sprintf("Failed to remove folder entry from config: %v", err), true
 	}
 	syncGlobalsFromCurrent()
-
-	cfgPath, _ := configFilePath()
-	if cfgPath == "" {
-		cfgPath = "~/.corezoid/config.json"
-	}
 
 	browserHost := strings.TrimRight(snapAccountURL, "/")
 	if browserHost == "" {
