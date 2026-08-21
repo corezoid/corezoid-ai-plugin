@@ -303,10 +303,65 @@ var schemaDefinitions = []struct{ name, path string }{
 	{"semaphore_count", "json-schema/logics/semaphore_count.json"},
 }
 
-// knownLogicProps maps a logic type to the property names its schema declares.
-// Populated by loadCompiledSchema, consumed by findUnknownLogicProps so lint can
+// knownLogicProps maps a logic TYPE — the value a node actually carries in
+// `condition.logics[].type` — to the property names its schema declares.
+// Populated inside compiledSchemaOnce, consumed via logicProps() so lint can
 // still name an unexpected property after the schema itself stopped rejecting it.
+//
+// Keyed by declared type rather than by our filename: api_git.json declares both
+// `api_git` and `git_call`, so keying by filename left every git_call node
+// without an entry — and, once additionalProperties is relaxed, with no check at
+// all. Never read this directly; see logicProps().
 var knownLogicProps = map[string]map[string]bool{}
+
+// logicSchemaPathByType maps the same logic types to their embedded schema file,
+// so callers that need more than the property set (required lists, for instance)
+// can find the file for a type whose name differs from it.
+var logicSchemaPathByType = map[string]string{}
+
+// logicProps returns the per-type property sets, warming the schema cache first.
+//
+// Every read MUST go through here. knownLogicProps is written inside
+// compiledSchemaOnce, and sync.Once's happens-before guarantee is the only thing
+// making the read safe; a caller that skips the Do gets two bugs at once — it
+// races the writer (a concurrent map read/write is a fatal, unrecoverable Go
+// runtime error, and the HTTP transport serves each request on its own
+// goroutine), and on a cold cache it reads an empty map and silently finds
+// nothing.
+func logicProps() map[string]map[string]bool {
+	if _, err := loadCompiledSchema(); err != nil {
+		logger.Warn("logicProps: schema unavailable, per-type checks skipped: %v", err)
+		return nil
+	}
+	return knownLogicProps
+}
+
+// logicTypeNames returns the `type` values a logic schema pins, via const or
+// enum. Falls back to the definition name for the schemas that pin no type at
+// all (condition, semaphors, stub).
+func logicTypeNames(doc any, defName string) []string {
+	m, ok := doc.(map[string]any)
+	if !ok {
+		return []string{defName}
+	}
+	props, _ := m["properties"].(map[string]any)
+	typeProp, _ := props["type"].(map[string]any)
+	if c, ok := typeProp["const"].(string); ok && c != "" {
+		return []string{c}
+	}
+	if enum, ok := typeProp["enum"].([]any); ok {
+		var out []string
+		for _, v := range enum {
+			if s, ok := v.(string); ok && s != "" {
+				out = append(out, s)
+			}
+		}
+		if len(out) > 0 {
+			return out
+		}
+	}
+	return []string{defName}
+}
 
 // relaxAdditionalProps turns "additionalProperties": false into true and returns
 // the declared property names.
@@ -359,7 +414,16 @@ func loadCompiledSchema() (*jsonschema.Schema, error) {
 			}
 			if strings.HasPrefix(d.path, "json-schema/logics/") {
 				if known := relaxAdditionalProps(doc); known != nil {
-					knownLogicProps[d.name] = known
+					for _, t := range logicTypeNames(doc, d.name) {
+						knownLogicProps[t] = known
+						logicSchemaPathByType[t] = d.path
+					}
+					// Keep the definition name reachable too, but never at the
+					// cost of shadowing a real type value.
+					if _, taken := knownLogicProps[d.name]; !taken {
+						knownLogicProps[d.name] = known
+						logicSchemaPathByType[d.name] = d.path
+					}
 				}
 			}
 			defs[d.name] = doc
