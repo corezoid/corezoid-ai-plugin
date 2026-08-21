@@ -77,9 +77,12 @@ func TestFindUnknownLogicProps_NamesTypo(t *testing.T) {
 	}
 }
 
-// An advisory must never make an otherwise-clean file report as dirty — that is
-// the regression that would bring back the round-trip breakage.
-func TestFormatLintResult_AdvisoryNotCounted(t *testing.T) {
+// An undeclared property is a counted finding with its own section. It used to be
+// printed as an uncounted advisory on the reasoning that counting it would mark a
+// freshly pulled file dirty — which was wrong twice: `chunkify` is declared, so a
+// pulled file carries nothing undeclared, and lint output blocks nothing anyway.
+// Only the push gate blocks.
+func TestFormatLintResult_UnknownPropsCounted(t *testing.T) {
 	res := &LintResult{
 		ProcessTitle: "P", TotalNodes: 1, SchemaValid: true,
 		UnknownLogicProps: []UnknownLogicProp{
@@ -88,14 +91,17 @@ func TestFormatLintResult_AdvisoryNotCounted(t *testing.T) {
 		},
 	}
 	out := FormatLintResult(res)
-	if !strings.Contains(out, "No issues found.") {
-		t.Errorf("advisory alone must still read as clean, got: %s", out)
+	if strings.Contains(out, "No issues found.") {
+		t.Errorf("an undeclared property is a finding, not a clean bill: %s", out)
 	}
-	if strings.Contains(out, "Total issues") {
-		t.Errorf("advisory must not be counted, got: %s", out)
+	if !strings.Contains(out, "Total issues: 1") {
+		t.Errorf("must be counted, got: %s", out)
 	}
 	if !strings.Contains(out, "UNKNOWN LOGIC PROPERTIES (1)") {
-		t.Errorf("advisory section must still be printed, got: %s", out)
+		t.Errorf("section must be printed, got: %s", out)
+	}
+	if !strings.Contains(out, "force=true bypasses") {
+		t.Errorf("section must say how to proceed, got: %s", out)
 	}
 }
 
