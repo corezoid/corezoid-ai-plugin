@@ -59,7 +59,7 @@ func TestDocExamplesMatchSchema(t *testing.T) {
 			if logicType == "" || logicType == "go" {
 				continue
 			}
-			known, ok := knownLogicProps[logicType]
+			known, ok := logicProps()[logicType]
 			if !ok {
 				continue // no schema for this logic type
 			}
@@ -89,11 +89,21 @@ func TestDocExamplesMatchSchema(t *testing.T) {
 
 // requiredPropsFor reads the "required" list out of the embedded schema for a
 // logic type, so the test cannot drift from the schema it is checking against.
+//
+// Resolves the file through logicSchemaPathByType rather than guessing
+// "logics/<type>.json": a type whose name differs from its filename — git_call,
+// declared by api_git.json — would otherwise miss the file and have its required
+// properties silently unchecked, which is the same class of gap this test exists
+// to close.
 func requiredPropsFor(t *testing.T, logicType string) []string {
 	t.Helper()
-	data, err := schemaFS.ReadFile("json-schema/logics/" + logicType + ".json")
-	if err != nil {
+	path, ok := logicSchemaPathByType[logicType]
+	if !ok {
 		return nil
+	}
+	data, err := schemaFS.ReadFile(path)
+	if err != nil {
+		t.Fatalf("schema %s is registered for type %q but unreadable: %v", path, logicType, err)
 	}
 	var sch struct {
 		Required []string `json:"required"`
