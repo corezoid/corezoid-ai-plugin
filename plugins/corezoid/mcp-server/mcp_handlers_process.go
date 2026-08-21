@@ -539,9 +539,11 @@ func handlePushProcess(ctx context.Context, args map[string]interface{}) (string
 	}
 
 	// Auto-snapshot: if the process already exists on the server (obj_id != 0),
-	// capture the current server state before overwriting. There are three
+	// capture the current server state before overwriting. There are four
 	// outcomes:
 	//   • snapshot succeeded → note it, push proceeds.
+	//   • the environment has no snapshot feature at all → note it, push
+	//     proceeds; CreateSnapshot is never called (see snapshot_support.go).
 	//   • snapshot skipped because project/stage aren't resolved → warning
 	//     only; the workspace isn't wired for snapshots (misconfigured env),
 	//     blocking would be a false positive.
@@ -556,20 +558,26 @@ func handlePushProcess(ctx context.Context, args map[string]interface{}) (string
 	var snapshotNote string
 	if existingObjID := extractObjIDFromJSON(jsonContent); existingObjID != 0 {
 		if projectID, envNotice := resolveAndCacheProjectID(v); projectID != 0 && v.StageID != 0 {
-			name := extractProcessNameFromPath(filePath)
-			title := fmt.Sprintf("pre-push %s %s", name, time.Now().UTC().Format("2006-01-02 15:04"))
-			if snapObjID, snapVer, snapErr := v.CreateSnapshot(existingObjID, projectID, v.StageID, title); snapErr != nil {
-				logger.Warn("[snapshot] auto-snapshot failed: %v", snapErr)
-				if !processNeverDeployed(v, existingObjID) {
-					return fmt.Sprintf(
-						"Push blocked: the pre-push snapshot of process #%d failed (%v). Without a snapshot the previous server version cannot be restored after this push. Retry once the Corezoid API is reachable — the deploy call that follows would fail against the same endpoint anyway.",
-						existingObjID, snapErr), true
-				}
-				logger.Info("[snapshot] auto-snapshot skipped: process %d has never been deployed", existingObjID)
-				snapshotNote = fmt.Sprintf("Auto-snapshot skipped: process #%d has no deployed version yet, so there is no previous state to restore.", existingObjID)
+			if !snapshotsSupported(v, existingObjID, projectID, v.StageID) {
+				// No snapshot object in this installation: there is nothing to
+				// capture and nothing to block on, so the push just proceeds.
+				snapshotNote = "Auto-snapshot skipped: this Corezoid environment does not support snapshots. The platform holds no rollback point — keep the .conv.json under version control if you need one."
 			} else {
-				logger.Info("[snapshot] created version %d (obj_id=%d) for process %d", snapVer, snapObjID, existingObjID)
-				snapshotNote = fmt.Sprintf("Snapshot created before push (version %d, obj_id=%d).", snapVer, snapObjID)
+				name := extractProcessNameFromPath(filePath)
+				title := fmt.Sprintf("pre-push %s %s", name, time.Now().UTC().Format("2006-01-02 15:04"))
+				if snapObjID, snapVer, snapErr := v.CreateSnapshot(existingObjID, projectID, v.StageID, title); snapErr != nil {
+					logger.Warn("[snapshot] auto-snapshot failed: %v", snapErr)
+					if !processNeverDeployed(v, existingObjID) {
+						return fmt.Sprintf(
+							"Push blocked: the pre-push snapshot of process #%d failed (%v). Without a snapshot the previous server version cannot be restored after this push. Retry once the Corezoid API is reachable — the deploy call that follows would fail against the same endpoint anyway.",
+							existingObjID, snapErr), true
+					}
+					logger.Info("[snapshot] auto-snapshot skipped: process %d has never been deployed", existingObjID)
+					snapshotNote = fmt.Sprintf("Auto-snapshot skipped: process #%d has no deployed version yet, so there is no previous state to restore.", existingObjID)
+				} else {
+					logger.Info("[snapshot] created version %d (obj_id=%d) for process %d", snapVer, snapObjID, existingObjID)
+					snapshotNote = fmt.Sprintf("Snapshot created before push (version %d, obj_id=%d).", snapVer, snapObjID)
+				}
 			}
 			if envNotice != "" && snapshotNote != "" {
 				snapshotNote += " " + envNotice

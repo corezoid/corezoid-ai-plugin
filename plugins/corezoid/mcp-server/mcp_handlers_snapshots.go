@@ -33,6 +33,13 @@ func handleCreateSnapshot(ctx context.Context, args map[string]interface{}) (str
 		return "Error: could not resolve project_id. Ensure stage_id is configured for this folder (run the 'login' tool).", true
 	}
 
+	// Environments without the snapshot feature must not be asked to create one:
+	// the probe answers from cache after the first call, so this costs nothing
+	// on installations that do support snapshots.
+	if !snapshotsSupported(v, procID, projectID, v.StageID) {
+		return snapshotUnsupportedMessage, true
+	}
+
 	objID, version, err := v.CreateSnapshot(procID, projectID, v.StageID, title)
 	if err != nil {
 		return fmt.Sprintf("Error creating snapshot: %v", err), true
@@ -61,6 +68,10 @@ func handleListSnapshots(ctx context.Context, args map[string]interface{}) (stri
 	projectID, _ := resolveAndCacheProjectID(v)
 	if projectID == 0 {
 		return "Error: could not resolve project_id.", true
+	}
+
+	if !snapshotsSupported(v, procID, projectID, v.StageID) {
+		return snapshotUnsupportedMessage, true
 	}
 
 	snapshots, err := v.ListSnapshots(procID, projectID, v.StageID)
@@ -99,6 +110,10 @@ func handleDeleteSnapshot(ctx context.Context, args map[string]interface{}) (str
 		return "Error: could not resolve project_id.", true
 	}
 
+	if !snapshotsSupported(v, procID, projectID, v.StageID) {
+		return snapshotUnsupportedMessage, true
+	}
+
 	if err := v.DeleteSnapshot(objID, procID, projectID, v.StageID); err != nil {
 		return fmt.Sprintf("Error deleting snapshot: %v", err), true
 	}
@@ -127,6 +142,10 @@ func handleGetSnapshot(ctx context.Context, args map[string]interface{}) (string
 	projectID, _ := resolveAndCacheProjectID(v)
 	if projectID == 0 {
 		return "Error: could not resolve project_id.", true
+	}
+
+	if !snapshotsSupported(v, procID, projectID, v.StageID) {
+		return snapshotUnsupportedMessage, true
 	}
 
 	nodes, err := v.GetSnapshot(objID, procID, projectID, v.StageID)
