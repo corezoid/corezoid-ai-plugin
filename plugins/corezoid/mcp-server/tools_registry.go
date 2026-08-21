@@ -248,6 +248,29 @@ var toolRegistry = []mcpTool{
 		},
 	},
 	{
+		Name:        "clean-process",
+		Description: "Remove inactive nodes from a Corezoid process and save the result as <title>_cleaned.conv.json. Fetches per-node time-series statistics for the last N days (default 90), classifies nodes as active or inactive, protects structurally important inactive nodes (escalation chains, unconditional-go targets, set_param targets), then removes inactive nodes iteratively: dangling references are redirected to the removed node's go-successor, newly empty condition nodes cascade, pass-through nodes (single unconditional go after conditional branches were removed) are merged with their targets, and delay→final nodes are removed. Validates the cleaned scheme for dangling references and empty condition nodes before saving. Reports node counts before/after, breakdown by removal step, and any validation errors.",
+		Annotations: toolHints(hintMutates, hintSafe, hintIdempotent, hintOpenWorld),
+		InputSchema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"process_id": map[string]interface{}{
+					"type":        "integer",
+					"description": "Numeric ID of the process to clean.",
+				},
+				"days": map[string]interface{}{
+					"type":        "integer",
+					"description": "Look-back period in days for node activity statistics. Nodes with no traffic in this window are considered inactive. Default 90.",
+				},
+				"overwrite": map[string]interface{}{
+					"type":        "boolean",
+					"description": "Allow overwriting an existing _cleaned.conv.json file. Default false — the tool refuses to overwrite to protect manual edits made to a previously cleaned file.",
+				},
+			},
+			"required": []string{"process_id"},
+		},
+	},
+	{
 		Name:        "run-task",
 		Description: "Run a task on an already-deployed Corezoid process (without re-deploying) and wait for it to reach a final node. Never commits or deploys, so it needs only run access and works on immutable stages; if the deployed node list is unreadable the task is still sent, just reported without node names. Polls up to wait_sec (default 30), so tasks that cross async nodes (api, api_rpc, db_call, delay) still return their final result. On timeout reports the node the task is parked at, plus TaskRef/TaskID for follow-up via list-task-history.",
 		Annotations: toolHints(hintMutates, hintSafe, hintNonIdempotent, hintOpenWorld),
