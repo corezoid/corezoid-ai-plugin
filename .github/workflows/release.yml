@@ -192,9 +192,10 @@ jobs:
             POWER.md
 
       # A release that publishes without its binaries is not a soft failure: the
-      # launcher (run.sh) downloads convctl-<os>-<arch> and checksums.txt from
-      # exactly this release, and otherwise falls back to `go run .`, which
-      # needs the Go toolchain the README says is not required. So
+      # launcher (plugins/corezoid/mcp-server/run.sh) downloads
+      # convctl-<os>-<arch> and checksums.txt from exactly this release, and
+      # otherwise falls back to `go run .`, which needs the Go toolchain the
+      # README says is not required. So
       # the published asset list is verified against the expected set here, and
       # a release missing anything fails the workflow loudly instead of sitting
       # there looking complete.
