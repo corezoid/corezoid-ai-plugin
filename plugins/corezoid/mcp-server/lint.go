@@ -363,8 +363,7 @@ func findNoopNodes(nodes []processNode) ([]NoopCondition, []UnusedSetParam) {
 			}
 			var unreferenced []string
 			for varName := range extra {
-				pattern := "{{" + varName + "}}"
-				if !strings.Contains(refBlob, pattern) {
+				if !referencesVar(refBlob, varName) {
 					unreferenced = append(unreferenced, varName)
 				}
 			}
@@ -385,6 +384,55 @@ func findNoopNodes(nodes []processNode) ([]NoopCondition, []UnusedSetParam) {
 	}
 
 	return noopConditions, unusedSetParams
+}
+
+// referencesVar reports whether a variable set by set_param is read anywhere
+// downstream. Two syntaxes count, because Corezoid has two consumers:
+//
+//   - node configuration reads it as a template — {{name}} — which is what
+//     go_if_const, api_rpc extra, api urls and so on use;
+//   - a Code node (api_code) reads it as JavaScript — data.name, data["name"] —
+//     and NEVER as {{name}}.
+//
+// Checking only the template form is what made every set_param feeding a Code
+// node report as dead. That mattered beyond noise: the recommended middleware
+// shape maps outcomes in a Code node rather than a condition tree, so following
+// the guidance guaranteed the warning, and the cheapest way to silence it was to
+// rewrite a correct set_param as an api_code — lint pushing the author toward a
+// worse graph. A mention inside a JS comment now counts as a read, which is a
+// deliberate trade: under-reporting a genuinely dead node is far cheaper than
+// blocking a correct design.
+func referencesVar(blob, name string) bool {
+	if name == "" {
+		return false
+	}
+	if strings.Contains(blob, "{{"+name+"}}") {
+		return true
+	}
+	if strings.Contains(blob, `data["`+name+`"]`) || strings.Contains(blob, "data['"+name+"']") {
+		return true
+	}
+	// data.name — require a non-identifier character after the name so that
+	// `result` is not considered read by a reference to `data.result_code`.
+	needle := "data." + name
+	for i := 0; ; {
+		idx := strings.Index(blob[i:], needle)
+		if idx < 0 {
+			return false
+		}
+		end := i + idx + len(needle)
+		if end >= len(blob) || !isIdentChar(blob[end]) {
+			return true
+		}
+		i = end
+	}
+}
+
+func isIdentChar(c byte) bool {
+	return c == '_' || c == '$' ||
+		(c >= '0' && c <= '9') ||
+		(c >= 'a' && c <= 'z') ||
+		(c >= 'A' && c <= 'Z')
 }
 
 // findSharedErrorClusters flags error-cluster nodes shared between the error
