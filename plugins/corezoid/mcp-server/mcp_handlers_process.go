@@ -575,41 +575,59 @@ func handlePushProcess(ctx context.Context, args map[string]interface{}) (string
 	//     create-process → push-process flow impossible for every new process.
 	var snapshotNote string
 	if existingObjID := extractObjIDFromJSON(jsonContent); existingObjID != 0 {
-		if projectID, envNotice := resolveAndCacheProjectID(v); projectID != 0 && v.StageID != 0 {
-			if !snapshotsSupported(v, existingObjID, projectID, v.StageID) {
-				// No snapshot object in this installation: there is nothing to
-				// capture and nothing to block on, so the push just proceeds.
-				snapshotNote = "Auto-snapshot skipped: this Corezoid environment does not support snapshots. The platform holds no rollback point — keep the .conv.json under version control if you need one."
-			} else {
-				name := extractProcessNameFromPath(filePath)
-				title := fmt.Sprintf("pre-push %s %s", name, time.Now().UTC().Format("2006-01-02 15:04"))
-				if snapObjID, snapVer, snapErr := v.CreateSnapshot(existingObjID, projectID, v.StageID, title); snapErr != nil {
-					logger.Warn("[snapshot] auto-snapshot failed: %v", snapErr)
-					if !processNeverDeployed(v, existingObjID) {
-						return fmt.Sprintf(
-							"Push blocked: the pre-push snapshot of process #%d failed (%v). Without a snapshot the previous server version cannot be restored after this push. Retry once the Corezoid API is reachable — the deploy call that follows would fail against the same endpoint anyway.",
-							existingObjID, snapErr), true
-					}
-					logger.Info("[snapshot] auto-snapshot skipped: process %d has never been deployed", existingObjID)
-					snapshotNote = fmt.Sprintf("Auto-snapshot skipped: process #%d has no deployed version yet, so there is no previous state to restore.", existingObjID)
-				} else {
-					logger.Info("[snapshot] created version %d (obj_id=%d) for process %d", snapVer, snapObjID, existingObjID)
-					snapshotNote = fmt.Sprintf("Snapshot created before push (version %d, obj_id=%d).", snapVer, snapObjID)
+		projectID, envNotice := resolveAndCacheProjectID(v)
+		// "Does this installation have snapshots at all" is asked BEFORE "could
+		// we resolve the target", because the answers mean different things and
+		// only one of them is worth blocking over. An unresolved target on an
+		// installation that HAS snapshots means a rollback point existed and we
+		// failed to take it. On an installation that has none, there was never
+		// a rollback point to take, and blocking would leave those environments
+		// unable to push existing processes at all while telling the user to
+		// "configure snapshots" that do not exist. The probe tolerates a zero
+		// project/stage: it keys on the conv, and its positive control is `list
+		// commits` for that same conv (see snapshot_support.go). An inconclusive
+		// probe answers "supported", so an unproven environment still blocks.
+		switch supported := snapshotsSupported(v, existingObjID, projectID, v.StageID); {
+		case !supported:
+			// No snapshot object in this installation: there is nothing to
+			// capture and nothing to block on, so the push just proceeds.
+			snapshotNote = "Auto-snapshot skipped: this Corezoid environment does not support snapshots. The platform holds no rollback point — keep the .conv.json under version control if you need one."
+
+		case projectID != 0 && v.StageID != 0:
+			name := extractProcessNameFromPath(filePath)
+			title := fmt.Sprintf("pre-push %s %s", name, time.Now().UTC().Format("2006-01-02 15:04"))
+			if snapObjID, snapVer, snapErr := v.CreateSnapshot(existingObjID, projectID, v.StageID, title); snapErr != nil {
+				logger.Warn("[snapshot] auto-snapshot failed: %v", snapErr)
+				if !processNeverDeployed(v, existingObjID) {
+					return fmt.Sprintf(
+						"Push blocked: the pre-push snapshot of process #%d failed (%v). Without a snapshot the previous server version cannot be restored after this push. Retry once the Corezoid API is reachable — the deploy call that follows would fail against the same endpoint anyway.",
+						existingObjID, snapErr), true
 				}
+				logger.Info("[snapshot] auto-snapshot skipped: process %d has never been deployed", existingObjID)
+				snapshotNote = fmt.Sprintf("Auto-snapshot skipped: process #%d has no deployed version yet, so there is no previous state to restore.", existingObjID)
+			} else {
+				logger.Info("[snapshot] created version %d (obj_id=%d) for process %d", snapVer, snapObjID, existingObjID)
+				snapshotNote = fmt.Sprintf("Snapshot created before push (version %d, obj_id=%d).", snapVer, snapObjID)
 			}
-			if envNotice != "" && snapshotNote != "" {
-				snapshotNote += " " + envNotice
-			}
-		} else if processNeverDeployed(v, existingObjID) {
+
+		case processNeverDeployed(v, existingObjID):
 			// Nothing deployed yet, so there is no previous state a snapshot
 			// could preserve. This is the create-process → push-process flow.
 			snapshotNote = fmt.Sprintf("Auto-snapshot skipped: process #%d has no deployed version yet, so there is no previous state to restore.", existingObjID)
-		} else if allowed, why := snapshotWaiverAllowed(v, jsonContent, allowNoSnapshot); !allowed {
-			return fmt.Sprintf(
-				"Push blocked: process #%d already exists on the server, but no pre-push snapshot could be taken because project_id/stage_id could not be resolved%s — so there is no rollback point for the version this push would overwrite. %s\n\nFix the workspace configuration (re-run corezoid-init, or push from the folder whose stage marker names the target stage) so snapshots work, or re-run with allow_no_snapshot=true to accept an irreversible push. allow_no_snapshot is separate from force on purpose: force overrides a *known* conflict, this waives the ability to undo.",
-				existingObjID, envNoticeSuffix(envNotice), why), true
-		} else {
+
+		default:
+			// Snapshots exist here, the process has state to lose, and we could
+			// not resolve where to put the snapshot.
+			allowed, why := snapshotWaiverAllowed(v, jsonContent, allowNoSnapshot)
+			if !allowed {
+				return fmt.Sprintf(
+					"Push blocked: process #%d already exists on the server and this environment does support snapshots, but no pre-push snapshot could be taken because project_id/stage_id could not be resolved%s — so there is no rollback point for the version this push would overwrite. %s\n\nFix the workspace configuration (re-run corezoid-init, or push from the folder whose stage marker names the target stage) so snapshots work, or re-run with allow_no_snapshot=true to accept an irreversible push. allow_no_snapshot is separate from force on purpose: force overrides a *known* conflict, this waives the ability to undo.",
+					existingObjID, envNoticeSuffix(envNotice), why), true
+			}
 			snapshotNote = fmt.Sprintf("Warning: auto-snapshot skipped for process #%d (project_id/stage_id not resolved) and allow_no_snapshot=true was passed. NO ROLLBACK POINT EXISTS for the version this push overwrote (%s).", existingObjID, why)
+		}
+		if envNotice != "" && snapshotNote != "" {
+			snapshotNote += " " + envNotice
 		}
 	}
 

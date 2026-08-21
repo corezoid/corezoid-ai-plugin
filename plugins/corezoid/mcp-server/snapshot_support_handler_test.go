@@ -406,3 +406,71 @@ func TestHandlePushProcess_StaleConcurrencyStateIsReported(t *testing.T) {
 		}
 	}
 }
+
+// The combination that must NOT be blocked: an installation whose API has no
+// snapshot object AND a target that could not be resolved. There was never a
+// rollback point to take here, so blocking would make existing processes
+// unpushable on those environments — and the block message would tell the user
+// to configure snapshots that do not exist. The support question is therefore
+// asked before the target-resolution question.
+func TestHandlePushProcess_SnapshotlessEnvPushesWithUnresolvedTarget(t *testing.T) {
+	resetGlobals(t)
+	t.Cleanup(resetSnapshotSupportCache)
+	name := writeDeployedConv(t)
+
+	badObject := map[string]interface{}{"proc": "error", "description": "bad object"}
+	srv, _ := mockAPIServer(t, func(ops []map[string]interface{}) interface{} {
+		op := ops[0]
+		typ, _ := op["type"].(string)
+		obj, _ := op["obj"].(string)
+		switch {
+		case obj == "snapshots" || obj == "snapshot" || obj == snapshotProbeUnknownObj:
+			if typ == "create" {
+				t.Error("an environment without the snapshot object must never be asked to create a snapshot")
+			}
+			return wrapOp(badObject)
+		case typ == "list" && obj == "commits":
+			// Positive control: the conv is reachable and this build keeps
+			// per-process versions. It is conv-scoped, so it still works with no
+			// project/stage configured — which is what lets the probe conclude
+			// anything at all in this scenario.
+			return wrapOp(map[string]interface{}{"proc": "ok", "list": []interface{}{
+				map[string]interface{}{"conv_id": float64(123), "version": float64(1787315841)},
+			}})
+		case typ == "list" && obj == "conv":
+			return wrapOp(deployedProcessOp())
+		case typ == "create" && obj == "node":
+			results := make([]interface{}, len(ops))
+			for i, nodeOp := range ops {
+				localID, _ := nodeOp["id"].(string)
+				results[i] = map[string]interface{}{"proc": "ok", "id": localID, "obj_id": localID}
+			}
+			return map[string]interface{}{"request_proc": "ok", "ops": results}
+		}
+		return okResponse(ops)
+	})
+	setProjectAuth(t, srv.URL)
+	// Nothing resolved — the exact case that used to fall through to the
+	// unresolved-target block without ever asking about snapshot support.
+	stageID = 0
+	cachedProjectID = 0
+
+	result, isErr := handlePushProcess(context.Background(), map[string]interface{}{
+		"process_path":   name,
+		"adopt_existing": true,
+	})
+	if isErr {
+		t.Fatalf("a snapshot-less environment must not be blocked by the unresolved-target gate, got:\n%s", result)
+	}
+	for _, want := range []string{
+		"Process deployed successfully",
+		"does not support snapshots",
+	} {
+		if !strings.Contains(result, want) {
+			t.Errorf("expected result to contain %q, got:\n%s", want, result)
+		}
+	}
+	if strings.Contains(result, "project_id/stage_id could not be resolved") {
+		t.Errorf("must not advise configuring snapshots that do not exist here:\n%s", result)
+	}
+}
