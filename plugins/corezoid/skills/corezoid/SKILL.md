@@ -53,7 +53,7 @@ You have access to the Corezoid API via the `corezoid` MCP server.
 | `list-api-keys` | List API keys in the workspace |
 | `find-principal` | Resolve user / group / API-key name → obj_id (call before share-object) |
 | `invite-user` | Invite an external email AND share an object in one call |
-| `create-snapshot` | Create a snapshot of a process (auto-created before every push-process on existing processes) |
+| `create-snapshot` | Create a snapshot of a process (auto-created before every push-process on existing processes; skipped where the environment has no snapshot support) |
 | `list-snapshots` | List all snapshots for a process |
 | `delete-snapshot` | Delete a snapshot by snapshot_id |
 | `get-snapshot` | Get snapshot node list for diff comparison against current process |
