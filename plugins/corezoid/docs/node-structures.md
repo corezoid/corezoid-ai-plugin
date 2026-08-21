@@ -225,6 +225,7 @@ Complete JSON structures for all node types used when modifying Corezoid process
         "conv_id": "@process-alias",
         "ref": "{{unique_ref}}",
         "mode": "create",
+        "group": "all",
         "is_sync": false,
         "data": {
           "field1": "{{value1}}",
@@ -257,6 +258,8 @@ Complete JSON structures for all node types used when modifying Corezoid process
 - Use for async fan-out, logging, notifications, background processing
 - Use `api_rpc` instead when you need the output from the called process
 - `conv_id`: use `@alias` (preferred) or numeric process ID
+- `group` is **required** by the schema — `"all"` copies the whole task, `""` copies only the
+  fields listed in `data`. Omitting it fails validation with `missing property 'group'`
 - `data` / `data_type` instead of `extra` / `extra_type` (unlike `api_rpc`)
 - `err_node_id` is **required**
 
