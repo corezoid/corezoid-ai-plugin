@@ -1343,7 +1343,13 @@ func readParentIDFromFile(filePath string) (int, bool) {
 // never been deployed: no committed version and no nodes. Such a process holds no
 // state a snapshot could capture, and CreateSnapshot rejects it outright — so the
 // pre-push snapshot gate must not treat that rejection as a reason to block.
-// A failed lookup returns false, keeping the conservative "block" behaviour.
+//
+// The answer is fail-closed: true is returned only when the API response
+// positively confirms BOTH facts. A failed lookup, a missing field, an
+// unexpected type or a partial response all return false, keeping the
+// conservative "block the push" behaviour — this function is what disarms the
+// snapshot protection of an already-deployed process, so an ambiguous response
+// must never be read as "nothing to lose".
 func processNeverDeployed(v *Executor, objID int) bool {
 	if v == nil || objID == 0 {
 		return false
@@ -1352,13 +1358,66 @@ func processNeverDeployed(v *Executor, objID int) bool {
 	if err != nil || data == nil {
 		return false
 	}
-	if commits, ok := data["commits"].(map[string]interface{}); ok {
-		if ver, ok := commits["version"].(float64); ok && ver > 0 {
+	return commitsConfirmedEmpty(data) && nodeListConfirmedEmpty(data)
+}
+
+// commitsConfirmedEmpty reports whether the response states that the process
+// carries no committed version. It requires commits.version to be present and
+// numerically 0; last_confirmed_version, which baselineFromServer prefers when
+// present, vetoes the answer whenever it is anything but a confirmed 0.
+func commitsConfirmedEmpty(data map[string]interface{}) bool {
+	if lcv, present := data["last_confirmed_version"]; present {
+		n, ok := jsonNumberValue(lcv)
+		if !ok || n != 0 {
 			return false
 		}
 	}
-	if list, ok := data["list"].([]interface{}); ok && len(list) > 0 {
+	commits, ok := data["commits"].(map[string]interface{})
+	if !ok {
 		return false
 	}
-	return true
+	ver, present := commits["version"]
+	if !present {
+		return false
+	}
+	n, ok := jsonNumberValue(ver)
+	return ok && n == 0
+}
+
+// nodeListConfirmedEmpty reports whether the response states that the process
+// has no nodes. The list key must be present and an actual empty array — a
+// missing list, or a list of some other shape, means the response did not
+// answer the question.
+func nodeListConfirmedEmpty(data map[string]interface{}) bool {
+	list, present := data["list"]
+	if !present {
+		return false
+	}
+	nodes, ok := list.([]interface{})
+	return ok && len(nodes) == 0
+}
+
+// jsonNumberValue coerces the numeric spellings a Corezoid response can carry
+// (float64 from a plain decode, json.Number under UseNumber, an int from a
+// hand-built map, or a numeric string) to a float64. Anything else — nil,
+// bool, object, non-numeric string — reports false so the caller can treat the
+// field as unanswered rather than as zero.
+func jsonNumberValue(v interface{}) (float64, bool) {
+	switch t := v.(type) {
+	case float64:
+		return t, true
+	case float32:
+		return float64(t), true
+	case json.Number:
+		f, err := t.Float64()
+		return f, err == nil
+	case int:
+		return float64(t), true
+	case int64:
+		return float64(t), true
+	case string:
+		f, err := strconv.ParseFloat(strings.TrimSpace(t), 64)
+		return f, err == nil
+	}
+	return 0, false
 }

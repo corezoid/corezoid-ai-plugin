@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"path/filepath"
 	"testing"
 )
@@ -77,6 +78,148 @@ func TestProcessNeverDeployed_LookupFailureBlocks(t *testing.T) {
 	})
 	if processNeverDeployed(e, 555) {
 		t.Error("an unreachable API must not be read as never-deployed")
+	}
+}
+
+// A response that does not answer the question must not be read as an answer.
+// processNeverDeployed is the one thing that disarms the snapshot gate for a
+// process that already exists on the server, so every partial, reshaped or
+// truncated API response has to fall back to "block", not to "nothing to lose".
+func TestProcessNeverDeployed_IncompleteResponseBlocks(t *testing.T) {
+	cases := []struct {
+		name string
+		op   map[string]interface{}
+	}{
+		{
+			name: "commits missing",
+			op:   map[string]interface{}{"list": []interface{}{}},
+		},
+		{
+			name: "commits.version missing",
+			op: map[string]interface{}{
+				"commits": map[string]interface{}{"list": []interface{}{}},
+				"list":    []interface{}{},
+			},
+		},
+		{
+			name: "commits not an object",
+			op: map[string]interface{}{
+				"commits": "none",
+				"list":    []interface{}{},
+			},
+		},
+		{
+			name: "commits.version not numeric",
+			op: map[string]interface{}{
+				"commits": map[string]interface{}{"version": "latest"},
+				"list":    []interface{}{},
+			},
+		},
+		{
+			name: "commits.version null",
+			op: map[string]interface{}{
+				"commits": map[string]interface{}{"version": nil},
+				"list":    []interface{}{},
+			},
+		},
+		{
+			name: "list missing",
+			op: map[string]interface{}{
+				"commits": map[string]interface{}{"version": float64(0)},
+			},
+		},
+		{
+			name: "list not an array",
+			op: map[string]interface{}{
+				"commits": map[string]interface{}{"version": float64(0)},
+				"list":    map[string]interface{}{},
+			},
+		},
+		{
+			name: "list null",
+			op: map[string]interface{}{
+				"commits": map[string]interface{}{"version": float64(0)},
+				"list":    nil,
+			},
+		},
+		{
+			name: "empty op",
+			op:   map[string]interface{}{},
+		},
+		{
+			// commits.version is 0 but the process carries a confirmed
+			// deployed version — the veto field wins.
+			name: "last_confirmed_version set",
+			op: map[string]interface{}{
+				"commits":                map[string]interface{}{"version": float64(0)},
+				"last_confirmed_version": float64(7),
+				"list":                   []interface{}{},
+			},
+		},
+		{
+			name: "last_confirmed_version not numeric",
+			op: map[string]interface{}{
+				"commits":                map[string]interface{}{"version": float64(0)},
+				"last_confirmed_version": "7",
+				"list":                   []interface{}{},
+			},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			op := map[string]interface{}{"proc": "ok", "obj_id": float64(555)}
+			for k, val := range tc.op {
+				op[k] = val
+			}
+			_, e := mockAPIServer(t, func(ops []map[string]interface{}) interface{} {
+				return map[string]interface{}{
+					"request_proc": "ok",
+					"ops":          []interface{}{op},
+				}
+			})
+			if processNeverDeployed(e, 555) {
+				t.Errorf("%s: an unconfirmed response must not disarm the snapshot gate", tc.name)
+			}
+		})
+	}
+}
+
+// The numeric spellings a real response can use must still be recognised: the
+// gate would otherwise block every genuinely new process whenever the decoder
+// hands back json.Number instead of float64.
+func TestProcessNeverDeployed_AcceptsNumericSpellings(t *testing.T) {
+	cases := []struct {
+		name    string
+		version interface{}
+		lcv     interface{}
+	}{
+		{name: "float64", version: float64(0)},
+		{name: "json.Number", version: json.Number("0")},
+		{name: "int", version: 0},
+		{name: "numeric string", version: "0"},
+		{name: "last_confirmed_version zero", version: float64(0), lcv: float64(0)},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			op := map[string]interface{}{
+				"proc":    "ok",
+				"obj_id":  float64(555),
+				"commits": map[string]interface{}{"version": tc.version},
+				"list":    []interface{}{},
+			}
+			if tc.lcv != nil {
+				op["last_confirmed_version"] = tc.lcv
+			}
+			_, e := mockAPIServer(t, func(ops []map[string]interface{}) interface{} {
+				return map[string]interface{}{
+					"request_proc": "ok",
+					"ops":          []interface{}{op},
+				}
+			})
+			if !processNeverDeployed(e, 555) {
+				t.Errorf("%s: version 0 with no nodes is a never-deployed process", tc.name)
+			}
+		})
 	}
 }
 
