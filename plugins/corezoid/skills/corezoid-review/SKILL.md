@@ -98,8 +98,49 @@ These are read-only platform metadata, not configuration that should be extracte
 
 ## Step 5: Cycle Verification
 
+### Internal cycles
+
 - Detect nodes with `semaphors` of type `time` or `go_if_const` that create loops
 - Verify exit conditions exist and iteration limits are enforced
+
+### Cross-process cycles
+
+Any automatic action that causes a task to appear in another process is a potential cycle point. Before adding such a call, verify that the called process cannot return control back to the originating process — neither directly nor through a chain of intermediate processes — without user interaction.
+
+A cycle is acceptable only if it contains an explicit break point: a user action, an iteration counter, or a timeout.
+
+**Checklist for every automatic inter-process call (`api_copy`, `api_rpc`, `api`, or any other mechanism that creates a task in another process):**
+
+1. Can the called process return a call to the originating process — directly or through a chain?
+2. If yes — is there a break point?
+3. If no break point — a bypass parameter or a different route is required.
+
+**How to check** *(apply after Step 11 — outbound call data from Steps 10–11 is required)*:
+
+1. Using the outbound dependency list from Step 10, collect all direct outbound calls.
+2. For each dependency pulled in Step 11, collect *its* outbound calls (sub-dependencies listed there).
+3. Continue tracing until either:
+   - the originating process reappears in the chain → **cycle found**, or
+   - every branch reaches a terminal node or a user-interaction gate → **safe**.
+
+> ⚠️ Step 11 is explicitly 1-level deep and will not surface 3+-hop cycles on its own. For processes that act as dispatchers (high out-degree, parameter-based routing), always trace at least one level deeper manually before concluding no cycle exists.
+
+Flag any chain where the originating process appears as a downstream target without a break point.
+
+> **Execution note:** Record the checklist questions now (Step 5) and run the "How to check" trace at the end of Step 11, once all dependency schemes have been pulled.
+
+Report format:
+
+```markdown
+## 4. Cycles
+
+### Internal
+- [ ] Node W: no exit condition → add iteration limit
+
+### Cross-process
+- [ ] conv_id X → conv_id Y → conv_id Z → back to this process without break point
+  → add bypass parameter or change routing
+```
 
 ---
 
@@ -202,6 +243,8 @@ For each dependency:
    - Sub-dependencies (list but do NOT recurse)
    - Flag processes with 200+ nodes as needing their own dedicated review
 
+After pulling all dependencies, apply the **cross-process cycle trace** from Step 5 ("How to check"): use the sub-dependency lists collected above to trace whether any chain leads back to the originating process without a break point.
+
 Report format:
 
 ```markdown
@@ -276,7 +319,12 @@ Produce a Markdown report:
 
 ## 4. Cycles
 
+### Internal
 - [ ] Node W: no exit condition → add iteration limit
+
+### Cross-process
+- [ ] conv_id X → conv_id Y → conv_id Z → back to this process without break point
+  → add bypass parameter or change routing
 
 ## 5. Naming
 
