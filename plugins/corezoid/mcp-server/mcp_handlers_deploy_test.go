@@ -119,6 +119,15 @@ func shortVerifyRetries(t *testing.T) {
 	t.Cleanup(func() { deployVerifyAttempts, deployVerifyDelayVar = origA, origD })
 }
 
+// shortCompareRetries dials the initial-compare retry loop down to
+// milliseconds so transient-retry tests don't slow the suite.
+func shortCompareRetries(t *testing.T) {
+	t.Helper()
+	origA, origD := compareRetryAttempts, compareRetryDelay
+	compareRetryAttempts, compareRetryDelay = 2, time.Millisecond
+	t.Cleanup(func() { compareRetryAttempts, compareRetryDelay = origA, origD })
+}
+
 // stubDeployMonitor replaces the WS wait with a canned log for the duration of a test.
 func stubDeployMonitor(t *testing.T, log string, err error) {
 	t.Helper()
@@ -529,5 +538,82 @@ func TestSetImmutable_OK(t *testing.T) {
 	})
 	if isErr || !strings.Contains(res, "now immutable") {
 		t.Fatalf("expected success, got isErr=%v: %s", isErr, res)
+	}
+}
+
+// ---- compareWithRetry ---------------------------------------------------------
+
+// TestDeployStage_CompareTransientRetrySuccess: the initial compare returns a
+// request-level failure (transient) on the first attempt but succeeds on retry.
+// The deploy should complete normally — retrying a transient compare is safe.
+func TestDeployStage_CompareTransientRetrySuccess(t *testing.T) {
+	shortCompareRetries(t)
+	diff := []map[string]interface{}{diffItem("proc-a", "changed")}
+	calls := 0
+	res, isErr := callDeployWithFn(t, func(ops []map[string]interface{}) interface{} {
+		if len(ops) > 0 {
+			if typ, _ := ops[0]["type"].(string); typ == "compare" {
+				calls++
+				if calls == 1 {
+					// First attempt: request-level failure (transient — request_proc not ok).
+					return map[string]interface{}{"request_proc": "fail", "ops": []interface{}{}}
+				}
+				// Second attempt: normal success.
+				list := make([]interface{}, len(diff))
+				for i, d := range diff {
+					list[i] = d
+				}
+				return map[string]interface{}{
+					"request_proc": "ok",
+					"ops":          []interface{}{map[string]interface{}{"proc": "ok", "list": list}},
+				}
+			}
+		}
+		// show-stage and other ops succeed normally via the standard mock.
+		return map[string]interface{}{
+			"request_proc": "ok",
+			"ops":          []interface{}{map[string]interface{}{"proc": "ok", "immutable": true, "undeployed": float64(0), "title": "prod", "short_name": "prod"}},
+		}
+	}, map[string]interface{}{"apply": false})
+	if isErr {
+		t.Fatalf("transient compare should succeed on retry, got error: %s", res)
+	}
+	if calls < 2 {
+		t.Errorf("expected at least 2 compare calls (initial + retry), got %d", calls)
+	}
+	if !strings.Contains(res, "DRY-RUN") {
+		t.Errorf("expected dry-run output after successful retry, got: %s", res)
+	}
+}
+
+// TestDeployStage_CompareTransientRetryExhausted: all compare attempts return
+// a transient error. The error message must include stage context and a hint to
+// retry or use Partial Merge — the bare API error alone is undiagnosable.
+func TestDeployStage_CompareTransientRetryExhausted(t *testing.T) {
+	shortCompareRetries(t)
+	calls := 0
+	res, isErr := callDeployWithFn(t, func(ops []map[string]interface{}) interface{} {
+		if len(ops) > 0 {
+			if typ, _ := ops[0]["type"].(string); typ == "compare" {
+				calls++
+				return map[string]interface{}{"request_proc": "fail", "ops": []interface{}{}}
+			}
+		}
+		return map[string]interface{}{
+			"request_proc": "ok",
+			"ops":          []interface{}{map[string]interface{}{"proc": "ok", "immutable": true, "undeployed": float64(0), "title": "prod", "short_name": "prod"}},
+		}
+	}, map[string]interface{}{"apply": false})
+	if !isErr {
+		t.Fatalf("exhausted transient retries must be an error, got: %s", res)
+	}
+	if calls < compareRetryAttempts {
+		t.Errorf("expected %d compare attempts, got %d", compareRetryAttempts, calls)
+	}
+	// Error must include stage context (source→target) and the load-hint.
+	for _, want := range []string{"compare stage", "200→300", "server load", "Partial Merge"} {
+		if !strings.Contains(res, want) {
+			t.Errorf("error must contain %q for diagnosability, got:\n%s", want, res)
+		}
 	}
 }
