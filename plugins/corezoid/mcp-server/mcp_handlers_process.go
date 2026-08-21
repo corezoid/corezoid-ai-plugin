@@ -605,10 +605,14 @@ func handlePushProcess(ctx context.Context, args map[string]interface{}) (string
 	//   • snapshot skipped because project/stage aren't resolved → warning
 	//     only; the workspace isn't wired for snapshots (misconfigured env),
 	//     blocking would be a false positive.
-	//   • snapshot was attempted and the API returned an error → BLOCK. Without
-	//     git for .conv.json files the previous server version is unrecoverable
-	//     once ProcessJSON overwrites it, and the same Corezoid API that just
-	//     failed here is the one ProcessJSON is about to call anyway.
+	//   • snapshot was attempted and the API returned an error → BLOCK, unless the
+	//     process has never been deployed. Without git for .conv.json files the
+	//     previous server version is unrecoverable once ProcessJSON overwrites it,
+	//     and the same Corezoid API that just failed here is the one ProcessJSON is
+	//     about to call anyway. A never-deployed process is the exception: it has no
+	//     committed version and no nodes, CreateSnapshot rejects it, and there is no
+	//     previous state that could be lost — blocking there would make the
+	//     create-process → push-process flow impossible for every new process.
 	var snapshotNote string
 	if existingObjID := extractObjIDFromJSON(jsonContent); existingObjID != 0 {
 		if projectID, envNotice := resolveAndCacheProjectID(v); projectID != 0 && v.StageID != 0 {
@@ -616,9 +620,13 @@ func handlePushProcess(ctx context.Context, args map[string]interface{}) (string
 			title := fmt.Sprintf("pre-push %s %s", name, time.Now().UTC().Format("2006-01-02 15:04"))
 			if snapObjID, snapVer, snapErr := v.CreateSnapshot(existingObjID, projectID, v.StageID, title); snapErr != nil {
 				logger.Warn("[snapshot] auto-snapshot failed: %v", snapErr)
-				return fmt.Sprintf(
-					"Push blocked: the pre-push snapshot of process #%d failed (%v). Without a snapshot the previous server version cannot be restored after this push. Retry once the Corezoid API is reachable — the deploy call that follows would fail against the same endpoint anyway.",
-					existingObjID, snapErr), true
+				if !processNeverDeployed(v, existingObjID) {
+					return fmt.Sprintf(
+						"Push blocked: the pre-push snapshot of process #%d failed (%v). Without a snapshot the previous server version cannot be restored after this push. Retry once the Corezoid API is reachable — the deploy call that follows would fail against the same endpoint anyway.",
+						existingObjID, snapErr), true
+				}
+				logger.Info("[snapshot] auto-snapshot skipped: process %d has never been deployed", existingObjID)
+				snapshotNote = fmt.Sprintf("Auto-snapshot skipped: process #%d has no deployed version yet, so there is no previous state to restore.", existingObjID)
 			} else {
 				logger.Info("[snapshot] created version %d (obj_id=%d) for process %d", snapVer, snapObjID, existingObjID)
 				snapshotNote = fmt.Sprintf("Snapshot created before push (version %d, obj_id=%d).", snapVer, snapObjID)
@@ -1018,8 +1026,22 @@ func createConv(ctx context.Context, args map[string]interface{}, convType strin
 		return fmt.Sprintf("Error marshaling process: %v", err), true
 	}
 
+	// Mirror pull-process's placement when the caller pinned the Corezoid folder
+	// but not the local one. Without this the two tools disagree about where a
+	// process lives on disk: create writes into the CWD while a later
+	// pull-process writes the same object into the folder tree that mirrors its
+	// parent_id — leaving two copies and split baseline sidecars.
+	if optStrArg(args, "folder_path") == "" {
+		if mirrored := mirroredDirForFolder(v, folderID); mirrored != "" {
+			folderPath = mirrored
+		}
+	}
+
 	fileName := convFileName(processID, processName)
 	filePath := filepath.Join(folderPath, fileName)
+	if err := os.MkdirAll(folderPath, 0o755); err != nil {
+		return fmt.Sprintf("Error creating folder %s: %v", folderPath, err), true
+	}
 	if err := os.WriteFile(filePath, data, 0644); err != nil {
 		return fmt.Sprintf("Error writing file: %v", err), true
 	}
@@ -1030,6 +1052,26 @@ func createConv(ctx context.Context, args map[string]interface{}, convType strin
 	}
 	return fmt.Sprintf("%s '%s' created in Corezoid folder #%d (%s) and saved to %s",
 		label, processName, folderID, resolvedFrom, filePath), false
+}
+
+// mirroredDirForFolder returns the local directory that mirrors folderID inside
+// the Corezoid tree — the same placement pull-process uses — or "" when it cannot
+// be determined (no stage marker, unresolvable folder, API error). Callers keep
+// their previous behaviour on "", so this can only improve placement.
+func mirroredDirForFolder(v *Executor, folderID int) string {
+	if v == nil || folderID == 0 || v.StageID == 0 {
+		return ""
+	}
+	stageRoot := findStageRootFromCWD(v.StageID)
+	if stageRoot == "" {
+		return ""
+	}
+	rel, err := v.resolveFolderPathFromAPI(folderID)
+	if err != nil {
+		logger.Warn("create: could not resolve folder path for %d: %v", folderID, err)
+		return ""
+	}
+	return filepath.Join(stageRoot, rel)
 }
 
 // resolveCreateTarget picks the Corezoid folder a create lands in: an explicit
@@ -1070,6 +1112,15 @@ func handleCreateFolder(ctx context.Context, args map[string]interface{}) (strin
 	newFolderID, err := v.CreateFolder(parentFolderID, folderName, "")
 	if err != nil {
 		return fmt.Sprintf("Error creating folder '%s': %v", folderName, err), true
+	}
+
+	// Same divergence as createConv: an explicit parent folder_id with no
+	// parent_path used to mirror the new folder into the CWD, so the on-disk
+	// tree stopped matching the Corezoid tree that pull-folder reproduces.
+	if optStrArg(args, "parent_path") == "" {
+		if mirrored := mirroredDirForFolder(v, parentFolderID); mirrored != "" {
+			parentPath = mirrored
+		}
 	}
 
 	safeName := sanitizeFileSegment(folderName)
@@ -1338,4 +1389,28 @@ func readParentIDFromFile(filePath string) (int, bool) {
 		}
 	}
 	return 0, false
+}
+
+// processNeverDeployed reports whether a process that exists on the server has
+// never been deployed: no committed version and no nodes. Such a process holds no
+// state a snapshot could capture, and CreateSnapshot rejects it outright — so the
+// pre-push snapshot gate must not treat that rejection as a reason to block.
+// A failed lookup returns false, keeping the conservative "block" behaviour.
+func processNeverDeployed(v *Executor, objID int) bool {
+	if v == nil || objID == 0 {
+		return false
+	}
+	data, err := v.GetProcessByID(objID)
+	if err != nil || data == nil {
+		return false
+	}
+	if commits, ok := data["commits"].(map[string]interface{}); ok {
+		if ver, ok := commits["version"].(float64); ok && ver > 0 {
+			return false
+		}
+	}
+	if list, ok := data["list"].([]interface{}); ok && len(list) > 0 {
+		return false
+	}
+	return true
 }
