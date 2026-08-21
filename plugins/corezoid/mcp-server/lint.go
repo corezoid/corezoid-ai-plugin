@@ -455,11 +455,18 @@ type UnknownLogicProp struct {
 // preserved on round-trip), and a hand-authored typo (not harmless). Naming the
 // property lets the reader tell them apart in one glance.
 func findUnknownLogicProps(nodes []processNode) []UnknownLogicProp {
+	// logicProps(), never knownLogicProps directly: it warms the schema cache, so
+	// the first lint-process of a session sees a populated map instead of silently
+	// finding nothing, and the read is ordered against the writer.
+	props := logicProps()
+	if len(props) == 0 {
+		return nil
+	}
 	var out []UnknownLogicProp
 	for _, n := range nodes {
 		for _, lg := range n.logics {
 			logicType, _ := lg["type"].(string)
-			known, ok := knownLogicProps[logicType]
+			known, ok := props[logicType]
 			if !ok || len(known) == 0 {
 				continue // no schema for this logic type — nothing to compare against
 			}
