@@ -464,36 +464,49 @@ func findUnknownLogicProps(nodes []processNode) []UnknownLogicProp {
 	}
 	var out []UnknownLogicProp
 	for _, n := range nodes {
-		for _, lg := range n.logics {
-			logicType, _ := lg["type"].(string)
-			known, ok := props[logicType]
-			if !ok || len(known) == 0 {
-				continue // no schema for this logic type — nothing to compare against
-			}
-			var extras []string
-			for name := range lg {
-				if !known[name] {
-					extras = append(extras, name)
-				}
-			}
-			if len(extras) == 0 {
-				continue
-			}
-			sort.Strings(extras)
-			title := n.title
-			if title == "" {
-				title = "(untitled)"
-			}
-			out = append(out, UnknownLogicProp{
-				NodeID:    n.id,
-				NodeTitle: title,
-				LogicType: logicType,
-				Props:     extras,
-				Issue: fmt.Sprintf("%s carries %v, which its schema does not declare — "+
-					"a server-added field is fine and round-trips safely; a typo is not",
-					logicType, extras),
-			})
+		// Both collections, because both are relaxed. loadCompiledSchema opens a
+		// schema only if it pins a `type`, and that covers semaphor types ("time",
+		// "count") as well as logic types — so scanning only logics would leave
+		// the semaphor schemas relaxed with nothing checking them.
+		out = append(out, scanUnknownProps(n, n.logics, props)...)
+		out = append(out, scanUnknownProps(n, n.sems, props)...)
+	}
+	return out
+}
+
+// scanUnknownProps compares one node's logic or semaphor blocks against the
+// property names their schemas declare.
+func scanUnknownProps(n processNode, blocks []map[string]interface{}, props map[string]map[string]bool) []UnknownLogicProp {
+	var out []UnknownLogicProp
+	for _, lg := range blocks {
+		logicType, _ := lg["type"].(string)
+		known, ok := props[logicType]
+		if !ok || len(known) == 0 {
+			continue // no schema for this type — nothing to compare against
 		}
+		var extras []string
+		for name := range lg {
+			if !known[name] {
+				extras = append(extras, name)
+			}
+		}
+		if len(extras) == 0 {
+			continue
+		}
+		sort.Strings(extras)
+		title := n.title
+		if title == "" {
+			title = "(untitled)"
+		}
+		out = append(out, UnknownLogicProp{
+			NodeID:    n.id,
+			NodeTitle: title,
+			LogicType: logicType,
+			Props:     extras,
+			Issue: fmt.Sprintf("%s carries %v, which its schema does not declare — "+
+				"a server-added field is fine and round-trips safely; a typo is not",
+				logicType, extras),
+		})
 	}
 	return out
 }

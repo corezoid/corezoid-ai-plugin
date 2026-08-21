@@ -424,24 +424,35 @@ func categorizeLintForPush(lintRes *LintResult) (structural, overridable, adviso
 // a test of those sums cannot notice it going silent — which is exactly how it
 // went silent in the first place.
 //
-// Blocks by default, waived by force. The logics schemas are loaded with
-// additionalProperties relaxed so a field Corezoid adds to a deployed node cannot
-// break the pull -> push round-trip, and that relaxation removed the only thing
-// standing between a typo and a live process: `issync` for `is_sync` sits in no
-// `required` list, so it used to fail schema validation and now passes. Unlike
-// the closed schema it replaces, this stop is waivable — a genuine platform field
-// is one force=true away instead of a dead end.
-func unknownPropsPushBlock(lintRes *LintResult, force bool) string {
+// Blocks by default, waived by allow_unknown_logic_props — NOT by force.
+//
+// The logics schemas are loaded with additionalProperties relaxed so a field
+// Corezoid adds to a deployed node cannot break the pull -> push round-trip, and
+// that relaxation removed the only thing standing between a typo and a live
+// process: `issync` for `is_sync` sits in no `required` list, so it used to fail
+// schema validation and now passes. Unlike the closed schema it replaces, this
+// stop is waivable — a genuine platform field must not be a dead end.
+//
+// The waiver is its own flag on purpose. force=true ALSO waives the lost-update
+// concurrency gate (see resolveConflict), so routing this waiver through force
+// would mean: because there is no catalogue of server-emitted fields, an ordinary
+// pull -> edit -> push starts needing force, and the first time a colleague has
+// touched the process on the server since the pull, that push silently discards
+// their work. Same reason allow_active_stub_mode exists rather than another force
+// meaning.
+func unknownPropsPushBlock(lintRes *LintResult, allowUnknownProps bool) string {
 	n := len(lintRes.UnknownLogicProps)
-	if n == 0 || force {
+	if n == 0 || allowUnknownProps {
 		return ""
 	}
 	return fmt.Sprintf("Push blocked: %d node(s) carry a property their schema does not declare. "+
 		"Two things land here and they need opposite responses:\n\n"+
 		"  • a typo (`issync` for `is_sync`) — fix the property name; nothing else catches it, "+
 		"since it is in no required list;\n"+
-		"  • a field Corezoid added to a deployed node — leave it as-is and re-run with force=true, "+
-		"then report it so the schema can declare it and future pushes stop asking.\n\n%s",
+		"  • a field Corezoid added to a deployed node — leave it as-is and re-run with "+
+		"allow_unknown_logic_props=true, then report it so the schema can declare it and future "+
+		"pushes stop asking. (Not force=true: that would also waive the concurrent-change gate "+
+		"and could overwrite someone else's edits.)\n\n%s",
 		n, FormatLintResult(lintRes))
 }
 
@@ -521,12 +532,13 @@ func handlePushProcess(ctx context.Context, args map[string]interface{}) (string
 	//   • advisory findings (noop, unused set_param, orphans, passthrough,
 	//     shared clusters) never block; they are surfaced so the user sees them.
 	//   • undeclared logic properties have their own gate below: they block by
-	//     default but force=true waives them, because the same finding covers
-	//     both a typo and a platform-added field.
+	//     default and allow_unknown_logic_props=true waives them — a dedicated
+	//     flag, not force, which would also waive the concurrency gate.
 	// Active Stub Mode has its own stage-aware gate because it bypasses the real
 	// called process at runtime.
 	force, _ := args["force"].(bool)
 	allowStubMode, _ := args["allow_active_stub_mode"].(bool)
+	allowUnknownProps, _ := args["allow_unknown_logic_props"].(bool)
 	var lintNote string // findings surfaced on a proceeding push (see below)
 	if lintRes, lintErr := lintProcess(filePath); lintErr == nil {
 		stubMode := len(lintRes.StubModeNodes)
@@ -564,11 +576,11 @@ func handlePushProcess(ctx context.Context, args map[string]interface{}) (string
 		// what puts a stop back in front of it — waivable, unlike the closed
 		// schema it replaced, so a genuine platform field is a force=true away
 		// rather than a dead end.
-		if msg := unknownPropsPushBlock(lintRes, force); msg != "" {
+		if msg := unknownPropsPushBlock(lintRes, allowUnknownProps); msg != "" {
 			return msg, true
 		}
-		if n := len(lintRes.UnknownLogicProps); n > 0 && force {
-			fmt.Fprintf(os.Stderr, "[lint] %d undeclared logic property(ies) overridden with force=true\n", n)
+		if n := len(lintRes.UnknownLogicProps); n > 0 && allowUnknownProps {
+			fmt.Fprintf(os.Stderr, "[lint] %d undeclared logic property(ies) allowed with allow_unknown_logic_props=true\n", n)
 		}
 		// The push proceeds. Surface any findings so the promise "advisory
 		// findings are shown but do not block" is actually kept — otherwise

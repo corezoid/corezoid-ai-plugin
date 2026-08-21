@@ -38,3 +38,26 @@ func writeTempProcess(t *testing.T, body string) string {
 	}
 	return path
 }
+
+// `semaphores` instead of Corezoid's misspelled `semaphors`. The key sits on the
+// condition object, not on a logic, so only a closed container schema refuses it.
+const misspelledSemaphorsProcess = `{
+  "obj_type": 1, "obj_id": 7002, "parent_id": 7000, "title": "sem typo", "description": "",
+  "status": "active", "params": [], "ref_mask": true, "conv_type": "process",
+  "scheme": {"nodes": [
+    {"id": "bbbbbbbbbbbbbbbbbbbbbbb1", "obj_type": 1, "title": "Start", "description": "",
+     "x": 0, "y": 0, "extra": "{}", "options": null,
+     "condition": {"logics": [{"type": "go", "to_node_id": "bbbbbbbbbbbbbbbbbbbbbbb2"}], "semaphors": []}},
+    {"id": "bbbbbbbbbbbbbbbbbbbbbbb2", "obj_type": 0, "title": "Wait", "description": "",
+     "x": 0, "y": 160, "extra": "{}", "options": null,
+     "condition": {"logics": [{"type": "go", "to_node_id": "bbbbbbbbbbbbbbbbbbbbbbb3"}],
+       "semaphores": [{"type": "time", "value": 60, "dimension": "sec",
+                       "to_node_id": "bbbbbbbbbbbbbbbbbbbbbbb4"}]}},
+    {"id": "bbbbbbbbbbbbbbbbbbbbbbb3", "obj_type": 2, "title": "Done", "description": "",
+     "x": 0, "y": 320, "extra": "{}", "options": "{\"save_task\":true}",
+     "condition": {"logics": [], "semaphors": []}},
+    {"id": "bbbbbbbbbbbbbbbbbbbbbbb4", "obj_type": 2, "title": "Timed out", "description": "",
+     "x": 260, "y": 320, "extra": "{}", "options": "{\"save_task\":true}",
+     "condition": {"logics": [], "semaphors": []}}
+  ], "web_settings": [[], []]}
+}`

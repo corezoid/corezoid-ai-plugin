@@ -158,3 +158,95 @@ func TestLogicProps_ConcurrentReadersAndWriter(t *testing.T) {
 	}
 	wg.Wait()
 }
+
+// The relaxation and the compensating scan have to cover the same ground. When
+// they drifted apart, the schemas under json-schema/logics/ that describe the
+// CONTAINER of logics — condition, semaphors, stub — were relaxed while nothing
+// walked those objects. condition.json has additionalProperties:false and no
+// required list, so `"semaphores"` (the natural English spelling of Corezoid's
+// misspelled `semaphors`) validated, linted clean, pushed clean, and deployed a
+// node whose timer silently no longer existed. Before the relaxation it failed
+// loudly with "additional properties 'semaphores' not allowed".
+func TestContainerSchemas_StayClosed(t *testing.T) {
+	if _, err := loadCompiledSchema(); err != nil {
+		t.Fatalf("loadCompiledSchema: %v", err)
+	}
+	for _, name := range []string{"condition", "semaphors", "stub"} {
+		if _, registered := knownLogicProps[name]; registered {
+			t.Errorf("%s describes the container, not a logic — nothing scans it, so relaxing "+
+				"it accepts a misspelled key with no check behind it", name)
+		}
+	}
+}
+
+// End-to-end on the case above: the closed container schema is what refuses it.
+func TestSchema_RejectsMisspelledSemaphors(t *testing.T) {
+	sch, err := loadCompiledSchema()
+	if err != nil {
+		t.Fatalf("loadCompiledSchema: %v", err)
+	}
+	var doc any
+	if err := json.Unmarshal([]byte(misspelledSemaphorsProcess), &doc); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if err := sch.Validate(doc); err == nil {
+		t.Fatal("a misspelled `semaphores` key must not validate — the node would deploy " +
+			"with its timer silently gone")
+	}
+}
+
+// Semaphor schemas DO pin a type ("time", "count"), so they are relaxed — which
+// means the scan has to reach condition.semaphors[] as well as condition.logics[].
+// Scanning only logics would leave them open with nothing checking them.
+func TestFindUnknownLogicProps_ScansSemaphors(t *testing.T) {
+	resetSchemaCache(t)
+	nodes := []processNode{{
+		id: "n1", title: "Wait", objType: 0,
+		sems: []map[string]interface{}{
+			{"type": "time", "value": 60, "dimension": "sec",
+				"to_node_id": "e1", "bogus_sem_field": true},
+		},
+	}}
+	got := findUnknownLogicProps(nodes)
+	if len(got) != 1 {
+		t.Fatalf("a relaxed semaphor schema must still be checked, got %d findings", len(got))
+	}
+	if !strings.Contains(got[0].Issue, "bogus_sem_field") {
+		t.Errorf("finding must name the property, got: %s", got[0].Issue)
+	}
+}
+
+// The invariant itself, so the two halves cannot drift again: every schema that
+// pins a type is registered (hence scannable), and every schema that pins none is
+// left closed.
+func TestRelaxationMatchesScanCoverage(t *testing.T) {
+	if _, err := loadCompiledSchema(); err != nil {
+		t.Fatalf("loadCompiledSchema: %v", err)
+	}
+	for _, d := range schemaDefinitions {
+		if !strings.HasPrefix(d.path, "json-schema/logics/") {
+			continue
+		}
+		data, err := schemaFS.ReadFile(d.path)
+		if err != nil {
+			t.Fatalf("read %s: %v", d.path, err)
+		}
+		var doc any
+		if err := json.Unmarshal(data, &doc); err != nil {
+			t.Fatalf("parse %s: %v", d.path, err)
+		}
+		types := logicTypeNames(doc)
+		if len(types) == 0 {
+			if _, registered := knownLogicProps[d.name]; registered {
+				t.Errorf("%s pins no type, so nothing scans it — it must stay closed", d.path)
+			}
+			continue
+		}
+		for _, typeName := range types {
+			if _, ok := knownLogicProps[typeName]; !ok {
+				t.Errorf("%s pins type %q but is not registered — relaxed with no check behind it",
+					d.path, typeName)
+			}
+		}
+	}
+}

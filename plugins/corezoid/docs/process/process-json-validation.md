@@ -235,20 +235,40 @@ So the check moved to where the consequence is:
 | Step | Behaviour |
 |---|---|
 | `lint-process` | Reports it under `UNKNOWN LOGIC PROPERTIES`, counted in `Total issues` |
-| `push-process` | **Blocks.** `force=true` waives it |
+| `push-process` | **Blocks.** `allow_unknown_logic_props=true` waives it |
 
 Read the finding as a question with two opposite answers:
 
 - **A field on a node you pulled from a deployed process** → a platform field.
-  Leave it exactly as it is, re-run with `force=true`, and report it so the schema
-  can declare it and future pushes stop asking.
+  Leave it exactly as it is, re-run with `allow_unknown_logic_props=true`, and
+  report it so the schema can declare it and future pushes stop asking.
 - **A property on a node you wrote by hand** → a typo. Fix the name; compare it
   against the node's field list in [Node Structures](../node-structures.md).
-  Do not reach for `force=true` here — it is the one case where the block is right.
+  Do not reach for the waiver here — this is the case the block exists for.
 
 The block is waivable on purpose. A closed schema was not: it turned an
 undocumented platform field into a dead end on a file the plugin itself produced,
 with no way forward short of hand-editing generated JSON.
+
+**Use `allow_unknown_logic_props`, not `force`.** `force=true` also waives the
+concurrent-change gate, so if a colleague edited the process on the server after
+your pull, a forced push discards their work. Because there is no catalogue of
+server-emitted fields, reaching for `force` here would make that the routine path
+for ordinary pull → edit → push cycles. The dedicated flag waives this one gate
+and nothing else — the same reason `allow_active_stub_mode` exists.
+
+### Scope of the relaxation
+
+Only schemas that describe a **logic or semaphor** are relaxed — the ones pinning
+a `type` value, which is exactly what makes their objects reachable by the check
+above (`condition.logics[]` and `condition.semaphors[]`).
+
+The schemas describing the **container** — `condition`, `semaphors`, `stub` —
+stay strictly closed, because nothing walks those objects and an open schema with
+no check behind it is worse than a closed one. Concretely: `semaphores`, the
+natural English spelling of Corezoid's misspelled `semaphors` key, is refused by
+schema validation. Were the container relaxed, it would validate, lint clean, and
+deploy a node whose timer silently no longer exists.
 
 ## Process Schema Structure
 

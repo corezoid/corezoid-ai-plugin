@@ -46,8 +46,9 @@
 
 Corezoid may decorate deployed nodes with fields like this one beyond the list
 here — there is no published catalogue. An undeclared property therefore does not
-fail schema validation, but `push-process` blocks on it and `force=true` waives
-it; see
+fail schema validation, but `push-process` blocks on it and
+`allow_unknown_logic_props=true` waives it (not `force`, which would also waive
+the concurrent-change gate); see
 [Server-emitted node fields](../process/process-json-validation.md#server-emitted-node-fields).
 
 ## Available Libraries

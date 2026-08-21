@@ -337,12 +337,16 @@ func logicProps() map[string]map[string]bool {
 }
 
 // logicTypeNames returns the `type` values a logic schema pins, via const or
-// enum. Falls back to the definition name for the schemas that pin no type at
-// all (condition, semaphors, stub).
-func logicTypeNames(doc any, defName string) []string {
+// enum, and nil for a schema that pins none.
+//
+// nil is load-bearing: the schemas under json-schema/logics/ include CONTAINER
+// schemas (condition, semaphors, stub) that describe the object holding logics
+// rather than a logic itself. Nothing scans those objects, so relaxing them
+// would open a hole with no compensating check — see loadCompiledSchema.
+func logicTypeNames(doc any) []string {
 	m, ok := doc.(map[string]any)
 	if !ok {
-		return []string{defName}
+		return nil
 	}
 	props, _ := m["properties"].(map[string]any)
 	typeProp, _ := props["type"].(map[string]any)
@@ -360,7 +364,7 @@ func logicTypeNames(doc any, defName string) []string {
 			return out
 		}
 	}
-	return []string{defName}
+	return nil
 }
 
 // relaxAdditionalProps turns "additionalProperties": false into true and returns
@@ -421,17 +425,22 @@ func loadCompiledSchema() (*jsonschema.Schema, error) {
 				compiledSchemaErr = fmt.Errorf("failed to parse %s: %v", d.path, err)
 				return
 			}
+			// Relax exactly what findUnknownLogicProps scans, and nothing else.
+			// A schema is eligible only if it pins a logic `type`, which is what
+			// makes its objects reachable by the scan (condition.logics[] for
+			// logic types, condition.semaphors[] for semaphor types). The
+			// container schemas — condition, semaphors, stub — pin no type and
+			// stay CLOSED: nothing walks those objects, so relaxing them would
+			// accept a misspelled key with no check behind it. `semaphores` for
+			// `semaphors` on a condition is the concrete case: it validates, and
+			// the node deploys with its timer silently gone.
 			if strings.HasPrefix(d.path, "json-schema/logics/") {
-				if known := relaxAdditionalProps(doc); known != nil {
-					for _, t := range logicTypeNames(doc, d.name) {
-						knownLogicProps[t] = known
-						logicSchemaPathByType[t] = d.path
-					}
-					// Keep the definition name reachable too, but never at the
-					// cost of shadowing a real type value.
-					if _, taken := knownLogicProps[d.name]; !taken {
-						knownLogicProps[d.name] = known
-						logicSchemaPathByType[d.name] = d.path
+				if types := logicTypeNames(doc); len(types) > 0 {
+					if known := relaxAdditionalProps(doc); known != nil {
+						for _, t := range types {
+							knownLogicProps[t] = known
+							logicSchemaPathByType[t] = d.path
+						}
 					}
 				}
 			}
