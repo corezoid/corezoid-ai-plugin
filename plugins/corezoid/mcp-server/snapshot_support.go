@@ -377,6 +377,29 @@ var snapshotFeatureAbsentMarkers = []string{
 	"invalid obj",
 }
 
+// snapshotTransientFailureMarkers veto a snapshot-named feature-absence match.
+// "snapshot service temporarily not available" and "snapshots disabled during
+// maintenance" describe a working feature that cannot answer right now, not an
+// installation where the snapshot object does not exist. Those failures must
+// keep the pre-push gate enabled and must never be cached as unsupported.
+var snapshotTransientFailureMarkers = []string{
+	"temporarily",
+	"temporary",
+	"maintenance",
+	"service unavailable",
+	"service is unavailable",
+	"try again",
+	"retry later",
+	"please retry",
+	"timeout",
+	"timed out",
+	"connection",
+	"network",
+	"gateway",
+	"rate limit",
+	"overloaded",
+}
+
 // snapshotRequestSpecificMarkers name a concrete thing the request asked about.
 // A message mentioning any of them is answering "your request was wrong", not
 // "this object does not exist here" — the exact confusion that could otherwise
@@ -416,14 +439,21 @@ func classifySnapshotRejection(op map[string]any) snapshotRejection {
 		return rejectionOrdinary
 	}
 
-	// (1) The API named the snapshot object in its refusal — conclusive, and
-	// checked first so a message like "unknown obj snapshots for conv 5" is not
-	// discarded by the request-specific rule below.
+	// (1) A temporary outage is never evidence that the feature is absent. This
+	// must run before the snapshot-named check below: otherwise a message such
+	// as "snapshot service temporarily not available" would disable the gate.
+	if containsAnyMarker(hay, snapshotTransientFailureMarkers) {
+		return rejectionOrdinary
+	}
+
+	// (2) The API named the snapshot object in its refusal — conclusive, and
+	// checked before the request-specific rule so a message like "unknown obj
+	// snapshots for conv 5" is not discarded by that veto.
 	if strings.Contains(hay, "snapshot") && containsAnyMarker(hay, snapshotFeatureAbsentMarkers) {
 		return rejectionUnknownObjSnapshot
 	}
 
-	// (2) A structured code from the curated set. Exact-matched, so it is not a
+	// (3) A structured code from the curated set. Exact-matched, so it is not a
 	// heuristic at all — it outranks the text rules below, and is not subject to
 	// the request-specific veto (a code like `obj_not_supported` legitimately
 	// looks like a parameter reference).
@@ -431,13 +461,13 @@ func classifySnapshotRejection(op map[string]any) snapshotRejection {
 		return rejectionUnknownObjGeneric
 	}
 
-	// (3) Text fallback, and only from here on. First: anything naming a
+	// (4) Text fallback, and only from here on. First: anything naming a
 	// concrete thing the request carried is about the request.
 	if requestSpecificRejection(hay) {
 		return rejectionOrdinary
 	}
 
-	// (4) An obj-level refusal that did not name snapshots: suggestive only.
+	// (5) An obj-level refusal that did not name snapshots: suggestive only.
 	if containsAnyMarker(hay, snapshotUnknownObjMarkers) {
 		return rejectionUnknownObjGeneric
 	}

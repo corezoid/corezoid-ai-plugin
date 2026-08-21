@@ -69,6 +69,20 @@ func TestClassifySnapshotRejection_SnapshotNamedIsConclusive(t *testing.T) {
 	}
 }
 
+func TestClassifySnapshotRejection_TemporarySnapshotFailureStaysOrdinary(t *testing.T) {
+	for _, description := range []string{
+		"snapshot service temporarily not available",
+		"snapshots disabled during maintenance",
+	} {
+		t.Run(description, func(t *testing.T) {
+			op := map[string]any{"proc": "error", "description": description}
+			if got := classifySnapshotRejection(op); got != rejectionOrdinary {
+				t.Errorf("classified %v, want rejectionOrdinary", got)
+			}
+		})
+	}
+}
+
 // An "unknown obj" shaped refusal that never mentions snapshots is suggestive
 // only — the control ops decide (see the ProbeSnapshotSupport tests). This is
 // what dev.corezoid.com actually answers: a bare "bad object".
@@ -329,6 +343,29 @@ func TestSnapshotsSupported_TransientFailureStaysEnabledAndUncached(t *testing.T
 	}
 	if m.calls["snapshots"] != 2 {
 		t.Errorf("an inconclusive probe must not be cached; got %d probes, want 2", m.calls["snapshots"])
+	}
+}
+
+func TestSnapshotsSupported_TemporarySnapshotFailureStaysEnabledAndUncached(t *testing.T) {
+	for _, description := range []string{
+		"snapshot service temporarily not available",
+		"snapshots disabled during maintenance",
+	} {
+		t.Run(description, func(t *testing.T) {
+			resetSnapshotSupportCache()
+			t.Cleanup(resetSnapshotSupportCache)
+
+			m := newProbeMock(t)
+			m.snapshotsResp = map[string]interface{}{"proc": "error", "description": description}
+			_, e := mockAPIServer(t, m.fn)
+
+			if !snapshotsSupported(e, 555, 10, 20) || !snapshotsSupported(e, 555, 10, 20) {
+				t.Fatal("a temporary snapshot failure must keep snapshots enabled")
+			}
+			if m.calls["snapshots"] != 2 {
+				t.Errorf("a temporary failure must not be cached; got %d probes, want 2", m.calls["snapshots"])
+			}
+		})
 	}
 }
 
