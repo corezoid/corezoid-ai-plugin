@@ -566,7 +566,9 @@ func handlePushProcess(ctx context.Context, args map[string]interface{}) (string
 	//     it is an unknown safety configuration, and proceeding overwrites a
 	//     live process with no way back. See snapshotWaiverAllowed.
 	//   • snapshot was attempted and the API returned an error → BLOCK, unless the
-	//     process has never been deployed. Without git for .conv.json files the
+	//     process has never been deployed, or the caller passes
+	//     allow_no_snapshot=true on a resolved mutable stage (see
+	//     snapshotAPIFailureWaiverAllowed). Without git for .conv.json files the
 	//     previous server version is unrecoverable once ProcessJSON overwrites it,
 	//     and the same Corezoid API that just failed here is the one ProcessJSON is
 	//     about to call anyway. A never-deployed process is the exception: it has no
@@ -598,13 +600,24 @@ func handlePushProcess(ctx context.Context, args map[string]interface{}) (string
 			title := fmt.Sprintf("pre-push %s %s", name, time.Now().UTC().Format("2006-01-02 15:04"))
 			if snapObjID, snapVer, snapErr := v.CreateSnapshot(existingObjID, projectID, v.StageID, title); snapErr != nil {
 				logger.Warn("[snapshot] auto-snapshot failed: %v", snapErr)
-				if !processNeverDeployed(v, existingObjID) {
-					return fmt.Sprintf(
-						"Push blocked: the pre-push snapshot of process #%d failed (%v). Without a snapshot the previous server version cannot be restored after this push. Retry once the Corezoid API is reachable — the deploy call that follows would fail against the same endpoint anyway.",
-						existingObjID, snapErr), true
+				switch {
+				case processNeverDeployed(v, existingObjID):
+					logger.Info("[snapshot] auto-snapshot skipped: process %d has never been deployed", existingObjID)
+					snapshotNote = fmt.Sprintf("Auto-snapshot skipped: process #%d has no deployed version yet, so there is no previous state to restore.", existingObjID)
+				default:
+					// Resolution succeeded — we know exactly which stage this
+					// would have landed on — so the waiver is checked against
+					// that stage directly rather than re-derived from
+					// parent_id (contrast snapshotWaiverAllowed, used below
+					// for the unresolved-target case).
+					if allowed, why := snapshotAPIFailureWaiverAllowed(v, v.StageID, projectID, allowNoSnapshot); allowed {
+						snapshotNote = fmt.Sprintf("Warning: auto-snapshot could not be taken for process #%d — the CreateSnapshot API call failed (%v) — and allow_no_snapshot=true was passed. NO ROLLBACK POINT EXISTS for the version this push overwrites (%s).", existingObjID, snapErr, why)
+					} else {
+						return fmt.Sprintf(
+							"Push blocked: the pre-push snapshot of process #%d failed (%v). Without a snapshot the previous server version cannot be restored after this push. %s\n\nRetry once the Corezoid API is reachable, or re-run with allow_no_snapshot=true to accept an irreversible push once you accept the risk. allow_no_snapshot is separate from force on purpose: force overrides a *known* conflict, this waives the ability to undo.",
+							existingObjID, snapErr, why), true
+					}
 				}
-				logger.Info("[snapshot] auto-snapshot skipped: process %d has never been deployed", existingObjID)
-				snapshotNote = fmt.Sprintf("Auto-snapshot skipped: process #%d has no deployed version yet, so there is no previous state to restore.", existingObjID)
 			} else {
 				logger.Info("[snapshot] created version %d (obj_id=%d) for process %d", snapVer, snapObjID, existingObjID)
 				snapshotNote = fmt.Sprintf("Snapshot created before push (version %d, obj_id=%d).", snapVer, snapObjID)
@@ -1577,6 +1590,29 @@ func processNeverDeployed(v *Executor, objID int) bool {
 // must not be allowed to mean "so anything goes".
 func snapshotWaiverAllowed(v *Executor, jsonContent string, allowNoSnapshot bool) (bool, string) {
 	policy := stubModeStagePolicyForPush(v, jsonContent)
+	switch {
+	case policy.requiresConfirmation:
+		return false, fmt.Sprintf("Target policy: %s — a rollback waiver is not accepted here even with allow_no_snapshot=true.", policy.reason)
+	case !allowNoSnapshot:
+		return false, fmt.Sprintf("Target policy: %s.", policy.reason)
+	default:
+		return true, policy.reason
+	}
+}
+
+// snapshotAPIFailureWaiverAllowed decides whether allow_no_snapshot may be
+// honoured when project/stage resolved successfully but the CreateSnapshot
+// API call itself returned an error (as opposed to snapshotWaiverAllowed's
+// case, where the target could not be resolved at all). The stage is already
+// known here, so the policy is read for it directly instead of re-derived
+// from parent_id.
+//
+// Gated on the same mutable/non-production stage policy as the
+// resolution-failure waiver and Stub Mode: a transient API error must not be
+// treated as license to push blind on a stage where an irreversible
+// overwrite is least recoverable.
+func snapshotAPIFailureWaiverAllowed(v *Executor, stageID, projectID int, allowNoSnapshot bool) (bool, string) {
+	policy := stubModePolicyForStage(v, stageID, projectID)
 	switch {
 	case policy.requiresConfirmation:
 		return false, fmt.Sprintf("Target policy: %s — a rollback waiver is not accepted here even with allow_no_snapshot=true.", policy.reason)
