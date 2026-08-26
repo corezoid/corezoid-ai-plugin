@@ -145,6 +145,124 @@ func TestHandlePushProcess_SnapshotAPIErrorBlocksPush(t *testing.T) {
 	}
 }
 
+// A CreateSnapshot API failure on a target that DID resolve (unlike the
+// unresolved-target case below) must still be waivable with
+// allow_no_snapshot=true, as long as the resolved stage is mutable and
+// doesn't look production-like — otherwise a transient platform error on the
+// snapshot endpoint would leave a brand-new, still-empty process permanently
+// unpushable even though there is nothing of value on the server to lose.
+func TestHandlePushProcess_SnapshotAPIErrorWaiverAllowsPushOnMutableStage(t *testing.T) {
+	resetGlobals(t)
+	t.Cleanup(resetSnapshotSupportCache)
+	name := writeDeployedConv(t)
+
+	var createSnapshots int
+	srv, _ := mockAPIServer(t, func(ops []map[string]interface{}) interface{} {
+		op := ops[0]
+		typ, _ := op["type"].(string)
+		obj, _ := op["obj"].(string)
+		switch {
+		case typ == "list" && obj == "snapshots":
+			return wrapOp(map[string]interface{}{"proc": "ok", "list": []interface{}{}})
+		case typ == "create" && obj == "snapshot":
+			createSnapshots++
+			return wrapOp(map[string]interface{}{"proc": "error", "description": "Internal server error"})
+		case typ == "list" && obj == "conv":
+			return wrapOp(deployedProcessOp())
+		case typ == "show" && obj == "stage":
+			return wrapOp(map[string]interface{}{
+				"proc":       "ok",
+				"immutable":  false,
+				"title":      "develop",
+				"short_name": "dev",
+			})
+		case typ == "create" && obj == "node":
+			results := make([]interface{}, len(ops))
+			for i, nodeOp := range ops {
+				localID, _ := nodeOp["id"].(string)
+				results[i] = map[string]interface{}{"proc": "ok", "id": localID, "obj_id": localID}
+			}
+			return map[string]interface{}{"request_proc": "ok", "ops": results}
+		}
+		return okResponse(ops)
+	})
+	setProjectAuth(t, srv.URL)
+	stageID = 20
+	cachedProjectID = 10
+
+	result, isErr := handlePushProcess(context.Background(), map[string]interface{}{
+		"process_path":      name,
+		"adopt_existing":    true,
+		"allow_no_snapshot": true,
+	})
+	if isErr {
+		t.Fatalf("allow_no_snapshot must waive a CreateSnapshot API failure on a resolved mutable stage, got:\n%s", result)
+	}
+	if createSnapshots != 1 {
+		t.Errorf("expected exactly one snapshot attempt, got %d", createSnapshots)
+	}
+	for _, want := range []string{
+		"Process deployed successfully",
+		"CreateSnapshot API call failed",
+		"Internal server error",
+		"NO ROLLBACK POINT EXISTS",
+	} {
+		if !strings.Contains(result, want) {
+			t.Fatalf("expected result to contain %q, got:\n%s", want, result)
+		}
+	}
+}
+
+// The waiver for a CreateSnapshot API failure must be refused on the same
+// stages the resolution-failure waiver refuses: a transient API error is not
+// license to push blind somewhere an irreversible overwrite is unrecoverable.
+func TestHandlePushProcess_SnapshotAPIErrorWaiverRefusedOnImmutableStage(t *testing.T) {
+	resetGlobals(t)
+	t.Cleanup(resetSnapshotSupportCache)
+	name := writeDeployedConv(t)
+
+	var createSnapshots int
+	srv, _ := mockAPIServer(t, func(ops []map[string]interface{}) interface{} {
+		op := ops[0]
+		typ, _ := op["type"].(string)
+		obj, _ := op["obj"].(string)
+		switch {
+		case typ == "list" && obj == "snapshots":
+			return wrapOp(map[string]interface{}{"proc": "ok", "list": []interface{}{}})
+		case typ == "create" && obj == "snapshot":
+			createSnapshots++
+			return wrapOp(map[string]interface{}{"proc": "error", "description": "Internal server error"})
+		case typ == "list" && obj == "conv":
+			return wrapOp(deployedProcessOp())
+		case typ == "show" && obj == "stage":
+			return wrapOp(map[string]interface{}{
+				"proc":      "ok",
+				"immutable": true,
+				"title":     "production",
+			})
+		}
+		return okResponse(ops)
+	})
+	setProjectAuth(t, srv.URL)
+	stageID = 20
+	cachedProjectID = 10
+
+	result, isErr := handlePushProcess(context.Background(), map[string]interface{}{
+		"process_path":      name,
+		"adopt_existing":    true,
+		"allow_no_snapshot": true,
+	})
+	if !isErr {
+		t.Fatalf("allow_no_snapshot must not waive a CreateSnapshot API failure on an immutable stage, got:\n%s", result)
+	}
+	if createSnapshots != 1 {
+		t.Errorf("expected exactly one snapshot attempt, got %d", createSnapshots)
+	}
+	if !strings.Contains(result, "not accepted here even with allow_no_snapshot=true") {
+		t.Errorf("the refusal must say the waiver does not apply, got:\n%s", result)
+	}
+}
+
 // An older installation with no snapshot object in its API — the shape
 // dev.corezoid.com actually returns ("bad object", confirmed by the control
 // ops) — must not have its pushes blocked: there is no snapshot to take. The
