@@ -3,6 +3,8 @@ package main
 import (
 	"context"
 	"fmt"
+	"strings"
+	"sync"
 )
 
 // wsItem holds a single workspace entry returned by the list-workspaces API.
@@ -156,7 +158,13 @@ func ensureTokenAuth() error {
 		if snapAPILogin != "" && snapAPISecret != "" {
 			return nil
 		}
-		return fmt.Errorf("[Error] Not authenticated: missing access_token or api_login+api_secret. Invoke the 'corezoid-init' skill to set up credentials (use the Skill tool with skill=\"corezoid-init\").")
+		// describeEnvConfigProblems is appended because the most common headless
+		// failure is a COREZOID_* variable that *was* set and then rejected —
+		// a typo'd ID, or half an API-key pair. Without this the model sees
+		// only "missing credentials" and re-runs the login flow that cannot
+		// work here, while the real reason sits in the host's stderr.
+		return fmt.Errorf("[Error] Not authenticated: missing access_token or api_login+api_secret. Invoke the 'corezoid-init' skill to set up credentials (use the Skill tool with skill=\"corezoid-init\").%s",
+			describeEnvConfigProblems())
 	}
 	return nil
 }
@@ -180,7 +188,115 @@ func ensureAuth() error {
 	}
 
 	if len(missing) > 0 {
-		return fmt.Errorf("[Error] Not authenticated: missing %v. Invoke the 'corezoid-init' skill to set up credentials (use the Skill tool with skill=\"corezoid-init\").", missing)
+		// A rejected COREZOID_STAGE_ID lands here as a bare "missing stage_id",
+		// which reads as "never configured" rather than "configured wrongly".
+		return fmt.Errorf("[Error] Not authenticated: missing %v. Invoke the 'corezoid-init' skill to set up credentials (use the Skill tool with skill=\"corezoid-init\").%s",
+			missing, describeEnvConfigProblems())
 	}
+
+	// api_url is checked last because, unlike the two above, it can be derived
+	// rather than demanded.
+	return ensureAPIURL()
+}
+
+// fetchCorezoidAPIURLFn indirects the account-clients lookup so tests can drive
+// discovery without a network.
+var fetchCorezoidAPIURLFn = fetchCorezoidAPIURL
+
+// discoveredAPIURL caches an api_url resolved by ensureAPIURL, together with the
+// account_url it was derived from. It is deliberately NOT persisted: the value
+// belongs to whatever credentials are in effect right now, and the login flow
+// remains the only writer of corezoid_url in ~/.corezoid/config.json.
+//
+// syncGlobalsFromFolder resets apiURL from the config entry on every auth check,
+// so the cache has to live outside it — and it is keyed on account_url so a
+// second working directory pointing at a different Corezoid never inherits the
+// first one's host.
+var (
+	apiURLDiscoveryMu   sync.Mutex
+	discoveredAPIURL    string
+	discoveredAPIURLFor string
+)
+
+// ensureAPIURL resolves the API base URL when nothing supplied it.
+//
+// Only the login tool used to do this, which was fine while login was the only
+// way to get credentials. Since credentials can also come from COREZOID_*
+// variables — for CI jobs, containers and the HTTP transport, none of which can
+// run the browser flow — a headless setup passing account_url + stage_id + a
+// token was left with an empty base URL: ensureAuth reported success and the
+// first API call went to "/api/2/json" with no host. Deriving the URL here is
+// the same step handleLogin takes, moved to the point where it is actually
+// needed, so COREZOID_API_URL stays what the README says it is — an optional
+// way to skip the lookup.
+func ensureAPIURL() error {
+	snapAPIURL, snapToken, _, snapAccountURL, _ := authSnapshot()
+	if snapAPIURL != "" {
+		return nil
+	}
+	if snapAccountURL == "" {
+		// Nothing to derive from. ensureAuth reports account_url as missing in
+		// its own words; ensureTokenAuth deliberately does not require it, and
+		// must not start failing here over a field it never checked.
+		return nil
+	}
+
+	apiURLDiscoveryMu.Lock()
+	defer apiURLDiscoveryMu.Unlock()
+	// A concurrent tool call may have resolved it while we waited.
+	if snapAPIURL, _, _, _, _ = authSnapshot(); snapAPIURL != "" {
+		return nil
+	}
+	if discoveredAPIURL != "" && discoveredAPIURLFor == snapAccountURL {
+		adoptDiscoveredAPIURL(discoveredAPIURL)
+		return nil
+	}
+
+	resolved := strings.TrimRight(snapAccountURL, "/")
+	if snapToken != "" {
+		// The clients endpoint needs a bearer token; API-key-only setups skip
+		// straight to the account_url fallback, exactly as handleLogin does.
+		// In most deployments the API is served from the admin UI's host.
+		fetched, err := fetchCorezoidAPIURLFn(snapAccountURL, snapToken)
+		switch {
+		case err != nil:
+			// Do not silently guess a host after a failed lookup: a wrong base
+			// URL would send credentials somewhere the user never named. The
+			// failure is not cached — a lookup that failed on a flaky network
+			// must be allowed to succeed on the next tool call.
+			return fmt.Errorf("[Error] Could not determine the Corezoid API URL from account_url %q: %v. Set COREZOID_API_URL (or corezoid_url in ~/.corezoid/config.json) to the API base URL — no /api/2/json suffix — or re-run the 'corezoid-init' skill.%s",
+				snapAccountURL, err, describeEnvConfigProblems())
+		case fetched != "":
+			resolved = fetched
+		default:
+			logger.Info("api_url discovery returned no Corezoid client — using account_url %q", resolved)
+		}
+	}
+	if resolved == "" {
+		return fmt.Errorf("[Error] Not authenticated: missing api_url and it could not be derived from account_url %q. Set COREZOID_API_URL, or re-run the 'corezoid-init' skill.%s",
+			snapAccountURL, describeEnvConfigProblems())
+	}
+
+	discoveredAPIURL, discoveredAPIURLFor = resolved, snapAccountURL
+	adoptDiscoveredAPIURL(resolved)
+	logger.Info("api_url resolved to %q (not persisted)", resolved)
 	return nil
+}
+
+// adoptDiscoveredAPIURL publishes the resolved URL to the auth globals.
+func adoptDiscoveredAPIURL(resolved string) {
+	authStateMu.Lock()
+	defer authStateMu.Unlock()
+	if apiURL == "" {
+		apiURL = resolved
+	}
+}
+
+// resetAPIURLDiscovery drops the cached lookup. Called when the credentials it
+// was derived under are replaced (login, logout), so the next check re-derives
+// against whatever is in effect then.
+func resetAPIURLDiscovery() {
+	apiURLDiscoveryMu.Lock()
+	defer apiURLDiscoveryMu.Unlock()
+	discoveredAPIURL, discoveredAPIURLFor = "", ""
 }

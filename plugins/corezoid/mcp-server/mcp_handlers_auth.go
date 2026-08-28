@@ -638,6 +638,8 @@ func handleLogout(_ context.Context, _ map[string]interface{}) (string, bool) {
 	if err := RemoveCurrent(); err != nil {
 		return fmt.Sprintf("Failed to remove folder entry from config: %v", err), true
 	}
+	// The derived api_url belongs to the credentials that were just removed.
+	resetAPIURLDiscovery()
 	syncGlobalsFromCurrent()
 
 	cfgPath, _ := configFilePath()
@@ -660,10 +662,21 @@ func handleLogout(_ context.Context, _ map[string]interface{}) (string, bool) {
 	// Logout can only remove what it persisted. COREZOID_* variables are read
 	// as a fallback on every auth check, so leaving them set keeps the server
 	// authenticated — say so instead of reporting a clean logout.
-	if envConfigActive() {
+	//
+	// Credentials and configuration are reported separately because only the
+	// first contradicts "logged out". A leftover COREZOID_ACCOUNT_URL is not an
+	// identity; telling the user they are still authenticated because of it
+	// sends them hunting for a credential that was never there, and — worse —
+	// makes the same warning meaningless on the day it is true.
+	switch {
+	case envCredentialsActive():
 		msg += "\n\nNote: COREZOID_* environment variables still supply credentials for this " +
 			"working directory. They are read as a fallback and logout cannot remove them — " +
 			"unset them in your shell / MCP client config to fully deauthenticate."
+	case envConfigActive():
+		msg += "\n\nNote: COREZOID_* environment variables still supply configuration (no credentials) " +
+			"for this working directory. You are logged out; the next login will inherit those values " +
+			"unless you unset them."
 	}
 
 	return msg, false

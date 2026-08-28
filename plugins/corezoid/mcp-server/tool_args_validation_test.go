@@ -13,6 +13,9 @@ func TestHandleToolCall_UnknownArgumentRejected(t *testing.T) {
 	withAuthLock(func() {
 		apiToken = "test-token"
 		accountURL = "https://account.example"
+		// Set explicitly: without it ensureAuth derives api_url over the network
+		// (see ensureAPIURL) and this test never reaches argument validation.
+		apiURL = "https://api.example"
 		stageID = 1
 	})
 	result, isErr := handleToolCall(context.Background(), "create-process", map[string]interface{}{

@@ -169,7 +169,7 @@ They are saved to the current Folder in the same `~/.corezoid/config.json`.
 | `COREZOID_WORK_DIR`        | No       | Absolute path used to pick which entry in `folders[]` applies. Set automatically by Claude Code / Codex / Kiro from the user's cwd. Only meaningful if the host cannot preserve cwd across MCP subprocess spawn. |
 | `COREZOID_OAUTH_CLIENT_ID` | No       | OAuth2 client ID — on-prem deployments with a custom authorization server should set this to their own client ID; cloud (account.corezoid.com) users do not need it |
 | `COREZOID_HTTP_PORT`       | No       | Activate the Streamable HTTP transport on this port (e.g. `8080`). When set the server listens for MCP over HTTP instead of stdio — intended for hosted marketplace deployments. The browser OAuth login flow is not available in HTTP mode, so credentials must come from `~/.corezoid/config.json` or from the environment fallback below. |
-| `COREZOID_HTTP_TOKEN`      | No       | Bearer token required on every request when the HTTP transport is active. Unset means no request authentication — only safe for a loopback-only deployment. |
+| `COREZOID_HTTP_TOKEN`      | No       | Bearer token required on every request when the HTTP transport is active. Unset does **not** disable authentication: the server mints a random token at startup and prints it to stderr for you to copy into your client config. Set this to keep the same token across restarts. |
 | `COREZOID_HTTP_ALLOWED_ORIGINS` | No  | Comma-separated `Origin` allowlist for the HTTP transport |
 | `COREZOID_AUTOLAYOUT`      | No       | Set to `off` to disable auto-placement of new `(0,0)` nodes on `push-process` (default: preserve) |
 | `COREZOID_WS_URL`          | No       | Override the build WebSocket endpoint used by `git_call` compilation (on-prem installs) |
@@ -199,10 +199,13 @@ Normally every auth value lives in `~/.corezoid/config.json`, written by the `lo
 Precedence rules:
 
 - **The config file wins, field by field.** A variable is used only where the `folders[]` entry matching the current working directory leaves that field empty — or when no entry matches at all.
+- **Credential pairs are merged as a unit, not field by field.** `COREZOID_API_LOGIN` and `COREZOID_API_SECRET` are taken together or not at all: Corezoid verifies the request signature against the secret belonging to that login, so a login from the config combined with a secret from the environment can never authenticate — it would only produce an opaque `401`. Half a pair is refused locally and the reason is reported in the next auth error. `COREZOID_ACCESS_TOKEN` and `COREZOID_TOKEN_EXPIRES_AT` are paired the same way, so a fresh token never inherits a stale expiry.
 - A **stored token that has already expired counts as missing**, so `COREZOID_ACCESS_TOKEN` takes over instead of leaving the server with no credentials.
+- **A rejected variable is reported, not silently dropped.** A malformed `*_ID` / `*_EXPIRES_AT`, or half an API-key pair, is named in the auth error the tool returns — so "not authenticated" cannot be mistaken for "never configured".
 - Environment values are **never written back** to `~/.corezoid/config.json` — an env-supplied field is used in memory only. The server still writes the caches it resolves itself (`project_id`, `git_url`, `git_stage_path`), as it does in a normal setup.
 - `logout` cannot remove them — unset the variables to fully deauthenticate.
 - A minimal working set is `COREZOID_ACCOUNT_URL` + `COREZOID_STAGE_ID` + either `COREZOID_ACCESS_TOKEN` or `COREZOID_API_LOGIN` + `COREZOID_API_SECRET`. Add `COREZOID_API_URL` to skip API-URL discovery.
+- **API-URL discovery runs on the first authenticated operation**, not at startup: with a token the API base URL is read from the account's clients endpoint; with API-key credentials — which that endpoint does not accept — it falls back to `COREZOID_ACCOUNT_URL`. Set `COREZOID_API_URL` explicitly when the API is not served from the account host, or when the account host is unreachable from where the server runs.
 
 In Claude Code / Codex these can be set in the `env` block of the `corezoid` server in your MCP config, or exported in the shell that launches the client.
 

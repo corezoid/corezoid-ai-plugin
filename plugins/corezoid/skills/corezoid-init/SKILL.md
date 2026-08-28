@@ -197,9 +197,12 @@ Every field above can also come from the environment when the config file has no
 Rules to keep in mind when diagnosing auth state:
 
 - The **config file wins field by field**; a variable applies only where the matching Folder leaves that field empty, or when no Folder matches the cwd.
+- **Credential pairs are the exception to that** — `COREZOID_API_LOGIN`/`COREZOID_API_SECRET` come from one source or neither, as do `COREZOID_ACCESS_TOKEN`/`COREZOID_TOKEN_EXPIRES_AT`. A login and a secret from different sources cannot authenticate, so the half-pair is refused instead of being sent.
 - An **expired** stored `access_token` counts as missing, so `COREZOID_ACCESS_TOKEN` takes over.
+- If a variable was **set and rejected** (malformed `*_ID`, half an API-key pair), the auth error names it. Read that before concluding the user never configured anything — re-running `login` will not help in a headless environment.
 - Environment values are **never persisted** — they are used in memory only. Derived caches (`project_id`, `git_url`, `git_stage_path`) are still written as usual.
 - `logout` removes the Folder but cannot unset variables; the server stays authenticated until they are removed from the environment. The `logout` response says so when this is the case.
 - Minimal set: `COREZOID_ACCOUNT_URL` + `COREZOID_STAGE_ID` + (`COREZOID_ACCESS_TOKEN` or `COREZOID_API_LOGIN`/`COREZOID_API_SECRET`).
+- `COREZOID_API_URL` is optional: it is **derived on the first authenticated operation** — from the account's clients endpoint with a token, or from `COREZOID_ACCOUNT_URL` with API-key credentials. If that lookup fails the error says so and names the variable; do not read it as "not logged in".
 
 Do **not** propose this path for a normal desktop setup — `login` is better there (it discovers `corezoid_url`, lists workspaces/stages, and refreshes the token).
