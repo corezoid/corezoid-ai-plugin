@@ -106,9 +106,99 @@ func TestHandlePushProcess_ForceDoesNotWaiveTheConcurrencyGate(t *testing.T) {
 	if !isErr {
 		t.Fatalf("force=true must not deploy over a concurrent server change, got:\n%s", result)
 	}
-	for _, want := range []string{"changed on the server", "Alice", "overwrite_server_change=true"} {
+	for _, want := range []string{
+		"changed on the server",
+		"Alice",
+		"overwrite_server_change=true",
+		// Anything written against the old contract arrives here with force
+		// already set; the report has to say why it did nothing, or the split
+		// reads as a broken flag.
+		"force=true does NOT waive this gate",
+	} {
 		if !strings.Contains(result, want) {
 			t.Errorf("the block report must name %q, got:\n%s", want, result)
+		}
+	}
+}
+
+// neverDeployedServerProcess is `list conv` for a process that exists as an
+// object but was never committed: no confirmed version, no nodes — and a
+// change_time past the baseline, which creating or moving the object alone is
+// enough to produce.
+func neverDeployedServerProcess() map[string]interface{} {
+	return map[string]interface{}{
+		"proc":                   "ok",
+		"obj_id":                 float64(123),
+		"change_time":            float64(9000),
+		"last_confirmed_version": float64(0),
+		"commits":                map[string]interface{}{"version": float64(0)},
+		"list":                   []interface{}{},
+	}
+}
+
+// The irreversibility gate must not fire for a process that has nothing to
+// lose. A pulled-but-never-deployed process reaches it — its change_time moves
+// on its own, so the concurrency gate reports a divergence, and CreateSnapshot
+// refuses a process with no committed version, so no rollback point is taken.
+// Both halves of "unreconciled and unrecoverable" are technically true and both
+// are vacuous: there is no previous version. Demanding allow_no_snapshot there
+// would ask for a waiver to protect something that does not exist.
+func TestHandlePushProcess_NeverDeployedOverwriteNeedsNoSnapshotWaiver(t *testing.T) {
+	resetGlobals(t)
+	t.Cleanup(resetSnapshotSupportCache)
+	name := writeDeployedConv(t)
+	writeTestPullBaseline(t)
+
+	deployed := false
+	srv, _ := mockAPIServer(t, func(ops []map[string]interface{}) interface{} {
+		op := ops[0]
+		typ, _ := op["type"].(string)
+		obj, _ := op["obj"].(string)
+		switch {
+		case typ == "list" && obj == "snapshots":
+			return wrapOp(map[string]interface{}{"proc": "ok", "list": []interface{}{}})
+		case typ == "create" && obj == "snapshot":
+			// What the real API answers for a process with no committed version.
+			return wrapOp(map[string]interface{}{"proc": "error", "description": "conv has no confirmed version"})
+		case typ == "list" && obj == "conv":
+			return wrapOp(neverDeployedServerProcess())
+		case typ == "create" && obj == "node":
+			deployed = true
+			results := make([]interface{}, len(ops))
+			for i, nodeOp := range ops {
+				localID, _ := nodeOp["id"].(string)
+				results[i] = map[string]interface{}{"proc": "ok", "id": localID, "obj_id": localID}
+			}
+			return map[string]interface{}{"request_proc": "ok", "ops": results}
+		}
+		return okResponse(ops)
+	})
+	setProjectAuth(t, srv.URL)
+	stageID = 20
+	cachedProjectID = 10
+
+	result, isErr := handlePushProcess(context.Background(), map[string]interface{}{
+		"process_path":            name,
+		"overwrite_server_change": true,
+	})
+	if isErr {
+		t.Fatalf("a never-deployed process has no version to lose — the push must not need allow_no_snapshot:\n%s", result)
+	}
+	if !deployed {
+		t.Error("the process was never deployed")
+	}
+	if strings.Contains(result, "allow_no_snapshot=true in addition") {
+		t.Errorf("the irreversibility gate must not fire for a never-deployed process:\n%s", result)
+	}
+	// The waiver was still used, so it is still reported — only the second flag
+	// is not demanded.
+	for _, want := range []string{
+		"Process deployed successfully",
+		"WARNING: overwrite_server_change=true was used",
+		"no deployed version yet",
+	} {
+		if !strings.Contains(result, want) {
+			t.Errorf("the result must still record %q, got:\n%s", want, result)
 		}
 	}
 }

@@ -37,6 +37,14 @@ type conflictResult struct {
 // when the server has moved, either blocks with a 3-way impact report, grafts a
 // merge (merge=true), or overwrites (overwriteServerChange=true).
 //
+// Nothing here touches the SERVER, but two branches do write local sidecar
+// state, and they write it whether or not the push that follows survives the
+// remaining gates: applyMerge (the merged file plus its .pre-merge backup) and
+// healMissingAncestor (the merge ancestor). Both are safe to leave behind — a
+// recorded ancestor only makes later pushes MORE checked, and the merge is the
+// artefact the caller was asked to review — but "before any mutation" is about
+// the deploy, not about this process's local files.
+//
 // overwriteServerChange is deliberately NOT the same flag as the lint override.
 // One boolean covering both meant a force set for a lint finding — before any
 // conflict existed — silently pre-authorised an overwrite of a concurrent change
@@ -136,7 +144,7 @@ func resolveConflict(v *Executor, filePath string, procID int, localJSON string,
 		case contentCheckExportFailed:
 			if !overwriteServerChange {
 				return conflictResult{action: conflictBlock, message: fmt.Sprintf(
-					"Push blocked: process #%d has an equal-timestamp baseline (list-sourced or legacy) and the supplementary content diff could not complete (export or parse failed). A concurrent same-second overwrite cannot be ruled out. Retry once the export endpoint responds, or pass overwrite_server_change=true to override at your own risk.", procID)}
+					"Push blocked: process #%d has an equal-timestamp baseline (list-sourced or legacy) and the supplementary content diff could not complete (export or parse failed). A concurrent same-second overwrite cannot be ruled out. Retry once the export endpoint responds, or pass overwrite_server_change=true to override at your own risk — force=true does not waive this gate, it is the lint override only.", procID)}
 			}
 			// The comparison did not run, so this is an unreconciled overwrite
 			// like any other: it must still be paired with a rollback point.
@@ -419,6 +427,7 @@ func formatConflict(procID int, base, current baselineEntry, proc map[string]any
 		sb.WriteString("        the live process becomes EXACTLY your version; the server's changes above are DROPPED.\n")
 		sb.WriteString("        A snapshot of the server version is attempted first — if it succeeds (see the push result)\n")
 		sb.WriteString("        their version stays recoverable; if the snapshot fails, the drop is permanent.\n")
+		sb.WriteString(forceIsNotThisWaiver)
 		return sb.String()
 	}
 
@@ -428,8 +437,17 @@ func formatConflict(procID int, base, current baselineEntry, proc map[string]any
 	sb.WriteString("  [1] re-pull      THEIRS WINS — take the server version, re-apply your edits by hand (your local edits are discarded)\n")
 	sb.WriteString("  [2] overwrite_server_change=true   YOURS WINS — deploy your file as-is; the server's changes are DROPPED (a snapshot is attempted first; recoverable only if it succeeds)\n")
 	sb.WriteString("  (the node-level 3-way merge needs a pull ancestor for this file — re-pull once to enable it)\n")
+	sb.WriteString(forceIsNotThisWaiver)
 	return sb.String()
 }
+
+// forceIsNotThisWaiver closes the block report. force used to waive this gate as
+// well as lint, so anything written against the old contract — a saved command,
+// a habit, another agent's prompt — arrives here with force=true already set and
+// gets a report that never mentions the flag it did pass. Naming it turns the
+// split into one wasted call rather than a puzzle.
+const forceIsNotThisWaiver = "\nNote: force=true does NOT waive this gate — it is the lint override only. " +
+	"This gate takes overwrite_server_change=true, and only in reply to the report above.\n"
 
 // formatConflictDivergence renders the "who moved it, and how far" header shared
 // by the block report and the overwrite record. serverLabel differs between the

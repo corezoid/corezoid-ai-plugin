@@ -600,7 +600,8 @@ func handlePushProcess(ctx context.Context, args map[string]interface{}) (string
 	//     create-process → push-process flow impossible for every new process.
 	var snapshotNote string
 	snapshotTaken := false
-	if existingObjID := extractObjIDFromJSON(jsonContent); existingObjID != 0 {
+	existingObjID := extractObjIDFromJSON(jsonContent)
+	if existingObjID != 0 {
 		projectID, envNotice := resolveAndCacheProjectID(v)
 		// "Does this installation have snapshots at all" is asked BEFORE "could
 		// we resolve the target", because the answers mean different things and
@@ -666,7 +667,15 @@ func handlePushProcess(ctx context.Context, args map[string]interface{}) (string
 	// single flag set for an unrelated reason should be able to reach. It is also
 	// the only path a misclassified snapshot capability can turn into data loss,
 	// so the check keys on the snapshot OUTCOME, not on why it was missing.
-	if overwroteLiveState && !snapshotTaken {
+	//
+	// A never-deployed process is the same exception it is for the snapshot gate
+	// itself: there is no committed version, so there is nothing this push can
+	// make unrecoverable and nothing a snapshot could have preserved. The
+	// concurrency path can still get here for one — a pulled-but-never-deployed
+	// process whose change_time moved — and refusing that would demand a second
+	// waiver to protect a version that does not exist. The check costs one read
+	// and only on the path that is about to block or warn anyway.
+	if overwroteLiveState && !snapshotTaken && !processNeverDeployed(v, existingObjID) {
 		if !allowNoSnapshot {
 			return fmt.Sprintf(
 				"Push blocked: %s waived the comparison against the live server version, and no pre-push snapshot exists (%s). Together those two make this push irreversible — the version it overwrites is neither reported nor recoverable.\n\nEither restore one of the guarantees (re-pull and reconcile: pull-process, then push with merge=true; or fix the workspace configuration so a snapshot can be taken), or pass allow_no_snapshot=true in addition to accept an irreversible overwrite deliberately.",

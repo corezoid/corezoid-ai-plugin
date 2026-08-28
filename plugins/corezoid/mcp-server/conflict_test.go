@@ -204,11 +204,18 @@ func TestConflict_ChangedBlocksWithImpact(t *testing.T) {
 			t.Fatalf("conflict report missing %q:\n%s", want, msg)
 		}
 	}
-	// The lint override must never be offered as the way out of a conflict: one
+	// The lint override must never be OFFERED as the way out of a conflict: one
 	// flag for both gates is what let a force passed for a lint finding
-	// pre-authorise dropping a concurrent change nobody had seen.
-	if strings.Contains(msg, "force=true") {
-		t.Fatalf("the conflict report must not offer the lint override:\n%s", msg)
+	// pre-authorise dropping a concurrent change nobody had seen. Naming it in
+	// order to say it does NOT apply is the opposite of offering it, and it is
+	// what a caller written against the old contract needs to read.
+	if !strings.Contains(msg, "force=true does NOT waive this gate") {
+		t.Fatalf("the report must state that the lint override does not apply here:\n%s", msg)
+	}
+	for _, offer := range []string{"pass force=true", "with force=true", "re-run with force", "[2] force=true", "[3] force=true"} {
+		if strings.Contains(msg, offer) {
+			t.Fatalf("the conflict report must not offer the lint override (%q):\n%s", offer, msg)
+		}
 	}
 }
 
