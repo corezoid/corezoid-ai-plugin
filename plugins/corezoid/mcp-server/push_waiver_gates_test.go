@@ -88,6 +88,181 @@ func snapshotCapableServer(t *testing.T, procOp func() map[string]interface{}) {
 	cachedProjectID = 10
 }
 
+// snapshotlessServer answers every op the push path needs on an installation
+// whose API has no snapshot object at all — the on-prem builds predating the
+// feature. stage is what `show stage` returns, which is what decides the target
+// policy; pass nil to leave it to the generic ok answer (a nameless, mutable
+// stage). The returned counter tracks node creations, so a test can assert that
+// a refused push deployed nothing rather than only that it returned an error.
+func snapshotlessServer(t *testing.T, procOp func() map[string]interface{}, stage map[string]interface{}) *int {
+	t.Helper()
+	deployedNodes := 0
+	badObject := map[string]interface{}{"proc": "error", "description": "bad object"}
+	srv, _ := mockAPIServer(t, func(ops []map[string]interface{}) interface{} {
+		op := ops[0]
+		typ, _ := op["type"].(string)
+		obj, _ := op["obj"].(string)
+		switch {
+		case obj == "snapshots" || obj == "snapshot" || obj == snapshotProbeUnknownObj:
+			if typ == "create" {
+				t.Error("an environment without the snapshot object must never be asked to create a snapshot")
+			}
+			return wrapOp(badObject)
+		case typ == "list" && obj == "commits":
+			// Positive control for the support probe: the conv is reachable and
+			// this build does keep per-process versions — only the snapshot
+			// object is absent.
+			return wrapOp(map[string]interface{}{"proc": "ok", "list": []interface{}{
+				map[string]interface{}{"conv_id": float64(123), "version": float64(1787315841)},
+			}})
+		case typ == "show" && obj == "stage" && stage != nil:
+			return wrapOp(stage)
+		case typ == "list" && obj == "conv":
+			return wrapOp(procOp())
+		case typ == "create" && obj == "node":
+			results := make([]interface{}, len(ops))
+			for i, nodeOp := range ops {
+				deployedNodes++
+				localID, _ := nodeOp["id"].(string)
+				results[i] = map[string]interface{}{"proc": "ok", "id": localID, "obj_id": localID}
+			}
+			return map[string]interface{}{"request_proc": "ok", "ops": results}
+		}
+		return okResponse(ops)
+	})
+	setProjectAuth(t, srv.URL)
+	stageID = 20
+	cachedProjectID = 10
+	return &deployedNodes
+}
+
+// An installation with no snapshot API is the one place the snapshot branch
+// asks no policy question at all — deliberately, because blocking there would
+// leave those environments unable to push existing processes. That made the
+// irreversibility gate the only thing between the two overwrite waivers and an
+// unrecoverable push, and it was reading allow_no_snapshot as a raw flag: the
+// mutable/non-production stage policy the waiver documents did not apply
+// exactly where the rollback point is missing permanently rather than
+// transiently. These three cover the stage answers that decide it. The
+// unresolved-target case lives in
+// TestHandlePushProcess_SnapshotlessEnvUnresolvedTargetRefusesIrreversibleOverwrite.
+func TestHandlePushProcess_SnapshotlessIrreversibleOverwriteHonoursStagePolicy(t *testing.T) {
+	cases := []struct {
+		name      string
+		stage     map[string]interface{}
+		wantBlock bool
+		wantText  string
+	}{{
+		name: "mutable dev stage accepts the waiver",
+		stage: map[string]interface{}{
+			"proc": "ok", "immutable": false, "title": "develop", "short_name": "dev",
+		},
+		wantBlock: false,
+		wantText:  "is mutable and does not look production-like",
+	}, {
+		name: "production-like stage refuses it",
+		stage: map[string]interface{}{
+			"proc": "ok", "immutable": false, "title": "production", "short_name": "prod",
+		},
+		wantBlock: true,
+		wantText:  "looks production-like by title or short_name",
+	}, {
+		name: "immutable stage refuses it",
+		stage: map[string]interface{}{
+			"proc": "ok", "immutable": true, "title": "release", "short_name": "rel",
+		},
+		wantBlock: true,
+		wantText:  "is immutable/read-only",
+	}}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			resetGlobals(t)
+			t.Cleanup(resetSnapshotSupportCache)
+			name := writeDeployedConv(t)
+			deployedNodes := snapshotlessServer(t, deployedProcessOp, tc.stage)
+
+			result, isErr := handlePushProcess(context.Background(), map[string]interface{}{
+				"process_path":      name,
+				"adopt_existing":    true,
+				"allow_no_snapshot": true,
+			})
+			if isErr != tc.wantBlock {
+				t.Fatalf("wantBlock=%v, got isErr=%v:\n%s", tc.wantBlock, isErr, result)
+			}
+			if !strings.Contains(result, tc.wantText) {
+				t.Errorf("the result must name the target policy (%q), got:\n%s", tc.wantText, result)
+			}
+			// The snapshot gate itself must stay out of the way either way:
+			// this installation has nothing to capture, and the message must
+			// not send the user configuring a feature that does not exist.
+			if !strings.Contains(result, "does not support snapshots") {
+				t.Errorf("the snapshotless notice must survive into the result, got:\n%s", result)
+			}
+
+			if tc.wantBlock {
+				if *deployedNodes != 0 {
+					t.Errorf("a refused push must deploy nothing, got %d node creations", *deployedNodes)
+				}
+				if !strings.Contains(result, "allow_no_snapshot is not honoured on this target") {
+					t.Errorf("the refusal must say the flag was refused, not missing, got:\n%s", result)
+				}
+				// Asking for a flag the caller already passed reads as broken.
+				if strings.Contains(result, "allow_no_snapshot=true in addition") {
+					t.Errorf("must not ask for a flag that was already passed:\n%s", result)
+				}
+				return
+			}
+			if *deployedNodes == 0 {
+				t.Error("an allowed push must deploy the process")
+			}
+			for _, want := range []string{
+				"Process deployed successfully",
+				"allow_no_snapshot=true was combined with adopt_existing=true",
+				"CANNOT be undone",
+			} {
+				if !strings.Contains(result, want) {
+					t.Errorf("an allowed irreversible push must say so (%q), got:\n%s", want, result)
+				}
+			}
+		})
+	}
+}
+
+// A refusal that names a flag the target would refuse anyway sends the caller —
+// usually a model reading the block report — straight into a second, identical
+// block. When the stage itself rejects a rollback waiver, the report has to say
+// so even though allow_no_snapshot was never passed.
+func TestHandlePushProcess_ProdRefusalDoesNotAdviseTheWaiverItWouldRefuse(t *testing.T) {
+	resetGlobals(t)
+	t.Cleanup(resetSnapshotSupportCache)
+	name := writeDeployedConv(t)
+	deployedNodes := snapshotlessServer(t, deployedProcessOp, map[string]interface{}{
+		"proc": "ok", "immutable": false, "title": "production", "short_name": "prod",
+	})
+
+	// No allow_no_snapshot: the caller has not asked for the waiver yet.
+	result, isErr := handlePushProcess(context.Background(), map[string]interface{}{
+		"process_path":   name,
+		"adopt_existing": true,
+	})
+	if !isErr {
+		t.Fatalf("an unreconciled overwrite with no rollback point must be refused, got:\n%s", result)
+	}
+	if *deployedNodes != 0 {
+		t.Errorf("a refused push must deploy nothing, got %d node creations", *deployedNodes)
+	}
+	if !strings.Contains(result, "allow_no_snapshot is not honoured on this target") {
+		t.Errorf("the refusal must say the target rejects the waiver, got:\n%s", result)
+	}
+	if !strings.Contains(result, "looks production-like by title or short_name") {
+		t.Errorf("the refusal must name why, got:\n%s", result)
+	}
+	if strings.Contains(result, "allow_no_snapshot=true in addition") {
+		t.Errorf("must not advise a waiver this target would refuse anyway:\n%s", result)
+	}
+}
+
 // force is the lint override. It must not carry a push past the concurrency
 // gate: the whole point of that gate is that the user sees WHAT they are about
 // to drop before authorising it, and a force set for an unrelated lint finding

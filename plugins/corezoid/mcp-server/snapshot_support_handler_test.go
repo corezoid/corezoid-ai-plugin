@@ -534,13 +534,25 @@ func TestHandlePushProcess_StaleConcurrencyStateIsReported(t *testing.T) {
 	}
 }
 
-// The combination that must NOT be blocked: an installation whose API has no
-// snapshot object AND a target that could not be resolved. There was never a
-// rollback point to take here, so blocking would make existing processes
-// unpushable on those environments — and the block message would tell the user
-// to configure snapshots that do not exist. The support question is therefore
-// asked before the target-resolution question.
-func TestHandlePushProcess_SnapshotlessEnvPushesWithUnresolvedTarget(t *testing.T) {
+// An installation whose API has no snapshot object AND a target that could not
+// be resolved. Two separate properties are asserted here, and they pull in
+// opposite directions:
+//
+//   - The SNAPSHOT gate must not fire. There was never a rollback point to take
+//     on such an installation, so blocking there would make existing processes
+//     unpushable and would tell the user to configure snapshots that do not
+//     exist. That is why the support question is asked before the
+//     target-resolution question.
+//   - The IRREVERSIBILITY gate must still fire, because the push also waived the
+//     comparison against the live version. allow_no_snapshot is documented as
+//     honoured only on a resolved mutable stage, and an unresolved target is not
+//     one — "I could not determine where this lands" must not read as "so
+//     anything goes" on the one path that cannot be undone.
+//
+// The distinction is visible in the message: it must carry the snapshotless
+// notice (proving the snapshot gate concluded, not blocked) while refusing on
+// target policy.
+func TestHandlePushProcess_SnapshotlessEnvUnresolvedTargetRefusesIrreversibleOverwrite(t *testing.T) {
 	resetGlobals(t)
 	t.Cleanup(resetSnapshotSupportCache)
 	name := writeDeployedConv(t)
@@ -583,13 +595,60 @@ func TestHandlePushProcess_SnapshotlessEnvPushesWithUnresolvedTarget(t *testing.
 	cachedProjectID = 0
 
 	result, isErr := handlePushProcess(context.Background(), map[string]interface{}{
-		"process_path":   name,
-		"adopt_existing": true,
-		// On an environment with no snapshots, an unreconciled overwrite plus no
-		// rollback point is refused on purpose (irreversible), so the second waiver
-		// is what keeps this a snapshot-gate test — see
-		// TestHandlePushProcess_UnreconciledOverwriteWithoutSnapshotBlocks.
+		"process_path":      name,
+		"adopt_existing":    true,
 		"allow_no_snapshot": true,
+	})
+	if !isErr {
+		t.Fatalf("an unreconciled, unrecoverable overwrite onto an unresolvable target must be refused, got:\n%s", result)
+	}
+	for _, want := range []string{
+		// The snapshot gate concluded rather than blocked: no snapshot object,
+		// so nothing to capture and nothing to advise configuring.
+		"does not support snapshots",
+		// The refusal is the irreversibility gate, on target policy.
+		"adopt_existing=true waived the comparison",
+		"allow_no_snapshot is not honoured on this target",
+		"target stage could not be resolved from process parent_id 20",
+	} {
+		if !strings.Contains(result, want) {
+			t.Errorf("expected result to contain %q, got:\n%s", want, result)
+		}
+	}
+	if strings.Contains(result, "project_id/stage_id could not be resolved") {
+		t.Errorf("must not advise configuring snapshots that do not exist here:\n%s", result)
+	}
+	// Telling a caller who just passed allow_no_snapshot to pass it reads as a
+	// broken flag rather than a refused one.
+	if strings.Contains(result, "allow_no_snapshot=true in addition") {
+		t.Errorf("the refusal must not ask for a flag that was already passed:\n%s", result)
+	}
+}
+
+// The snapshot gate on its own must still let a snapshotless environment push:
+// the block above is the combination of two waivers, not the missing snapshot
+// feature. Same environment, same unresolved target, no overwrite waiver — the
+// push proceeds with the notice.
+func TestHandlePushProcess_SnapshotlessEnvUnresolvedTargetPushesWithoutOverwriteWaiver(t *testing.T) {
+	resetGlobals(t)
+	t.Cleanup(resetSnapshotSupportCache)
+	name := writeDeployedConv(t)
+	snapshotlessServer(t, deployedProcessOp, nil)
+	stageID = 0
+	cachedProjectID = 0
+
+	// A pull baseline that matches the server: nothing to reconcile, so
+	// adopt_existing is not needed and the irreversibility gate never arms.
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := writeBaseline(cwd, 123, baselineEntry{ChangeTime: 0, Version: 5, Source: baselineSourceDetail}); err != nil {
+		t.Fatal(err)
+	}
+
+	result, isErr := handlePushProcess(context.Background(), map[string]interface{}{
+		"process_path": name,
 	})
 	if isErr {
 		t.Fatalf("a snapshot-less environment must not be blocked by the unresolved-target gate, got:\n%s", result)

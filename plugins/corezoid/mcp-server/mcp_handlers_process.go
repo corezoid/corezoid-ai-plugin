@@ -589,11 +589,11 @@ func handlePushProcess(ctx context.Context, args map[string]interface{}) (string
 	//     allow_no_snapshot=true on a resolved mutable stage. An unresolved
 	//     target is not evidence that this environment needs no rollback point;
 	//     it is an unknown safety configuration, and proceeding overwrites a
-	//     live process with no way back. See snapshotWaiverAllowed.
+	//     live process with no way back. See applySnapshotWaiverPolicy.
 	//   • snapshot was attempted and the API returned an error → BLOCK, unless the
 	//     process has never been deployed, or the caller passes
 	//     allow_no_snapshot=true on a resolved mutable stage (see
-	//     snapshotAPIFailureWaiverAllowed). Without git for .conv.json files the
+	//     applySnapshotWaiverPolicy). Without git for .conv.json files the
 	//     previous server version is unrecoverable once ProcessJSON overwrites it,
 	//     and the same Corezoid API that just failed here is the one ProcessJSON is
 	//     about to call anyway. A never-deployed process is the exception: it has no
@@ -602,9 +602,18 @@ func handlePushProcess(ctx context.Context, args map[string]interface{}) (string
 	//     create-process → push-process flow impossible for every new process.
 	var snapshotNote string
 	snapshotTaken := false
+	// Kept in scope for the irreversibility gate below: when the target did
+	// resolve, the waiver there must be judged against the stage the snapshot
+	// would have gone to, not re-derived from parent_id.
+	snapshotProjectID := 0
+	// The target policy, if one of the branches below already read it. Carried
+	// rather than recomputed so the gate cannot reach a different verdict about
+	// the same push, and does not pay a second `show stage` round trip.
+	var waiverPolicy *stubModeStagePolicy
 	existingObjID := extractObjIDFromJSON(jsonContent)
 	if existingObjID != 0 {
 		projectID, envNotice := resolveAndCacheProjectID(v)
+		snapshotProjectID = projectID
 		// "Does this installation have snapshots at all" is asked BEFORE "could
 		// we resolve the target", because the answers mean different things and
 		// only one of them is worth blocking over. An unresolved target on an
@@ -635,9 +644,11 @@ func handlePushProcess(ctx context.Context, args map[string]interface{}) (string
 					// Resolution succeeded — we know exactly which stage this
 					// would have landed on — so the waiver is checked against
 					// that stage directly rather than re-derived from
-					// parent_id (contrast snapshotWaiverAllowed, used below
-					// for the unresolved-target case).
-					if allowed, why := snapshotAPIFailureWaiverAllowed(v, v.StageID, projectID, allowNoSnapshot); allowed {
+					// parent_id (contrast the unresolved-target case below,
+					// which has to re-derive it).
+					policy := stubModePolicyForStage(v, v.StageID, projectID)
+					waiverPolicy = &policy
+					if allowed, why := applySnapshotWaiverPolicy(policy, allowNoSnapshot); allowed {
 						snapshotNote = fmt.Sprintf("Warning: auto-snapshot could not be taken for process #%d — the CreateSnapshot API call failed (%v) — and allow_no_snapshot=true was passed. NO ROLLBACK POINT EXISTS for the version this push overwrites (%s).", existingObjID, snapErr, why)
 					} else {
 						return fmt.Sprintf(
@@ -659,7 +670,9 @@ func handlePushProcess(ctx context.Context, args map[string]interface{}) (string
 		default:
 			// Snapshots exist here, the process has state to lose, and we could
 			// not resolve where to put the snapshot.
-			allowed, why := snapshotWaiverAllowed(v, jsonContent, allowNoSnapshot)
+			policy := stubModeStagePolicyForPush(v, jsonContent)
+			waiverPolicy = &policy
+			allowed, why := applySnapshotWaiverPolicy(policy, allowNoSnapshot)
 			if !allowed {
 				return fmt.Sprintf(
 					"Push blocked: process #%d already exists on the server and this environment does support snapshots, but no pre-push snapshot could be taken because project_id/stage_id could not be resolved%s — so there is no rollback point for the version this push would overwrite. %s\n\nFix the workspace configuration (re-run corezoid-init, or push from the folder whose stage marker names the target stage) so snapshots work, or re-run with allow_no_snapshot=true to accept an irreversible push. allow_no_snapshot is separate from force on purpose: force overrides a *known* conflict, this waives the ability to undo.",
@@ -688,8 +701,40 @@ func handlePushProcess(ctx context.Context, args map[string]interface{}) (string
 	// process whose change_time moved — and refusing that would demand a second
 	// waiver to protect a version that does not exist. The check costs one read
 	// and only on the path that is about to block or warn anyway.
+	//
+	// What is honoured here is the POLICY-GATED waiver, not the raw flag.
+	// allow_no_snapshot promises in its own contract that it applies only on a
+	// stage that resolves and is mutable, and is refused on immutable,
+	// production-like or unresolvable targets — but the branch above asks that
+	// question only where it takes (or fails to take) a snapshot. On an
+	// installation whose API has no snapshot object it deliberately asks
+	// nothing, because blocking there would leave those environments unable to
+	// push at all. That left this gate as the only thing standing between the
+	// two waivers and an irreversible overwrite, reading the flag directly — so
+	// the stage policy did not apply in the one environment where the rollback
+	// point is missing permanently rather than transiently. On the other two
+	// paths the same policy already ran and returned early, so asking it again
+	// yields the same answer; it is not a second, stricter gate.
 	if overwroteLiveState && !snapshotTaken && !processNeverDeployed(v, existingObjID) {
-		if !allowNoSnapshot {
+		if waiverPolicy == nil {
+			// Only the snapshotless branch gets here without a policy: it asks
+			// no question of its own, so the lookup is paid here, on the
+			// destructive path, rather than on every push to such an install.
+			policy := snapshotWaiverPolicyForTarget(v, jsonContent, v.StageID, snapshotProjectID)
+			waiverPolicy = &policy
+		}
+		allowed, why := applySnapshotWaiverPolicy(*waiverPolicy, allowNoSnapshot)
+		switch {
+		case waiverPolicy.requiresConfirmation:
+			// The target refuses the waiver whatever the caller passed. Keyed on
+			// the policy rather than on the flag: telling someone to pass
+			// allow_no_snapshot here would send them into a second, identical
+			// refusal — and telling someone who already passed it to pass it
+			// reads as a broken flag.
+			return fmt.Sprintf(
+				"Push blocked: %s waived the comparison against the live server version and no pre-push snapshot exists (%s), so this push would be irreversible — and allow_no_snapshot is not honoured on this target. %s\n\nAn irreversible overwrite is refused exactly where it is least recoverable. Re-pull and reconcile instead (pull-process, then push with merge=true), or push to a stage the waiver applies to.",
+				overwriteWaiver, strings.TrimSuffix(snapshotNote, "."), why), true
+		case !allowed:
 			return fmt.Sprintf(
 				"Push blocked: %s waived the comparison against the live server version, and no pre-push snapshot exists (%s). Together those two make this push irreversible — the version it overwrites is neither reported nor recoverable.\n\nEither restore one of the guarantees (re-pull and reconcile: pull-process, then push with merge=true; or fix the workspace configuration so a snapshot can be taken), or pass allow_no_snapshot=true in addition to accept an irreversible overwrite deliberately.",
 				overwriteWaiver, strings.TrimSuffix(snapshotNote, ".")), true
@@ -698,7 +743,7 @@ func handlePushProcess(ctx context.Context, args map[string]interface{}) (string
 		// can do, so it is stated outright rather than left to be inferred from
 		// two flags and a snapshot line.
 		waiverNotes = append(waiverNotes, fmt.Sprintf(
-			"WARNING: allow_no_snapshot=true was combined with %s — this push overwrote live server state that was never compared to anything, with no rollback point. It CANNOT be undone.", overwriteWaiver))
+			"WARNING: allow_no_snapshot=true was combined with %s — this push overwrote live server state that was never compared to anything, with no rollback point. It CANNOT be undone. (%s)", overwriteWaiver, why))
 	}
 
 	if _, err := v.ProcessJSON(filePath, jsonContent); err != nil {
@@ -1636,43 +1681,41 @@ func processNeverDeployed(v *Executor, objID int) bool {
 	return commitsConfirmedEmpty(data) && nodeListConfirmedEmpty(data)
 }
 
-// snapshotWaiverAllowed decides whether allow_no_snapshot may be honoured for a
-// push whose project/stage could not be resolved, and always returns the reason
-// so both the block and the waiver can state it.
+// snapshotWaiverPolicyForTarget reads the target policy that decides whether
+// allow_no_snapshot may be honoured, from whichever description of the target is
+// the more trustworthy: a stage that resolved is asked about directly, an
+// unresolved one is re-derived from the process parent_id.
 //
-// Waiving the rollback point is only ever acceptable somewhere a lost version
-// is cheap to recreate, so the waiver is gated on the same stage policy the
-// Stub Mode gate uses: it is honoured only on a stage that resolved and is
-// mutable. Anywhere that policy wants confirmation — an immutable stage, a
+// Walking parent_id can fail where stage_id/project_id are perfectly well known,
+// so preferring the resolved pair is what keeps the irreversibility gate from
+// contradicting the snapshot branch that ran a few lines earlier.
+func snapshotWaiverPolicyForTarget(v *Executor, jsonContent string, stageID, projectID int) stubModeStagePolicy {
+	if stageID != 0 && projectID != 0 {
+		return stubModePolicyForStage(v, stageID, projectID)
+	}
+	return stubModeStagePolicyForPush(v, jsonContent)
+}
+
+// applySnapshotWaiverPolicy turns a target policy plus the flag into a verdict
+// on allow_no_snapshot, and always returns the reason so the block, the refusal
+// and the waiver notice can all state it.
+//
+// Waiving the rollback point is only ever acceptable somewhere a lost version is
+// cheap to recreate, so the waiver is gated on the same stage policy the Stub
+// Mode gate uses: it is honoured only on a stage that resolved and is mutable.
+// Anywhere that policy wants confirmation — an immutable stage, a
 // production-looking name, or a stage that could not be resolved or read at all
 // — the waiver is refused, because that is exactly where an irreversible
 // overwrite is least recoverable and where "I could not determine the target"
-// must not be allowed to mean "so anything goes".
-func snapshotWaiverAllowed(v *Executor, jsonContent string, allowNoSnapshot bool) (bool, string) {
-	policy := stubModeStagePolicyForPush(v, jsonContent)
-	switch {
-	case policy.requiresConfirmation:
-		return false, fmt.Sprintf("Target policy: %s — a rollback waiver is not accepted here even with allow_no_snapshot=true.", policy.reason)
-	case !allowNoSnapshot:
-		return false, fmt.Sprintf("Target policy: %s.", policy.reason)
-	default:
-		return true, policy.reason
-	}
-}
-
-// snapshotAPIFailureWaiverAllowed decides whether allow_no_snapshot may be
-// honoured when project/stage resolved successfully but the CreateSnapshot
-// API call itself returned an error (as opposed to snapshotWaiverAllowed's
-// case, where the target could not be resolved at all). The stage is already
-// known here, so the policy is read for it directly instead of re-derived
-// from parent_id.
+// must not be allowed to mean "so anything goes". That holds for a transient
+// CreateSnapshot error as much as for an unresolved target, and — since the
+// irreversibility gate reuses this — for an installation that has no snapshot
+// object at all.
 //
-// Gated on the same mutable/non-production stage policy as the
-// resolution-failure waiver and Stub Mode: a transient API error must not be
-// treated as license to push blind on a stage where an irreversible
-// overwrite is least recoverable.
-func snapshotAPIFailureWaiverAllowed(v *Executor, stageID, projectID int, allowNoSnapshot bool) (bool, string) {
-	policy := stubModePolicyForStage(v, stageID, projectID)
+// The policy is passed in rather than read here so callers that already hold it
+// can reuse it: reading it again costs a `show stage` round trip and, worse,
+// lets two independently derived verdicts about the same push disagree.
+func applySnapshotWaiverPolicy(policy stubModeStagePolicy, allowNoSnapshot bool) (bool, string) {
 	switch {
 	case policy.requiresConfirmation:
 		return false, fmt.Sprintf("Target policy: %s — a rollback waiver is not accepted here even with allow_no_snapshot=true.", policy.reason)
