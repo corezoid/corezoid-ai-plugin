@@ -37,7 +37,12 @@ import (
 // disable the pre-push rollback point for everything that follows. So a
 // negative answer needs *evidence about the obj name itself*, not a keyword:
 //
-//  1. the API names the snapshot object in its refusal → conclusive on its own;
+//  1. the API names the snapshot object in its refusal → believed only once the
+//     refusal is shown not to depend on the target (see
+//     confirmSnapshotObjectAbsent). Naming the object is weak evidence on its
+//     own, because an API answers about the object you asked for: "snapshot
+//     object is not available here" reads identically from a build that has no
+//     snapshots and from a per-target refusal on a build that does;
 //  2. an "unknown obj"-style refusal that does NOT name snapshots is only
 //     believed after two control ops confirm it (see confirmUnknownSnapshotObject):
 //     a request the installation must answer (`show folder`) succeeds, and a
@@ -182,7 +187,11 @@ func (v *Executor) ProbeSnapshotSupport(convID, projectID, stageID int) (bool, e
 	}
 	switch classifySnapshotRejection(op) {
 	case rejectionUnknownObjSnapshot:
-		return false, fmt.Errorf("snapshot API not available: %w", err)
+		if v.confirmSnapshotObjectAbsent(op, convID, projectID, stageID) {
+			return false, fmt.Errorf("snapshot API not available: %w", err)
+		}
+		logger.Warn("[snapshot] refusal %q names snapshots but depends on the target — treating it as request-specific and keeping snapshots enabled", opRejectionText(op))
+		return true, err
 	case rejectionUnknownObjGeneric:
 		if v.confirmUnknownSnapshotObject(op, convID, projectID, stageID) {
 			return false, fmt.Errorf("snapshot API not available: %w", err)
@@ -204,6 +213,66 @@ func (v *Executor) snapshotListProbeOp(obj string, convID, projectID, stageID in
 		"conv_id":    convID,
 		"project_id": projectID,
 		"stage_id":   stageID,
+		"company_id": v.WorkspaceID,
+	}
+}
+
+// confirmSnapshotObjectAbsent decides whether a refusal that NAMES the snapshot
+// object speaks for the installation or only for this request.
+//
+// Naming the object is not proof by itself: the API answers about whatever you
+// asked for, so a build that implements snapshots but refuses them for one
+// target ("snapshot object is not available here") produces the same shape as a
+// build that has none. What separates the two is whether the refusal depends on
+// the target:
+//
+//   - positive control — `list commits` for the same conv must succeed, proving
+//     the endpoint, the credentials and the process itself are all fine, so the
+//     refusal is not collateral damage from a broken target;
+//   - scope invariance — the same op with the conv/project/stage removed must be
+//     refused in exactly the same words. Obj-name dispatch runs before any id is
+//     looked at (that is how the recorded snapshot-less build answers "bad
+//     object" for every conv alike), so an installation-wide absence answers
+//     identically with or without a target, while a target-scoped refusal
+//     changes its answer once the target is gone.
+//
+// A probe that carried no target in the first place cannot have been given a
+// target-scoped refusal, so invariance is already established and only the
+// positive control runs. Both controls are read-only.
+//
+// Either control failing to line up keeps snapshots ENABLED, and that direction
+// is the point: the cost of a wrong "still supported" is a blocked push telling
+// the user to retry, while the cost of a wrong "not supported here" is every
+// later push in that project+stage overwriting a live process with no rollback
+// point — and, paired with an overwrite waiver, doing it unrecoverably.
+func (v *Executor) confirmSnapshotObjectAbsent(rejection map[string]any, convID, projectID, stageID int) bool {
+	if err := v.snapshotPositiveControl(convID, stageID); err != nil {
+		logger.Warn("[snapshot] control op failed (%v) — cannot conclude the snapshot object is missing", err)
+		return false
+	}
+	if convID == 0 && projectID == 0 && stageID == 0 {
+		return true
+	}
+	resp, err := v.req("json", []map[string]any{v.snapshotScopelessProbeOp("snapshots")})
+	if err == nil {
+		// The very same op succeeds once the target is dropped: the object
+		// exists here and the refusal was about the target.
+		return false
+	}
+	control := rawFirstOp(resp)
+	if control == nil {
+		return false
+	}
+	return sameRejection(rejection, control)
+}
+
+// snapshotScopelessProbeOp is the scope-invariance control: the same read-only
+// list op with conv/project/stage dropped, so the only thing left to refuse is
+// the obj name itself.
+func (v *Executor) snapshotScopelessProbeOp(obj string) map[string]any {
+	return map[string]any{
+		"type":       "list",
+		"obj":        obj,
 		"company_id": v.WorkspaceID,
 	}
 }
@@ -456,9 +525,10 @@ func classifySnapshotRejection(op map[string]any) snapshotRejection {
 		return rejectionOrdinary
 	}
 
-	// (2) The API named the snapshot object in its refusal — conclusive, but
-	// only when the same message does not also name a concrete thing the
-	// request carried. "Snapshots are unsupported for this project type" and
+	// (2) The API named the snapshot object in its refusal. Suggestive, and
+	// still subject to the control ops in confirmSnapshotObjectAbsent, but only
+	// when the same message does not also name a concrete thing the request
+	// carried. "Snapshots are unsupported for this project type" and
 	// "Snapshots are not supported for this user" are scoped complaints about
 	// one target, not evidence that the installation lacks the object; without
 	// this veto they would be cached as snapshotSupportNo and disable the

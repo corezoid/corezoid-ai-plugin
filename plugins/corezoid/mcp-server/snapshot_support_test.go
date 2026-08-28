@@ -187,7 +187,16 @@ func (m *probeMock) fn(ops []map[string]interface{}) interface{} {
 		m.t.Errorf("a support probe must never issue a mutating op, got %#v", op)
 	}
 	obj, _ := op["obj"].(string)
-	m.calls[obj]++
+	// The scope-invariance control issues the same obj with the target dropped;
+	// count it under its own key so assertions about the scoped probe keep
+	// meaning what they meant.
+	key := obj
+	if obj == "snapshots" {
+		if _, scoped := op["conv_id"]; !scoped {
+			key = "snapshots-scopeless"
+		}
+	}
+	m.calls[key]++
 	switch obj {
 	case "snapshots":
 		return wrapOp(m.snapshotsResp)
@@ -323,8 +332,13 @@ func TestSnapshotsSupported_StageFallbackControl(t *testing.T) {
 	}
 }
 
-// A refusal naming the snapshot object needs no controls at all.
-func TestSnapshotsSupported_SnapshotNamedRefusalNeedsNoControls(t *testing.T) {
+// A refusal naming the snapshot object is believed — but only after the controls
+// show it does not depend on the target. Naming the object is weak evidence on
+// its own: an API answers about whatever you asked for, so the same wording
+// comes from a build with no snapshots and from a per-target refusal on a build
+// that has them. What settles it is that the refusal is identical with the
+// target dropped, and that ordinary ops about that target work.
+func TestSnapshotsSupported_SnapshotNamedRefusalNeedsScopeInvariance(t *testing.T) {
 	t.Cleanup(resetSnapshotSupportCache)
 
 	m := newProbeMock(t)
@@ -332,10 +346,54 @@ func TestSnapshotsSupported_SnapshotNamedRefusalNeedsNoControls(t *testing.T) {
 	_, e := mockAPIServer(t, m.fn)
 
 	if snapshotsSupported(e, 555, 10, 20) {
-		t.Fatal("an API naming the snapshot object as unsupported has no snapshot feature")
+		t.Fatal("an API refusing the snapshot object the same way with and without a target has no snapshot feature")
 	}
-	if m.calls["commits"] != 0 || m.calls[snapshotProbeUnknownObj] != 0 {
-		t.Errorf("a conclusive refusal must not cost extra ops, got %#v", m.calls)
+	if m.calls["commits"] != 1 || m.calls["snapshots-scopeless"] != 1 {
+		t.Errorf("both controls must run before disabling snapshots, got %#v", m.calls)
+	}
+	// The nonsense-obj control belongs to the generic path only; a refusal that
+	// already names the object does not need to learn what "unknown name" looks
+	// like here.
+	if m.calls[snapshotProbeUnknownObj] != 0 {
+		t.Errorf("the nonsense-obj control is for unnamed refusals only, got %#v", m.calls)
+	}
+}
+
+// The case the scope-invariance control exists for: a build that DOES implement
+// snapshots but refuses them for one target, in wording that names the object.
+// Reading that as an installation-wide absence would cache "no snapshots" for
+// the whole project+stage and silently drop the pre-push rollback point for
+// every later push there.
+func TestSnapshotsSupported_ScopedSnapshotRefusalStaysEnabled(t *testing.T) {
+	t.Cleanup(resetSnapshotSupportCache)
+
+	var scopeless int
+	_, e := mockAPIServer(t, func(ops []map[string]interface{}) interface{} {
+		op := ops[0]
+		obj, _ := op["obj"].(string)
+		switch obj {
+		case "commits":
+			return wrapOp(map[string]interface{}{"proc": "ok", "list": []interface{}{}})
+		case "snapshots":
+			if _, scoped := op["conv_id"]; !scoped {
+				// No target to complain about, so this build answers normally —
+				// which is exactly what proves the object exists here.
+				scopeless++
+				return wrapOp(map[string]interface{}{"proc": "ok", "list": []interface{}{}})
+			}
+			return wrapOp(map[string]interface{}{"proc": "error", "description": "snapshot object is not available here"})
+		}
+		return wrapOp(map[string]interface{}{"proc": "ok"})
+	})
+
+	if !snapshotsSupported(e, 555, 10, 20) {
+		t.Fatal("a snapshot refusal that disappears once the target is dropped is about the target, not the installation")
+	}
+	if scopeless != 1 {
+		t.Errorf("the scope-invariance control must run exactly once, ran %d times", scopeless)
+	}
+	if cachedSnapshotSupport(e, 10, 20) != snapshotSupportUnknown {
+		t.Error("an unconfirmed refusal must not be cached")
 	}
 }
 

@@ -250,7 +250,7 @@ validation errors, and summarize what each process does.
 | `show-project`      | Show a project's stages and parent folder          |
 | `pull-folder`       | Export an entire folder/stage to local files       |
 | `pull-process`      | Export a single process to a `.conv.json` file     |
-| `push-process`      | Validate and deploy a `.conv.json` to Corezoid. Blocks when the graph is structurally invalid, when the server changed since pull, when no rollback point could be taken, or when the file has no pull baseline but the process is already deployed |
+| `push-process`      | Validate and deploy a `.conv.json` to Corezoid. Blocks when the graph is structurally invalid, when the server changed since pull (`force` is the lint override only — the concurrency gate has its own `overwrite_server_change`), when no rollback point could be taken, or when the file has no pull baseline but the process is already deployed. Every waived gate is reported in the push result |
 | `layout-process`    | Auto-arrange node coordinates (waterfall / layered / table-star regions); local, changes only x/y and collapse flags |
 | `lint-process`      | Validate process structure locally (no API call)   |
 | `run-task`          | Send a task to a deployed process                  |
@@ -299,7 +299,7 @@ validation errors, and summarize what each process does.
 | `find-principal`    | Resolve user / group / API-key name to obj_id      |
 | `invite-user`       | Invite an external email and share an object in one call |
 | `send-feedback`     | Submit feedback about plugin behavior (returns ticket id) |
-| `create-snapshot`   | Create a snapshot of the current server state of a process. Also auto-created before `push-process` overwrites an existing process: if the snapshot fails the push is blocked, and if the target project/stage cannot be resolved the push is blocked too unless `allow_no_snapshot=true` on a resolved mutable stage. Skipped only where there is nothing to preserve — a process with no deployed version, or an installation whose API has no snapshot object |
+| `create-snapshot`   | Create a snapshot of the current server state of a process. Also auto-created before `push-process` overwrites an existing process: if the snapshot call fails the push is blocked, and if the target project/stage cannot be resolved the push is blocked too — both waived by `allow_no_snapshot=true` on a resolved mutable stage, though retrying a failed call is the safer default. Skipped only where there is nothing to preserve — a process with no deployed version, or an installation whose API has no snapshot object. A push that overwrites live server state without comparing it (`overwrite_server_change`, or `adopt_existing` on a file with no baseline) is refused when no snapshot was taken, unless `allow_no_snapshot=true` is passed as well; a never-deployed process is exempt — it has no previous version to preserve |
 | `list-snapshots`    | List all snapshots for a process with version, title, author and creation time |
 | `delete-snapshot`   | Delete a snapshot by its obj_id |
 | `get-snapshot`      | Get the node list of a specific snapshot for diff comparison |

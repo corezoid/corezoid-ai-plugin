@@ -494,10 +494,21 @@ func handlePushProcess(ctx context.Context, args map[string]interface{}) (string
 	//     shared clusters) never block; they are surfaced so the user sees them.
 	// Active Stub Mode has its own stage-aware gate because it bypasses the real
 	// called process at runtime.
+	// force waives generic blocking LINT findings and nothing else. The
+	// concurrency gate has its own waiver, overwrite_server_change: one boolean
+	// covering both meant a force passed for a lint finding also pre-authorised
+	// overwriting a concurrent server change that had not happened yet and was
+	// therefore never shown to anyone (see resolveConflict).
 	force, _ := args["force"].(bool)
+	overwriteServerChange, _ := args["overwrite_server_change"].(bool)
 	allowStubMode, _ := args["allow_active_stub_mode"].(bool)
 	allowNoSnapshot, _ := args["allow_no_snapshot"].(bool)
-	var lintNote string // findings surfaced on a proceeding push (see below)
+	var lintNote, lintNoteHeader string // findings surfaced on a proceeding push (see below)
+	// Every gate this push waived, reported in the tool result. A waiver visible
+	// only on stderr is not an audit trail: an MCP host is free to surface just
+	// the returned content, leaving "deployed successfully" as the whole record
+	// of an overridden safety check.
+	var waiverNotes []string
 	if lintRes, lintErr := lintProcess(filePath); lintErr == nil {
 		stubMode := len(lintRes.StubModeNodes)
 		if stubMode > 0 {
@@ -507,7 +518,8 @@ func handlePushProcess(ctx context.Context, args map[string]interface{}) (string
 					stubMode, policy.reason, FormatLintResult(lintRes)), true
 			}
 			if allowStubMode {
-				fmt.Fprintf(os.Stderr, "[lint] %d active Stub Mode node(s) allowed with allow_active_stub_mode=true (%s)\n", stubMode, policy.reason)
+				waiverNotes = append(waiverNotes, fmt.Sprintf(
+					"WARNING: allow_active_stub_mode=true was used — %d node(s) were deployed with active Stub Mode, which bypasses the real called process at runtime (%s).", stubMode, policy.reason))
 			} else {
 				fmt.Fprintf(os.Stderr, "[lint] %d active Stub Mode node(s) are warning-only for this push (%s)\n", stubMode, policy.reason)
 			}
@@ -522,25 +534,37 @@ func handlePushProcess(ctx context.Context, args map[string]interface{}) (string
 				overridable, FormatLintResult(lintRes)), true
 		}
 		if overridable > 0 && force {
-			fmt.Fprintf(os.Stderr, "[lint] %d blocking issue(s) overridden with force=true\n", overridable)
+			waiverNotes = append(waiverNotes, fmt.Sprintf(
+				"WARNING: force=true was used — %d lint finding(s) that block a push by default were overridden and deployed (listed below).", overridable))
+			// Reporting these under the old "non-blocking" heading was worse than
+			// not reporting them: the findings were there but the audit trail said
+			// they had never blocked anything.
+			lintNoteHeader = fmt.Sprintf("Lint — %d BLOCKING finding(s) overridden with force=true, deployed anyway:", overridable)
 		}
 		// The push proceeds. Surface any findings so the promise "advisory
 		// findings are shown but do not block" is actually kept — otherwise
 		// advisory-only issues would deploy silently and never be seen.
 		if overridable+advisory+stubMode > 0 {
 			lintNote = FormatLintResult(lintRes)
+			if lintNoteHeader == "" {
+				lintNoteHeader = "Lint (non-blocking, deployed anyway):"
+			}
 		}
 	}
 
 	// Concurrency gate: if this process was pulled and someone else changed it
 	// on the server since, a plain push would silently overwrite their edits
 	// (DeleteNotUsedNodes drops server nodes absent from the local scheme).
-	// Block with an impact report unless force=true. New/never-pulled processes
-	// have no baseline and are unaffected.
+	// Block with an impact report unless overwrite_server_change=true, which is
+	// meant to be passed in reply to that report — not ahead of it. New/never-
+	// pulled processes have no baseline and are unaffected.
 	merge, _ := args["merge"].(bool)
 	adoptExisting, _ := args["adopt_existing"].(bool)
+	// Set when the gate authorised writing over a live server version whose
+	// content was never reconciled. Paired with the snapshot outcome below.
+	overwroteLiveState, overwriteWaiver := false, ""
 	if objID := extractObjIDFromJSON(jsonContent); objID != 0 {
-		res := resolveConflict(v, filePath, objID, jsonContent, force, merge, adoptExisting)
+		res := resolveConflict(v, filePath, objID, jsonContent, overwriteServerChange, merge, adoptExisting)
 		switch res.action {
 		case conflictBlock:
 			return res.message, true
@@ -548,8 +572,9 @@ func handlePushProcess(ctx context.Context, args map[string]interface{}) (string
 			return res.message, false // merged file written for review — do not push now
 		case conflictProceed:
 			if res.message != "" {
-				fmt.Fprintln(os.Stderr, res.message) // advisory (e.g. no baseline) — do not block
+				waiverNotes = append(waiverNotes, res.message)
 			}
+			overwroteLiveState, overwriteWaiver = res.overwroteLiveState, res.waiver
 		}
 	}
 
@@ -576,7 +601,9 @@ func handlePushProcess(ctx context.Context, args map[string]interface{}) (string
 	//     previous state that could be lost — blocking there would make the
 	//     create-process → push-process flow impossible for every new process.
 	var snapshotNote string
-	if existingObjID := extractObjIDFromJSON(jsonContent); existingObjID != 0 {
+	snapshotTaken := false
+	existingObjID := extractObjIDFromJSON(jsonContent)
+	if existingObjID != 0 {
 		projectID, envNotice := resolveAndCacheProjectID(v)
 		// "Does this installation have snapshots at all" is asked BEFORE "could
 		// we resolve the target", because the answers mean different things and
@@ -621,6 +648,7 @@ func handlePushProcess(ctx context.Context, args map[string]interface{}) (string
 			} else {
 				logger.Info("[snapshot] created version %d (obj_id=%d) for process %d", snapVer, snapObjID, existingObjID)
 				snapshotNote = fmt.Sprintf("Snapshot created before push (version %d, obj_id=%d).", snapVer, snapObjID)
+				snapshotTaken = true
 			}
 
 		case processNeverDeployed(v, existingObjID):
@@ -642,6 +670,35 @@ func handlePushProcess(ctx context.Context, args map[string]interface{}) (string
 		if envNotice != "" && snapshotNote != "" {
 			snapshotNote += " " + envNotice
 		}
+	}
+
+	// An unreconciled overwrite of live server state with no rollback point is
+	// the one combination in this handler that nothing can undo. Each waiver on
+	// its own is a defensible judgement call — one says "their change loses",
+	// the other says "no undo is available here". Together they mean the previous
+	// version is neither reported nor recoverable, and that is not something a
+	// single flag set for an unrelated reason should be able to reach. It is also
+	// the only path a misclassified snapshot capability can turn into data loss,
+	// so the check keys on the snapshot OUTCOME, not on why it was missing.
+	//
+	// A never-deployed process is the same exception it is for the snapshot gate
+	// itself: there is no committed version, so there is nothing this push can
+	// make unrecoverable and nothing a snapshot could have preserved. The
+	// concurrency path can still get here for one — a pulled-but-never-deployed
+	// process whose change_time moved — and refusing that would demand a second
+	// waiver to protect a version that does not exist. The check costs one read
+	// and only on the path that is about to block or warn anyway.
+	if overwroteLiveState && !snapshotTaken && !processNeverDeployed(v, existingObjID) {
+		if !allowNoSnapshot {
+			return fmt.Sprintf(
+				"Push blocked: %s waived the comparison against the live server version, and no pre-push snapshot exists (%s). Together those two make this push irreversible — the version it overwrites is neither reported nor recoverable.\n\nEither restore one of the guarantees (re-pull and reconcile: pull-process, then push with merge=true; or fix the workspace configuration so a snapshot can be taken), or pass allow_no_snapshot=true in addition to accept an irreversible overwrite deliberately.",
+				overwriteWaiver, strings.TrimSuffix(snapshotNote, ".")), true
+		}
+		// Deliberate and allowed — but it is the most destructive thing this tool
+		// can do, so it is stated outright rather than left to be inferred from
+		// two flags and a snapshot line.
+		waiverNotes = append(waiverNotes, fmt.Sprintf(
+			"WARNING: allow_no_snapshot=true was combined with %s — this push overwrote live server state that was never compared to anything, with no rollback point. It CANNOT be undone.", overwriteWaiver))
 	}
 
 	if _, err := v.ProcessJSON(filePath, jsonContent); err != nil {
@@ -693,8 +750,11 @@ func handlePushProcess(ctx context.Context, args map[string]interface{}) (string
 	if snapshotNote != "" {
 		result += "\n" + snapshotNote
 	}
+	if len(waiverNotes) > 0 {
+		result += "\n\n" + strings.Join(waiverNotes, "\n\n")
+	}
 	if lintNote != "" {
-		result += "\n\nLint (non-blocking, deployed anyway):\n" + lintNote
+		result += "\n\n" + lintNoteHeader + "\n" + lintNote
 	}
 	// Surface the git_call container build log so the user sees what the build
 	// service reported (progress + result), not just silence on success.

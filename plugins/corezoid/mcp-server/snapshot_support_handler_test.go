@@ -311,6 +311,11 @@ func TestHandlePushProcess_EnvironmentWithoutSnapshotsPushesWithWarning(t *testi
 		// fixture was never pulled, so adopt_existing carries it past the
 		// missing-baseline block (see TestConflict_NoBaseline*).
 		"adopt_existing": true,
+		// On an environment with no snapshots, an unreconciled overwrite plus no
+		// rollback point is refused on purpose (irreversible), so the second waiver
+		// is what keeps this a snapshot-gate test — see
+		// TestHandlePushProcess_UnreconciledOverwriteWithoutSnapshotBlocks.
+		"allow_no_snapshot": true,
 	})
 	if isErr {
 		t.Fatalf("a missing snapshot feature must not block the push, got error:\n%s", result)
@@ -319,6 +324,10 @@ func TestHandlePushProcess_EnvironmentWithoutSnapshotsPushesWithWarning(t *testi
 		"Process deployed successfully",
 		"Auto-snapshot skipped: this Corezoid environment does not support snapshots",
 		"keep the .conv.json under version control",
+		// The two waivers together made this push unrecoverable; that has to be
+		// stated, not left to be inferred from the flags that were passed.
+		"allow_no_snapshot=true was combined with adopt_existing=true",
+		"CANNOT be undone",
 	} {
 		if !strings.Contains(result, want) {
 			t.Fatalf("expected result to contain %q, got:\n%s", want, result)
@@ -576,6 +585,11 @@ func TestHandlePushProcess_SnapshotlessEnvPushesWithUnresolvedTarget(t *testing.
 	result, isErr := handlePushProcess(context.Background(), map[string]interface{}{
 		"process_path":   name,
 		"adopt_existing": true,
+		// On an environment with no snapshots, an unreconciled overwrite plus no
+		// rollback point is refused on purpose (irreversible), so the second waiver
+		// is what keeps this a snapshot-gate test — see
+		// TestHandlePushProcess_UnreconciledOverwriteWithoutSnapshotBlocks.
+		"allow_no_snapshot": true,
 	})
 	if isErr {
 		t.Fatalf("a snapshot-less environment must not be blocked by the unresolved-target gate, got:\n%s", result)
