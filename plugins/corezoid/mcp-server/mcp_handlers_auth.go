@@ -650,10 +650,21 @@ func handleLogout(_ context.Context, _ map[string]interface{}) (string, bool) {
 		browserHost = "https://account.corezoid.com"
 	}
 
-	return fmt.Sprintf(
+	msg := fmt.Sprintf(
 		"Logged out. Folder entry removed from %s.\n\n"+
 			"Important: your browser may still have an active SSO session at %s. "+
 			"If a subsequent login produces an already-expired token (\"exp\" in the past), "+
 			"you must also log out of that site in your browser before calling login again.",
-		cfgPath, browserHost), false
+		cfgPath, browserHost)
+
+	// Logout can only remove what it persisted. COREZOID_* variables are read
+	// as a fallback on every auth check, so leaving them set keeps the server
+	// authenticated — say so instead of reporting a clean logout.
+	if envConfigActive() {
+		msg += "\n\nNote: COREZOID_* environment variables still supply credentials for this " +
+			"working directory. They are read as a fallback and logout cannot remove them — " +
+			"unset them in your shell / MCP client config to fully deauthenticate."
+	}
+
+	return msg, false
 }

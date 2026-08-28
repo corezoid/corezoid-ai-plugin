@@ -172,3 +172,34 @@ Every field below lives in the current Folder inside `~/.corezoid/config.json`. 
 | `git_url` / `git_stage_path` | cached on first git-pull-context |
 
 `COREZOID_OAUTH_CLIENT_ID` remains an environment variable (not a Folder field) — pre-login only, on-prem deployments with a custom authorization server. Cloud users do not need it.
+
+---
+
+## Environment fallback (headless / CI)
+
+Every field above can also come from the environment when the config file has nothing for it. Use this only where the interactive login cannot run — CI jobs, containers, the Streamable HTTP transport:
+
+| Variable | Field |
+|---|---|
+| `COREZOID_ACCOUNT_URL` | `account_url` |
+| `COREZOID_API_URL` | `corezoid_url` |
+| `COREZOID_APIGW_URL` | `apigw_url` |
+| `COREZOID_WORKSPACE_ID` | `workspace_id` |
+| `COREZOID_PROJECT_ID` | `project_id` |
+| `COREZOID_STAGE_ID` | `stage_id` |
+| `COREZOID_ACCESS_TOKEN` | `access_token` |
+| `COREZOID_TOKEN_EXPIRES_AT` | `expires_at` (RFC 3339) |
+| `COREZOID_API_LOGIN` | `api_login` |
+| `COREZOID_API_SECRET` | `api_secret` |
+| `COREZOID_GIT_URL` | `git_url` |
+| `COREZOID_GIT_STAGE_PATH` | `git_stage_path` |
+
+Rules to keep in mind when diagnosing auth state:
+
+- The **config file wins field by field**; a variable applies only where the matching Folder leaves that field empty, or when no Folder matches the cwd.
+- An **expired** stored `access_token` counts as missing, so `COREZOID_ACCESS_TOKEN` takes over.
+- Environment values are **never persisted** — they are used in memory only. Derived caches (`project_id`, `git_url`, `git_stage_path`) are still written as usual.
+- `logout` removes the Folder but cannot unset variables; the server stays authenticated until they are removed from the environment. The `logout` response says so when this is the case.
+- Minimal set: `COREZOID_ACCOUNT_URL` + `COREZOID_STAGE_ID` + (`COREZOID_ACCESS_TOKEN` or `COREZOID_API_LOGIN`/`COREZOID_API_SECRET`).
+
+Do **not** propose this path for a normal desktop setup — `login` is better there (it discovers `corezoid_url`, lists workspaces/stages, and refreshes the token).

@@ -392,7 +392,13 @@ func syncGlobalsFromCurrent() {
 // without an intermediate disk write. Passing nil resets every global to its
 // zero value, matching the fresh-install state — this prevents stale
 // in-memory state from a previous cwd leaking into new operations.
+//
+// Fields the caller's Folder leaves unset (and every field when f is nil) are
+// filled in from COREZOID_* environment variables by applyEnvFallback — the
+// config file always wins, the environment only fills gaps. This is the single
+// choke point for that fallback: every hot path reads the globals it writes.
 func syncGlobalsFromFolder(f *Folder) {
+	f = applyEnvFallback(f)
 	authStateMu.Lock()
 	defer authStateMu.Unlock()
 	if f == nil {

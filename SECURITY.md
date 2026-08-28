@@ -20,6 +20,7 @@ All credentials and per-workspace config live in a single user-level file:
 
 **Config file:** written with permissions `0600`; the `~/.corezoid/` directory is created with `0700`. Nothing lives in the project tree — secrets (`access_token`, `api_secret`) never leave the user's home directory.  
 **Plugin package:** `plugins/corezoid/.mcp.json` ships without any credentials — tokens are never bundled in the marketplace package.  
+**Environment fallback:** when the matching folder entry leaves a field empty (or no entry matches the cwd), the server falls back to `COREZOID_*` variables for the same fields — including `COREZOID_ACCESS_TOKEN`, `COREZOID_API_LOGIN`, and `COREZOID_API_SECRET` (see [README](README.md#auth-config-from-environment-variables)). Intended for CI/containers, where no interactive login is possible. Such values are read-only: they are never written back to `~/.corezoid/config.json`, and they do not get the `0600` protection the config file has — keep them in your CI secret store, not in a committed file, and note that `logout` cannot unset them.  
 **Concurrency:** writes go through an in-process mutex + a cross-process `flock` on `~/.corezoid/config.json.lock`, followed by an atomic temp-file + rename. Two MCP-server processes started from different IDE windows serialise cleanly.
 
 ## What the MCP server sends over the network

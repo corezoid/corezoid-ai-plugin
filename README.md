@@ -167,12 +167,46 @@ They are saved to the current Folder in the same `~/.corezoid/config.json`.
 | Environment variable       | Required | Description                                       |
 |----------------------------|----------|---------------------------------------------------|
 | `COREZOID_WORK_DIR`        | No       | Absolute path used to pick which entry in `folders[]` applies. Set automatically by Claude Code / Codex / Kiro from the user's cwd. Only meaningful if the host cannot preserve cwd across MCP subprocess spawn. |
-| `COREZOID_APIGW_URL`       | No       | Override the API Gateway URL                      |
 | `COREZOID_OAUTH_CLIENT_ID` | No       | OAuth2 client ID — on-prem deployments with a custom authorization server should set this to their own client ID; cloud (account.corezoid.com) users do not need it |
-| `COREZOID_HTTP_PORT`       | No       | Activate the Streamable HTTP transport on this port (e.g. `8080`). When set the server listens for MCP over HTTP instead of stdio — intended for hosted marketplace deployments. Credentials must be pre-configured in `~/.corezoid/config.json`; the browser OAuth login flow is not available in HTTP mode. |
+| `COREZOID_HTTP_PORT`       | No       | Activate the Streamable HTTP transport on this port (e.g. `8080`). When set the server listens for MCP over HTTP instead of stdio — intended for hosted marketplace deployments. The browser OAuth login flow is not available in HTTP mode, so credentials must come from `~/.corezoid/config.json` or from the environment fallback below. |
+| `COREZOID_HTTP_TOKEN`      | No       | Bearer token required on every request when the HTTP transport is active. Unset means no request authentication — only safe for a loopback-only deployment. |
+| `COREZOID_HTTP_ALLOWED_ORIGINS` | No  | Comma-separated `Origin` allowlist for the HTTP transport |
 | `COREZOID_AUTOLAYOUT`      | No       | Set to `off` to disable auto-placement of new `(0,0)` nodes on `push-process` (default: preserve) |
+| `COREZOID_WS_URL`          | No       | Override the build WebSocket endpoint used by `git_call` compilation (on-prem installs) |
+| `COREZOID_INSECURE_TLS`    | No       | Set to `1` to skip TLS verification — on-prem installs with self-signed certificates only |
+| `COREZOID_DEBUG`           | No       | Set to `1` for verbose API request/response tracing |
+| `COREZOID_DEBUG_LOG`       | No       | Path for the MCP-mode log file (default `~/.corezoid/mcp.log`) |
 
-All auth-related values (`account_url`, `workspace_id`, `stage_id`, `access_token`, `api_login`, `api_secret`, `git_url`, ...) live in `~/.corezoid/config.json` — not in environment variables.
+### Auth config from environment variables
+
+Normally every auth value lives in `~/.corezoid/config.json`, written by the `login` tool. For hosts that cannot run the interactive browser login and have no writable config — CI jobs, containers, the Streamable HTTP transport — the same fields can be supplied through the environment:
+
+| Environment variable        | Folder field     |
+|----------------------------|------------------|
+| `COREZOID_ACCOUNT_URL`     | `account_url`    |
+| `COREZOID_API_URL`         | `corezoid_url` (base URL only, no `/api/2/json` suffix) |
+| `COREZOID_APIGW_URL`       | `apigw_url` (default `https://api-apigw.corezoid.com`) |
+| `COREZOID_WORKSPACE_ID`    | `workspace_id`   |
+| `COREZOID_PROJECT_ID`      | `project_id`     |
+| `COREZOID_STAGE_ID`        | `stage_id`       |
+| `COREZOID_ACCESS_TOKEN`    | `access_token`   |
+| `COREZOID_TOKEN_EXPIRES_AT`| `expires_at` (RFC 3339; omit for a token with no known expiry) |
+| `COREZOID_API_LOGIN`       | `api_login`      |
+| `COREZOID_API_SECRET`      | `api_secret`     |
+| `COREZOID_GIT_URL`         | `git_url`        |
+| `COREZOID_GIT_STAGE_PATH`  | `git_stage_path` |
+
+Precedence rules:
+
+- **The config file wins, field by field.** A variable is used only where the `folders[]` entry matching the current working directory leaves that field empty — or when no entry matches at all.
+- A **stored token that has already expired counts as missing**, so `COREZOID_ACCESS_TOKEN` takes over instead of leaving the server with no credentials.
+- Environment values are **never written back** to `~/.corezoid/config.json` — an env-supplied field is used in memory only. The server still writes the caches it resolves itself (`project_id`, `git_url`, `git_stage_path`), as it does in a normal setup.
+- `logout` cannot remove them — unset the variables to fully deauthenticate.
+- A minimal working set is `COREZOID_ACCOUNT_URL` + `COREZOID_STAGE_ID` + either `COREZOID_ACCESS_TOKEN` or `COREZOID_API_LOGIN` + `COREZOID_API_SECRET`. Add `COREZOID_API_URL` to skip API-URL discovery.
+
+In Claude Code / Codex these can be set in the `env` block of the `corezoid` server in your MCP config, or exported in the shell that launches the client.
+
+⚠️ `COREZOID_ACCESS_TOKEN` and `COREZOID_API_SECRET` are secrets. Prefer your CI's secret store over a committed config file — `~/.corezoid/config.json` is written with mode `0600`, an environment variable inherits whatever protection the host gives it.
 
 ## Telemetry
 
