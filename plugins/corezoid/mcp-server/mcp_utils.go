@@ -276,7 +276,12 @@ func resolveProcessPath(args map[string]interface{}, key string) (string, error)
 // only mentions the file-based path.
 func resolveProcessID(args map[string]interface{}, pathKey, convIDKey string) (procID int, filePath string, errMsg string) {
 	raw, hasID := args[convIDKey]
-	_, hasPath := args[pathKey]
+	// A client that always serializes declared-but-unset optional fields as
+	// "" or null (some MCP hosts do) must not trip the both-given conflict
+	// below — optStrArg already treats "" and null as absent everywhere else
+	// pathKey is read, so the presence check has to agree with that.
+	hasID = hasID && raw != nil
+	hasPath := optStrArg(args, pathKey) != ""
 	if hasID && hasPath {
 		return 0, "", fmt.Sprintf(
 			"Error: pass either %s or %s, not both — got both arguments and cannot tell which one to trust.",

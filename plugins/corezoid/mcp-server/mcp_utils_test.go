@@ -399,6 +399,53 @@ func TestResolveProcessID_BothArgsGivenIsRejected(t *testing.T) {
 	}
 }
 
+// Some MCP hosts serialize a declared-but-unset optional field as "" or null
+// rather than omitting the key. A valid process_id must not be rejected as
+// "both given" just because such a client also sent an empty/null
+// process_path — optStrArg already treats "" and null as absent everywhere
+// else process_path is read, and the conflict check has to agree.
+func TestResolveProcessID_EmptyOrNullProcessPathIsNotAConflict(t *testing.T) {
+	for name, pathVal := range map[string]interface{}{"empty string": "", "null": nil} {
+		t.Run(name, func(t *testing.T) {
+			id, filePath, errMsg := resolveProcessID(map[string]interface{}{
+				"process_path": pathVal,
+				"process_id":   float64(456),
+			}, "process_path", "process_id")
+			if errMsg != "" {
+				t.Fatalf("unexpected error: %s", errMsg)
+			}
+			if id != 456 {
+				t.Errorf("got id=%d, want 456", id)
+			}
+			if filePath != "" {
+				t.Errorf("expected empty filePath, got %q", filePath)
+			}
+		})
+	}
+}
+
+// Symmetric case: a null process_id must not be treated as "given" either —
+// it falls back to process_path like an absent key would.
+func TestResolveProcessID_NullProcessIDFallsBackToProcessPath(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+
+	os.WriteFile(filepath.Join(dir, "333_proc.conv.json"), []byte("{}"), 0644) //nolint:errcheck
+	id, filePath, errMsg := resolveProcessID(map[string]interface{}{
+		"process_path": "333_proc.conv.json",
+		"process_id":   nil,
+	}, "process_path", "process_id")
+	if errMsg != "" {
+		t.Fatalf("unexpected error: %s", errMsg)
+	}
+	if id != 333 {
+		t.Errorf("got id=%d, want 333", id)
+	}
+	if filePath != "333_proc.conv.json" {
+		t.Errorf("got filePath=%q, want 333_proc.conv.json", filePath)
+	}
+}
+
 func TestResolveProcessID_ZeroIsRejected(t *testing.T) {
 	_, _, errMsg := resolveProcessID(map[string]interface{}{"process_id": float64(0)}, "process_path", "process_id")
 	if errMsg == "" {
