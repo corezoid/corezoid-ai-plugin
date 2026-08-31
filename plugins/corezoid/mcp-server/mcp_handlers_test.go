@@ -1407,6 +1407,96 @@ func TestHandleRunTask_UsesDeployedProcessWithoutRedeploy(t *testing.T) {
 	}
 }
 
+// run-task must work with process_id alone, with no local .conv.json
+// anywhere — this is the path a host with no local process repository (e.g.
+// the Simulator.Company AI console) uses instead of pull-process + process_path.
+func TestHandleRunTask_ProcessIDWithoutLocalFile(t *testing.T) {
+	resetGlobals(t)
+	var operations []string
+	srv, _ := mockAPIServer(t, func(ops []map[string]interface{}) interface{} {
+		if len(ops) != 1 {
+			return map[string]interface{}{"request_proc": "error", "description": "unexpected operation count"}
+		}
+		obj, _ := ops[0]["obj"].(string)
+		typ, _ := ops[0]["type"].(string)
+		operations = append(operations, obj+":"+typ)
+		switch obj + ":" + typ {
+		case "conv:list":
+			return map[string]interface{}{
+				"request_proc": "ok",
+				"ops": []interface{}{map[string]interface{}{
+					"proc": "ok",
+					"list": []interface{}{map[string]interface{}{
+						"scheme": map[string]interface{}{"nodes": []interface{}{
+							map[string]interface{}{
+								"id": "server-final", "title": "Final", "obj_type": float64(2),
+								"extra": `{"icon":""}`,
+							},
+						}},
+					}},
+				}},
+			}
+		case "task:create":
+			return map[string]interface{}{
+				"request_proc": "ok",
+				"ops":          []interface{}{map[string]interface{}{"proc": "ok"}},
+			}
+		case "task:show":
+			return map[string]interface{}{
+				"request_proc": "ok",
+				"ops": []interface{}{map[string]interface{}{
+					"proc": "ok", "obj_id": "task-1", "node_id": "server-final",
+					"data": map[string]interface{}{"result": "ok"},
+				}},
+			}
+		default:
+			return map[string]interface{}{"request_proc": "error", "description": "unexpected mutating operation"}
+		}
+	})
+	setProjectAuth(t, srv.URL)
+
+	dir := t.TempDir()
+	t.Chdir(dir) // no .conv.json file anywhere — process_id must not need one
+
+	originalFirstPoll := runTaskFirstPollAfter
+	originalPollEvery := runTaskPollEvery
+	runTaskFirstPollAfter = time.Millisecond
+	runTaskPollEvery = time.Millisecond
+	t.Cleanup(func() {
+		runTaskFirstPollAfter = originalFirstPoll
+		runTaskPollEvery = originalPollEvery
+	})
+
+	result, isErr := handleRunTask(context.Background(), map[string]interface{}{
+		"process_id": float64(123), "data": `{}`, "ref": "process-id-run", "wait_sec": 1,
+	})
+	if isErr || !strings.Contains(result, "Task completed") || !strings.Contains(result, "NodeName: Final") {
+		t.Fatalf("process_id-based task run failed: %s", result)
+	}
+	if got := strings.Join(operations, ","); got != "conv:list,task:create,task:show" {
+		t.Fatalf("run-task issued unexpected operations: %s", got)
+	}
+}
+
+// Calling run-task with neither process_path nor process_id — and no local
+// .conv.json to auto-discover — must fail with a message naming both
+// accepted alternatives, not a generic "file not found".
+func TestHandleRunTask_MissingProcessPathAndProcessID(t *testing.T) {
+	resetGlobals(t)
+	dir := t.TempDir()
+	t.Chdir(dir)
+
+	result, isErr := handleRunTask(context.Background(), map[string]interface{}{
+		"data": `{}`,
+	})
+	if !isErr {
+		t.Fatalf("expected isError=true when neither process_path nor process_id is given, got: %s", result)
+	}
+	if !strings.Contains(result, "process_path") || !strings.Contains(result, "process_id") {
+		t.Fatalf("expected error to mention both process_path and process_id, got: %s", result)
+	}
+}
+
 func TestLoadRuntimeNodeMap_FallsBackToReadOnlyExport(t *testing.T) {
 	var srv *httptest.Server
 	var requests []string

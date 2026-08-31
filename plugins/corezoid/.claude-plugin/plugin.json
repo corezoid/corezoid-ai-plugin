@@ -11,5 +11,26 @@
   "license": "MIT",
   "keywords": ["corezoid", "process", "bpm", "workflow", "automation", "mcp"],
   "skills": "./skills/",
-  "mcpServers": "./.mcp.json"
+  "mcpServers": "./.mcp.json",
+  "interface": {
+    "displayName": "Corezoid",
+    "shortDescription": "BPM process authoring and automation via the Corezoid API",
+    "longDescription": "Create, edit, review, and deploy Corezoid BPM processes directly from your IDE via the Corezoid REST API. Covers process authoring, linting, layout, documentation, environment variables, aliases, dashboards, access control, and state diagrams — including running tasks and inspecting task history by process ID, with no local process repository required.",
+    "developerName": "Corezoid",
+    "category": "Developer Tools",
+    "capabilities": [
+      "BPM process creation, editing, and review",
+      "Push, pull, and deploy processes across stages",
+      "Run tasks and inspect task/node history by process ID",
+      "Process linting, auto-layout, and documentation generation",
+      "Environment variables, aliases, dashboards, and access management",
+      "State diagram (lifecycle) creation and editing"
+    ],
+    "websiteURL": "https://corezoid.com",
+    "defaultPrompt": [
+      "Create a new Corezoid process that validates and stores a customer order",
+      "Review this process for orphaned nodes and hardcoded values",
+      "Run a task on process 123456 and show me the result"
+    ]
+  }
 }

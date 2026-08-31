@@ -851,9 +851,9 @@ var runTaskFirstPollAfter = 300 * time.Millisecond
 // metadata from the server and never deploys the local file: all deployments
 // must pass through push-process and its safety gates first.
 func handleRunTask(ctx context.Context, args map[string]interface{}) (string, bool) {
-	filePath, err := resolveProcessPath(args, "process_path")
-	if err != nil {
-		return "Error: " + err.Error(), true
+	procID, filePath, errMsg := resolveProcessID(args, "process_path", "process_id")
+	if errMsg != "" {
+		return errMsg, true
 	}
 	dataStr, err := strArg(args, "data")
 	if err != nil {
@@ -874,14 +874,13 @@ func handleRunTask(ctx context.Context, args map[string]interface{}) (string, bo
 		waitSec = runTaskMaxWaitSec
 	}
 
-	procID, errMsg := extractProcessIDFromPath(filePath)
-	if errMsg != "" {
-		return errMsg, true
-	}
-	if info, statErr := os.Stat(filePath); statErr != nil {
-		return fmt.Sprintf("Error reading process file: %v", statErr), true
-	} else if info.IsDir() {
-		return fmt.Sprintf("Error reading process file: %s is a directory", filePath), true
+	// filePath is "" when process_id was used instead — nothing local to check.
+	if filePath != "" {
+		if info, statErr := os.Stat(filePath); statErr != nil {
+			return fmt.Sprintf("Error reading process file: %v", statErr), true
+		} else if info.IsDir() {
+			return fmt.Sprintf("Error reading process file: %s is a directory", filePath), true
+		}
 	}
 
 	v := NewValidator(ctx, procID)

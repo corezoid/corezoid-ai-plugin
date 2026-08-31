@@ -255,6 +255,41 @@ func resolveProcessPath(args map[string]interface{}, key string) (string, error)
 	return "", fmt.Errorf("no .conv.json file found in current directory and process_path was not provided")
 }
 
+// resolveProcessID resolves the target process ID from either an explicit
+// convIDKey argument or a pathKey argument (a local .conv.json file whose
+// filename encodes the ID, resolved the same way as resolveProcessPath).
+//
+// convIDKey wins when both are supplied. It is the only route that needs no
+// local file at all: hosts with no local process repository (e.g. an AI
+// console with no filesystem, or a process that was never pulled) can still
+// call the tool by passing the numeric Corezoid process ID directly, with no
+// preceding pull-process.
+//
+// filePath is "" when convIDKey was used — callers must not stat or read it
+// in that case. On failure, errMsg names both accepted arguments so a caller
+// that supplied neither gets a self-explanatory error instead of one that
+// only mentions the file-based path.
+func resolveProcessID(args map[string]interface{}, pathKey, convIDKey string) (procID int, filePath string, errMsg string) {
+	if _, ok := args[convIDKey]; ok {
+		id, err := intArg(args, convIDKey)
+		if err != nil {
+			return 0, "", "Error: " + err.Error()
+		}
+		return id, "", ""
+	}
+	fp, err := resolveProcessPath(args, pathKey)
+	if err != nil {
+		return 0, "", fmt.Sprintf(
+			"Error: %v. Pass either %s (a local .conv.json file) or %s (the numeric Corezoid process ID — use this when there is no local process repository).",
+			err, pathKey, convIDKey)
+	}
+	id, msg := extractProcessIDFromPath(fp)
+	if msg != "" {
+		return 0, "", msg
+	}
+	return id, fp, ""
+}
+
 // resolveDirPath returns the path argument confined to the workspace tree,
 // or "." if the argument is absent. Returns "." and logs a warning if the
 // supplied path escapes the workspace — directory handlers (create-process,

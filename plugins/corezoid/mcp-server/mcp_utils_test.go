@@ -3,6 +3,7 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -351,6 +352,99 @@ func TestResolveProcessPath_AutoDiscoverNone(t *testing.T) {
 	_, err := resolveProcessPath(map[string]interface{}{}, "process_path")
 	if err == nil {
 		t.Error("expected error when no .conv.json present, got nil")
+	}
+}
+
+// ---- resolveProcessID -------------------------------------------------------
+
+// process_id must resolve the process without touching the filesystem at
+// all — this is the path hosts with no local process repository (e.g. the
+// Simulator.Company AI console) rely on to call run-task / snapshot tools
+// without a preceding pull-process.
+func TestResolveProcessID_ProcessIDSkipsFileResolution(t *testing.T) {
+	dir := t.TempDir()
+	orig, _ := os.Getwd()
+	os.Chdir(dir)                        //nolint:errcheck
+	t.Cleanup(func() { os.Chdir(orig) }) //nolint:errcheck
+	// Deliberately no .conv.json anywhere in cwd.
+
+	id, filePath, errMsg := resolveProcessID(map[string]interface{}{"process_id": float64(456)}, "process_path", "process_id")
+	if errMsg != "" {
+		t.Fatalf("unexpected error: %s", errMsg)
+	}
+	if id != 456 {
+		t.Errorf("got id=%d, want 456", id)
+	}
+	if filePath != "" {
+		t.Errorf("expected empty filePath for process_id resolution, got %q", filePath)
+	}
+}
+
+func TestResolveProcessID_ProcessIDTakesPrecedenceOverProcessPath(t *testing.T) {
+	dir := t.TempDir()
+	orig, _ := os.Getwd()
+	os.Chdir(dir)                        //nolint:errcheck
+	t.Cleanup(func() { os.Chdir(orig) }) //nolint:errcheck
+
+	os.WriteFile(filepath.Join(dir, "111_proc.conv.json"), []byte("{}"), 0644) //nolint:errcheck
+	id, filePath, errMsg := resolveProcessID(map[string]interface{}{
+		"process_path": "111_proc.conv.json",
+		"process_id":   float64(999),
+	}, "process_path", "process_id")
+	if errMsg != "" {
+		t.Fatalf("unexpected error: %s", errMsg)
+	}
+	if id != 999 {
+		t.Errorf("got id=%d, want process_id to win (999)", id)
+	}
+	if filePath != "" {
+		t.Errorf("expected empty filePath when process_id is used, got %q", filePath)
+	}
+}
+
+func TestResolveProcessID_FallsBackToProcessPath(t *testing.T) {
+	dir := t.TempDir()
+	orig, _ := os.Getwd()
+	os.Chdir(dir)                        //nolint:errcheck
+	t.Cleanup(func() { os.Chdir(orig) }) //nolint:errcheck
+
+	os.WriteFile(filepath.Join(dir, "222_proc.conv.json"), []byte("{}"), 0644) //nolint:errcheck
+	id, filePath, errMsg := resolveProcessID(map[string]interface{}{
+		"process_path": "222_proc.conv.json",
+	}, "process_path", "process_id")
+	if errMsg != "" {
+		t.Fatalf("unexpected error: %s", errMsg)
+	}
+	if id != 222 {
+		t.Errorf("got id=%d, want 222", id)
+	}
+	if filePath != "222_proc.conv.json" {
+		t.Errorf("got filePath=%q, want 222_proc.conv.json", filePath)
+	}
+}
+
+// Neither argument given must produce one error naming both accepted options,
+// not the file-only message resolveProcessPath returns on its own.
+func TestResolveProcessID_NeitherArgGivenMentionsBothOptions(t *testing.T) {
+	dir := t.TempDir()
+	orig, _ := os.Getwd()
+	os.Chdir(dir)                        //nolint:errcheck
+	t.Cleanup(func() { os.Chdir(orig) }) //nolint:errcheck
+	// No .conv.json present, so process_path auto-discovery also fails.
+
+	_, _, errMsg := resolveProcessID(map[string]interface{}{}, "process_path", "process_id")
+	if errMsg == "" {
+		t.Fatal("expected an error when neither process_path nor process_id is given")
+	}
+	if !strings.Contains(errMsg, "process_path") || !strings.Contains(errMsg, "process_id") {
+		t.Errorf("expected error to name both process_path and process_id, got: %s", errMsg)
+	}
+}
+
+func TestResolveProcessID_InvalidProcessIDType(t *testing.T) {
+	_, _, errMsg := resolveProcessID(map[string]interface{}{"process_id": "not-a-number"}, "process_path", "process_id")
+	if errMsg == "" {
+		t.Fatal("expected an error for a non-numeric process_id")
 	}
 }
 

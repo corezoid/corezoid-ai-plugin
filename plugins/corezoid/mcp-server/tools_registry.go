@@ -261,14 +261,18 @@ var toolRegistry = []mcpTool{
 	},
 	{
 		Name:        "run-task",
-		Description: "Run a task on an already-deployed Corezoid process (without re-deploying) and wait for it to reach a final node. Never commits or deploys, so it needs only run access and works on immutable stages; if the deployed node list is unreadable the task is still sent, just reported without node names. Polls up to wait_sec (default 30), so tasks that cross async nodes (api, api_rpc, db_call, delay) still return their final result. On timeout reports the node the task is parked at, plus TaskRef/TaskID for follow-up via list-task-history.",
+		Description: "Run a task on an already-deployed Corezoid process (without re-deploying) and wait for it to reach a final node. Never commits or deploys, so it needs only run access and works on immutable stages; if the deployed node list is unreadable the task is still sent, just reported without node names. Accepts either process_path (a local .conv.json file) or process_id (the numeric Corezoid process ID, same as show-task/list-task-history) to identify the target — process_id needs no local file at all, so this also works in hosts with no local process repository (no pull-process required). Polls up to wait_sec (default 30), so tasks that cross async nodes (api, api_rpc, db_call, delay) still return their final result. On timeout reports the node the task is parked at, plus TaskRef/TaskID for follow-up via list-task-history.",
 		Annotations: toolHints(hintMutates, hintSafe, hintNonIdempotent, hintOpenWorld),
 		InputSchema: map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
 				"process_path": map[string]interface{}{
 					"type":        "string",
-					"description": "Relative path to the process JSON file.",
+					"description": "Relative path to the process JSON file. Omit and pass process_id instead when there is no local process repository (e.g. a host console with no filesystem).",
+				},
+				"process_id": map[string]interface{}{
+					"type":        "integer",
+					"description": "Corezoid process (conv) ID. Alternative to process_path — use this to run a task without a local .conv.json file, without a preceding pull-process.",
 				},
 				"data": map[string]interface{}{
 					"type":        "string",
@@ -283,7 +287,11 @@ var toolRegistry = []mcpTool{
 					"description": "How long to wait (seconds) for the task to reach a final node before reporting it as in progress. Default 30, max 600. Raise it for processes with slow external calls or delay nodes.",
 				},
 			},
-			"required": []string{"process_path", "data"},
+			"required": []string{"data"},
+			"anyOf": []map[string]interface{}{
+				{"required": []string{"process_path"}},
+				{"required": []string{"process_id"}},
+			},
 		},
 	},
 	{
@@ -1468,74 +1476,104 @@ var toolRegistry = []mcpTool{
 	},
 	{
 		Name:        "create-snapshot",
-		Description: "Create a snapshot of the current server state of a process before making changes. Useful as a manual checkpoint before experiments. Auto-snapshot is also created automatically before every push-process on existing processes.",
+		Description: "Create a snapshot of the current server state of a process before making changes. Useful as a manual checkpoint before experiments. Auto-snapshot is also created automatically before every push-process on existing processes. Accepts either process_path (a local .conv.json file) or process_id (the numeric Corezoid process ID) — process_id works with no local process repository.",
 		Annotations: toolHints(hintMutates, hintSafe, hintNonIdempotent, hintOpenWorld),
 		InputSchema: map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
 				"process_path": map[string]interface{}{
 					"type":        "string",
-					"description": "Path to the .conv.json file.",
+					"description": "Path to the .conv.json file. Omit and pass process_id instead when there is no local process repository.",
+				},
+				"process_id": map[string]interface{}{
+					"type":        "integer",
+					"description": "Corezoid process (conv) ID. Alternative to process_path — works with no local file.",
 				},
 				"title": map[string]interface{}{
 					"type":        "string",
 					"description": "Optional snapshot title. Defaults to 'manual snapshot <ProcessName> <datetime>'.",
 				},
 			},
-			"required": []string{"process_path"},
+			"anyOf": []map[string]interface{}{
+				{"required": []string{"process_path"}},
+				{"required": []string{"process_id"}},
+			},
 		},
 	},
 	{
 		Name:        "list-snapshots",
-		Description: "List all snapshots for a process. Returns version, title, author and creation time for each snapshot.",
+		Description: "List all snapshots for a process. Returns version, title, author and creation time for each snapshot. Accepts either process_path (a local .conv.json file) or process_id (the numeric Corezoid process ID) — process_id works with no local process repository.",
 		Annotations: toolHints(hintReadOnly, hintSafe, hintIdempotent, hintOpenWorld),
 		InputSchema: map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
 				"process_path": map[string]interface{}{
 					"type":        "string",
-					"description": "Path to the .conv.json file.",
+					"description": "Path to the .conv.json file. Omit and pass process_id instead when there is no local process repository.",
+				},
+				"process_id": map[string]interface{}{
+					"type":        "integer",
+					"description": "Corezoid process (conv) ID. Alternative to process_path — works with no local file.",
 				},
 			},
-			"required": []string{"process_path"},
+			"anyOf": []map[string]interface{}{
+				{"required": []string{"process_path"}},
+				{"required": []string{"process_id"}},
+			},
 		},
 	},
 	{
 		Name:        "delete-snapshot",
-		Description: "Delete a snapshot by its obj_id. Use list-snapshots to find the snapshot_id.",
+		Description: "Delete a snapshot by its obj_id. Use list-snapshots to find the snapshot_id. Accepts either process_path (a local .conv.json file) or process_id (the numeric Corezoid process ID) — process_id works with no local process repository.",
 		Annotations: toolHints(hintMutates, hintDestructive, hintNonIdempotent, hintOpenWorld),
 		InputSchema: map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
 				"process_path": map[string]interface{}{
 					"type":        "string",
-					"description": "Path to the .conv.json file.",
+					"description": "Path to the .conv.json file. Omit and pass process_id instead when there is no local process repository.",
+				},
+				"process_id": map[string]interface{}{
+					"type":        "integer",
+					"description": "Corezoid process (conv) ID. Alternative to process_path — works with no local file.",
 				},
 				"snapshot_id": map[string]interface{}{
 					"type":        "integer",
 					"description": "The obj_id of the snapshot to delete (from list-snapshots).",
 				},
 			},
-			"required": []string{"process_path", "snapshot_id"},
+			"required": []string{"snapshot_id"},
+			"anyOf": []map[string]interface{}{
+				{"required": []string{"process_path"}},
+				{"required": []string{"process_id"}},
+			},
 		},
 	},
 	{
 		Name:        "get-snapshot",
-		Description: "Get the node list of a specific snapshot for diff comparison against the current process state. Returns all nodes as they existed at snapshot time.",
+		Description: "Get the node list of a specific snapshot for diff comparison against the current process state. Returns all nodes as they existed at snapshot time. Accepts either process_path (a local .conv.json file) or process_id (the numeric Corezoid process ID) — process_id works with no local process repository.",
 		Annotations: toolHints(hintReadOnly, hintSafe, hintIdempotent, hintOpenWorld),
 		InputSchema: map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
 				"process_path": map[string]interface{}{
 					"type":        "string",
-					"description": "Path to the .conv.json file.",
+					"description": "Path to the .conv.json file. Omit and pass process_id instead when there is no local process repository.",
+				},
+				"process_id": map[string]interface{}{
+					"type":        "integer",
+					"description": "Corezoid process (conv) ID. Alternative to process_path — works with no local file.",
 				},
 				"snapshot_id": map[string]interface{}{
 					"type":        "integer",
 					"description": "The obj_id of the snapshot to retrieve (from list-snapshots).",
 				},
 			},
-			"required": []string{"process_path", "snapshot_id"},
+			"required": []string{"snapshot_id"},
+			"anyOf": []map[string]interface{}{
+				{"required": []string{"process_path"}},
+				{"required": []string{"process_id"}},
+			},
 		},
 	},
 
