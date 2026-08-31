@@ -123,7 +123,7 @@ run-task(process_path="./folder/12345_MyProcess.conv.json", data={"key": "value"
 ```
 run-task(process_id=12345, data={"key": "value"})
 ```
-`process_id` needs no `pull-process` first — it identifies the process the same way `process_path`'s filename does, just without a file (same argument name `show-task`/`list-task-history`/`pull-process` already use). `create-snapshot`, `list-snapshots`, `delete-snapshot`, and `get-snapshot` accept `process_id` the same way.
+`process_id` needs no `pull-process` first — it identifies the process the same way `process_path`'s filename does, just without a file (same argument name `show-task`/`list-task-history`/`pull-process` already use). `create-snapshot`, `list-snapshots`, `delete-snapshot`, and `get-snapshot` accept `process_id` the same way. Pass exactly one of the two — both together is rejected as ambiguous, and `process_id` must be greater than zero. These tools still need `stage_id`/`project_id` resolved from Corezoid credentials (`login`, or `COREZOID_*` env vars — see `corezoid-init`), even when no local file is used.
 
 ### Inspect a task by its external reference
 ```

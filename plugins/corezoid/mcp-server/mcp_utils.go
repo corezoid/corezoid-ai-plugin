@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -259,24 +260,43 @@ func resolveProcessPath(args map[string]interface{}, key string) (string, error)
 // convIDKey argument or a pathKey argument (a local .conv.json file whose
 // filename encodes the ID, resolved the same way as resolveProcessPath).
 //
-// convIDKey wins when both are supplied. It is the only route that needs no
-// local file at all: hosts with no local process repository (e.g. an AI
-// console with no filesystem, or a process that was never pulled) can still
-// call the tool by passing the numeric Corezoid process ID directly, with no
-// preceding pull-process.
+// convIDKey is the only route that needs no local file at all: hosts with no
+// local process repository (e.g. an AI console with no filesystem, or a
+// process that was never pulled) can still call the tool by passing the
+// numeric Corezoid process ID directly, with no preceding pull-process.
+//
+// Supplying both is rejected rather than silently preferring one: several of
+// these tools are destructive (e.g. delete-snapshot), so a caller pointing at
+// two different processes by mistake must be told, not have one argument
+// quietly ignored.
 //
 // filePath is "" when convIDKey was used — callers must not stat or read it
 // in that case. On failure, errMsg names both accepted arguments so a caller
 // that supplied neither gets a self-explanatory error instead of one that
 // only mentions the file-based path.
 func resolveProcessID(args map[string]interface{}, pathKey, convIDKey string) (procID int, filePath string, errMsg string) {
-	if _, ok := args[convIDKey]; ok {
+	raw, hasID := args[convIDKey]
+	_, hasPath := args[pathKey]
+	if hasID && hasPath {
+		return 0, "", fmt.Sprintf(
+			"Error: pass either %s or %s, not both — got both arguments and cannot tell which one to trust.",
+			pathKey, convIDKey)
+	}
+
+	if hasID {
+		if f, isFloat := raw.(float64); isFloat && f != math.Trunc(f) {
+			return 0, "", fmt.Sprintf("Error: %s must be a whole number, got %v", convIDKey, f)
+		}
 		id, err := intArg(args, convIDKey)
 		if err != nil {
 			return 0, "", "Error: " + err.Error()
 		}
+		if id <= 0 {
+			return 0, "", fmt.Sprintf("Error: %s must be greater than zero", convIDKey)
+		}
 		return id, "", ""
 	}
+
 	fp, err := resolveProcessPath(args, pathKey)
 	if err != nil {
 		return 0, "", fmt.Sprintf(

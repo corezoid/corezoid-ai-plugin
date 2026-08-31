@@ -17,7 +17,7 @@
     "shortDescription": "BPM process authoring and automation via the Corezoid API",
     "longDescription": "Create, edit, review, and deploy Corezoid BPM processes directly from your IDE via the Corezoid REST API. Covers process authoring, linting, layout, documentation, environment variables, aliases, dashboards, access control, and state diagrams — including running tasks and inspecting task history by process ID, with no local process repository required.",
     "developerName": "Corezoid",
-    "category": "Developer Tools",
+    "category": "Productivity",
     "capabilities": [
       "BPM process creation, editing, and review",
       "Push, pull, and deploy processes across stages",

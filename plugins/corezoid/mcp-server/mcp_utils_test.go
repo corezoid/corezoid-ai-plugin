@@ -363,9 +363,7 @@ func TestResolveProcessPath_AutoDiscoverNone(t *testing.T) {
 // without a preceding pull-process.
 func TestResolveProcessID_ProcessIDSkipsFileResolution(t *testing.T) {
 	dir := t.TempDir()
-	orig, _ := os.Getwd()
-	os.Chdir(dir)                        //nolint:errcheck
-	t.Cleanup(func() { os.Chdir(orig) }) //nolint:errcheck
+	t.Chdir(dir)
 	// Deliberately no .conv.json anywhere in cwd.
 
 	id, filePath, errMsg := resolveProcessID(map[string]interface{}{"process_id": float64(456)}, "process_path", "process_id")
@@ -380,33 +378,64 @@ func TestResolveProcessID_ProcessIDSkipsFileResolution(t *testing.T) {
 	}
 }
 
-func TestResolveProcessID_ProcessIDTakesPrecedenceOverProcessPath(t *testing.T) {
+// Supplying both must be rejected, not silently resolved by picking one:
+// several callers of resolveProcessID are destructive (e.g. delete-snapshot),
+// so a caller pointing at two different processes by mistake needs to be
+// told, not have one argument quietly ignored.
+func TestResolveProcessID_BothArgsGivenIsRejected(t *testing.T) {
 	dir := t.TempDir()
-	orig, _ := os.Getwd()
-	os.Chdir(dir)                        //nolint:errcheck
-	t.Cleanup(func() { os.Chdir(orig) }) //nolint:errcheck
+	t.Chdir(dir)
 
 	os.WriteFile(filepath.Join(dir, "111_proc.conv.json"), []byte("{}"), 0644) //nolint:errcheck
-	id, filePath, errMsg := resolveProcessID(map[string]interface{}{
+	_, _, errMsg := resolveProcessID(map[string]interface{}{
 		"process_path": "111_proc.conv.json",
 		"process_id":   float64(999),
 	}, "process_path", "process_id")
-	if errMsg != "" {
-		t.Fatalf("unexpected error: %s", errMsg)
+	if errMsg == "" {
+		t.Fatal("expected an error when both process_path and process_id are given")
 	}
-	if id != 999 {
-		t.Errorf("got id=%d, want process_id to win (999)", id)
+	if !strings.Contains(errMsg, "process_path") || !strings.Contains(errMsg, "process_id") {
+		t.Errorf("expected error to name both process_path and process_id, got: %s", errMsg)
 	}
-	if filePath != "" {
-		t.Errorf("expected empty filePath when process_id is used, got %q", filePath)
+}
+
+func TestResolveProcessID_ZeroIsRejected(t *testing.T) {
+	_, _, errMsg := resolveProcessID(map[string]interface{}{"process_id": float64(0)}, "process_path", "process_id")
+	if errMsg == "" {
+		t.Fatal("expected an error for process_id=0")
+	}
+	if !strings.Contains(errMsg, "greater than zero") {
+		t.Errorf("expected a greater-than-zero message, got: %s", errMsg)
+	}
+}
+
+func TestResolveProcessID_NegativeIsRejected(t *testing.T) {
+	_, _, errMsg := resolveProcessID(map[string]interface{}{"process_id": float64(-5)}, "process_path", "process_id")
+	if errMsg == "" {
+		t.Fatal("expected an error for a negative process_id")
+	}
+	if !strings.Contains(errMsg, "greater than zero") {
+		t.Errorf("expected a greater-than-zero message, got: %s", errMsg)
+	}
+}
+
+// intArg truncates a fractional float64 (123.9 -> 123), which is the right
+// call for arguments genuinely typed as integers upstream. process_id has no
+// legitimate fractional input, though, so silently truncating it would hide
+// a caller bug (e.g. a miscomputed ID) behind a wrong-but-plausible process.
+func TestResolveProcessID_FractionalIsRejected(t *testing.T) {
+	_, _, errMsg := resolveProcessID(map[string]interface{}{"process_id": float64(123.9)}, "process_path", "process_id")
+	if errMsg == "" {
+		t.Fatal("expected an error for a fractional process_id")
+	}
+	if !strings.Contains(errMsg, "whole number") {
+		t.Errorf("expected a whole-number message, got: %s", errMsg)
 	}
 }
 
 func TestResolveProcessID_FallsBackToProcessPath(t *testing.T) {
 	dir := t.TempDir()
-	orig, _ := os.Getwd()
-	os.Chdir(dir)                        //nolint:errcheck
-	t.Cleanup(func() { os.Chdir(orig) }) //nolint:errcheck
+	t.Chdir(dir)
 
 	os.WriteFile(filepath.Join(dir, "222_proc.conv.json"), []byte("{}"), 0644) //nolint:errcheck
 	id, filePath, errMsg := resolveProcessID(map[string]interface{}{
@@ -427,9 +456,7 @@ func TestResolveProcessID_FallsBackToProcessPath(t *testing.T) {
 // not the file-only message resolveProcessPath returns on its own.
 func TestResolveProcessID_NeitherArgGivenMentionsBothOptions(t *testing.T) {
 	dir := t.TempDir()
-	orig, _ := os.Getwd()
-	os.Chdir(dir)                        //nolint:errcheck
-	t.Cleanup(func() { os.Chdir(orig) }) //nolint:errcheck
+	t.Chdir(dir)
 	// No .conv.json present, so process_path auto-discovery also fails.
 
 	_, _, errMsg := resolveProcessID(map[string]interface{}{}, "process_path", "process_id")
