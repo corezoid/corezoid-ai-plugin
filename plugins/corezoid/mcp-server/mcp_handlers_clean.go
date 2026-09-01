@@ -71,8 +71,11 @@ func handleCleanProcess(ctx context.Context, args map[string]interface{}) (strin
 	}
 
 	// Keep a snapshot of the original structure for pass-through detection and
-	// for following go-successor chains of nodes that will be removed.
-	origNmap := cleanNodeMapByID(nodes)
+	// for following go-successor chains of nodes that will be removed. This
+	// must be an independent copy: step 4 mutates each node's "condition" map
+	// in place, and since Go maps are reference types, a shallow index built
+	// from the live nodes would alias that same mutation.
+	origNmap := cleanSnapshotNodes(nodes)
 
 	// ── Step 2: Collect node statistics concurrently ──────────────────────────
 	endTS := time.Now().Unix()
@@ -138,6 +141,20 @@ func handleCleanProcess(ctx context.Context, args map[string]interface{}) (strin
 		}
 	}
 
+	// If not a single node showed any traffic, treat it as a hard error
+	// rather than "everything is inactive": this is the signature of a
+	// look-back window that's too narrow, a process that was never run, or
+	// a get_node_stat response shape the parser doesn't recognize — any of
+	// which would otherwise cascade into deleting the entire scheme (see
+	// the start-node/empty-scheme guard below).
+	if len(activeIDs) == 0 {
+		return fmt.Sprintf(
+			"Error: no node showed any traffic in the last %d days (active: 0, inactive: %d, stat-errors: %d, out of %d nodes). "+
+				"Refusing to clean — increase `days`, verify the process has real traffic, or check get_node_stat manually before retrying.",
+			days, len(inactiveIDs), len(errorIDs), len(nodes),
+		), true
+	}
+
 	// ── Step 3: Exclusions ────────────────────────────────────────────────────
 	excluded := cleanApplyExclusions(nodes, activeIDs, inactiveIDs)
 
@@ -145,6 +162,16 @@ func handleCleanProcess(ctx context.Context, args map[string]interface{}) (strin
 	for id := range inactiveIDs {
 		if !excluded[id] {
 			toRemove[id] = true
+		}
+	}
+	// The start node (obj_type=1) must never be removed — a process without
+	// one can't be pushed, and its own traffic stats aren't a reliable
+	// activity signal for a node that Corezoid invokes implicitly.
+	for _, n := range nodes {
+		if cleanObjType(n) == 1 {
+			if id, _ := n["id"].(string); id != "" {
+				delete(toRemove, id)
+			}
 		}
 	}
 	initialRemoveCount := len(toRemove)
@@ -162,6 +189,26 @@ func handleCleanProcess(ctx context.Context, args map[string]interface{}) (strin
 
 	// ── Step 7: Validate ──────────────────────────────────────────────────────
 	validationErrors := cleanValidate(nodes)
+
+	// Safety net: even with the start-node protection above, refuse to write
+	// a scheme that lost its start node or was reduced to nothing — that
+	// signals a bug in the exclusion/cascade logic rather than a legitimately
+	// clean process, and writing it would silently hand back an unpushable
+	// file while reporting success.
+	hasStart := false
+	for _, n := range nodes {
+		if cleanObjType(n) == 1 {
+			hasStart = true
+			break
+		}
+	}
+	if len(nodes) == 0 || !hasStart {
+		return fmt.Sprintf(
+			"Error: cleaning would remove the process's start node or leave zero nodes (%d → %d). "+
+				"Aborting without writing a file — please report process %d for investigation.",
+			originalCount, len(nodes), processID,
+		), true
+	}
 
 	// Update scheme
 	rawCleaned := make([]interface{}, 0, len(nodes))
@@ -287,13 +334,49 @@ func cleanIsNodeActive(resp map[string]interface{}) bool {
 	return false
 }
 
-// cleanNodeMapByID returns a map from node id → node.
+// cleanNodeMapByID returns a map from node id → node. The returned maps alias
+// the input nodes — mutating a node's "condition" map after calling this also
+// changes what's visible through the index. Use cleanSnapshotNodes instead
+// when the index must survive later in-place mutation of the nodes.
 func cleanNodeMapByID(nodes []map[string]interface{}) map[string]map[string]interface{} {
 	m := make(map[string]map[string]interface{}, len(nodes))
 	for _, n := range nodes {
 		if id, ok := n["id"].(string); ok && id != "" {
 			m[id] = n
 		}
+	}
+	return m
+}
+
+// cleanSnapshotNodes returns a map from node id → node that is independent of
+// later in-place mutation of nodes' "condition" maps. Individual logic/
+// semaphor entries are never mutated in place elsewhere in this file (a
+// changed entry is always replaced via cleanCloneMap), so sharing those
+// leaf maps is safe — only the node map, its "condition" map, and the
+// "logics"/"semaphors" slice headers need to be copied.
+func cleanSnapshotNodes(nodes []map[string]interface{}) map[string]map[string]interface{} {
+	m := make(map[string]map[string]interface{}, len(nodes))
+	for _, n := range nodes {
+		id, ok := n["id"].(string)
+		if !ok || id == "" {
+			continue
+		}
+		snap := cleanCloneMap(n)
+		if cond, ok := n["condition"].(map[string]interface{}); ok {
+			condSnap := cleanCloneMap(cond)
+			if logics, ok := cond["logics"].([]interface{}); ok {
+				logicsCopy := make([]interface{}, len(logics))
+				copy(logicsCopy, logics)
+				condSnap["logics"] = logicsCopy
+			}
+			if sems, ok := cond["semaphors"].([]interface{}); ok {
+				semsCopy := make([]interface{}, len(sems))
+				copy(semsCopy, sems)
+				condSnap["semaphors"] = semsCopy
+			}
+			snap["condition"] = condSnap
+		}
+		m[id] = snap
 	}
 	return m
 }
@@ -552,24 +635,35 @@ func cleanDeleteAndCascade(
 					newLogics = append(newLogics, l)
 					continue
 				}
-				// Redirect or drop logic whose target was removed
+				// Redirect or drop logic whose target was removed. Track
+				// whether the logic survives so the err_node_id cleanup
+				// below always runs too — to_node_id and err_node_id are
+				// independent fields and both may need fixing up.
+				keepLogic := true
 				if toID, _ := logic["to_node_id"].(string); toID != "" && toRemove[toID] {
 					if successor := cleanFindGoSuccessor(toID, origNmap, toRemove); successor != "" {
 						logic = cleanCloneMap(logic)
 						logic["to_node_id"] = successor
-						newLogics = append(newLogics, logic)
+					} else {
+						keepLogic = false
 					}
-					// else drop the logic entirely
+				}
+				if !keepLogic {
 					continue
 				}
-				// Clean dangling err_node_id — record a warning if dropped
+				// Redirect or drop dangling err_node_id — record a warning
+				// only when no go-successor could be found.
 				if errID, _ := logic["err_node_id"].(string); errID != "" && toRemove[errID] {
 					logic = cleanCloneMap(logic)
-					delete(logic, "err_node_id")
-					if droppedErrs != nil {
-						ltype, _ := logic["type"].(string)
-						*droppedErrs = append(*droppedErrs,
-							fmt.Sprintf("node %s logic (type=%s): err_node_id=%s removed (no go-successor)", nodeID, ltype, errID))
+					if successor := cleanFindGoSuccessor(errID, origNmap, toRemove); successor != "" {
+						logic["err_node_id"] = successor
+					} else {
+						delete(logic, "err_node_id")
+						if droppedErrs != nil {
+							ltype, _ := logic["type"].(string)
+							*droppedErrs = append(*droppedErrs,
+								fmt.Sprintf("node %s logic (type=%s): err_node_id=%s removed (no go-successor)", nodeID, ltype, errID))
+						}
 					}
 				}
 				newLogics = append(newLogics, logic)
@@ -596,9 +690,11 @@ func cleanDeleteAndCascade(
 			cond["logics"] = newLogics
 			cond["semaphors"] = newSems
 
-			// Cascade: obj_type 0/1/3 with no logics and no semaphors
+			// Cascade: obj_type 0/3 with no logics and no semaphors. The
+			// start node (obj_type=1) is deliberately excluded — it must
+			// never be cascaded away, even if it ends up with no logics.
 			id, _ := node["id"].(string)
-			if ot := cleanObjType(node); (ot == 0 || ot == 1 || ot == 3) &&
+			if ot := cleanObjType(node); (ot == 0 || ot == 3) &&
 				len(newLogics) == 0 && len(newSems) == 0 && !toRemove[id] {
 				toRemove[id] = true
 				changed = true
@@ -677,8 +773,12 @@ func cleanRemovePassThrough(
 			if goTarget == "" || curNmap[goTarget] == nil {
 				continue
 			}
+			nodeID, ok := node["id"].(string)
+			if !ok || nodeID == "" {
+				continue
+			}
 			// Must have originally had at least one go_if_const
-			orig := origNmap[node["id"].(string)]
+			orig := origNmap[nodeID]
 			if orig == nil {
 				continue
 			}
@@ -696,7 +796,7 @@ func cleanRemovePassThrough(
 			if !hadConditional {
 				continue
 			}
-			pts = append(pts, struct{ id, target string }{id: node["id"].(string), target: goTarget})
+			pts = append(pts, struct{ id, target string }{id: nodeID, target: goTarget})
 		}
 
 		if len(pts) == 0 {
@@ -810,7 +910,11 @@ func cleanRemoveDelayToFinal(nodes []map[string]interface{}) ([]map[string]inter
 			if !allFinal || singleTarget == "" {
 				continue
 			}
-			candidates = append(candidates, struct{ id, target string }{id: node["id"].(string), target: singleTarget})
+			nodeID, ok := node["id"].(string)
+			if !ok || nodeID == "" {
+				continue
+			}
+			candidates = append(candidates, struct{ id, target string }{id: nodeID, target: singleTarget})
 		}
 
 		if len(candidates) == 0 {
