@@ -1,5 +1,9 @@
 # Changelog
 
+## [Unreleased]
+
+- Fix(mcp-server): `chunkify` is declared on every logic type, not only `api_code`. Corezoid stamps the flag on deployed nodes and `pull-process` carries it back, so declaring it on one type only moved the failure to the next node kind — a pulled Condition node now failed schema validation with "additional properties 'chunkify' not allowed" at `/scheme/nodes/N/condition/logics/0`, and the plugin's own pull → edit → lint → push loop still broke on its own output. Every closed logic schema declares it now, and a test asserts that, so a newly stamped node type cannot reopen the same hole. The schemas stay closed to everything else: a typo like `chunkfy` is still rejected.
+
 ## [3.3.0]
 
 - Feat(mcp-server): auth values can come from `COREZOID_*` environment variables when `~/.corezoid/config.json` has nothing for the current working directory — for CI jobs, containers and the Streamable HTTP transport, none of which can run the interactive browser login. The config file still wins field by field; the environment only fills gaps, and nothing read from it is ever written back. Two credential pairs are the exception to field-by-field merging: `COREZOID_API_LOGIN`/`COREZOID_API_SECRET` and `COREZOID_ACCESS_TOKEN`/`COREZOID_TOKEN_EXPIRES_AT` come from one source or neither, because a login and a secret from different sources can only produce an opaque `401`. A variable that was set and rejected — a malformed ID, half a pair — is named in the auth error the tool returns, not only on stderr, so "not authenticated" cannot be mistaken for "never configured".

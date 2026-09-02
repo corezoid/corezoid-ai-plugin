@@ -77,6 +77,10 @@
     "err_node_id": {
       "type": "string",
       "description": "ID of the node for error handling"
+    },
+    "chunkify": {
+      "type": ["boolean", "string", "number"],
+      "description": "Server-emitted execution flag. Not authored by hand — Corezoid adds it to deployed nodes, so pull-process round-trips carry it back. Declared here so the plugin's own pull -> edit -> lint -> push loop does not fail on its own output."
     }
   },
   "examples": [
