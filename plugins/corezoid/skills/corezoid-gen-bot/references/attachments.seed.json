@@ -1,0 +1,210 @@
+{
+  "_comment": [
+    "Attachments is a state process with ONE TASK PER attachment_id: the task",
+    "ref is the attachment_id, and its data is keyed by channel. Send Message",
+    "reads {{conv[<attachments_id>].ref[{{attachment_id}}].{{channel}}}}.",
+    "",
+    "Create a new attachment with run-task (ref: \"<attachment_id>\"), update",
+    "with modify-task + deep_merge:true. A channel key that is absent means",
+    "\"send no attachment on that channel\" — that is legal, not an error.",
+    "",
+    "Every field below is consumed by the per-channel native-syntax Code node",
+    "inside Send Message; these are the shapes it actually reads. Setting",
+    "\"raw\": true on a channel bypasses translation and copies your object",
+    "straight onto the channel's send payload — use it only for a shape the",
+    "template does not model.",
+    "",
+    "Button labels and payloads go through the same {{var}} / {{t'key}}",
+    "interpolation as text, so a label can be a localization key. {{t'key}} has",
+    "NO dot. And {{var}} resolves against Send Message's OWN task, so the",
+    "calling command must forward that field in its api_copy data block.",
+    "",
+    "REPLY KEYBOARD vs INLINE KEYBOARD decides whether a dialog can read the",
+    "answer at all. A dialog's wait node reads data.message.text. telegram",
+    "type:\"keyboard\" (reply keyboard) sends the button LABEL as a text",
+    "message, so the label arrives as the answer -- that is what an ask or",
+    "confirm step needs. type:\"inline_keyboard\" sends callback_data, which",
+    "Main -> PARSE command reads as a COMMAND, so the pending question is never",
+    "answered. Use keyboard for answer steps, inline_keyboard for menus and",
+    "display-only rows.",
+    "",
+    "A DYNAMIC attachment (one carrying an items/buttons pattern) renders its",
+    "rows from the CALLING task, so the command must forward items and",
+    "currentPage on its Send Message api_copy or the carousel arrives empty.",
+    "The gate into createDynamicAttachment is `items == \"\" && buttons == \"\"`,",
+    "so a command with no rows must send items as the empty STRING: an empty",
+    "ARRAY takes the dynamic path and re-renders a static keyboard's buttons as",
+    "a per-item pattern zero times, delivering a keyboard with no buttons.",
+    "",
+    "Button payload grammar (Main -> PARSE command):",
+    "  \"/order-status__id-42_page-2\" => command /order-status, params {id:42,page:2}",
+    "  separator \"__\", pair union \"_\", key/value \"-\". A literal - or _ inside",
+    "  a value splits it, so never put free text in a payload.",
+    "",
+    "Per-page item caps enforced by createDynamicAttachment:",
+    "  facebook carousel 10, quick_replies 6, list 4 | viber carousel 6, keyboard 8",
+    "",
+    "TELEGRAM SENDS MORE THAN KEYBOARDS. Send Message's Telegram native-syntax",
+    "node dispatches on attachment.type, and its API_Methods folder implements a",
+    "method per type -- so these are available and are NOT just keyboards.",
+    "VERIFIED ON TELEGRAM ONLY: the list below was read off the Telegram",
+    "native-syntax node and its API_Methods. Viber, Facebook and ABC have their",
+    "own native-syntax nodes with their own switch on attachment.type -- read the",
+    "one you are targeting the same way instead of assuming these names carry",
+    "over, and remember an absent channel key is legal.",
+    "  {\"type\":\"image\", \"url\":\"...\", \"caption\":\"...\"}  -> sendPhoto",
+    "  {\"type\":\"video\"|\"audio\"|\"file\", \"url\":\"...\"}     -> sendVideo/sendAudio/sendDocument",
+    "  {\"type\":\"location\", \"lat\":\"...\", \"lon\":\"...\"}    -> sendLocation",
+    "  {\"type\":\"sticker\", ...}                          -> sendSticker",
+    "url and caption go through the same {{var}} interpolation as text, so",
+    "{\"type\":\"image\",\"url\":\"{{someImageUrl}}\"} renders a per-task image as long",
+    "as the command forwards someImageUrl. Omit caption to let the resolved text_id become the",
+    "photo caption instead. Two consequences: an image/video/location attachment",
+    "sets reply_markup to {} (no buttons on that message), and a caption is capped",
+    "by Telegram at ~1024 chars.",
+    "",
+    "TWO REPLY-KEYBOARD BUTTON FLAGS REMOVE WHOLE DIALOG STEPS. Telegram passes",
+    "attachment.buttons straight into reply_markup.keyboard, so these survive:",
+    "  {\"text\":\"...\", \"request_contact\":true}   -> the user taps and Telegram sends",
+    "      a contact message; the receiver normalises it to",
+    "      {type:\"contact\", contact:{name, phone}}, read as message.contact.phone",
+    "  {\"text\":\"...\", \"request_location\":true}  -> normalised to",
+    "      {type:\"location\", location:{lat, lon}}, read as message.location.lat/.lon",
+    "      (NOTE lat/lon, not latitude/longitude)",
+    "Prefer request_contact over asking someone to type their phone number, and",
+    "keep the typed fallback in the keep node anyway: other channels have no such",
+    "button and a Telegram user can ignore it.",
+    "",
+    "Each top-level key below is a SEPARATE task — do not write this file as",
+    "one task."
+  ],
+
+  "mainKeyboard": {
+    "_ref": "mainKeyboard",
+    "_note": "Already exists in a fresh orchestrator. Add one button per generated command; this is what makes a command discoverable.",
+    "telegram": {
+      "type": "keyboard",
+      "buttons": [
+        [{ "text": "{{t'btnOrderStatus}}" }],
+        [{ "text": "{{t'btnRates}}" }]
+      ]
+    },
+    "viber": {
+      "type": "keyboard",
+      "inputFieldState": "regular",
+      "buttons": [
+        { "ActionType": "reply", "ActionBody": "/order-status", "Text": "{{t'btnOrderStatus}}", "Columns": 6, "Rows": 1 },
+        { "ActionType": "reply", "ActionBody": "/rates", "Text": "{{t'btnRates}}", "Columns": 6, "Rows": 1 }
+      ]
+    },
+    "facebook": {
+      "type": "quick_replies",
+      "buttons": [
+        { "content_type": "text", "title": "{{t'btnOrderStatus}}", "payload": "/order-status" },
+        { "content_type": "text", "title": "{{t'btnRates}}", "payload": "/rates" }
+      ]
+    },
+    "abc": {
+      "type": "quick_reply",
+      "quick_reply": {
+        "summaryText": "{{t'mainMenu}}",
+        "items": [
+          { "identifier": "/order-status", "title": "{{t'btnOrderStatus}}" },
+          { "identifier": "/rates", "title": "{{t'btnRates}}" }
+        ]
+      }
+    }
+  },
+
+  "orderStatusKeyboard": {
+    "_ref": "orderStatusKeyboard",
+    "_note": "Enum-answer / confirm dialog step. telegram uses type:\"keyboard\" ON PURPOSE: a reply keyboard sends the button LABEL as a text message, which is what the wait node reads from data.message.text. An inline_keyboard here sends callback_data, which Main parses as a new COMMAND, so the pending question would never be answered. Keep the regex on the step anyway: Viber and ABC let the user type instead of tapping.",
+    "telegram": {
+      "type": "keyboard",
+      "buttons": [
+        [{ "text": "{{t'btnYes}}" }, { "text": "{{t'btnNo}}" }]
+      ]
+    },
+    "viber": {
+      "type": "keyboard",
+      "buttons": [
+        { "ActionType": "reply", "ActionBody": "/order-status__confirm-yes", "Text": "{{t'btnYes}}", "Columns": 3, "Rows": 1 },
+        { "ActionType": "reply", "ActionBody": "/order-status__confirm-no", "Text": "{{t'btnNo}}", "Columns": 3, "Rows": 1 }
+      ]
+    },
+    "facebook": {
+      "type": "quick_replies",
+      "buttons": [
+        { "content_type": "text", "title": "{{t'btnYes}}", "payload": "/order-status__confirm-yes" },
+        { "content_type": "text", "title": "{{t'btnNo}}", "payload": "/order-status__confirm-no" }
+      ]
+    },
+    "abc": {
+      "type": "text_list_picker",
+      "title": "{{t'orderStatusAsk1}}",
+      "order": 0,
+      "multipleSelection": false,
+      "receivedMessage": { "style": "small", "title": "{{t'orderStatusAsk1}}" },
+      "replyMessage": { "style": "small", "title": "{{t'btnSelected}}" },
+      "items": [
+        { "identifier": "/order-status__confirm-yes", "title": "{{t'btnYes}}", "order": 0 },
+        { "identifier": "/order-status__confirm-no", "title": "{{t'btnNo}}", "order": 1 }
+      ]
+    }
+  },
+
+  "phoneKeyboard": {
+    "_ref": "phoneKeyboard",
+    "_note": "Collect a phone number without anyone typing it. request_contact makes Telegram send a contact message, which the receiver normalises to {type:\"contact\", contact:{name, phone}} -- so the keep node reads message.contact.phone and falls back to message.text. A shared contact and a typed answer are formatted differently (a shared one usually carries the country code and a +, a typed one often does not), so normalise both to whatever form the callee's params describe before validating. Only telegram has this button; on other channels the same step is a plain typed answer, which is why the telegram key is the only one here.",
+    "telegram": {
+      "type": "keyboard",
+      "buttons": [
+        [{ "text": "{{t'btnSharePhone}}", "request_contact": true }]
+      ]
+    }
+  },
+
+  "locationKeyboard": {
+    "_ref": "locationKeyboard",
+    "_note": "Same idea for coordinates. The receiver normalises the reply to {type:\"location\", location:{lat, lon}} -- lat/lon, NOT latitude/longitude. Validate presence in the keep node (a typed reply has no location) and re-ask rather than calling the domain process with empty coordinates.",
+    "telegram": {
+      "type": "keyboard",
+      "buttons": [
+        [{ "text": "{{t'btnSendLocation}}", "request_location": true }]
+      ]
+    }
+  },
+
+  "photoAttachment": {
+    "_ref": "photoAttachment",
+    "_note": "A per-task image: url is interpolated from the CALLING task, so the command must forward that field in its Send Message api_copy data. No caption key here on purpose -- Telegram native syntax only overrides data.text when attachment.caption is set, so leaving it out lets the resolved text_id become the photo caption. Note reply_markup is {} for an image, so this message carries no buttons; send a second message if the menu must stay visible.",
+    "telegram": {
+      "type": "image",
+      "url": "{{someImageUrl}}"
+    }
+  },
+
+  "carouselPattern": {
+    "_ref": "carouselPattern",
+    "_note": "Dynamic list. items is a template rendered once per element of the task's items array by createDynamicAttachment; currentPage drives paging. Ships with the wizard — reuse it before writing your own. THE CALLER MUST FORWARD items AND currentPage in its Send Message api_copy data or this renders empty; see the top comment for the items:\"\" vs items:[] trap.",
+    "telegram": {
+      "type": "inline_keyboard",
+      "buttons": [[{ "text": "{{name}} — {{value}}", "callback_data": "/noop" }]]
+    },
+    "viber": {
+      "type": "carousel",
+      "carouselColumns": 6,
+      "carouselRows": 2,
+      "items": [{ "ActionType": "reply", "ActionBody": "/noop", "Text": "{{name}} — {{value}}", "Columns": 6, "Rows": 2 }]
+    },
+    "facebook": {
+      "type": "carousel",
+      "items": [{ "title": "{{name}}", "subtitle": "{{value}}" }]
+    },
+    "abc": {
+      "type": "text_list_picker",
+      "order": 0,
+      "items": [{ "identifier": "/noop", "title": "{{name}}", "subtitle": "{{value}}", "order": 0 }]
+    }
+  }
+}

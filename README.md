@@ -18,6 +18,8 @@ The plugin bundles a Go MCP server that exposes Corezoid operations as MCP tools
 | `corezoid-lifecycle`           | "pause/resume process", "move process/folder", "сними с паузы", "перемести процесс" | Explicit, confirm-gated process lifecycle and server-side reparenting |
 | `corezoid-state-diagram-create` | "create state diagram", "build a state machine", "conv_type state" | Building state diagrams from scratch (`conv_type: "state"`) |
 | `corezoid-state-diagram-edit`  | "edit state diagram", "add a state", "change transitions" | Modifying existing state diagrams — states, transitions, side effects |
+| `corezoid-gen-bot`             | "сделай бота из этих процессов", "telegram bot from corezoid processes", "communications orchestrator" | Generate a Telegram / Viber / Apple Messages / Facebook Messenger bot over a set of existing processes — plan, execute, refresh |
+| `corezoid-edit-bot`            | "измени бота", "добавь команду", "edit bot", "задеплой бота" | Edit an already-built bot: commands, copy, wiring, localization, stage promotion |
 | `corezoid-review`              | "review", "audit", "check" a process     | Analysis, dead code, best-practice violations     |
 | `corezoid-project-review`      | "review project", "audit folder"         | Cross-process audit of an entire folder           |
 | `corezoid-node-layout`         | "arrange nodes", "lay out", "tidy up the diagram", "fix positions", "remove overlaps" | Auto-arrange node x/y into a clean top-to-bottom flow with error handling railed right and no overlaps (positions only) |
@@ -431,6 +433,8 @@ corezoid-ai-plugin/
 │   │   ├── corezoid-variable-manager/      # Environment variable management skill
 │   │   ├── corezoid-api-connector/         # Corezoid public-API caller skill
 │   │   ├── corezoid-gitcall/               # git_call custom-code skill
+│   │   ├── corezoid-gen-bot/               # Messenger bot generation skill
+│   │   ├── corezoid-edit-bot/              # Messenger bot editing skill
 │   │   ├── corezoid-access/                # Sharing, groups, API keys skill
 │   │   ├── corezoid-retro/                 # End-of-session retrospective skill
 │   │   ├── corezoid-feedback/              # Bug / improvement reporting skill

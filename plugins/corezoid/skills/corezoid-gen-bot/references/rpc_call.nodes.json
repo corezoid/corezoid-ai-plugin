@@ -1,0 +1,170 @@
+{
+  "_comment": [
+    "Fragment: one more domain-process call inside a bot command. Both skeletons",
+    "already carry the first call — use this to add a second (third, …) when a",
+    "command chains processes, e.g. auth -> lookup.",
+    "",
+    "Splice the nodes into scheme.nodes and rewire to_node_id / err_node_id.",
+    "",
+    "A namespaced key still has to be FORWARDED to be renderable: the final",
+  "Send Message api_copy is group:\"\" and carries only the fields named in",
+  "its data block, so \"reg2_cardPassword\": \"{{reg2_cardPassword}}\" must be",
+  "listed there or the chat shows a literal {{reg2_cardPassword}}.",
+  "",
+  "THE NAMESPACING NODE IS NOT OPTIONAL WHEN A COMMAND MAKES 2+ CALLS.",
+    "An api_rpc callee's res_data merges into the CALLER's task data at top",
+    "level. Every process in this family replies with the same {result, code}",
+    "envelope, so the second callee silently overwrites the first one's verdict",
+    "and the command branches on the wrong outcome. With exactly one call there",
+    "is nothing to overwrite — read {{result}}/{{code}} directly and skip it.",
+    "",
+    "It must be an api_code, NOT a set_param: lint-process cannot parse",
+    "JavaScript, so it resolves a set_param's outputs by scanning downstream",
+    "node configuration. A data.auth_result read inside a Code node is invisible",
+    "to it and the file fails with 'UNUSED SET_PARAM … but no downstream node",
+    "references them'. Same assignments, different node type.",
+    "",
+    "The time semaphor is what stops a hung or paused callee from parking the",
+    "task forever — in a chat that means a user staring at nothing. 30 sec is",
+    "the server minimum (lint rejects lower), so it is also the floor on how",
+    "fast a command can fail: write the timeout copy to read sensibly after a",
+    "half-minute, not as a flicker.",
+    "",
+    "Prefer @alias over a numeric conv_id when the callee has one: the numeric",
+    "id is stage-specific and does not survive a deploy-stage promotion."
+  ],
+
+  "nodes": [
+    {
+      "condition": {
+        "logics": [
+          {
+            "conv_id": "@lookup-order",
+            "err_node_id": "<own escalation node id>",
+            "extra": { "order_id": "{{answer}}", "token": "{{auth_token}}" },
+            "extra_type": { "order_id": "string", "token": "string" },
+            "group": "",
+            "type": "api_rpc",
+            "user_id": "<the user_id the wizard stamped on its own api_copy nodes>"
+          },
+          { "to_node_id": "<namespace node id>", "type": "go" }
+        ],
+        "semaphors": [
+          { "dimension": "sec", "to_node_id": "<timeout node id>", "type": "time", "value": 30 }
+        ]
+      },
+      "description": "",
+      "extra": "{\"modeForm\":\"expand\",\"icon\":\"\"}",
+      "id": "<24 hex chars, unique in this process>",
+      "obj_type": 0,
+      "options": null,
+      "title": "Call Lookup order",
+      "x": 600,
+      "y": 1000
+    },
+    {
+      "condition": {
+        "logics": [
+          {
+            "err_node_id": "<own escalation node id>",
+            "lang": "js",
+            "src": "// Namespace this callee's reply and clear the shared envelope, so the\n// next api_rpc in this task cannot be read as this one's verdict.\n// ES5 only. Corezoid does NOT interpolate {{...}} in a Code node's src.\ndata.order_result = String(data.result || \"\");\ndata.order_code = String(data.code || \"\");\ndata.order_status = data.status || \"\";\n\ndata.result = \"\";\ndata.code = \"\";\n",
+            "type": "api_code"
+          },
+          { "to_node_id": "<outcome mapping node id>", "type": "go" }
+        ],
+        "semaphors": []
+      },
+      "description": "",
+      "extra": "{\"modeForm\":\"expand\",\"icon\":\"\"}",
+      "id": "<24 hex chars, unique in this process>",
+      "obj_type": 0,
+      "options": null,
+      "title": "Namespace Lookup order reply",
+      "x": 600,
+      "y": 1120
+    },
+    {
+      "condition": {
+        "logics": [
+          {
+            "err_node_id": "<own escalation node id>",
+            "lang": "js",
+            "src": "// Branch on the NAMESPACED keys, never on the bare {{result}}/{{code}}.\nif (data.order_result === \"success\" || data.order_code === \"200\") {\n    data.outcome = \"success\";\n    data.text_id = \"orderStatusDone\";\n} else if (data.order_result === \"error\" || data.order_result === \"\") {\n    data.outcome = \"error\";\n    data.text_id = \"serviceError\";\n} else {\n    data.outcome = \"alternate\";\n    data.text_id = \"orderStatusNotFound\";\n}\n",
+            "type": "api_code"
+          },
+          { "to_node_id": "<Alternate outcome? condition node id>", "type": "go" }
+        ],
+        "semaphors": []
+      },
+      "description": "",
+      "extra": "{\"modeForm\":\"expand\",\"icon\":\"\"}",
+      "id": "<24 hex chars, unique in this process>",
+      "obj_type": 0,
+      "options": null,
+      "title": "Map Lookup order outcome",
+      "x": 600,
+      "y": 1240
+    }
+  ],
+
+  "_fire_and_forget": {
+    "_comment": [
+      "For a domain process with NO reachable api_rpc_reply, api_rpc would hang",
+      "until the semaphor fires. Use api_copy instead and acknowledge only what",
+      "you actually know: the request was submitted. Do not render a",
+      "confirmation the backend never sent."
+    ],
+    "condition": {
+      "logics": [
+        {
+          "conv_id": "@send-complaint",
+          "data": { "chat_id": "{{chat_id}}", "channel": "{{channel}}", "text": "{{answer}}" },
+          "data_type": { "chat_id": "string", "channel": "string", "text": "string" },
+          "err_node_id": "<own escalation node id>",
+          "group": "",
+          "mode": "create",
+          "type": "api_copy",
+          "user_id": "<template user_id>"
+        },
+        { "to_node_id": "<Send acknowledgement node id>", "type": "go" }
+      ],
+      "semaphors": []
+    },
+    "description": "",
+    "extra": "{\"modeForm\":\"expand\",\"icon\":\"\"}",
+    "id": "<24 hex chars, unique in this process>",
+    "obj_type": 0,
+    "options": null,
+    "title": "Submit Send complaint (no reply expected)",
+    "x": 600,
+    "y": 1000
+  },
+
+  "_state_read": {
+    "_comment": [
+      "For conv_type:\"state\", there is nothing to call — a state diagram has no",
+      "Start-to-Final path. Read it inline in a set_param instead."
+    ],
+    "condition": {
+      "logics": [
+        {
+          "err_node_id": "<own escalation node id>",
+          "extra": { "city_name": "{{conv[1760400].ref[Cities].{{answer}}}}" },
+          "extra_type": { "city_name": "string" },
+          "type": "set_param"
+        },
+        { "to_node_id": "<next node id>", "type": "go" }
+      ],
+      "semaphors": []
+    },
+    "description": "",
+    "extra": "{\"modeForm\":\"expand\",\"icon\":\"\"}",
+    "id": "<24 hex chars, unique in this process>",
+    "obj_type": 0,
+    "options": null,
+    "title": "Read Cities state",
+    "x": 600,
+    "y": 1000
+  }
+}

@@ -89,6 +89,7 @@ Each skill is auto-loaded from `.kiro/skills/<name>/SKILL.md`:
 - `corezoid-lifecycle` — confirm-gated process pause/resume and process/folder moves.
 - `corezoid-review` / `corezoid-project-review` — single-process / whole-project audits.
 - `corezoid-state-diagram-create` / `corezoid-state-diagram-edit` — state-machine processes.
+- `corezoid-gen-bot` / `corezoid-edit-bot` — generate and edit a multi-platform messenger bot over existing processes.
 - `corezoid-process-optimizer` — tact reduction, resilience patterns.
 - `corezoid-process-tech-writer` — generate human-readable docs.
 - `corezoid-node-layout` — auto-arrange node x/y (positions only) before push.

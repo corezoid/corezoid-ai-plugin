@@ -84,6 +84,8 @@ plugins/corezoid/
     corezoid-lifecycle/             — Explicitly pause/resume processes and move processes/folders
     corezoid-state-diagram-create/  — Create a new state diagram (conv_type "state") from scratch
     corezoid-state-diagram-edit/    — Modify an existing state diagram
+    corezoid-gen-bot/               — Generate a multi-platform messenger bot over existing processes
+    corezoid-edit-bot/              — Edit an already-built messenger bot (commands, copy, wiring, deploy)
     corezoid-review/                — Audit and analyze a single process
     corezoid-project-review/        — Audit a whole project / multiple processes
     corezoid-process-optimizer/     — Reduce tacts, merge nodes, clean data flow, add resilience
