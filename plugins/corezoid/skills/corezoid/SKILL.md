@@ -35,6 +35,7 @@ You have access to the Corezoid API via the `corezoid` MCP server.
 | `move-process` / `move-folder` | Explicitly reparent an existing object without copying/deploying; dry-run + exact confirmation required |
 | `create-alias` | Create a short alias for a process |
 | `create-variable` | Create a Corezoid environment variable |
+| `create-communications-orchestrator` | Build a multi-platform messenger robot (Telegram / Facebook Messenger / Viber / Apple Messages for Business). Needs one channel token per messenger; returns the `folder_url` of the generated folder once the async build finishes |
 | `create-dashboard` | Create a new dashboard for process metrics |
 | `get-dashboard` | Get dashboard details with charts and series |
 | `add-chart` | Add a chart (column/pie/funnel/table) to a dashboard |

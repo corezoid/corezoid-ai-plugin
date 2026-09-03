@@ -66,6 +66,9 @@ var toolHandlers = map[string]toolHandler{
 	"modify-task":       handleModifyTask,
 	"delete-task":       handleDeleteTask,
 
+	// communications orchestrator (multi-platform messenger robot)
+	"create-communications-orchestrator": handleCreateCommsOrchestrator,
+
 	// dashboards
 	"create-dashboard":     handleCreateDashboard,
 	"get-dashboard":        handleGetDashboard,

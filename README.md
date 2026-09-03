@@ -314,6 +314,7 @@ validation errors, and summarize what each process does.
 | `list-variables`    | List a stage's environment variables (secrets masked) |
 | `modify-variable`   | Change a variable's value/title/data_type or rename it — dry-run + confirm-gated |
 | `delete-variable`   | PERMANENTLY delete a variable (no recycle bin) — dry-run + confirm-gated |
+| `create-communications-orchestrator` | Build a multi-platform messenger robot (Telegram / Facebook Messenger / Viber / Apple Messages) — queues the `bot_wizzard` build, polls it every 3s up to 10 times, and returns the generated `folder_url` or the wizard's error |
 | `create-dashboard`  | Create a new dashboard for visualizing node metrics |
 | `get-dashboard`     | Get a dashboard with its charts and series         |
 | `add-chart`         | Add a chart (column, pie, funnel, table) to a dashboard |
@@ -383,6 +384,7 @@ Claude Code / Codex
         ├── Tasks         run-task, show-task, list-node-tasks, list-task-history,
         │                 get-node-stat, modify-task, delete-task
         ├── Snapshots     create-snapshot, list-snapshots, delete-snapshot, get-snapshot
+        ├── Bots          create-communications-orchestrator
         ├── Dashboards    create-dashboard, get-dashboard, add-chart,
         │                 modify-chart, get-chart, set-dashboard-layout
         ├── Access        share-object, list-shares,

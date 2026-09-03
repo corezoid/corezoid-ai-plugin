@@ -815,6 +815,37 @@ var toolRegistry = []mcpTool{
 		},
 	},
 	{
+		Name:        "create-communications-orchestrator",
+		Description: "Create a Communications Orchestrator: a multi-platform robot that handles messages from Telegram, Facebook Messenger, Viber and Apple Messages for Business. Corezoid builds one folder of processes per channel asynchronously; this tool queues the build and polls it (every 3s, up to 10 checks), returning the folder_url of the generated folder on success or the wizard's error on failure. At least one messenger is required.",
+		Annotations: toolHints(hintMutates, hintSafe, hintNonIdempotent, hintOpenWorld),
+		InputSchema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"messengers": map[string]interface{}{
+					"type": "string",
+					"description": "JSON array of channel objects, at least one. One entry per channel, each with its own credential field: " +
+						`telegram {"channel":"telegram","key":"<bot token>"}, ` +
+						`viber {"channel":"viber","viber_token":"<token>"}, ` +
+						`fbmessenger {"channel":"fbmessenger","page_access_token":"<token>"}, ` +
+						`abc (Apple Messages for Business) {"channel":"abc","abc_token":"<token>","user_id":68381,"email":"me@example.com","name":"My Name"} — user_id/email/name are optional and identify the brand contact.`,
+				},
+				"stage_id": map[string]interface{}{
+					"type":        "integer",
+					"description": "Optional. Stage/folder ID to build the orchestrator in. Defaults to the current stage (resolved from the workspace's <id>_<name>.stage.json marker file).",
+				},
+				"project_id": map[string]interface{}{
+					"type":        "integer",
+					"description": "Optional. Project ID that owns stage_id. Resolved from the stage when omitted.",
+				},
+				"lang": map[string]interface{}{
+					"type":        "string",
+					"description": "Optional. Language of the generated processes and bot replies (e.g. \"en\", \"uk\", \"ru\"). Defaults to \"en\".",
+				},
+			},
+			"required": []string{"messengers"},
+		},
+	},
+	{
 		Name:        "create-dashboard",
 		Description: "Create a new Corezoid dashboard for visualizing process node metrics. Returns dashboard_id needed for adding charts.",
 		Annotations: toolHints(hintMutates, hintSafe, hintNonIdempotent, hintOpenWorld),
