@@ -87,11 +87,18 @@ func newMCPSession(t *testing.T, bin string) *mcpSession {
 		t.Fatalf("start: %v", err)
 	}
 	t.Cleanup(func() { _ = cmd.Process.Kill() })
+	// bufio.Scanner defaults to a 64 KiB max token, and one tools/list line is
+	// already ~65 KB of tool descriptions — a single added tool tips a
+	// default-sized reader over, and the failure surfaces as "EOF" rather than
+	// as the length error it is. Give the reader room here; the payload itself
+	// is bounded by TestMCPProtocol_ToolsListFitsLineBudget.
+	scan := bufio.NewScanner(stdout)
+	scan.Buffer(make([]byte, 0, 64*1024), 4*1024*1024)
 	return &mcpSession{
 		t:    t,
 		cmd:  cmd,
 		enc:  json.NewEncoder(stdin),
-		scan: bufio.NewScanner(stdout),
+		scan: scan,
 	}
 }
 
@@ -114,6 +121,13 @@ func (s *mcpSession) recv() map[string]json.RawMessage {
 			s.t.Fatalf("recv parse: %v — %s", err, line)
 		}
 		return msg
+	}
+	if err := s.scan.Err(); err != nil {
+		// bufio.ErrTooLong lands here: a response longer than the reader's
+		// buffer is not an EOF, and reporting it as one sent the last reader
+		// of this failure looking for a crashed server instead of an
+		// oversized line.
+		s.t.Fatalf("read from server failed: %v", err)
 	}
 	s.t.Fatal("EOF before receiving a message")
 	return nil
