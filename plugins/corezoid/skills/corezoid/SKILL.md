@@ -26,7 +26,7 @@ You have access to the Corezoid API via the `corezoid` MCP server.
 | `push-process` | Validate and deploy a `.conv.json` file |
 | `lint-process` | Validate process structure locally (no API needed) |
 | `layout-process` | Auto-arrange node coordinates into a clean layout (local; only x/y and collapse flags change) |
-| `run-task` | Run a task on an already-deployed process |
+| `run-task` | Run a task on an already-deployed process, by `process_path` or `process_id` — `process_id` needs no local file, so it also works in hosts with no local process repository (no `pull-process` required) |
 | `show-task` | Look up one task by `ref` and/or `task_id` — returns its current `data`, `node_id` and status. Read-only; use it instead of paging `list-node-tasks` |
 | `create-process` | Create a new empty process (`conv_type: "process"`) in a folder |
 | `create-state-diagram` | Create a new empty state diagram (`conv_type: "state"`) in a folder |
@@ -119,6 +119,12 @@ push-process(process_path="./folder/12345_MyProcess.conv.json")
 ```
 run-task(process_path="./folder/12345_MyProcess.conv.json", data={"key": "value"})
 ```
+
+### Run a task with no local process file (e.g. a host with no local process repository)
+```
+run-task(process_id=12345, data={"key": "value"})
+```
+`process_id` needs no `pull-process` first — it identifies the process the same way `process_path`'s filename does, just without a file (same argument name `show-task`/`list-task-history`/`pull-process` already use). `create-snapshot`, `list-snapshots`, `delete-snapshot`, and `get-snapshot` accept `process_id` the same way. Pass exactly one of the two — both together is rejected as ambiguous, and `process_id` must be greater than zero. These tools still need `stage_id`/`project_id` resolved from Corezoid credentials (`login`, or `COREZOID_*` env vars — see `corezoid-init`), even when no local file is used.
 
 ### Inspect a task by its external reference
 ```

@@ -1,6 +1,8 @@
 package main
 
 import (
+	"context"
+	"strings"
 	"testing"
 )
 
@@ -71,6 +73,45 @@ func TestResolveAndCacheProjectID_FromCache(t *testing.T) {
 	}
 	if notice != "" {
 		t.Errorf("expected no notice from cache path, got %q", notice)
+	}
+}
+
+// list-snapshots must resolve the process from process_id alone, with no
+// local .conv.json anywhere — the same host-without-a-local-repository path
+// that run-task supports via process_id.
+func TestHandleListSnapshots_ProcessIDWithoutLocalFile(t *testing.T) {
+	resetGlobals(t)
+	t.Cleanup(resetSnapshotSupportCache)
+
+	srv, _ := mockAPIServer(t, func(ops []map[string]interface{}) interface{} {
+		op := ops[0]
+		typ, _ := op["type"].(string)
+		obj, _ := op["obj"].(string)
+		if typ == "list" && obj == "snapshots" {
+			return wrapOp(map[string]interface{}{
+				"proc": "ok",
+				"list": []interface{}{
+					map[string]interface{}{"obj_id": float64(1), "version": float64(2), "title": "manual snapshot"},
+				},
+			})
+		}
+		return okResponse(ops)
+	})
+	setProjectAuth(t, srv.URL)
+	stageID = 20
+	cachedProjectID = 10
+
+	dir := t.TempDir()
+	t.Chdir(dir) // no .conv.json anywhere in cwd
+
+	result, isErr := handleListSnapshots(context.Background(), map[string]interface{}{
+		"process_id": float64(123),
+	})
+	if isErr {
+		t.Fatalf("process_id-based list-snapshots failed: %s", result)
+	}
+	if !strings.Contains(result, `"title": "manual snapshot"`) {
+		t.Fatalf("unexpected result: %s", result)
 	}
 }
 

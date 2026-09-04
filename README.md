@@ -274,6 +274,8 @@ validation errors, and summarize what each process does.
 
 ## MCP Tools
 
+Most tools identify a process with `process_path` (a local `.conv.json` file, as produced by `pull-process`/`pull-folder`). A few tools that never need the file's *contents* — only the numeric process ID encoded in its filename — also accept a `process_id` argument instead (the same argument name `show-task`, `list-task-history`, `pull-process`, and other process-by-ID tools already use): `run-task`, `create-snapshot`, `list-snapshots`, `delete-snapshot`, `get-snapshot`. Pass exactly one of `process_path` or `process_id` — passing both, neither, or a `process_id` ≤ 0 is rejected with an error naming the valid options. `process_id` is what lets these tools run without a preceding `pull-process`, which is the only option in a host with no local process repository (e.g. the Simulator.Company AI console); `process_path` keeps working unchanged. Note that `process_id` alone doesn't remove all local state: these tools still need `stage_id`/`project_id` resolved from Corezoid credentials — see [Auth config from environment variables](#auth-config-from-environment-variables) for configuring that without an interactive `login`.
+
 | Tool                | Description                                        |
 |---------------------|----------------------------------------------------|
 | `login`             | Authenticate via OAuth2 (opens browser)            |
@@ -292,7 +294,7 @@ validation errors, and summarize what each process does.
 | `push-process`      | Validate and deploy a `.conv.json` to Corezoid. Blocks when the graph is structurally invalid, when the server changed since pull (`force` is the lint override only — the concurrency gate has its own `overwrite_server_change`), when no rollback point could be taken, or when the file has no pull baseline but the process is already deployed. Every waived gate is reported in the push result |
 | `layout-process`    | Auto-arrange node coordinates (waterfall / layered / table-star regions); local, changes only x/y and collapse flags |
 | `lint-process`      | Validate process structure locally (no API call)   |
-| `run-task`          | Send a task to a deployed process                  |
+| `run-task`          | Send a task to a deployed process, by `process_path` or `process_id` (no local file needed) |
 | `show-task`         | Look up one task by `ref` and/or `task_id` — data, node, status (read-only) |
 | `list-node-tasks`   | List tasks currently sitting in a node             |
 | `list-task-history` | Show task execution history                        |
@@ -339,10 +341,10 @@ validation errors, and summarize what each process does.
 | `find-principal`    | Resolve user / group / API-key name to obj_id      |
 | `invite-user`       | Invite an external email and share an object in one call |
 | `send-feedback`     | Submit feedback about plugin behavior (returns ticket id) |
-| `create-snapshot`   | Create a snapshot of the current server state of a process. Also auto-created before `push-process` overwrites an existing process: if the snapshot call fails the push is blocked, and if the target project/stage cannot be resolved the push is blocked too — both waived by `allow_no_snapshot=true` on a resolved mutable stage, though retrying a failed call is the safer default. Skipped only where there is nothing to preserve — a process with no deployed version, or an installation whose API has no snapshot object. A push that overwrites live server state without comparing it (`overwrite_server_change`, or `adopt_existing` on a file with no baseline) is refused when no snapshot was taken, unless `allow_no_snapshot=true` is passed as well; a never-deployed process is exempt — it has no previous version to preserve |
-| `list-snapshots`    | List all snapshots for a process with version, title, author and creation time |
-| `delete-snapshot`   | Delete a snapshot by its obj_id |
-| `get-snapshot`      | Get the node list of a specific snapshot for diff comparison |
+| `create-snapshot`   | Create a snapshot of the current server state of a process, by `process_path` or `process_id`. Also auto-created before `push-process` overwrites an existing process: if the snapshot call fails the push is blocked, and if the target project/stage cannot be resolved the push is blocked too — both waived by `allow_no_snapshot=true` on a resolved mutable stage, though retrying a failed call is the safer default. Skipped only where there is nothing to preserve — a process with no deployed version, or an installation whose API has no snapshot object. A push that overwrites live server state without comparing it (`overwrite_server_change`, or `adopt_existing` on a file with no baseline) is refused when no snapshot was taken, unless `allow_no_snapshot=true` is passed as well; a never-deployed process is exempt — it has no previous version to preserve |
+| `list-snapshots`    | List all snapshots for a process with version, title, author and creation time, by `process_path` or `process_id` |
+| `delete-snapshot`   | Delete a snapshot by its obj_id, by `process_path` or `process_id` |
+| `get-snapshot`      | Get the node list of a specific snapshot for diff comparison, by `process_path` or `process_id` |
 | `git-pull-context`  | Clone or pull the Corezoid git mirror into `.git-context/` |
 | `git-push-context`  | Commit and push `_ext/` changes to the git mirror  |
 | `read-context-file` | Read a file from `.git-context/`                   |

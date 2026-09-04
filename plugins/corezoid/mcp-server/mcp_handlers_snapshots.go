@@ -11,19 +11,17 @@ import (
 
 // handleCreateSnapshot manually creates a snapshot for the given process.
 func handleCreateSnapshot(ctx context.Context, args map[string]interface{}) (string, bool) {
-	filePath, err := resolveProcessPath(args, "process_path")
-	if err != nil {
-		return "Error: " + err.Error(), true
-	}
-
-	procID, errMsg := extractProcessIDFromPath(filePath)
+	procID, filePath, errMsg := resolveProcessID(args, "process_path", "process_id")
 	if errMsg != "" {
 		return errMsg, true
 	}
 
 	title, _ := args["title"].(string)
 	if title == "" {
-		name := extractProcessNameFromPath(filePath)
+		name := fmt.Sprintf("process %d", procID)
+		if filePath != "" {
+			name = extractProcessNameFromPath(filePath)
+		}
 		title = fmt.Sprintf("manual snapshot %s %s", name, time.Now().UTC().Format("2006-01-02 15:04"))
 	}
 
@@ -54,12 +52,7 @@ func handleCreateSnapshot(ctx context.Context, args map[string]interface{}) (str
 
 // handleListSnapshots returns all snapshots for the given process.
 func handleListSnapshots(ctx context.Context, args map[string]interface{}) (string, bool) {
-	filePath, err := resolveProcessPath(args, "process_path")
-	if err != nil {
-		return "Error: " + err.Error(), true
-	}
-
-	procID, errMsg := extractProcessIDFromPath(filePath)
+	procID, _, errMsg := resolveProcessID(args, "process_path", "process_id")
 	if errMsg != "" {
 		return errMsg, true
 	}
@@ -89,12 +82,7 @@ func handleListSnapshots(ctx context.Context, args map[string]interface{}) (stri
 
 // handleDeleteSnapshot removes a snapshot by obj_id.
 func handleDeleteSnapshot(ctx context.Context, args map[string]interface{}) (string, bool) {
-	filePath, err := resolveProcessPath(args, "process_path")
-	if err != nil {
-		return "Error: " + err.Error(), true
-	}
-
-	procID, errMsg := extractProcessIDFromPath(filePath)
+	procID, _, errMsg := resolveProcessID(args, "process_path", "process_id")
 	if errMsg != "" {
 		return errMsg, true
 	}
@@ -123,12 +111,7 @@ func handleDeleteSnapshot(ctx context.Context, args map[string]interface{}) (str
 
 // handleGetSnapshot returns the nodes of a specific snapshot for diff comparison.
 func handleGetSnapshot(ctx context.Context, args map[string]interface{}) (string, bool) {
-	filePath, err := resolveProcessPath(args, "process_path")
-	if err != nil {
-		return "Error: " + err.Error(), true
-	}
-
-	procID, errMsg := extractProcessIDFromPath(filePath)
+	procID, _, errMsg := resolveProcessID(args, "process_path", "process_id")
 	if errMsg != "" {
 		return errMsg, true
 	}

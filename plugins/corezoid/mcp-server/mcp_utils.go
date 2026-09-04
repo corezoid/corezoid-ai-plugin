@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -253,6 +254,65 @@ func resolveProcessPath(args map[string]interface{}, key string) (string, error)
 		return "", fmt.Errorf("multiple .conv.json files found in current directory — pass process_path explicitly: %v", matches)
 	}
 	return "", fmt.Errorf("no .conv.json file found in current directory and process_path was not provided")
+}
+
+// resolveProcessID resolves the target process ID from either an explicit
+// convIDKey argument or a pathKey argument (a local .conv.json file whose
+// filename encodes the ID, resolved the same way as resolveProcessPath).
+//
+// convIDKey is the only route that needs no local file at all: hosts with no
+// local process repository (e.g. an AI console with no filesystem, or a
+// process that was never pulled) can still call the tool by passing the
+// numeric Corezoid process ID directly, with no preceding pull-process.
+//
+// Supplying both is rejected rather than silently preferring one: several of
+// these tools are destructive (e.g. delete-snapshot), so a caller pointing at
+// two different processes by mistake must be told, not have one argument
+// quietly ignored.
+//
+// filePath is "" when convIDKey was used — callers must not stat or read it
+// in that case. On failure, errMsg names both accepted arguments so a caller
+// that supplied neither gets a self-explanatory error instead of one that
+// only mentions the file-based path.
+func resolveProcessID(args map[string]interface{}, pathKey, convIDKey string) (procID int, filePath string, errMsg string) {
+	raw, hasID := args[convIDKey]
+	// A client that always serializes declared-but-unset optional fields as
+	// "" or null (some MCP hosts do) must not trip the both-given conflict
+	// below — optStrArg already treats "" and null as absent everywhere else
+	// pathKey is read, so the presence check has to agree with that.
+	hasID = hasID && raw != nil
+	hasPath := optStrArg(args, pathKey) != ""
+	if hasID && hasPath {
+		return 0, "", fmt.Sprintf(
+			"Error: pass either %s or %s, not both — got both arguments and cannot tell which one to trust.",
+			pathKey, convIDKey)
+	}
+
+	if hasID {
+		if f, isFloat := raw.(float64); isFloat && f != math.Trunc(f) {
+			return 0, "", fmt.Sprintf("Error: %s must be a whole number, got %v", convIDKey, f)
+		}
+		id, err := intArg(args, convIDKey)
+		if err != nil {
+			return 0, "", "Error: " + err.Error()
+		}
+		if id <= 0 {
+			return 0, "", fmt.Sprintf("Error: %s must be greater than zero", convIDKey)
+		}
+		return id, "", ""
+	}
+
+	fp, err := resolveProcessPath(args, pathKey)
+	if err != nil {
+		return 0, "", fmt.Sprintf(
+			"Error: %v. Pass either %s (a local .conv.json file) or %s (the numeric Corezoid process ID — use this when there is no local process repository).",
+			err, pathKey, convIDKey)
+	}
+	id, msg := extractProcessIDFromPath(fp)
+	if msg != "" {
+		return 0, "", msg
+	}
+	return id, fp, ""
 }
 
 // resolveDirPath returns the path argument confined to the workspace tree,
