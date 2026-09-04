@@ -854,7 +854,16 @@ var toolRegistry = []mcpTool{
 	{
 		Name:        "create-communications-orchestrator",
 		Description: "Create a Communications Orchestrator: a multi-platform robot that handles messages from Telegram, Facebook Messenger, Viber and Apple Messages for Business. Corezoid builds one folder of processes per channel asynchronously; this tool queues the build and polls it (every 3s, up to 10 checks), returning the folder_url of the generated folder on success or the wizard's error on failure. At least one messenger is required.",
-		Annotations: toolHints(hintMutates, hintSafe, hintNonIdempotent, hintOpenWorld),
+		// destructiveHint, even though the build only ADDS objects. The flag is
+		// what an MCP host reads to decide whether to ask the user first, and
+		// this call earns the prompt twice over: there is no undo for the ~150
+		// processes it creates, and a second build against a channel token that
+		// already serves a bot silently steals that bot's webhook — destroying
+		// a working integration without deleting a single object. The
+		// corezoid-gen-bot skill gates this behind its own confirmation step,
+		// but the tool is callable without the skill, and the annotation is the
+		// only gate on that path.
+		Annotations: toolHints(hintMutates, hintDestructive, hintNonIdempotent, hintOpenWorld),
 		InputSchema: map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
