@@ -45,3 +45,43 @@ func TestRedactForLog_NonJSON(t *testing.T) {
 		t.Fatalf("raw non-JSON payload must not be echoed: %s", out)
 	}
 }
+
+// Every messenger channel names its credential differently, and the
+// create-communications-orchestrator payload carries a live one per channel.
+// Only Telegram's was masked — by collision with the create_api_key `key`
+// field, not by intent — so a debug trace attached to a bug report handed over
+// working Viber, Facebook and Apple Messages bot tokens.
+func TestRedactForLog_MessengerChannelTokens(t *testing.T) {
+	in := `{"ops":[{"obj":"bot_wizzard","type":"create","messengers":[
+	  {"channel":"telegram","key":"TG-SECRET"},
+	  {"channel":"viber","viber_token":"VIBER-SECRET"},
+	  {"channel":"fbmessenger","page_access_token":"FB-SECRET"},
+	  {"channel":"abc","abc_token":"ABC-SECRET","email":"me@example.com"}]}]}`
+	out := string(redactForLog([]byte(in)))
+	for _, secret := range []string{"TG-SECRET", "VIBER-SECRET", "FB-SECRET", "ABC-SECRET"} {
+		if strings.Contains(out, secret) {
+			t.Errorf("messenger credential %s leaked into debug output: %s", secret, out)
+		}
+	}
+	// The entries must still be identifiable in the trace — which channel was
+	// rejected is the whole point of reading the log.
+	for _, want := range []string{"telegram", "viber", "fbmessenger", "abc", "me@example.com"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("non-secret field lost: want %s in %s", want, out)
+		}
+	}
+}
+
+// The suffix rule, not the list, is what keeps a channel added later covered:
+// an exhaustive list is how the Viber/FB/ABC tokens got logged in the first
+// place.
+func TestRedactForLog_UnlistedTokenSuffix(t *testing.T) {
+	in := `{"ops":[{"obj":"bot_wizzard","type":"create","messengers":[
+	  {"channel":"whatsapp","whatsapp_business_token":"WA-SECRET","some_secret":"S2"}]}]}`
+	out := string(redactForLog([]byte(in)))
+	for _, secret := range []string{"WA-SECRET", "S2"} {
+		if strings.Contains(out, secret) {
+			t.Errorf("credential %s leaked into debug output: %s", secret, out)
+		}
+	}
+}
