@@ -44,6 +44,38 @@ func toolHints(readOnly, destructive, idempotent, openWorld bool) *toolAnnotatio
 	}
 }
 
+// processTargetAnyOf advertises the "identify the process by EXACTLY ONE of
+// process_path or process_id" contract shared by run-task and the snapshot
+// tools.
+//
+// It is anyOf, not oneOf, on purpose. JSON Schema `required` is satisfied by
+// the mere PRESENCE of a key, whatever its value, while the runtime check in
+// resolveProcessID treats "" and null as absent — deliberately, because some
+// MCP hosts serialize a declared-but-unset optional field instead of omitting
+// it (see TestResolveProcessID_EmptyOrNullProcessPathIsNotAConflict). Under
+// oneOf such a client sends {process_path: "", process_id: N}, satisfies BOTH
+// branches, and a host that pre-validates arguments against the advertised
+// schema rejects the call before the server ever sees it — breaking exactly
+// the no-local-repository hosts process_id was added for. anyOf still rejects
+// a call that names neither target, and the genuine both-given conflict is
+// caught by resolveProcessID, which can say which two arguments disagreed
+// instead of emitting a schema error. Same shape show-task already uses for
+// its task_id/ref pair.
+//
+// For the same reason the two properties are typed ["string", "null"] and
+// ["integer", "null"] at each call site: a host that fills an unset optional
+// with an explicit null would otherwise fail client-side validation on the
+// property TYPE even with anyOf in place, and the runtime accepts that form
+// too (TestResolveProcessID_NullProcessIDFallsBackToProcessPath). A null is
+// "not supplied", never a target — resolveProcessID still rejects a call that
+// nulls both.
+func processTargetAnyOf() []map[string]interface{} {
+	return []map[string]interface{}{
+		{"required": []string{"process_path"}},
+		{"required": []string{"process_id"}},
+	}
+}
+
 // toolRegistry is the single source of truth for all MCP tool definitions.
 // mcp_server.go returns this slice for "tools/list", and tests verify
 // the README tools table stays in sync with it.
@@ -267,11 +299,11 @@ var toolRegistry = []mcpTool{
 			"type": "object",
 			"properties": map[string]interface{}{
 				"process_path": map[string]interface{}{
-					"type":        "string",
+					"type":        []string{"string", "null"},
 					"description": "Relative path to the process JSON file. Omit and pass process_id instead when there is no local process repository (e.g. a host console with no filesystem). Mutually exclusive with process_id.",
 				},
 				"process_id": map[string]interface{}{
-					"type":        "integer",
+					"type":        []string{"integer", "null"},
 					"description": "Corezoid process (conv) ID, greater than zero. Alternative to process_path — use this to run a task without a local .conv.json file, without a preceding pull-process. Mutually exclusive with process_path.",
 				},
 				"data": map[string]interface{}{
@@ -288,10 +320,7 @@ var toolRegistry = []mcpTool{
 				},
 			},
 			"required": []string{"data"},
-			"oneOf": []map[string]interface{}{
-				{"required": []string{"process_path"}},
-				{"required": []string{"process_id"}},
-			},
+			"anyOf":    processTargetAnyOf(),
 		},
 	},
 	{
@@ -1513,11 +1542,11 @@ var toolRegistry = []mcpTool{
 			"type": "object",
 			"properties": map[string]interface{}{
 				"process_path": map[string]interface{}{
-					"type":        "string",
+					"type":        []string{"string", "null"},
 					"description": "Path to the .conv.json file. Omit and pass process_id instead when there is no local process repository. Mutually exclusive with process_id.",
 				},
 				"process_id": map[string]interface{}{
-					"type":        "integer",
+					"type":        []string{"integer", "null"},
 					"description": "Corezoid process (conv) ID, greater than zero. Alternative to process_path — works with no local file. Mutually exclusive with process_path.",
 				},
 				"title": map[string]interface{}{
@@ -1525,10 +1554,7 @@ var toolRegistry = []mcpTool{
 					"description": "Optional snapshot title. Defaults to 'manual snapshot <ProcessName> <datetime>'.",
 				},
 			},
-			"oneOf": []map[string]interface{}{
-				{"required": []string{"process_path"}},
-				{"required": []string{"process_id"}},
-			},
+			"anyOf": processTargetAnyOf(),
 		},
 	},
 	{
@@ -1539,18 +1565,15 @@ var toolRegistry = []mcpTool{
 			"type": "object",
 			"properties": map[string]interface{}{
 				"process_path": map[string]interface{}{
-					"type":        "string",
+					"type":        []string{"string", "null"},
 					"description": "Path to the .conv.json file. Omit and pass process_id instead when there is no local process repository. Mutually exclusive with process_id.",
 				},
 				"process_id": map[string]interface{}{
-					"type":        "integer",
+					"type":        []string{"integer", "null"},
 					"description": "Corezoid process (conv) ID, greater than zero. Alternative to process_path — works with no local file. Mutually exclusive with process_path.",
 				},
 			},
-			"oneOf": []map[string]interface{}{
-				{"required": []string{"process_path"}},
-				{"required": []string{"process_id"}},
-			},
+			"anyOf": processTargetAnyOf(),
 		},
 	},
 	{
@@ -1561,11 +1584,11 @@ var toolRegistry = []mcpTool{
 			"type": "object",
 			"properties": map[string]interface{}{
 				"process_path": map[string]interface{}{
-					"type":        "string",
+					"type":        []string{"string", "null"},
 					"description": "Path to the .conv.json file. Omit and pass process_id instead when there is no local process repository. Mutually exclusive with process_id.",
 				},
 				"process_id": map[string]interface{}{
-					"type":        "integer",
+					"type":        []string{"integer", "null"},
 					"description": "Corezoid process (conv) ID, greater than zero. Alternative to process_path — works with no local file. Mutually exclusive with process_path.",
 				},
 				"snapshot_id": map[string]interface{}{
@@ -1574,10 +1597,7 @@ var toolRegistry = []mcpTool{
 				},
 			},
 			"required": []string{"snapshot_id"},
-			"oneOf": []map[string]interface{}{
-				{"required": []string{"process_path"}},
-				{"required": []string{"process_id"}},
-			},
+			"anyOf":    processTargetAnyOf(),
 		},
 	},
 	{
@@ -1588,11 +1608,11 @@ var toolRegistry = []mcpTool{
 			"type": "object",
 			"properties": map[string]interface{}{
 				"process_path": map[string]interface{}{
-					"type":        "string",
+					"type":        []string{"string", "null"},
 					"description": "Path to the .conv.json file. Omit and pass process_id instead when there is no local process repository. Mutually exclusive with process_id.",
 				},
 				"process_id": map[string]interface{}{
-					"type":        "integer",
+					"type":        []string{"integer", "null"},
 					"description": "Corezoid process (conv) ID, greater than zero. Alternative to process_path — works with no local file. Mutually exclusive with process_path.",
 				},
 				"snapshot_id": map[string]interface{}{
@@ -1601,10 +1621,7 @@ var toolRegistry = []mcpTool{
 				},
 			},
 			"required": []string{"snapshot_id"},
-			"oneOf": []map[string]interface{}{
-				{"required": []string{"process_path"}},
-				{"required": []string{"process_id"}},
-			},
+			"anyOf":    processTargetAnyOf(),
 		},
 	},
 
