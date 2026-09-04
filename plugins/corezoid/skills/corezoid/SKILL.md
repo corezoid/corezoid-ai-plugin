@@ -163,6 +163,8 @@ For domain-specific workflows use the specialized skills:
 - `/corezoid-retro` — end-of-session retrospective: extract learnings (failed→fixed push deltas, data-shape surprises, corrections) and route them to workspace CLAUDE.md, team feedback, settings, or personal memory with user confirmation
 - `/corezoid-describe` — update or create the description of a process, folder, or project without editing its logic
 - `/corezoid-git-context` — after a substantial session: analyse changes and update `_ext/docs/*.md` in the git mirror
+- `/corezoid-gen-bot` — turn a set of existing processes into a multi-platform messenger bot (Telegram / Viber / Facebook Messenger / Apple Messages for Business): derives each process's real contract, designs the command map, creates the Communications Orchestrator and one bot process per command
+- `/corezoid-edit-bot` — change a bot that already exists: add/rename/drop a command, wire another process, edit copy or keyboards, promote a stage
 
 ## Reference Documents
 

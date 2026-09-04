@@ -11,7 +11,7 @@
     {
       "name": "corezoid",
       "source": "./plugins/corezoid",
-      "description": "Corezoid BPM platform skills, MCP server, docs, and samples for Claude Code.",
+      "description": "Corezoid BPM platform skills, MCP server, docs, and samples for Claude Code — including messenger bot generation over existing processes.",
       "version": "3.3.0",
       "author": {
         "name": "Corezoid",
@@ -20,7 +20,7 @@
       "homepage": "https://corezoid.com",
       "repository": "https://github.com/corezoid/corezoid-ai-plugin",
       "license": "MIT",
-      "keywords": ["corezoid", "process", "bpm", "workflow", "automation", "mcp"],
+      "keywords": ["corezoid", "process", "bpm", "workflow", "automation", "mcp", "chatbot", "telegram"],
       "category": "Developer Tools"
     }
   ]

@@ -8,13 +8,13 @@
   },
   "homepage": "https://github.com/corezoid/corezoid-ai-plugin",
   "license": "MIT",
-  "keywords": ["corezoid", "bpm", "process", "workflow", "automation", "mcp"],
+  "keywords": ["corezoid", "bpm", "process", "workflow", "automation", "mcp", "chatbot", "telegram"],
   "skills": "./skills/",
   "mcpServers": "./.mcp.json",
   "interface": {
     "displayName": "Corezoid",
     "shortDescription": "Create, edit, and deploy Corezoid BPM processes via natural conversation",
-    "longDescription": "Full access to the Corezoid BPM platform — pull and push processes, lint and validate JSON, run tasks, manage folders, and create environment variables. Specialist skills cover process creation, editing, review, and project-wide auditing.",
+    "longDescription": "Full access to the Corezoid BPM platform — pull and push processes, lint and validate JSON, run tasks, manage folders, and create environment variables. Specialist skills cover process creation, editing, review, and project-wide auditing. Bot skills wrap an existing process backend in a multi-platform messenger bot and keep it maintainable.",
     "developerName": "Corezoid",
     "category": "Productivity",
     "capabilities": [
@@ -22,13 +22,15 @@
       "Pull and push processes to Corezoid workspace",
       "Lint and validate process structure locally",
       "Run and inspect tasks on deployed processes",
-      "Manage folders, aliases, and environment variables"
+      "Manage folders, aliases, and environment variables",
+      "Build and maintain messenger bots (Telegram, Viber, Facebook Messenger, Apple Messages for Business) on top of existing processes"
     ],
     "websiteURL": "https://corezoid.com",
     "defaultPrompt": [
       "Pull my Corezoid workspace and show the process list",
       "Create a process that calls an external API and handles errors",
-      "Review the payment process for validation errors"
+      "Review the payment process for validation errors",
+      "Build a Telegram bot from my existing order processes"
     ]
   }
 }

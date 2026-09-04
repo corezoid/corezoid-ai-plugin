@@ -9,7 +9,7 @@
   "homepage": "https://github.com/corezoid/corezoid-ai-plugin",
   "repository": "https://github.com/corezoid/corezoid-ai-plugin",
   "license": "MIT",
-  "keywords": ["corezoid", "process", "bpm", "workflow", "automation", "mcp"],
+  "keywords": ["corezoid", "process", "bpm", "workflow", "automation", "mcp", "chatbot", "telegram"],
   "skills": "./skills/",
   "mcpServers": "./.mcp.kiro.json",
   "kiro": {
@@ -20,7 +20,7 @@
   "interface": {
     "displayName": "Corezoid",
     "shortDescription": "BPM process authoring and automation via the Corezoid API",
-    "longDescription": "Create, edit, review, and deploy Corezoid BPM processes directly from your IDE via the Corezoid REST API. Covers process authoring, linting, layout, documentation, environment variables, aliases, dashboards, access control, and state diagrams — including running tasks and inspecting task history by process ID, with no local process repository required.",
+    "longDescription": "Create, edit, review, and deploy Corezoid BPM processes directly from your IDE via the Corezoid REST API. Covers process authoring, linting, layout, documentation, environment variables, aliases, dashboards, access control, and state diagrams — including running tasks and inspecting task history by process ID, with no local process repository required. Also turns a set of existing processes into a multi-platform messenger bot — Telegram, Viber, Facebook Messenger and Apple Messages for Business — and maintains it as commands, copy and wiring change.",
     "developerName": "Corezoid",
     "category": "Productivity",
     "capabilities": [
@@ -29,13 +29,15 @@
       "Run tasks and inspect task/node history by process ID",
       "Process linting, auto-layout, and documentation generation",
       "Environment variables, aliases, dashboards, and access management",
-      "State diagram (lifecycle) creation and editing"
+      "State diagram (lifecycle) creation and editing",
+      "Messenger bot generation and maintenance over existing processes (Telegram, Viber, Facebook Messenger, Apple Messages for Business)"
     ],
     "websiteURL": "https://corezoid.com",
     "defaultPrompt": [
       "Create a new Corezoid process that validates and stores a customer order",
       "Review this process for orphaned nodes and hardcoded values",
-      "Run a task on process 123456 and show me the result"
+      "Run a task on process 123456 and show me the result",
+      "Turn processes 123456 and 123457 into a Telegram bot"
     ]
   }
 }
