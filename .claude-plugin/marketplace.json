@@ -12,7 +12,7 @@
       "name": "corezoid",
       "source": "./plugins/corezoid",
       "description": "Corezoid BPM platform skills, MCP server, docs, and samples for Claude Code — including messenger bot generation over existing processes.",
-      "version": "3.3.0",
+      "version": "3.4.0",
       "author": {
         "name": "Corezoid",
         "email": "support@corezoid.com"
