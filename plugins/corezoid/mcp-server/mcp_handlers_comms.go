@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math"
 	"sort"
 	"strconv"
 	"strings"
@@ -174,10 +175,16 @@ func commsFieldString(raw interface{}) string {
 }
 
 // commsFieldInt reads a messenger field as an int, accepting the JSON-number
-// and string-encoded forms.
+// and string-encoded forms. A fractional value is an error rather than a
+// truncation: this is an identity (the ABC brand contact), and 68381.5 silently
+// becoming 68381 registers the bot against a different user than the caller
+// named. resolveProcessID refuses fractional ids for the same reason.
 func commsFieldInt(raw interface{}) (int, error) {
 	switch v := raw.(type) {
 	case float64:
+		if v != math.Trunc(v) {
+			return 0, fmt.Errorf("must be a whole number, got %v", v)
+		}
 		return int(v), nil
 	case int:
 		return v, nil
@@ -185,6 +192,33 @@ func commsFieldInt(raw interface{}) (int, error) {
 		return strconv.Atoi(strings.TrimSpace(v))
 	}
 	return 0, fmt.Errorf("unexpected type %T", raw)
+}
+
+// commsCheckTargetID validates an optional stage_id/project_id argument before
+// it is used to resolve a build target. An absent or null key is fine — both
+// ids fall back to the workspace's configured stage — but a supplied one has to
+// be a whole number greater than zero. argInt would truncate 12345.6 and
+// happily accept 0 or a negative, and the resulting build lands somewhere the
+// caller did not name, with no undo.
+func commsCheckTargetID(args map[string]interface{}, key string) string {
+	raw, ok := args[key]
+	if !ok || raw == nil {
+		return ""
+	}
+	if f, isFloat := raw.(float64); isFloat && f != math.Trunc(f) {
+		return fmt.Sprintf("Error: %s must be a whole number, got %v", key, f)
+	}
+	id, ok := argInt(args, key)
+	if !ok {
+		// argInt reports "not usable" the same way it reports "absent", so a
+		// value it cannot parse would otherwise fall through to the configured
+		// stage and build the bot somewhere the caller never named.
+		return fmt.Sprintf("Error: %s must be an integer, got %v", key, raw)
+	}
+	if id <= 0 {
+		return fmt.Sprintf("Error: %s must be greater than zero, got %d", key, id)
+	}
+	return ""
 }
 
 // handleCreateCommsOrchestrator creates a Communications Orchestrator — the
@@ -201,6 +235,17 @@ func handleCreateCommsOrchestrator(ctx context.Context, args map[string]interfac
 	}
 
 	v := NewValidator(ctx, 0)
+
+	// argInt truncates a JSON float, so a mistyped 12345.6 would resolve to a
+	// real but different stage — and this tool's whole output is "a folder of
+	// ~150 processes now exists over there". Both target ids are validated
+	// before anything is queued.
+	if msg := commsCheckTargetID(args, "stage_id"); msg != "" {
+		return msg, true
+	}
+	if msg := commsCheckTargetID(args, "project_id"); msg != "" {
+		return msg, true
+	}
 
 	stageID := v.StageID
 	if id, ok := argInt(args, "stage_id"); ok && id != 0 {

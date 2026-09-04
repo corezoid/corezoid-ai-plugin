@@ -404,3 +404,47 @@ func TestCommsSleep_HonoursCancellation(t *testing.T) {
 		t.Error("commsSleep must return the context error instead of sleeping")
 	}
 }
+
+// A mistyped target id must not resolve to a real-but-different stage. argInt
+// truncates a JSON float and reports an unparseable value the same way it
+// reports an absent key, so without these checks 12345.6 would build the bot
+// in stage 12345 and "abc" would build it in whatever stage the workspace has
+// configured — both irreversibly, and neither named by the caller.
+func TestCommsOrchestrator_RejectsBadTargetIDs(t *testing.T) {
+	valid := `[{"channel":"telegram","key":"tg-token"}]`
+	cases := map[string]struct {
+		args map[string]interface{}
+		want string
+	}{
+		"fractional stage_id":   {map[string]interface{}{"messengers": valid, "stage_id": 12345.6}, "whole number"},
+		"fractional project_id": {map[string]interface{}{"messengers": valid, "project_id": 777.25}, "whole number"},
+		"negative stage_id":     {map[string]interface{}{"messengers": valid, "stage_id": float64(-5)}, "greater than zero"},
+		"zero project_id":       {map[string]interface{}{"messengers": valid, "project_id": float64(0)}, "greater than zero"},
+		"non-numeric stage_id":  {map[string]interface{}{"messengers": valid, "stage_id": "abc"}, "must be an integer"},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			out, isErr := handleCreateCommsOrchestrator(context.Background(), tc.args)
+			if !isErr {
+				t.Fatalf("expected an error, got success: %s", out)
+			}
+			if !strings.Contains(out, tc.want) {
+				t.Errorf("error must explain the problem (%q), got: %s", tc.want, out)
+			}
+		})
+	}
+}
+
+// The ABC brand contact is an identity: 68381.5 quietly becoming 68381
+// registers the bot against a different user than the caller named.
+func TestCommsOrchestrator_RejectsFractionalUserID(t *testing.T) {
+	_, err := parseMessengers([]interface{}{
+		map[string]interface{}{"channel": "abc", "abc_token": "t", "user_id": 68381.5},
+	})
+	if err == nil {
+		t.Fatal("expected a fractional user_id to be rejected")
+	}
+	if !strings.Contains(err.Error(), "user_id") {
+		t.Errorf("error must name user_id, got: %v", err)
+	}
+}
