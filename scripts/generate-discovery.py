@@ -116,26 +116,63 @@ def generate_index_json(skills):
     }
 
 
-MCP_TOOLS = [
-    ("login",            "Authenticate with Corezoid via OAuth2 browser flow"),
-    ("pull-process",     "Export a single process definition to a local .conv.json file"),
-    ("pull-folder",      "Recursively export all processes from a Corezoid folder"),
-    ("push-process",     "Validate and deploy a local process file to Corezoid"),
-    ("lint-process",     "Validate process structure — orphaned nodes, noop conditions, unused params"),
-    ("run-task",         "Execute a task on a deployed Corezoid process"),
-    ("create-process",   "Create a new empty process inside a Corezoid folder"),
-    ("create-folder",    "Create a new folder inside a Corezoid folder"),
-    ("create-variable",  "Create an environment variable in a Corezoid folder"),
-    ("create-dashboard", "Create a dashboard for visualizing process node metrics"),
-    ("add-chart",        "Add a chart (column, pie, funnel, table) to a dashboard"),
-    ("list-workspaces",  "List Corezoid workspaces available to the authenticated user"),
-    ("list-projects",    "List projects inside a workspace"),
-    ("list-stages",      "List stages (environments) inside a project"),
-    ("show-task",        "Look up a single task by ref and/or task_id (read-only)"),
-    ("modify-task",      "Modify an existing task's data"),
-    ("delete-task",      "Delete a task from a process"),
-    ("logout",           "Remove saved Corezoid credentials from disk"),
-]
+TOOLS_REGISTRY = os.path.join(
+    ROOT, "plugins", "corezoid", "mcp-server", "tools_registry.go"
+)
+
+# Matches one registry entry's Name/Description pair. Description values are
+# single Go string literals with escaped inner quotes; [^"\\] plus an escape
+# alternative is what keeps the match from stopping at the first \".
+_TOOL_RE = re.compile(
+    r'Name:\s*"(?P<name>[a-z0-9-]+)",\s*\n\s*'
+    r'Description:\s*"(?P<desc>(?:[^"\\]|\\.)*)"',
+    re.MULTILINE,
+)
+
+
+def _first_sentence(text):
+    """First sentence of a tool description, for the one-line index entry.
+
+    Tool descriptions are long on purpose — they are the model's instructions —
+    but llms.txt is an index, so only the opening claim belongs here.
+    """
+    text = text.replace('\\"', '"').replace("\\\\", "\\")
+    # A sentence end is ". " followed by a capital; requiring that keeps
+    # decimals and mid-sentence abbreviations ("e.g. promote", "i.e. the
+    # stage") from cutting the line in half.
+    head = re.split(r"(?<=[a-z0-9)\]])\.\s+(?=[A-Z])", text, maxsplit=1)[0]
+    return head.rstrip(".").strip()
+
+
+def read_mcp_tools():
+    """Read the MCP tool list from tools_registry.go — the single source of truth.
+
+    This used to be a hand-maintained list in this file. It drifted to 18 of 71
+    tools, so llms.txt and the skills index advertised a plugin several releases
+    old and omitted whole feature areas (snapshots, groups, layout, deploy,
+    create-communications-orchestrator). A generated list cannot drift: a tool
+    that exists is listed, and one that is renamed is renamed here too.
+    """
+    with open(TOOLS_REGISTRY, encoding="utf-8") as fh:
+        src = fh.read()
+
+    tools = [(m.group("name"), _first_sentence(m.group("desc")))
+             for m in _TOOL_RE.finditer(src)]
+
+    if not tools:
+        sys.exit(
+            f"generate-discovery: found no tools in {TOOLS_REGISTRY} — the "
+            "registry format changed and this parser needs updating; refusing "
+            "to publish a discovery file with an empty tool list"
+        )
+
+    seen = set()
+    for name, _ in tools:
+        if name in seen:
+            sys.exit(f"generate-discovery: tool {name!r} is declared twice")
+        seen.add(name)
+
+    return sorted(tools)
 
 
 def generate_llms_txt(skills, version):
@@ -164,7 +201,7 @@ def generate_llms_txt(skills, version):
         "",
     ]
 
-    for name, desc in MCP_TOOLS:
+    for name, desc in read_mcp_tools():
         lines.append(f"- **{name}**: {desc}")
 
     lines += [

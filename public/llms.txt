@@ -12,10 +12,13 @@
 - [corezoid-dashboard-manager](https://raw.githubusercontent.com/corezoid/corezoid-ai-plugin/main/plugins/corezoid/skills/corezoid-dashboard-manager/SKILL.md): Creates and manages Corezoid dashboards — adds charts (column, pie, funnel, table), binds metrics to process nodes, configures real-time mode, and sets up drill-down linking between dashboards
 - [corezoid-describe](https://raw.githubusercontent.com/corezoid/corezoid-ai-plugin/main/plugins/corezoid/skills/corezoid-describe/SKILL.md): Updates or creates the description of a Corezoid process, folder, or project without touching its logic
 - [corezoid-edit](https://raw.githubusercontent.com/corezoid/corezoid-ai-plugin/main/plugins/corezoid/skills/corezoid-edit/SKILL.md): Corezoid process editing specialist
+- [corezoid-edit-bot](https://raw.githubusercontent.com/corezoid/corezoid-ai-plugin/main/plugins/corezoid/skills/corezoid-edit-bot/SKILL.md): Iteratively edits an already-built messenger bot from corezoid-gen-bot — a Corezoid Communications Orchestrator serving Telegram, Viber, Apple Messages for Business and Facebook Messenger over a backend of existing Corezoid processes called with api_rpc
 - [corezoid-feedback](https://raw.githubusercontent.com/corezoid/corezoid-ai-plugin/main/plugins/corezoid/skills/corezoid-feedback/SKILL.md): Collects and submits bug reports, improvement requests, and quality signals about the Corezoid plugin to the Corezoid team
+- [corezoid-gen-bot](https://raw.githubusercontent.com/corezoid/corezoid-ai-plugin/main/plugins/corezoid/skills/corezoid-gen-bot/SKILL.md): Generates a multi-platform messenger bot (Telegram, Viber, Apple Messages for Business, Facebook Messenger) on Corezoid from a set of EXISTING Corezoid processes plus a description of the desired bot
 - [corezoid-git-context](https://raw.githubusercontent.com/corezoid/corezoid-ai-plugin/main/plugins/corezoid/skills/corezoid-git-context/SKILL.md): Analyzes the current session and updates _ext/docs/*.md in the Corezoid git mirror for the active stage
 - [corezoid-gitcall](https://raw.githubusercontent.com/corezoid/corezoid-ai-plugin/main/plugins/corezoid/skills/corezoid-gitcall/SKILL.md): Corezoid Git Call node specialist — run custom code (Python, Go, Java, PHP, JavaScript, Clojure, Lisp, Prolog, or a custom Dockerfile) as a step inside a process
 - [corezoid-init](https://raw.githubusercontent.com/corezoid/corezoid-ai-plugin/main/plugins/corezoid/skills/corezoid-init/SKILL.md): Corezoid environment setup specialist
+- [corezoid-lifecycle](https://raw.githubusercontent.com/corezoid/corezoid-ai-plugin/main/plugins/corezoid/skills/corezoid-lifecycle/SKILL.md): Safely pauses, resumes, or moves existing Corezoid processes and folders
 - [corezoid-logout](https://raw.githubusercontent.com/corezoid/corezoid-ai-plugin/main/plugins/corezoid/skills/corezoid-logout/SKILL.md): Log out of Corezoid: remove saved credentials for the current workspace from `~/.corezoid/config.json`
 - [corezoid-node-layout](https://raw.githubusercontent.com/corezoid/corezoid-ai-plugin/main/plugins/corezoid/skills/corezoid-node-layout/SKILL.md): Auto-arrange the nodes of a Corezoid process into a clean, readable layout — a vertical top-to-bottom business flow with error handling railed off to the right and no overlapping nodes
 - [corezoid-process-optimizer](https://raw.githubusercontent.com/corezoid/corezoid-ai-plugin/main/plugins/corezoid/skills/corezoid-process-optimizer/SKILL.md): Optimizes a Corezoid process JSON — reduces tact consumption by merging nodes, cleans data flow, fills missing node titles, and adds resilience patterns
@@ -32,23 +35,77 @@
 
 The plugin bundles a Go MCP server (`convctl`) with these tools:
 
-- **login**: Authenticate with Corezoid via OAuth2 browser flow
-- **pull-process**: Export a single process definition to a local .conv.json file
-- **pull-folder**: Recursively export all processes from a Corezoid folder
-- **push-process**: Validate and deploy a local process file to Corezoid
-- **lint-process**: Validate process structure — orphaned nodes, noop conditions, unused params
-- **run-task**: Execute a task on a deployed Corezoid process
-- **create-process**: Create a new empty process inside a Corezoid folder
-- **create-folder**: Create a new folder inside a Corezoid folder
-- **create-variable**: Create an environment variable in a Corezoid folder
-- **create-dashboard**: Create a dashboard for visualizing process node metrics
-- **add-chart**: Add a chart (column, pie, funnel, table) to a dashboard
-- **list-workspaces**: List Corezoid workspaces available to the authenticated user
-- **list-projects**: List projects inside a workspace
-- **list-stages**: List stages (environments) inside a project
-- **modify-task**: Modify an existing task's data
+- **add-chart**: Add a chart to a Corezoid dashboard. chart_type must be one of: column, pie, funnel, table
+- **add-to-group**: Add a user (or API key user) to a group
+- **create-alias**: Create a short alias for a Corezoid process
+- **create-api-key**: Create a new API key in the workspace
+- **create-communications-orchestrator**: Create a Communications Orchestrator: a multi-platform robot that handles messages from Telegram, Facebook Messenger, Viber and Apple Messages for Business
+- **create-dashboard**: Create a new Corezoid dashboard for visualizing process node metrics
+- **create-folder**: Create a new folder inside a parent Corezoid folder
+- **create-group**: Create a new user group in the current workspace
+- **create-process**: Create a new empty process (conv_type "process") inside a Corezoid folder
+- **create-project**: Create a new Corezoid project (with optional stages) inside a workspace
+- **create-snapshot**: Create a snapshot of the current server state of a process before making changes
+- **create-state-diagram**: Create a new empty state diagram (conv_type "state") inside a Corezoid folder
+- **create-variable**: Create an environment variable in the current Corezoid stage
+- **delete-api-key**: Delete an API key
+- **delete-folder**: Move a Corezoid folder to the recycle bin (Trash)
+- **delete-group**: Delete a user group
+- **delete-process**: Move a Corezoid process (or state diagram) to the recycle bin (Trash)
+- **delete-project**: Move a Corezoid project to the recycle bin (Trash)
+- **delete-snapshot**: Delete a snapshot by its obj_id
 - **delete-task**: Delete a task from a process
+- **delete-variable**: PERMANENTLY delete a Corezoid environment variable from the current stage
+- **deploy-stage**: Deploy (promote) one stage's processes onto another within a Corezoid project — e.g. develop → production
+- **find-principal**: Search users, groups or API keys in the workspace by substring
+- **get-chart**: Get a single chart with its series data
+- **get-dashboard**: Get a Corezoid dashboard with its charts and series
+- **get-node-stat**: Return time-series statistics (in/out counts) for a node over a time range. node_id is the ID shown in the Corezoid UI archive URL (/diagram/{node_id}/archive). ops[0]['data'] contains [{"date":"YYYY-MM-DD","in":N,"out":M}] for non-zero buckets. ops[0]['title'] is the node title
+- **get-snapshot**: Get the node list of a specific snapshot for diff comparison against the current process state
+- **git-pull-context**: Clone or pull the Corezoid git mirror for the current workspace into .git-context/. Requires git_url, api_login, and api_secret to be set in the current Folder in ~/.corezoid/config.json
+- **git-push-context**: Commit and push local _ext/ changes to the Corezoid git mirror
+- **invite-user**: Invite an external email to the workspace AND share a process/folder/stage/project with them in one call
+- **layout-process**: Auto-arrange a process's node coordinates into a clean, readable layout (waterfall for simple trees, layered+error-rail for meshes, aligned table/star grids for region bundles)
+- **lint-process**: Validate process structure
+- **list-api-keys**: List API keys visible in the current workspace
+- **list-folders**: List the immediate children of a Corezoid folder (subfolders + processes + state diagrams)
+- **list-group-objects**: List the processes (conv objects) currently shared with a group
+- **list-groups**: List user groups visible in the current workspace
+- **list-node-tasks**: Return tasks currently sitting in a specific node of a process
+- **list-projects**: Return the list of projects inside a Corezoid workspace (company), sorted by title
+- **list-shares**: List users, API keys and groups that currently have access to a Corezoid object
+- **list-snapshots**: List all snapshots for a process
+- **list-stages**: Return the list of stages (environments) inside a Corezoid project
+- **list-task-history**: Return the execution history (node path) for a task
+- **list-variables**: List all environment variables (env_var) in the current Corezoid stage: short_name, obj_id, data_type (raw/json), env_var_type (visible/secret), title, value and change time
+- **list-workspaces**: Return the list of Corezoid workspaces (companies) available to the authenticated user
+- **login**: Authenticate with Corezoid
 - **logout**: Remove saved Corezoid credentials from disk
+- **modify-api-key**: Update title and/or description of an existing API key
+- **modify-chart**: Modify an existing Corezoid chart
+- **modify-folder**: Rename a Corezoid folder and/or update its description
+- **modify-group**: Rename a user group and/or update its description
+- **modify-project**: Update a Corezoid project's title, short_name and/or description
+- **modify-task**: Modify an existing task's data
+- **modify-variable**: Modify a Corezoid environment variable in the current stage: change its value, description (display title), data_type (raw/json), and/or rename it (new_name)
+- **move-folder**: Move (reparent) one existing NORMAL Corezoid folder to another folder in the configured workspace
+- **move-process**: Move (reparent) one existing Corezoid process/state diagram to another folder in the configured workspace
+- **pause-process**: Pause one Corezoid process without changing or deploying its graph
+- **pull-folder**: Recursively export all processes from a Corezoid folder/stage to a local directory
+- **pull-process**: Export a single Corezoid process definitions to a JSON file
+- **push-process**: Validate and deploy a process file to Corezoid
+- **read-context-file**: Read a file from .git-context/ of the current workspace (git mirror local copy)
+- **remove-from-group**: Remove a user from a group
+- **resume-process**: Resume (activate) one paused/debug Corezoid process without changing or deploying its graph
+- **run-task**: Run a task on an already-deployed Corezoid process (without re-deploying) and wait for it to reach a final node
+- **send-feedback**: Submit user feedback about plugin behavior to Corezoid
+- **set-dashboard-layout**: Save chart positions on a dashboard grid
+- **set-stage-immutable**: Set a stage's immutable (read-only) flag
+- **share-object**: Grant or revoke access to a Corezoid object (process/folder/stage/project) for a user, API key, or group
+- **show-folder**: Show metadata for a single Corezoid folder: title, obj_type (0 normal, 2 project, 3 stage), parent folder ID and parent type
+- **show-project**: Show a Corezoid project's metadata and the stages available to the caller
+- **show-task**: Return the current state of a single task — data, obj_id (task_id), node_id and status — resolved by task_id and/or ref
+- **update-context-file**: Write or append to a file inside _ext/ of the git mirror local copy (.git-context/)
 
 ## Documentation
 

@@ -57,10 +57,30 @@
       ]
     },
     {
+      "name": "corezoid-edit-bot",
+      "description": "Iteratively edits an already-built messenger bot from corezoid-gen-bot — a Corezoid Communications Orchestrator serving Telegram, Viber, Apple Messages for Business and Facebook Messenger over a backend of existing Corezoid processes called with api_rpc. Runs a lean plan → confirm → apply → lint → push → smoke-test loop. `plan` writes `.corezoid-gen-bot/CHANGE.md` (scope + processes + tasks + the smoke test that proves it) and stops; `execute` reads CHANGE.md, applies it, lints and pushes each touched process, updates Localization/Attachments tasks with deep_merge, and smoke-tests every affected command through the Router and through Send Message; `deploy` promotes one stage onto another. Trigger on phrases like \"измени бота\", \"поправь бота\", \"добавь команду\", \"убери команду\", \"переименуй команду\", \"подключи ещё процесс\", \"поменяй текст бота\", \"поменяй клавиатуру\", \"добавь язык боту\", \"добавь шаг в диалог\", \"бот отвечает пустым сообщением\", \"бот отвечает дважды\", \"почему бот не отвечает\", \"edit bot\", \"modify bot\", \"add command to bot\", \"wire another process into the bot\", \"change bot copy\", \"fix the bot\", \"задеплой бота\", \"promote stage\", or when the user references PLAN.md/CHANGE.md for a bot and asks for a change. Assumes CWD is the Corezoid workspace built by corezoid-gen-bot (contains `.corezoid-gen-bot/PLAN.md`, a `*.stage.json` marker and the pulled orchestrator folder). For a Smart Form web app over the same processes use `simulator-app-generator`.",
+      "files": [
+        "https://raw.githubusercontent.com/corezoid/corezoid-ai-plugin/main/plugins/corezoid/skills/corezoid-edit-bot/SKILL.md",
+        "https://raw.githubusercontent.com/corezoid/corezoid-ai-plugin/main/plugins/corezoid/skills/corezoid-edit-bot/references/change_kinds.md",
+        "https://raw.githubusercontent.com/corezoid/corezoid-ai-plugin/main/plugins/corezoid/skills/corezoid-edit-bot/references/invariants.md",
+        "https://raw.githubusercontent.com/corezoid/corezoid-ai-plugin/main/plugins/corezoid/skills/corezoid-edit-bot/references/repair_loop.md"
+      ]
+    },
+    {
       "name": "corezoid-feedback",
       "description": "Collects and submits bug reports, improvement requests, and quality signals about the Corezoid plugin to the Corezoid team. Activate in two cases:",
       "files": [
         "https://raw.githubusercontent.com/corezoid/corezoid-ai-plugin/main/plugins/corezoid/skills/corezoid-feedback/SKILL.md"
+      ]
+    },
+    {
+      "name": "corezoid-gen-bot",
+      "description": "Generates a multi-platform messenger bot (Telegram, Viber, Apple Messages for Business, Facebook Messenger) on Corezoid from a set of EXISTING Corezoid processes plus a description of the desired bot. Use when the user has a working Corezoid backend (a folder id, a list of process ids, or already-pulled .conv.json files) and wants it reachable from a chat. Runs in phases via subcommands — `plan` pulls every process, derives its real input/output contract from its `api_rpc_reply` nodes, classifies side effects, designs a command map that uses ALL of the processes, and writes `.corezoid-gen-bot/PLAN.md`; `execute` creates a Communications Orchestrator from the Corezoid template via `create-communications-orchestrator`, pulls the generated folder, generates one bot process per command wired to the domain processes with `api_rpc`, seeds Localization and Attachments, pushes, lints and smoke-tests every command; `refresh` re-derives the contracts of an existing plan. Trigger on phrases like \"сделай бота из этих процессов\", \"бот на базе процессов корезоид\", \"сгенерируй бота\", \"telegram bot from corezoid processes\", \"bot from process ids\", \"corezoid gen bot\", \"viber bot\", \"apple messages for business bot\", \"facebook messenger bot\", \"чат-бот поверх корезоид\", \"оберни процессы в бота\", \"создай оркестратор коммуникаций\", \"communications orchestrator\", \"згенеруй бота з цих процесів\". Also trigger on subcommand phrases \"execute plan\", \"сгенерируй по плану\", \"погнали\", \"обнови план\", \"re-derive\", \"refresh plan\" when a `.corezoid-gen-bot/` directory is present. For a Smart Form web app over the same processes use `simulator-app-generator`; to change a bot that already exists use `edit-bot`.",
+      "files": [
+        "https://raw.githubusercontent.com/corezoid/corezoid-ai-plugin/main/plugins/corezoid/skills/corezoid-gen-bot/SKILL.md",
+        "https://raw.githubusercontent.com/corezoid/corezoid-ai-plugin/main/plugins/corezoid/skills/corezoid-gen-bot/references/command_patterns.md",
+        "https://raw.githubusercontent.com/corezoid/corezoid-ai-plugin/main/plugins/corezoid/skills/corezoid-gen-bot/references/contract_extraction.md",
+        "https://raw.githubusercontent.com/corezoid/corezoid-ai-plugin/main/plugins/corezoid/skills/corezoid-gen-bot/references/template_map.md"
       ]
     },
     {
@@ -82,6 +102,13 @@
       "description": "Corezoid environment setup specialist. Use when the user wants to connect to Corezoid, set up credentials, authenticate, pull a project, configure the environment, or start working with a Corezoid project for the first time. Activate when the user says \"init\", \"setup\", \"connect to corezoid\", \"login\", \"pull workspace\", \"configure environment\", or \"get started\".",
       "files": [
         "https://raw.githubusercontent.com/corezoid/corezoid-ai-plugin/main/plugins/corezoid/skills/corezoid-init/SKILL.md"
+      ]
+    },
+    {
+      "name": "corezoid-lifecycle",
+      "description": "Safely pauses, resumes, or moves existing Corezoid processes and folders. Use only when the user explicitly asks to pause/unpause/resume/activate a process or to move/relocate/reorganize a specific process or folder. Trigger on \"pause process\", \"resume process\", \"move process\", \"move folder\", \"поставь процесс на паузу\", \"сними с паузы\", \"возобнови процесс\", \"перемести процесс\", \"перемести папку\", \"перенеси процесс\", or \"перенеси папку\". Do not activate merely because a review, edit, cleanup, or refactor is in progress; those are not authorization to mutate lifecycle or location.",
+      "files": [
+        "https://raw.githubusercontent.com/corezoid/corezoid-ai-plugin/main/plugins/corezoid/skills/corezoid-lifecycle/SKILL.md"
       ]
     },
     {
