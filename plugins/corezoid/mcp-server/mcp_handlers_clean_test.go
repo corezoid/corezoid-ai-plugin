@@ -52,7 +52,7 @@ func TestCleanDeleteAndCascade_RedirectsBothToAndErrNodeID(t *testing.T) {
 	toRemove := map[string]bool{"B": true, "C": true}
 
 	var dropped []string
-	result := cleanDeleteAndCascade(nodes, toRemove, origNmap, &dropped)
+	result := cleanDeleteAndCascade(nodes, toRemove, origNmap, &dropped, nil)
 
 	if cleanFindNode(result, "B") != nil || cleanFindNode(result, "C") != nil {
 		t.Fatalf("expected B and C to be removed, got: %+v", result)
@@ -90,7 +90,7 @@ func TestCleanDeleteAndCascade_RedirectsErrNodeIDToGoSuccessor(t *testing.T) {
 	toRemove := map[string]bool{"C": true}
 
 	var dropped []string
-	result := cleanDeleteAndCascade(nodes, toRemove, origNmap, &dropped)
+	result := cleanDeleteAndCascade(nodes, toRemove, origNmap, &dropped, nil)
 
 	a := cleanFindNode(result, "A")
 	if a == nil {
@@ -127,7 +127,7 @@ func TestCleanRemovePassThrough_DetectsConditionalAfterCascadeMutation(t *testin
 
 	toRemove := map[string]bool{"Y": true}
 	var dropped []string
-	nodes = cleanDeleteAndCascade(nodes, toRemove, origNmap, &dropped)
+	nodes = cleanDeleteAndCascade(nodes, toRemove, origNmap, &dropped, nil)
 
 	x := cleanFindNode(nodes, "X")
 	if x == nil {
@@ -153,6 +153,96 @@ func TestCleanRemovePassThrough_DetectsConditionalAfterCascadeMutation(t *testin
 	}
 }
 
+// ---- cleanRemovePassThrough: chained pass-through nodes in one batch -------
+// (regression for redirecting a caller to another node that is itself
+// removed in the same pass, producing a dangling reference).
+
+func TestCleanRemovePassThrough_ChainedPassThroughResolvesTransitively(t *testing.T) {
+	// W --ok--> X --go--> Y --go--> Z (final). Both X and Y are pass-through
+	// survivors of an earlier step: each originally had a go_if_const branch
+	// (to a now-removed node) plus the surviving "go". Both qualify as
+	// pass-through in the very same pass of cleanRemovePassThrough, so
+	// redirecting W past X must not stop at Y — Y is removed in this same
+	// batch too — it must resolve all the way to the live node Z.
+	origX := cleanNode("X", 0, []interface{}{
+		cleanLogic("go_if_const", "DEAD1", ""),
+		cleanLogic("go", "Y", ""),
+	}, nil)
+	origY := cleanNode("Y", 0, []interface{}{
+		cleanLogic("go_if_const", "DEAD2", ""),
+		cleanLogic("go", "Z", ""),
+	}, nil)
+	origNodes := []map[string]interface{}{origX, origY, cleanNode("Z", 2, nil, nil)}
+	origNmap := cleanSnapshotNodes(origNodes)
+
+	// Current state: DEAD1/DEAD2 already removed by an earlier step, leaving
+	// X and Y each with a single unconditional "go".
+	nodeW := cleanNode("W", 3, []interface{}{cleanLogic("ok", "X", "")}, nil)
+	nodeX := cleanNode("X", 0, []interface{}{cleanLogic("go", "Y", "")}, nil)
+	nodeY := cleanNode("Y", 0, []interface{}{cleanLogic("go", "Z", "")}, nil)
+	nodeZ := cleanNode("Z", 2, nil, nil)
+	nodes := []map[string]interface{}{nodeW, nodeX, nodeY, nodeZ}
+
+	nodes, ptCount := cleanRemovePassThrough(nodes, origNmap)
+	if ptCount != 2 {
+		t.Fatalf("expected 2 pass-through removals (X and Y), got %d", ptCount)
+	}
+	if cleanFindNode(nodes, "X") != nil || cleanFindNode(nodes, "Y") != nil {
+		t.Fatalf("expected X and Y to be removed, got: %+v", nodes)
+	}
+	w := cleanFindNode(nodes, "W")
+	if w == nil {
+		t.Fatal("node W was unexpectedly removed")
+	}
+	logic := cleanNodeLogics(w)[0].(map[string]interface{})
+	if got, _ := logic["to_node_id"].(string); got != "Z" {
+		t.Errorf("W's logic: got to_node_id=%q, want %q — redirect must resolve past both removed pass-through nodes to the live target", got, "Z")
+	}
+	if errs := cleanValidate(nodes); len(errs) != 0 {
+		t.Errorf("expected no dangling references after chained pass-through removal, got: %v", errs)
+	}
+}
+
+// ---- cleanDeleteAndCascade: dropped to_node_id/semaphor must be reported --
+// just as loudly as a dropped err_node_id (regression for a silent branch
+// removal that never showed up in the tool's report).
+
+func TestCleanDeleteAndCascade_ReportsDroppedToNodeIDAndSemaphor(t *testing.T) {
+	// A has two logics: "err" to F (a live final, so A survives the cascade)
+	// and "ok" to B, which is removed with no go-successor — that second
+	// logic is dropped entirely. Unlike a dropped err_node_id (just a
+	// reference), this removes a whole outgoing branch, so it must be
+	// reported too.
+	nodeA := cleanNode("A", 3, []interface{}{
+		cleanLogic("err", "F", ""),
+		cleanLogic("ok", "B", ""),
+	}, nil)
+	nodeB := cleanNode("B", 2, nil, nil) // final, no way out
+	nodeF := cleanNode("F", 2, nil, nil) // final, keeps A alive
+
+	// D's semaphor points at E, also removed with no go-successor.
+	nodeD := cleanNode("D", 0, nil, []interface{}{cleanSem("E")})
+	nodeE := cleanNode("E", 2, nil, nil)
+
+	nodes := []map[string]interface{}{nodeA, nodeB, nodeF, nodeD, nodeE}
+	origNmap := cleanSnapshotNodes(nodes)
+	toRemove := map[string]bool{"B": true, "E": true}
+
+	var droppedErrs, droppedTargets []string
+	result := cleanDeleteAndCascade(nodes, toRemove, origNmap, &droppedErrs, &droppedTargets)
+
+	a := cleanFindNode(result, "A")
+	if a == nil {
+		t.Fatal("node A was unexpectedly removed")
+	}
+	if logics := cleanNodeLogics(a); len(logics) != 1 {
+		t.Errorf("expected A's logic to B to be dropped entirely (keeping only err->F), got %v", logics)
+	}
+	if len(droppedTargets) != 2 {
+		t.Fatalf("expected 2 dropped-target warnings (A's logic + D's semaphor), got %d: %v", len(droppedTargets), droppedTargets)
+	}
+}
+
 // ---- start-node protection --------------------------------------------------
 // (regression for the empty/start-less scheme being silently written out).
 
@@ -169,7 +259,7 @@ func TestCleanDeleteAndCascade_NeverCascadesStartNode(t *testing.T) {
 	toRemove := map[string]bool{"R": true}
 
 	var dropped []string
-	result := cleanDeleteAndCascade(nodes, toRemove, origNmap, &dropped)
+	result := cleanDeleteAndCascade(nodes, toRemove, origNmap, &dropped, nil)
 
 	s := cleanFindNode(result, "S")
 	if s == nil {

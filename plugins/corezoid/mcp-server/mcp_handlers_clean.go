@@ -178,7 +178,8 @@ func handleCleanProcess(ctx context.Context, args map[string]interface{}) (strin
 
 	// ── Step 4: Delete + cascade with redirect ────────────────────────────────
 	var droppedErrHandlers []string
-	nodes = cleanDeleteAndCascade(nodes, toRemove, origNmap, &droppedErrHandlers)
+	var droppedTargets []string
+	nodes = cleanDeleteAndCascade(nodes, toRemove, origNmap, &droppedErrHandlers, &droppedTargets)
 	cascadeCount := len(toRemove) - initialRemoveCount
 
 	// ── Step 5: Pass-through removal ──────────────────────────────────────────
@@ -286,6 +287,16 @@ func handleCleanProcess(ctx context.Context, args map[string]interface{}) (strin
 		for i, w := range droppedErrHandlers {
 			if i >= 10 {
 				report += fmt.Sprintf("\n  … and %d more", len(droppedErrHandlers)-10)
+				break
+			}
+			report += "\n  - " + w
+		}
+	}
+	if len(droppedTargets) > 0 {
+		report += fmt.Sprintf("\n\nWarning: %d logic/semaphor entry(ies) were dropped entirely because their to_node_id target was removed and had no unambiguous go-successor. This removes a whole outgoing branch, not just a reference — review manually:", len(droppedTargets))
+		for i, w := range droppedTargets {
+			if i >= 10 {
+				report += fmt.Sprintf("\n  … and %d more", len(droppedTargets)-10)
 				break
 			}
 			report += "\n  - " + w
@@ -600,11 +611,15 @@ func cleanProtectErrChildren(
 // cascades empty condition nodes into toRemove until stable.
 // droppedErrs is populated with a description each time an err_node_id is
 // dropped without a redirect (the handler had no unambiguous go-successor).
+// droppedTargets is populated the same way for a dropped to_node_id — which,
+// unlike err_node_id, takes the whole logic (or semaphor) down with it, so
+// it's worth surfacing just as loudly.
 func cleanDeleteAndCascade(
 	nodes []map[string]interface{},
 	toRemove map[string]bool,
 	origNmap map[string]map[string]interface{},
 	droppedErrs *[]string,
+	droppedTargets *[]string,
 ) []map[string]interface{} {
 	changed := true
 	for changed {
@@ -646,6 +661,11 @@ func cleanDeleteAndCascade(
 						logic["to_node_id"] = successor
 					} else {
 						keepLogic = false
+						if droppedTargets != nil {
+							ltype, _ := logic["type"].(string)
+							*droppedTargets = append(*droppedTargets,
+								fmt.Sprintf("node %s logic (type=%s): to_node_id=%s removed (no go-successor) — entire logic dropped", nodeID, ltype, toID))
+						}
 					}
 				}
 				if !keepLogic {
@@ -681,6 +701,9 @@ func cleanDeleteAndCascade(
 						sem = cleanCloneMap(sem)
 						sem["to_node_id"] = successor
 						newSems = append(newSems, sem)
+					} else if droppedTargets != nil {
+						*droppedTargets = append(*droppedTargets,
+							fmt.Sprintf("node %s semaphor: to_node_id=%s removed (no go-successor) — semaphor dropped", nodeID, toID))
 					}
 					continue
 				}
@@ -810,6 +833,27 @@ func cleanRemovePassThrough(
 		}
 		total += len(pts)
 
+		// resolveTarget follows the redirect chain past any other pass-through
+		// node collected in this same batch. Two pass-through nodes detected
+		// in one pass (e.g. X -> Y -> Z, both X and Y single-"go" survivors of
+		// step 4) both land in ptSet/redirect together, so a caller pointed at
+		// X must not be redirected only to Y — Y is being removed in this same
+		// pass too. Without this, callers end up pointing at a node that no
+		// longer exists (caught only later by cleanValidate, after the file
+		// has already been written).
+		resolveTarget := func(id string) string {
+			target := redirect[id]
+			seen := map[string]bool{id: true}
+			for ptSet[target] {
+				if seen[target] {
+					break // cycle guard — leave as-is, cleanValidate will flag it
+				}
+				seen[target] = true
+				target = redirect[target]
+			}
+			return target
+		}
+
 		var kept []map[string]interface{}
 		for _, node := range nodes {
 			id, _ := node["id"].(string)
@@ -832,10 +876,10 @@ func cleanRemovePassThrough(
 				}
 				logic = cleanCloneMap(logic)
 				if tid, _ := logic["to_node_id"].(string); ptSet[tid] {
-					logic["to_node_id"] = redirect[tid]
+					logic["to_node_id"] = resolveTarget(tid)
 				}
 				if eid, _ := logic["err_node_id"].(string); ptSet[eid] {
-					logic["err_node_id"] = redirect[eid]
+					logic["err_node_id"] = resolveTarget(eid)
 				}
 				newLogics = append(newLogics, logic)
 			}
@@ -848,7 +892,7 @@ func cleanRemovePassThrough(
 				}
 				sem = cleanCloneMap(sem)
 				if tid, _ := sem["to_node_id"].(string); ptSet[tid] {
-					sem["to_node_id"] = redirect[tid]
+					sem["to_node_id"] = resolveTarget(tid)
 				}
 				newSems = append(newSems, sem)
 			}
