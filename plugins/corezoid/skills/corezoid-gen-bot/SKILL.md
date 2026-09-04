@@ -6,9 +6,10 @@ description: Generates a multi-platform messenger bot (Telegram, Viber, Apple Me
 # corezoid-gen-bot
 
 Turns **a set of existing Corezoid processes + a description of the bot** into a
-**deployed, smoke-tested messenger bot** serving all four channels at once —
-Telegram, Viber, Apple Messages for Business (`abc`), Facebook Messenger
-(`fbmessenger`).
+**deployed, smoke-tested messenger bot**. One bot serves every channel the user
+has a token for — Telegram, Viber, Apple Messages for Business (`abc`), Facebook
+Messenger (`fbmessenger`) — and one channel is enough; the command processes are
+the same whichever channels are wired.
 
 The skill owns three things nothing else does:
 
@@ -102,7 +103,7 @@ summary. A pulled mirror is a git-tracked artifact. In PLAN.md record only
 | `/corezoid-gen-bot plan <ids or folder>` | **plan** | Phases 1–3 — pull, extract contracts, design, write PLAN.md, stop |
 | `/corezoid-gen-bot execute` (or "погнали", "go") | **execute** | Phases 4–8 — build, generate, seed, verify, report |
 | `/corezoid-gen-bot refresh` | **refresh** | Phase 2 only — re-pull, re-derive, patch PLAN.md, print diff, stop |
-| `/corezoid-gen-bot <ids or folder>` no subcommand | **full** | plan → summary → **pause** → execute after the user confirms |
+| `/corezoid-gen-bot <ids or folder>` no subcommand | **full** | plan → summary → **pause** → execute only after the user confirms; never automatically |
 
 `.corezoid-gen-bot/PLAN.md` is the source of truth between phases, with
 `.corezoid-gen-bot/bot-contract.json` as the machine-readable manifest beside it.
@@ -393,9 +394,19 @@ Print **exactly** this block (≤ 16 lines) and stop:
 Что-то поправить или /corezoid-gen-bot execute?
 ```
 
-### Approval gate — when to auto-proceed
+### Approval gate — Phase 4 always waits for the user
 
-Only in **full** mode, and only if all of these hold:
+**There is no auto-proceed.** In every mode, print the summary and stop; enter
+Phase 4 only after the user answers `execute` / `погнали` / `go`. Phase 4 has no
+undo — it mints ~150 processes, and a second build on a channel token that
+already serves a bot takes that bot's webhook over — so the one message it costs
+to ask is not a trade worth making. `/corezoid-gen-bot <ids>` with no subcommand
+authorises *planning* the bot, not building it: the user has not seen the command
+map at the point they typed it.
+
+The checklist below is not an auto-proceed condition. It is what has to hold
+before the plan is fit to *offer* for execution at all — if any item fails, say
+which one and what it means, and fix the plan first:
 
 - `Known unknowns / risks` is empty.
 - Every handed-in process appears in the coverage table.
@@ -403,9 +414,6 @@ Only in **full** mode, and only if all of these hold:
   renders.
 - No command reaches a `likely`/`unknown` side effect without a confirm step.
 - `orchestrator.folder_id` is null.
-
-Anything else → stop after the summary. **Never auto-proceed in `plan` mode.**
-Phase 4 is irreversible; when in doubt, stop.
 
 ## Phase 3a — Refining PLAN.md on user request
 
