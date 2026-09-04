@@ -26,14 +26,20 @@ copy those processes reference.
 
 Read these before generating anything:
 
+Load them with the `Read` tool. `${CLAUDE_PLUGIN_ROOT}` resolves to the
+installed plugin root; a bare `references/…` does **not** — this skill runs with
+the Corezoid workspace as the working directory, where no such directory exists.
+Every short `references/<file>` named later in this document lives in
+`${CLAUDE_PLUGIN_ROOT}/skills/corezoid-gen-bot/references/`.
+
 | Document | What it settles |
 |---|---|
-| `references/contract_extraction.md` | how to read a handed-in process; the manifest format |
-| `references/command_patterns.md` | contract shape → command shape; the coverage rule |
-| `references/template_map.md` | the orchestrator's contracts, and how a command calls a domain process |
-| `references/rpc_call.nodes.json` | the `api_rpc` / `api_copy` / state-read fragments |
-| `references/bot_reply.skeleton.json`, `bot_dialog.skeleton.json` | the two command shapes |
-| `references/localization.seed.json`, `attachments.seed.json` | the runtime copy and keyboard documents |
+| `${CLAUDE_PLUGIN_ROOT}/skills/corezoid-gen-bot/references/contract_extraction.md` | how to read a handed-in process; the manifest format |
+| `${CLAUDE_PLUGIN_ROOT}/skills/corezoid-gen-bot/references/command_patterns.md` | contract shape → command shape; the coverage rule |
+| `${CLAUDE_PLUGIN_ROOT}/skills/corezoid-gen-bot/references/template_map.md` | the orchestrator's contracts, and how a command calls a domain process |
+| `${CLAUDE_PLUGIN_ROOT}/skills/corezoid-gen-bot/references/rpc_call.nodes.json` | the `api_rpc` / `api_copy` / state-read fragments |
+| `${CLAUDE_PLUGIN_ROOT}/skills/corezoid-gen-bot/references/bot_reply.skeleton.json`, `bot_dialog.skeleton.json` | the two command shapes |
+| `${CLAUDE_PLUGIN_ROOT}/skills/corezoid-gen-bot/references/localization.seed.json`, `attachments.seed.json` | the runtime copy and keyboard documents |
 
 ## 0. Preflight
 
@@ -173,9 +179,9 @@ progress, and it is the one case where you must ask before re-pulling it.
 Corezoid.
 
 If the user gave a **folder** instead of ids, check for that folder locally
-first (`<folder_id>_*` under the stage root). If it is absent, call `pull-folder`
-**with no arguments**: it resolves the stage from the `<id>_<name>.stage.json`
-marker and mirrors the whole stage into the **stage root** (not the current
+first (`<folder_id>_*` under the stage root). If it is absent, call
+`pull-folder` **with the stage id** (`folder_id` is required over MCP — see
+§4.2): it mirrors the whole stage into the **stage root** (not the current
 directory), so the processes land at their real paths. Then locate the folder by
 its `<folder_id>_` name prefix. Passing that folder's id to `pull-folder`
 instead unzips its contents over the stage root and loses the folder boundary —
@@ -492,13 +498,25 @@ PLAN.md's `orchestrator:` block, then continue.
 
 ### 4.2 Pull the whole stage, then find the orchestrator folder in it
 
-**Call `pull-folder` with no arguments.** The MCP server resolves the stage from
-the on-disk `<id>_<name>.stage.json` marker; you do not need to know or pass a
-stage id.
+**Call `pull-folder` with the STAGE id.**
 
 ```
-pull-folder            # no arguments
+pull-folder  folder_id: {obj_id from <stage_id>_<name>.stage.json}   # the STAGE id
 ```
+
+`folder_id` is a **required** argument of the MCP tool. Zero-argument
+`pull-folder` resolves the stage on its own only in the server's CLI mode; over
+MCP the call is rejected with `missing required argument: folder_id` before any
+stage resolution happens, so omitting it stops the build right after the
+orchestrator was created — the one point in this skill where stopping costs
+~150 orphaned processes.
+
+Where the id comes from: the `<stage_id>_<name>.stage.json` marker at the
+workspace root if it exists. A workspace that has been logged into but never
+pulled has **no marker yet** (see Phase 0) — there the stage id is the
+`stage_id` recorded for this directory in `~/.corezoid/config.json`, which is
+also the value Phase 4.1 passed to `create-communications-orchestrator`. Reuse
+that one; do not re-derive it with `list-stages` and risk a different stage.
 
 > **Do NOT pass the orchestrator's `folder_id` here.** `pull-folder` unzips a
 > server-produced archive into the **stage root** (the `RootPath` registered for
@@ -509,12 +527,9 @@ pull-folder            # no arguments
 > contents directly over the stage root, and the
 > `<folder_id>_Communications_Orchestrator/` directory the rest of this phase
 > looks for never appears. That is the failure mode this instruction exists to
-> prevent.
->
-> **Current builds declare `folder_id` as required**, so the no-argument form is
-> often not available at all: pass the **stage id from the marker file**
-> (`<stage_id>_<name>.stage.json` → `obj_id`) — never the orchestrator folder id.
-> The rule that matters is *which* id, not whether you pass one.
+> prevent — and it is the reason the argument is easy to get wrong in the right
+> direction: the id you must pass is the stage's, and the orchestrator folder id
+> you have in hand from Phase 4.1 is the one id that must not go here.
 
 After the pull, the orchestrator is a directory at the stage root whose name
 prefix is exactly the `folder_id` recorded in §4.1 — the trailing number of the
@@ -636,6 +651,23 @@ Per entry in PLAN.md `Commands`:
    `src` is also a generator-time substitution — Corezoid does **not**
    interpolate `{{...}}` in Code nodes. Grep for `{{[A-Z]` before pushing: a
    leftover placeholder deploys happily and fails at runtime.
+
+   **Two of them are numeric — drop the surrounding quotes.** The skeletons
+   ship `"parent_id": "{{BOTS_FOLDER_ID}}"` and
+   `"user_id": "{{TEMPLATE_USER_ID}}"` quoted only so the template files stay
+   parseable JSON. The schema declares the process's `parent_id` as
+   `null|integer` and `api_copy`'s `user_id` as `integer`, so a plain textual
+   substitution leaves a string and `push-process` fails schema validation on
+   `parent_id` and on **every** `api_copy` node:
+
+   ```
+   - at '/parent_id': got string, want null or integer
+   - at '/scheme/nodes/3/condition/logics/0/user_id': got string, want integer
+   ```
+
+   `force` does not bypass schema validation, so this has to be right before
+   the first push. Every other placeholder above substitutes as a string:
+   `conv_id` accepts both forms, and `text_id`/`attachment_id` are strings.
 
 7. **Assign unique node ids** — 24 hex characters, unique within the process.
    The skeletons ship readable placeholders (`aa0000…01`) which are valid but
@@ -975,8 +1007,10 @@ Then report, in one compact block:
   age instead of implying freshness.
 - **Never rename a pulled `<ID>_<Title>.conv.json`.** `push-process` and
   `lint-process` recover the process id from the filename.
-- **`pull-folder` takes no arguments, writes to the stage root, and pulls the
-  whole stage.** Never pass the orchestrator's `folder_id` to it: a subfolder id
+- **`pull-folder` takes the STAGE id, writes to the stage root, and pulls the
+  whole stage.** `folder_id` is required over MCP — the zero-argument form works
+  only in the server's CLI mode. Never pass the orchestrator's `folder_id` to
+  it: a subfolder id
   fetches only that folder and still unzips it at the stage root, so the
   `<folder_id>_Communications_Orchestrator/` directory never appears and every
   id read afterwards is read out of the wrong tree. After the pull, find the

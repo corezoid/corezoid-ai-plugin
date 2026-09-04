@@ -22,14 +22,22 @@ Read these before touching anything:
 
 | Document | What it settles |
 |---|---|
-| `references/change_kinds.md` | what each request kind may touch, its verification, and what this skill deliberately cannot do |
-| `references/invariants.md` | the send-side and dispatch invariants every change must preserve — all of them silent when broken |
-| `references/repair_loop.md` | symptom → cause → the layer at fault, and when to stop looping and report |
-| `corezoid-gen-bot/references/template_map.md` | the orchestrator's own contracts (Router, Send Message, Localization, Attachments) |
-| `corezoid-gen-bot/references/contract_extraction.md` | how to read a domain process — needed for `wire-process` and `process-remap` |
-| `corezoid-gen-bot/references/rpc_call.nodes.json` | the `api_rpc` / `api_copy` / state-read fragments |
-| `corezoid-gen-bot/references/bot_reply.skeleton.json`, `bot_dialog.skeleton.json` | the two command shapes, for a new command |
-| `corezoid-gen-bot/references/attachments.seed.json`, `localization.seed.json` | per-channel attachment shapes, per-page caps, interpolation rules |
+| `${CLAUDE_PLUGIN_ROOT}/skills/corezoid-edit-bot/references/change_kinds.md` | what each request kind may touch, its verification, and what this skill deliberately cannot do |
+| `${CLAUDE_PLUGIN_ROOT}/skills/corezoid-edit-bot/references/invariants.md` | the send-side and dispatch invariants every change must preserve — all of them silent when broken |
+| `${CLAUDE_PLUGIN_ROOT}/skills/corezoid-edit-bot/references/repair_loop.md` | symptom → cause → the layer at fault, and when to stop looping and report |
+| `${CLAUDE_PLUGIN_ROOT}/skills/corezoid-gen-bot/references/template_map.md` | the orchestrator's own contracts (Router, Send Message, Localization, Attachments) |
+| `${CLAUDE_PLUGIN_ROOT}/skills/corezoid-gen-bot/references/contract_extraction.md` | how to read a domain process — needed for `wire-process` and `process-remap` |
+| `${CLAUDE_PLUGIN_ROOT}/skills/corezoid-gen-bot/references/rpc_call.nodes.json` | the `api_rpc` / `api_copy` / state-read fragments |
+| `${CLAUDE_PLUGIN_ROOT}/skills/corezoid-gen-bot/references/bot_reply.skeleton.json`, `bot_dialog.skeleton.json` | the two command shapes, for a new command |
+| `${CLAUDE_PLUGIN_ROOT}/skills/corezoid-gen-bot/references/attachments.seed.json`, `localization.seed.json` | per-channel attachment shapes, per-page caps, interpolation rules |
+
+Load them with the `Read` tool. `${CLAUDE_PLUGIN_ROOT}` resolves to the
+installed plugin root; a bare `references/…` does **not** — this skill runs with
+the Corezoid workspace as the working directory. Every short
+`references/<file>` named later in this document is under
+`${CLAUDE_PLUGIN_ROOT}/skills/corezoid-edit-bot/references/`, and every
+`corezoid-gen-bot/references/<file>` under
+`${CLAUDE_PLUGIN_ROOT}/skills/corezoid-gen-bot/references/`.
 
 ## When to use
 
@@ -387,7 +395,11 @@ the create/delete lists.
   Router), assign fresh 24-hex node ids unique within the process, then
   `layout-process`. A `{{UPPER_CASE}}` inside an `api_code` `src` is a
   generator-time substitution too: Corezoid does not interpolate `{{...}}` in
-  Code nodes.
+  Code nodes. `{{BOTS_FOLDER_ID}}` and `{{TEMPLATE_USER_ID}}` are quoted in the
+  skeletons only to keep those files parseable JSON — **substitute both as bare
+  integers and drop the quotes**, or `push-process` fails schema validation
+  (`'/parent_id': got string, want null or integer`, and the same for `user_id`
+  on every `api_copy`), which `force` does not bypass.
 - **Edited command** — reference nodes **by title**, never by a remembered id:
   `push-process` regenerates ids and rewrites the file, so any id from before
   the last push is stale. Re-read the file after every push.
