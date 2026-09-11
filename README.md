@@ -292,6 +292,7 @@ Most tools identify a process with `process_path` (a local `.conv.json` file, as
 | `pull-folder`       | Export an entire folder/stage to local files       |
 | `pull-process`      | Export a single process to a `.conv.json` file     |
 | `push-process`      | Validate and deploy a `.conv.json` to Corezoid. Blocks when the graph is structurally invalid, when the server changed since pull (`force` is the lint override only — the concurrency gate has its own `overwrite_server_change`), when no rollback point could be taken, or when the file has no pull baseline but the process is already deployed. Every waived gate is reported in the push result |
+| `clean-process`     | Remove inactive nodes, save a reviewable proposal as `<ID>_<title>.cleaned.json` |
 | `layout-process`    | Auto-arrange node coordinates (waterfall / layered / table-star regions); local, changes only x/y and collapse flags |
 | `lint-process`      | Validate process structure locally (no API call)   |
 | `run-task`          | Send a task to a deployed process, by `process_path` or `process_id` (no local file needed) |

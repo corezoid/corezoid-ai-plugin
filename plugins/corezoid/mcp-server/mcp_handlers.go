@@ -30,6 +30,7 @@ var toolHandlers = map[string]toolHandler{
 	"modify-variable":      handleModifyVariable,
 	"delete-variable":      handleDeleteVariable,
 	"push-process":         handlePushProcess,
+	"clean-process":        handleCleanProcess,
 	"layout-process":       handleLayoutProcess,
 	"lint-process":         handleLintProcess,
 	"run-task":             handleRunTask,

@@ -1,0 +1,1160 @@
+package main
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"os"
+	"path/filepath"
+	"sync"
+	"time"
+)
+
+// handleCleanProcess removes inactive nodes from a Corezoid process and saves
+// the result as <title>_cleaned.conv.json next to the original.
+//
+// Algorithm (mirrors the clean-corezoid-process skill):
+//  1. Export the process and collect per-node time-series statistics.
+//  2. Apply three exclusion criteria to protect structurally important inactive nodes.
+//  3. Delete inactive nodes, redirect dangling references to their go-successors,
+//     then cascade-remove newly empty condition nodes.
+//  4. Remove pass-through nodes (obj_type=0 with a single unconditional go that
+//     originally had conditional branches).
+//  5. Remove delay→final nodes (obj_type=0, no logics, all semaphor targets are finals).
+//  6. Validate the resulting scheme and save.
+func handleCleanProcess(ctx context.Context, args map[string]interface{}) (string, bool) {
+	processID, err := intArg(args, "process_id")
+	if err != nil {
+		return "Error: " + err.Error(), true
+	}
+
+	days := 90
+	if d, err2 := intArg(args, "days"); err2 == nil && d > 0 {
+		days = d
+	}
+	overwrite := false
+	if ow, ok := args["overwrite"].(bool); ok {
+		overwrite = ow
+	}
+
+	v := NewValidator(ctx, processID)
+
+	// ── Step 1: Export process ────────────────────────────────────────────────
+	exported, err := v.ExportProcess()
+	if err != nil {
+		return fmt.Sprintf("Error fetching process: %v", err), true
+	}
+	var procMap map[string]interface{}
+	if arr, ok := exported.([]interface{}); ok && len(arr) > 0 {
+		procMap, _ = arr[0].(map[string]interface{})
+	} else {
+		procMap, _ = exported.(map[string]interface{})
+	}
+	if procMap == nil {
+		return "Error: could not extract process data", true
+	}
+	scheme, _ := procMap["scheme"].(map[string]interface{})
+	if scheme == nil {
+		return "Error: process has no scheme", true
+	}
+	rawNodes, _ := scheme["nodes"].([]interface{})
+
+	nodes := make([]map[string]interface{}, 0, len(rawNodes))
+	for _, rn := range rawNodes {
+		if nm, ok := rn.(map[string]interface{}); ok {
+			nodes = append(nodes, nm)
+		}
+	}
+	originalCount := len(nodes)
+	if originalCount == 0 {
+		return "Process has no nodes — nothing to clean.", false
+	}
+
+	// Keep a snapshot of the original structure for pass-through detection and
+	// for following go-successor chains of nodes that will be removed. This
+	// must be an independent copy: step 4 mutates each node's "condition" map
+	// in place, and since Go maps are reference types, a shallow index built
+	// from the live nodes would alias that same mutation.
+	origNmap := cleanSnapshotNodes(nodes)
+
+	// ── Step 2: Collect node statistics concurrently ──────────────────────────
+	endTS := time.Now().Unix()
+	startTS := endTS - int64(days)*86400
+
+	type statResult struct {
+		nodeID string
+		active bool
+		err    error
+	}
+
+	resultCh := make(chan statResult, len(nodes))
+	sem := make(chan struct{}, 16) // max 16 concurrent API requests
+	var wg sync.WaitGroup
+
+	for _, node := range nodes {
+		nodeID, _ := node["id"].(string)
+		if nodeID == "" {
+			continue
+		}
+		wg.Add(1)
+		go func(nid string) {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+
+			ops := []map[string]any{
+				{
+					"obj":             "stat",
+					"type":            "show",
+					"group":           "time",
+					"conv_id":         processID,
+					"node_id":         nid,
+					"company_id":      v.WorkspaceID,
+					"start":           int(startTS),
+					"end":             int(endTS),
+					"interval":        "day",
+					"timezone_offset": 0,
+				},
+			}
+			resp, reqErr := v.req("get_node_stat", ops)
+			if reqErr != nil {
+				resultCh <- statResult{nodeID: nid, err: reqErr}
+				return
+			}
+			resultCh <- statResult{nodeID: nid, active: cleanIsNodeActive(resp)}
+		}(nodeID)
+	}
+	wg.Wait()
+	close(resultCh)
+
+	activeIDs := make(map[string]bool)
+	inactiveIDs := make(map[string]bool)
+	errorIDs := make(map[string]bool)
+	for r := range resultCh {
+		switch {
+		case r.err != nil:
+			errorIDs[r.nodeID] = true
+		case r.active:
+			activeIDs[r.nodeID] = true
+		default:
+			inactiveIDs[r.nodeID] = true
+		}
+	}
+
+	// If not a single node showed any traffic, treat it as a hard error
+	// rather than "everything is inactive": this is the signature of a
+	// look-back window that's too narrow, a process that was never run, or
+	// a get_node_stat response shape the parser doesn't recognize — any of
+	// which would otherwise cascade into deleting the entire scheme (see
+	// the start-node/empty-scheme guard below).
+	if len(activeIDs) == 0 {
+		return fmt.Sprintf(
+			"Error: no node showed any traffic in the last %d days (active: 0, inactive: %d, stat-errors: %d, out of %d nodes). "+
+				"Refusing to clean — increase `days`, verify the process has real traffic, or check get_node_stat manually before retrying.",
+			days, len(inactiveIDs), len(errorIDs), len(nodes),
+		), true
+	}
+
+	// ── Step 3: Exclusions ────────────────────────────────────────────────────
+	excluded := cleanApplyExclusions(nodes, activeIDs, inactiveIDs)
+
+	toRemove := make(map[string]bool)
+	for id := range inactiveIDs {
+		if !excluded[id] {
+			toRemove[id] = true
+		}
+	}
+	// The start node (obj_type=1) must never be removed — a process without
+	// one can't be pushed, and its own traffic stats aren't a reliable
+	// activity signal for a node that Corezoid invokes implicitly.
+	for _, n := range nodes {
+		if cleanObjType(n) == 1 {
+			if id, _ := n["id"].(string); id != "" {
+				delete(toRemove, id)
+			}
+		}
+	}
+	initialRemoveCount := len(toRemove)
+
+	// ── Step 4: Delete + cascade with redirect ────────────────────────────────
+	var droppedErrHandlers []string
+	var droppedTargets []string
+	nodes = cleanDeleteAndCascade(nodes, toRemove, origNmap, &droppedErrHandlers, &droppedTargets)
+	cascadeCount := len(toRemove) - initialRemoveCount
+
+	// ── Step 5: Pass-through removal ──────────────────────────────────────────
+	nodes, ptCount := cleanRemovePassThrough(nodes, origNmap)
+
+	// ── Step 6: Delay→final removal ───────────────────────────────────────────
+	nodes, dfCount := cleanRemoveDelayToFinal(nodes, origNmap)
+
+	// ── Step 7: Validate ──────────────────────────────────────────────────────
+	validationErrors := cleanValidate(nodes)
+
+	// Safety net: even with the start-node protection above, refuse to write
+	// a scheme that lost its start node or was reduced to nothing — that
+	// signals a bug in the exclusion/cascade logic rather than a legitimately
+	// clean process, and writing it would silently hand back an unpushable
+	// file while reporting success.
+	hasStart := false
+	for _, n := range nodes {
+		if cleanObjType(n) == 1 {
+			hasStart = true
+			break
+		}
+	}
+	if len(nodes) == 0 || !hasStart {
+		return fmt.Sprintf(
+			"Error: cleaning would remove the process's start node or leave zero nodes (%d → %d). "+
+				"Aborting without writing a file — please report process %d for investigation.",
+			originalCount, len(nodes), processID,
+		), true
+	}
+
+	// A scheme that failed validation is never written. cleanValidate only
+	// reports structural damage — dangling to_node_id/err_node_id, or a node
+	// left with no way out — so the file would be unpushable anyway, and
+	// writing it means the next push-process (or a human reading the diff)
+	// is the thing that discovers the bug. Failing here keeps the damaged
+	// scheme in memory where it belongs.
+	if len(validationErrors) > 0 {
+		msg := fmt.Sprintf(
+			"Error: the cleaned scheme failed validation (%d problem(s)) — nothing was written.\n"+
+				"This is a bug in the cleanup, not something to fix by hand; please report process %d.",
+			len(validationErrors), processID,
+		)
+		for i, e := range validationErrors {
+			if i >= 10 {
+				msg += fmt.Sprintf("\n  … and %d more", len(validationErrors)-10)
+				break
+			}
+			msg += "\n  - " + e
+		}
+		return msg, true
+	}
+
+	// Update scheme
+	rawCleaned := make([]interface{}, 0, len(nodes))
+	for _, n := range nodes {
+		rawCleaned = append(rawCleaned, n)
+	}
+	scheme["nodes"] = rawCleaned
+
+	// ── Save ──────────────────────────────────────────────────────────────────
+	//
+	// The cleaned scheme is a PROPOSAL for a human to review, not a mirror of
+	// what is deployed, and it deliberately does not end in ".conv.json".
+	// That suffix is what resolveProcessPath, the MCP resource listing, the
+	// git-sync process index and the env-var reference scan discover files by
+	// (see convFileName): landing a second ".conv.json" carrying the same
+	// obj_id next to the original makes resolveProcessPath ambiguous — every
+	// lint/layout/push call in that directory that relied on auto-discovery
+	// starts failing with "multiple .conv.json files found" — and makes
+	// git-sync index one process twice.
+	//
+	// ".cleaned.json" still starts with "<ID>_", which is all
+	// extractProcessIDFromPath needs, so `push-process` and `lint-process`
+	// accept the file when it is passed as an explicit process_path. The
+	// report below tells the user exactly that.
+	title, _ := procMap["title"].(string)
+	baseFileName := convFileName(processID, title)
+	const ext = ".conv.json"
+	cleanedFileName := baseFileName
+	if len(cleanedFileName) > len(ext) && cleanedFileName[len(cleanedFileName)-len(ext):] == ext {
+		cleanedFileName = cleanedFileName[:len(cleanedFileName)-len(ext)]
+	}
+	cleanedFileName += ".cleaned.json"
+
+	var dir string
+	if parentID := int(cleanFloat(procMap["parent_id"])); parentID != 0 && v.StageID != 0 {
+		if resolved, resolveErr := v.resolveFolderPathFromAPI(parentID); resolveErr == nil {
+			if stageRoot := findStageRootFromCWD(v.StageID); stageRoot != "" {
+				dir = filepath.Join(stageRoot, resolved)
+			} else {
+				dir = resolved
+			}
+		}
+	}
+	if dir != "" {
+		if mkErr := os.MkdirAll(dir, 0755); mkErr != nil {
+			return fmt.Sprintf("Error creating directory: %v", mkErr), true
+		}
+	}
+	filePath := filepath.Join(dir, cleanedFileName)
+
+	if !overwrite {
+		if _, statErr := os.Stat(filePath); statErr == nil {
+			return fmt.Sprintf(
+				"Error: %s already exists. Delete it first or pass overwrite=true to replace it.",
+				filePath,
+			), true
+		}
+	}
+
+	data, marshalErr := json.MarshalIndent(procMap, "", "  ")
+	if marshalErr != nil {
+		return fmt.Sprintf("Error marshaling cleaned process: %v", marshalErr), true
+	}
+	if writeErr := os.WriteFile(filePath, data, 0644); writeErr != nil {
+		return fmt.Sprintf("Error writing file: %v", writeErr), true
+	}
+
+	// ── Report ────────────────────────────────────────────────────────────────
+	finalCount := len(nodes)
+	report := fmt.Sprintf(
+		"Process %d (%q) cleaned.\n"+
+			"Nodes: %d → %d (removed %d)\n"+
+			"Period: last %d days\n"+
+			"  Active: %d, Inactive: %d, Stat-errors: %d\n"+
+			"  Excluded by rules: %d\n"+
+			"  Removed: %d initial + %d cascade + %d pass-through + %d delay→final\n"+
+			"Validation: passed\n"+
+			"Saved: %s\n"+
+			"This is a reviewable proposal, not a pulled process — it is intentionally not a "+
+			".conv.json file, so review the diff first, then pass the path explicitly: "+
+			"lint-process/push-process with process_path=%s.",
+		processID, title,
+		originalCount, finalCount, originalCount-finalCount,
+		days,
+		len(activeIDs), len(inactiveIDs), len(errorIDs),
+		len(excluded),
+		initialRemoveCount, cascadeCount, ptCount, dfCount,
+		filePath, filePath,
+	)
+	if len(droppedErrHandlers) > 0 {
+		report += fmt.Sprintf("\n\nWarning: %d err_node_id reference(s) were dropped because the handler node was removed and had no unambiguous go-successor. Review these logics manually:", len(droppedErrHandlers))
+		for i, w := range droppedErrHandlers {
+			if i >= 10 {
+				report += fmt.Sprintf("\n  … and %d more", len(droppedErrHandlers)-10)
+				break
+			}
+			report += "\n  - " + w
+		}
+	}
+	if len(droppedTargets) > 0 {
+		report += fmt.Sprintf("\n\nWarning: %d logic/semaphor entry(ies) were dropped entirely because their to_node_id target was removed and had no unambiguous go-successor. This removes a whole outgoing branch, not just a reference — review manually:", len(droppedTargets))
+		for i, w := range droppedTargets {
+			if i >= 10 {
+				report += fmt.Sprintf("\n  … and %d more", len(droppedTargets)-10)
+				break
+			}
+			report += "\n  - " + w
+		}
+	}
+	// A validation failure returned early above, so reaching here means the
+	// saved scheme is structurally sound. The dropped-reference warnings are
+	// not errors: the scheme is valid, a human just needs to confirm the lost
+	// branches were meant to go.
+	return report, false
+}
+
+// ── helpers ───────────────────────────────────────────────────────────────────
+
+// cleanIsNodeActive reports whether a get_node_stat response contains at least
+// one data point with a non-zero in or out count.
+func cleanIsNodeActive(resp map[string]interface{}) bool {
+	ops, ok := resp["ops"].([]interface{})
+	if !ok || len(ops) == 0 {
+		return false
+	}
+	op, ok := ops[0].(map[string]interface{})
+	if !ok {
+		return false
+	}
+	data, ok := op["data"].([]interface{})
+	if !ok {
+		return false
+	}
+	for _, d := range data {
+		entry, ok := d.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		if cleanToInt(entry["in"]) > 0 || cleanToInt(entry["out"]) > 0 {
+			return true
+		}
+	}
+	return false
+}
+
+// cleanNodeMapByID returns a map from node id → node. The returned maps alias
+// the input nodes — mutating a node's "condition" map after calling this also
+// changes what's visible through the index. Use cleanSnapshotNodes instead
+// when the index must survive later in-place mutation of the nodes.
+func cleanNodeMapByID(nodes []map[string]interface{}) map[string]map[string]interface{} {
+	m := make(map[string]map[string]interface{}, len(nodes))
+	for _, n := range nodes {
+		if id, ok := n["id"].(string); ok && id != "" {
+			m[id] = n
+		}
+	}
+	return m
+}
+
+// cleanSnapshotNodes returns a map from node id → node that is independent of
+// later in-place mutation of nodes' "condition" maps. Individual logic/
+// semaphor entries are never mutated in place elsewhere in this file (a
+// changed entry is always replaced via cleanCloneMap), so sharing those
+// leaf maps is safe — only the node map, its "condition" map, and the
+// "logics"/"semaphors" slice headers need to be copied.
+func cleanSnapshotNodes(nodes []map[string]interface{}) map[string]map[string]interface{} {
+	m := make(map[string]map[string]interface{}, len(nodes))
+	for _, n := range nodes {
+		id, ok := n["id"].(string)
+		if !ok || id == "" {
+			continue
+		}
+		snap := cleanCloneMap(n)
+		if cond, ok := n["condition"].(map[string]interface{}); ok {
+			condSnap := cleanCloneMap(cond)
+			if logics, ok := cond["logics"].([]interface{}); ok {
+				logicsCopy := make([]interface{}, len(logics))
+				copy(logicsCopy, logics)
+				condSnap["logics"] = logicsCopy
+			}
+			if sems, ok := cond["semaphors"].([]interface{}); ok {
+				semsCopy := make([]interface{}, len(sems))
+				copy(semsCopy, sems)
+				condSnap["semaphors"] = semsCopy
+			}
+			snap["condition"] = condSnap
+		}
+		m[id] = snap
+	}
+	return m
+}
+
+// cleanNodeLogics returns the logics slice from a node's condition, never nil.
+func cleanNodeLogics(node map[string]interface{}) []interface{} {
+	if cond, ok := node["condition"].(map[string]interface{}); ok {
+		if l, ok := cond["logics"].([]interface{}); ok {
+			return l
+		}
+	}
+	return nil
+}
+
+// cleanNodeSemaphors returns the semaphors slice from a node's condition, never nil.
+func cleanNodeSemaphors(node map[string]interface{}) []interface{} {
+	if cond, ok := node["condition"].(map[string]interface{}); ok {
+		if s, ok := cond["semaphors"].([]interface{}); ok {
+			return s
+		}
+	}
+	return nil
+}
+
+// cleanObjType returns a node's obj_type as int (-1 if absent).
+func cleanObjType(node map[string]interface{}) int {
+	if node == nil {
+		return -1
+	}
+	return cleanToInt(node["obj_type"])
+}
+
+// cleanToInt converts a JSON number (float64) or int to int.
+func cleanToInt(v interface{}) int {
+	switch n := v.(type) {
+	case float64:
+		return int(n)
+	case int:
+		return n
+	}
+	return 0
+}
+
+// cleanFloat safely extracts a float64 from an interface{}.
+func cleanFloat(v interface{}) float64 {
+	if f, ok := v.(float64); ok {
+		return f
+	}
+	return 0
+}
+
+// cleanCloneMap shallow-copies a map[string]interface{}.
+func cleanCloneMap(m map[string]interface{}) map[string]interface{} {
+	clone := make(map[string]interface{}, len(m))
+	for k, v := range m {
+		clone[k] = v
+	}
+	return clone
+}
+
+// ── Step 3: Exclusions ────────────────────────────────────────────────────────
+
+// cleanApplyExclusions returns the set of inactive node IDs that must NOT be
+// removed, based on the three exclusion criteria in the skill spec.
+func cleanApplyExclusions(
+	nodes []map[string]interface{},
+	activeIDs, inactiveIDs map[string]bool,
+) map[string]bool {
+	nmap := cleanNodeMapByID(nodes)
+	excluded := make(map[string]bool)
+
+	// Criterion 1 & 2: active nodes with set_param or unconditional go
+	for id := range activeIDs {
+		node := nmap[id]
+		if node == nil {
+			continue
+		}
+		for _, l := range cleanNodeLogics(node) {
+			logic, ok := l.(map[string]interface{})
+			if !ok {
+				continue
+			}
+			ltype, _ := logic["type"].(string)
+			toID, _ := logic["to_node_id"].(string)
+			if toID == "" || !inactiveIDs[toID] {
+				continue
+			}
+			if ltype == "set_param" || ltype == "go" {
+				excluded[toID] = true
+			}
+		}
+	}
+
+	// Criterion 3: escalation chains — iterate until stable.
+	changed := true
+	for changed {
+		changed = false
+
+		// will_stay = active ∪ excluded ∪ nodes not in inactive
+		willStay := make(map[string]bool, len(activeIDs)+len(excluded))
+		for id := range activeIDs {
+			willStay[id] = true
+		}
+		for id := range excluded {
+			willStay[id] = true
+		}
+		for _, n := range nodes {
+			id, _ := n["id"].(string)
+			if !inactiveIDs[id] {
+				willStay[id] = true
+			}
+		}
+
+		for id := range willStay {
+			node := nmap[id]
+			if node == nil {
+				continue
+			}
+			for _, l := range cleanNodeLogics(node) {
+				logic, ok := l.(map[string]interface{})
+				if !ok {
+					continue
+				}
+				errID, _ := logic["err_node_id"].(string)
+				if errID == "" {
+					continue
+				}
+				if inactiveIDs[errID] && !excluded[errID] {
+					excluded[errID] = true
+					changed = true
+				}
+				if errNode := nmap[errID]; errNode != nil {
+					if cleanProtectErrChildren(errNode, nmap, inactiveIDs, excluded) {
+						changed = true
+					}
+				}
+			}
+			// Active err_handler nodes (obj_type=3) also protect their children
+			if cleanObjType(node) == 3 {
+				if cleanProtectErrChildren(node, nmap, inactiveIDs, excluded) {
+					changed = true
+				}
+			}
+		}
+	}
+	return excluded
+}
+
+// cleanProtectErrChildren protects the children of a condition/err_handler node
+// that must stay alive when the parent is kept in the schema.
+func cleanProtectErrChildren(
+	errNode map[string]interface{},
+	nmap map[string]map[string]interface{},
+	inactiveIDs, excluded map[string]bool,
+) bool {
+	added := false
+	for _, l := range cleanNodeLogics(errNode) {
+		logic, ok := l.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		childID, _ := logic["to_node_id"].(string)
+		if childID == "" {
+			continue
+		}
+		child := nmap[childID]
+		if child == nil {
+			continue
+		}
+		switch ct := cleanObjType(child); ct {
+		case 2: // final node
+			if inactiveIDs[childID] && !excluded[childID] {
+				excluded[childID] = true
+				added = true
+			}
+		case 0:
+			if len(cleanNodeSemaphors(child)) == 0 {
+				continue // not a delay node
+			}
+			// Delay node with semaphors
+			if inactiveIDs[childID] && !excluded[childID] {
+				excluded[childID] = true
+				added = true
+			}
+			// Protect only final targets (not retry/self-back targets)
+			for _, sl := range cleanNodeSemaphors(child) {
+				sem, ok := sl.(map[string]interface{})
+				if !ok {
+					continue
+				}
+				tid, _ := sem["to_node_id"].(string)
+				if tn := nmap[tid]; tn != nil && cleanObjType(tn) == 2 {
+					if inactiveIDs[tid] && !excluded[tid] {
+						excluded[tid] = true
+						added = true
+					}
+				}
+			}
+			for _, dl := range cleanNodeLogics(child) {
+				dlogic, ok := dl.(map[string]interface{})
+				if !ok {
+					continue
+				}
+				did, _ := dlogic["to_node_id"].(string)
+				if dn := nmap[did]; dn != nil && cleanObjType(dn) == 2 {
+					if inactiveIDs[did] && !excluded[did] {
+						excluded[did] = true
+						added = true
+					}
+				}
+			}
+		}
+	}
+	return added
+}
+
+// ── Step 4: Delete + cascade with redirect ────────────────────────────────────
+
+// cleanDeleteAndCascade removes nodes in toRemove, fixes all references
+// (redirecting to a removed node's go-successor where possible), and
+// cascades empty condition nodes into toRemove until stable.
+// droppedErrs is populated with a description each time an err_node_id is
+// dropped without a redirect (the handler had no unambiguous go-successor).
+// droppedTargets is populated the same way for a dropped to_node_id — which,
+// unlike err_node_id, takes the whole logic (or semaphor) down with it, so
+// it's worth surfacing just as loudly.
+func cleanDeleteAndCascade(
+	nodes []map[string]interface{},
+	toRemove map[string]bool,
+	origNmap map[string]map[string]interface{},
+	droppedErrs *[]string,
+	droppedTargets *[]string,
+) []map[string]interface{} {
+	changed := true
+	for changed {
+		changed = false
+
+		// Remove deleted nodes
+		kept := nodes[:0]
+		for _, n := range nodes {
+			if id, _ := n["id"].(string); !toRemove[id] {
+				kept = append(kept, n)
+			}
+		}
+		nodes = kept
+
+		for _, node := range nodes {
+			cond, ok := node["condition"].(map[string]interface{})
+			if !ok {
+				continue
+			}
+			logics, _ := cond["logics"].([]interface{})
+			sems, _ := cond["semaphors"].([]interface{})
+			nodeID, _ := node["id"].(string)
+
+			newLogics := make([]interface{}, 0, len(logics))
+			for _, l := range logics {
+				logic, ok := l.(map[string]interface{})
+				if !ok {
+					newLogics = append(newLogics, l)
+					continue
+				}
+				// Redirect or drop logic whose target was removed. Track
+				// whether the logic survives so the err_node_id cleanup
+				// below always runs too — to_node_id and err_node_id are
+				// independent fields and both may need fixing up.
+				keepLogic := true
+				if toID, _ := logic["to_node_id"].(string); toID != "" && toRemove[toID] {
+					if successor := cleanFindGoSuccessor(toID, origNmap, toRemove); successor != "" {
+						logic = cleanCloneMap(logic)
+						logic["to_node_id"] = successor
+					} else {
+						keepLogic = false
+						if droppedTargets != nil {
+							ltype, _ := logic["type"].(string)
+							*droppedTargets = append(*droppedTargets,
+								fmt.Sprintf("node %s logic (type=%s): to_node_id=%s removed (no go-successor) — entire logic dropped", nodeID, ltype, toID))
+						}
+					}
+				}
+				if !keepLogic {
+					continue
+				}
+				// Redirect or drop dangling err_node_id — record a warning
+				// only when no go-successor could be found.
+				if errID, _ := logic["err_node_id"].(string); errID != "" && toRemove[errID] {
+					logic = cleanCloneMap(logic)
+					if successor := cleanFindGoSuccessor(errID, origNmap, toRemove); successor != "" {
+						logic["err_node_id"] = successor
+					} else {
+						delete(logic, "err_node_id")
+						if droppedErrs != nil {
+							ltype, _ := logic["type"].(string)
+							*droppedErrs = append(*droppedErrs,
+								fmt.Sprintf("node %s logic (type=%s): err_node_id=%s removed (no go-successor)", nodeID, ltype, errID))
+						}
+					}
+				}
+				newLogics = append(newLogics, logic)
+			}
+
+			newSems := make([]interface{}, 0, len(sems))
+			for _, s := range sems {
+				sem, ok := s.(map[string]interface{})
+				if !ok {
+					newSems = append(newSems, s)
+					continue
+				}
+				if toID, _ := sem["to_node_id"].(string); toID != "" && toRemove[toID] {
+					if successor := cleanFindGoSuccessor(toID, origNmap, toRemove); successor != "" {
+						sem = cleanCloneMap(sem)
+						sem["to_node_id"] = successor
+						newSems = append(newSems, sem)
+					} else if droppedTargets != nil {
+						*droppedTargets = append(*droppedTargets,
+							fmt.Sprintf("node %s semaphor: to_node_id=%s removed (no go-successor) — semaphor dropped", nodeID, toID))
+					}
+					continue
+				}
+				newSems = append(newSems, s)
+			}
+
+			cond["logics"] = newLogics
+			cond["semaphors"] = newSems
+
+			// Cascade: obj_type 0/3 with no logics and no semaphors. The
+			// start node (obj_type=1) is deliberately excluded — it must
+			// never be cascaded away, even if it ends up with no logics.
+			id, _ := node["id"].(string)
+			if ot := cleanObjType(node); (ot == 0 || ot == 3) &&
+				len(newLogics) == 0 && len(newSems) == 0 && !toRemove[id] {
+				toRemove[id] = true
+				changed = true
+			}
+		}
+	}
+	return nodes
+}
+
+// cleanFindGoSuccessor follows the unconditional go-logic chain starting from
+// startID (using origNmap) and returns the first node ID not in toRemove.
+// Returns "" if no live successor is found or if a cycle is detected.
+func cleanFindGoSuccessor(startID string, origNmap map[string]map[string]interface{}, toRemove map[string]bool) string {
+	visited := map[string]bool{startID: true}
+	cur := startID
+	for {
+		node := origNmap[cur]
+		if node == nil {
+			return ""
+		}
+		var goTarget string
+		for _, l := range cleanNodeLogics(node) {
+			logic, ok := l.(map[string]interface{})
+			if !ok {
+				continue
+			}
+			if t, _ := logic["type"].(string); t == "go" {
+				goTarget, _ = logic["to_node_id"].(string)
+				break
+			}
+		}
+		if goTarget == "" || visited[goTarget] {
+			return ""
+		}
+		if !toRemove[goTarget] {
+			return goTarget
+		}
+		visited[goTarget] = true
+		cur = goTarget
+	}
+}
+
+// ── Step 5: Pass-through removal ─────────────────────────────────────────────
+
+// cleanRemovePassThrough removes obj_type=0 nodes that now have exactly one
+// unconditional go-logic and no semaphors, but originally had conditional
+// branches (go_if_const). References to them are redirected to their target.
+func cleanRemovePassThrough(
+	nodes []map[string]interface{},
+	origNmap map[string]map[string]interface{},
+) ([]map[string]interface{}, int) {
+	total := 0
+	changed := true
+	for changed {
+		changed = false
+		curNmap := cleanNodeMapByID(nodes)
+
+		var pts []struct{ id, target string }
+		for _, node := range nodes {
+			if cleanObjType(node) != 0 {
+				continue
+			}
+			logics := cleanNodeLogics(node)
+			sems := cleanNodeSemaphors(node)
+			if len(sems) != 0 || len(logics) != 1 {
+				continue
+			}
+			logic, ok := logics[0].(map[string]interface{})
+			if !ok {
+				continue
+			}
+			if t, _ := logic["type"].(string); t != "go" {
+				continue
+			}
+			goTarget, _ := logic["to_node_id"].(string)
+			if goTarget == "" || curNmap[goTarget] == nil {
+				continue
+			}
+			nodeID, ok := node["id"].(string)
+			if !ok || nodeID == "" {
+				continue
+			}
+			// Must have originally had at least one go_if_const
+			orig := origNmap[nodeID]
+			if orig == nil {
+				continue
+			}
+			hadConditional := false
+			for _, ol := range cleanNodeLogics(orig) {
+				ol2, ok := ol.(map[string]interface{})
+				if !ok {
+					continue
+				}
+				if t, _ := ol2["type"].(string); t == "go_if_const" {
+					hadConditional = true
+					break
+				}
+			}
+			if !hadConditional {
+				continue
+			}
+			pts = append(pts, struct{ id, target string }{id: nodeID, target: goTarget})
+		}
+
+		if len(pts) == 0 {
+			break
+		}
+		redirect := make(map[string]string, len(pts))
+		ptSet := make(map[string]bool, len(pts))
+		for _, p := range pts {
+			redirect[p.id] = p.target
+			ptSet[p.id] = true
+		}
+		total += len(pts)
+
+		// resolveTarget follows the redirect chain past any other pass-through
+		// node collected in this same batch. Two pass-through nodes detected
+		// in one pass (e.g. X -> Y -> Z, both X and Y single-"go" survivors of
+		// step 4) both land in ptSet/redirect together, so a caller pointed at
+		// X must not be redirected only to Y — Y is being removed in this same
+		// pass too. Without this, callers end up pointing at a node that no
+		// longer exists (caught only later by cleanValidate, after the file
+		// has already been written).
+		resolveTarget := func(id string) string {
+			target := redirect[id]
+			seen := map[string]bool{id: true}
+			for ptSet[target] {
+				if seen[target] {
+					break // cycle guard — leave as-is, cleanValidate will flag it
+				}
+				seen[target] = true
+				target = redirect[target]
+			}
+			return target
+		}
+
+		var kept []map[string]interface{}
+		for _, node := range nodes {
+			id, _ := node["id"].(string)
+			if ptSet[id] {
+				continue
+			}
+			cond, _ := node["condition"].(map[string]interface{})
+			if cond == nil {
+				kept = append(kept, node)
+				continue
+			}
+			logics, _ := cond["logics"].([]interface{})
+			sems, _ := cond["semaphors"].([]interface{})
+			newLogics := make([]interface{}, 0, len(logics))
+			for _, l := range logics {
+				logic, ok := l.(map[string]interface{})
+				if !ok {
+					newLogics = append(newLogics, l)
+					continue
+				}
+				logic = cleanCloneMap(logic)
+				if tid, _ := logic["to_node_id"].(string); ptSet[tid] {
+					logic["to_node_id"] = resolveTarget(tid)
+				}
+				if eid, _ := logic["err_node_id"].(string); ptSet[eid] {
+					logic["err_node_id"] = resolveTarget(eid)
+				}
+				newLogics = append(newLogics, logic)
+			}
+			newSems := make([]interface{}, 0, len(sems))
+			for _, s := range sems {
+				sem, ok := s.(map[string]interface{})
+				if !ok {
+					newSems = append(newSems, s)
+					continue
+				}
+				sem = cleanCloneMap(sem)
+				if tid, _ := sem["to_node_id"].(string); ptSet[tid] {
+					sem["to_node_id"] = resolveTarget(tid)
+				}
+				newSems = append(newSems, sem)
+			}
+			cond["logics"] = newLogics
+			cond["semaphors"] = newSems
+			kept = append(kept, node)
+		}
+		nodes = kept
+		changed = true
+	}
+	return nodes, total
+}
+
+// ── Step 6: Delay→final removal ───────────────────────────────────────────────
+
+// cleanSemaphorTargetCounts returns the multiset of a node's semaphor
+// to_node_id values, so two versions of the same node can be compared without
+// depending on semaphor order.
+func cleanSemaphorTargetCounts(node map[string]interface{}) map[string]int {
+	counts := make(map[string]int)
+	for _, s := range cleanNodeSemaphors(node) {
+		sem, ok := s.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		tid, _ := sem["to_node_id"].(string)
+		counts[tid]++
+	}
+	return counts
+}
+
+// cleanNodeWasRewired reports whether this cleanup changed a node's outgoing
+// edges relative to the exported process. It is the guard that separates "this
+// node became a bare delay→final because we deleted what sat between them"
+// from "this node was authored as a delay→final and is doing its job".
+//
+// A node missing from origNmap is reported as untouched: unknown provenance is
+// not a licence to delete.
+func cleanNodeWasRewired(node map[string]interface{}, origNmap map[string]map[string]interface{}) bool {
+	id, _ := node["id"].(string)
+	orig := origNmap[id]
+	if orig == nil {
+		return false
+	}
+	if len(cleanNodeLogics(node)) != len(cleanNodeLogics(orig)) {
+		return true
+	}
+	cur, was := cleanSemaphorTargetCounts(node), cleanSemaphorTargetCounts(orig)
+	if len(cur) != len(was) {
+		return true
+	}
+	for tid, n := range cur {
+		if was[tid] != n {
+			return true
+		}
+	}
+	return false
+}
+
+// cleanRemoveDelayToFinal removes obj_type=0 nodes that have no logics and
+// whose every semaphor target is a final node (obj_type=2). This pattern
+// arises when a condition node between a delay and a final was removed.
+//
+// The "arises when ... was removed" part is load-bearing, which is why
+// origNmap is a parameter: "obj_type=0, no logics, one time-semaphor to a
+// final" is ALSO the canonical shape of a healthy, hand-built Delay node
+// (see docs/nodes/delay-node.md — "Delay 30 sec" → "Done"). Matching on
+// shape alone would delete that node out of every process it appears in and
+// rewire its callers straight to the final, so tasks that used to wait would
+// finish instantly. Only nodes this cleanup actually rewired are eligible —
+// cleanNodeWasRewired is the gate.
+func cleanRemoveDelayToFinal(
+	nodes []map[string]interface{},
+	origNmap map[string]map[string]interface{},
+) ([]map[string]interface{}, int) {
+	total := 0
+	changed := true
+	for changed {
+		changed = false
+		curNmap := cleanNodeMapByID(nodes)
+
+		var candidates []struct{ id, target string }
+		for _, node := range nodes {
+			if cleanObjType(node) != 0 {
+				continue
+			}
+			logics := cleanNodeLogics(node)
+			sems := cleanNodeSemaphors(node)
+			if len(logics) != 0 || len(sems) == 0 {
+				continue
+			}
+			if !cleanNodeWasRewired(node, origNmap) {
+				continue
+			}
+			allFinal := true
+			singleTarget := ""
+			for _, s := range sems {
+				sem, ok := s.(map[string]interface{})
+				if !ok {
+					allFinal = false
+					break
+				}
+				tid, _ := sem["to_node_id"].(string)
+				tn := curNmap[tid]
+				if tn == nil || cleanObjType(tn) != 2 {
+					allFinal = false
+					break
+				}
+				if singleTarget == "" {
+					singleTarget = tid
+				} else if singleTarget != tid {
+					// Semaphors point to different finals — cannot safely redirect
+					// all callers to one of them; skip this node.
+					allFinal = false
+					break
+				}
+			}
+			if !allFinal || singleTarget == "" {
+				continue
+			}
+			nodeID, ok := node["id"].(string)
+			if !ok || nodeID == "" {
+				continue
+			}
+			candidates = append(candidates, struct{ id, target string }{id: nodeID, target: singleTarget})
+		}
+
+		if len(candidates) == 0 {
+			break
+		}
+		redirect := make(map[string]string, len(candidates))
+		dfSet := make(map[string]bool, len(candidates))
+		for _, c := range candidates {
+			redirect[c.id] = c.target
+			dfSet[c.id] = true
+		}
+		total += len(candidates)
+
+		var kept []map[string]interface{}
+		for _, node := range nodes {
+			id, _ := node["id"].(string)
+			if dfSet[id] {
+				continue
+			}
+			cond, _ := node["condition"].(map[string]interface{})
+			if cond == nil {
+				kept = append(kept, node)
+				continue
+			}
+			logics, _ := cond["logics"].([]interface{})
+			sems, _ := cond["semaphors"].([]interface{})
+			newLogics := make([]interface{}, 0, len(logics))
+			for _, l := range logics {
+				logic, ok := l.(map[string]interface{})
+				if !ok {
+					newLogics = append(newLogics, l)
+					continue
+				}
+				logic = cleanCloneMap(logic)
+				if tid, _ := logic["to_node_id"].(string); dfSet[tid] {
+					logic["to_node_id"] = redirect[tid]
+				}
+				if eid, _ := logic["err_node_id"].(string); dfSet[eid] {
+					logic["err_node_id"] = redirect[eid]
+				}
+				newLogics = append(newLogics, logic)
+			}
+			newSems := make([]interface{}, 0, len(sems))
+			for _, s := range sems {
+				sem, ok := s.(map[string]interface{})
+				if !ok {
+					newSems = append(newSems, s)
+					continue
+				}
+				sem = cleanCloneMap(sem)
+				if tid, _ := sem["to_node_id"].(string); dfSet[tid] {
+					sem["to_node_id"] = redirect[tid]
+				}
+				newSems = append(newSems, sem)
+			}
+			cond["logics"] = newLogics
+			cond["semaphors"] = newSems
+			kept = append(kept, node)
+		}
+		nodes = kept
+		changed = true
+	}
+	return nodes, total
+}
+
+// ── Step 7: Validate ──────────────────────────────────────────────────────────
+
+// cleanValidate returns a list of structural errors in the cleaned scheme.
+func cleanValidate(nodes []map[string]interface{}) []string {
+	nset := make(map[string]bool, len(nodes))
+	for _, n := range nodes {
+		if id, ok := n["id"].(string); ok {
+			nset[id] = true
+		}
+	}
+	var errs []string
+	for _, node := range nodes {
+		id, _ := node["id"].(string)
+		for _, l := range cleanNodeLogics(node) {
+			logic, ok := l.(map[string]interface{})
+			if !ok {
+				continue
+			}
+			if tid, _ := logic["to_node_id"].(string); tid != "" && !nset[tid] {
+				errs = append(errs, fmt.Sprintf("node %s: logic to_node_id=%s is dangling", id, tid))
+			}
+			if eid, _ := logic["err_node_id"].(string); eid != "" && !nset[eid] {
+				errs = append(errs, fmt.Sprintf("node %s: err_node_id=%s is dangling", id, eid))
+			}
+		}
+		for _, s := range cleanNodeSemaphors(node) {
+			sem, ok := s.(map[string]interface{})
+			if !ok {
+				continue
+			}
+			if tid, _ := sem["to_node_id"].(string); tid != "" && !nset[tid] {
+				errs = append(errs, fmt.Sprintf("node %s: semaphor to_node_id=%s is dangling", id, tid))
+			}
+		}
+		ot := cleanObjType(node)
+		if ot == 0 || ot == 1 || ot == 3 {
+			if len(cleanNodeLogics(node)) == 0 && len(cleanNodeSemaphors(node)) == 0 {
+				errs = append(errs, fmt.Sprintf("node %s (obj_type=%d): no logics and no semaphors", id, ot))
+			}
+		}
+	}
+	return errs
+}

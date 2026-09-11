@@ -145,7 +145,7 @@ var toolRegistry = []mcpTool{
 	},
 	{
 		Name:        "modify-variable",
-		Description: "Modify a Corezoid environment variable in the current stage: change its value, description (display title), data_type (raw/json), and/or rename it (new_name). The stage is resolved automatically from the workspace's <id>_<name>.stage.json marker file — no stage argument. CONSEQUENTIAL: renaming breaks every {{env_var[@old-name]}} reference in the stage's processes, and a value change takes effect immediately in running processes without redeploy. env_var_type (visible/secret) CANNOT be changed after creation — the server silently ignores such changes. Modify is partial: omitted fields keep their current value (a secret's value survives a modify that does not send value). SAFETY: apply=false (default) is a dry-run showing the current → new diff and, for renames, a local reference scan — nothing is changed. To apply you MUST show the diff to the user, get their explicit confirmation, then call with apply=true AND confirm=\"<short_name>#<obj_id>\" (the CURRENT short_name, before any rename). Never modify a variable without the user confirming.",
+		Description: "Modify a Corezoid environment variable in the current stage: its value, description (display title), data_type (raw/json), and/or rename it (new_name). The stage is resolved from the workspace's <id>_<name>.stage.json marker — no stage argument. CONSEQUENTIAL: renaming breaks every {{env_var[@old-name]}} reference in the stage's processes, and a value change takes effect immediately in running processes without redeploy. env_var_type (visible/secret) CANNOT be changed after creation — the server silently ignores such changes. Modify is partial: omitted fields keep their current value (a secret's value survives a modify that does not send value). SAFETY: apply=false (default) is a dry-run showing the current → new diff plus, for renames, a local reference scan — nothing is changed. To apply you MUST show that diff to the user, get explicit confirmation, then call with apply=true AND confirm=\"<short_name>#<obj_id>\" (the CURRENT short_name, before any rename). Never modify a variable without the user confirming.",
 		Annotations: toolHints(hintMutates, hintDestructive, hintNonIdempotent, hintOpenWorld),
 		InputSchema: map[string]interface{}{
 			"type": "object",
@@ -189,7 +189,7 @@ var toolRegistry = []mcpTool{
 	},
 	{
 		Name:        "delete-variable",
-		Description: "PERMANENTLY delete a Corezoid environment variable from the current stage. The stage is resolved automatically from the workspace's <id>_<name>.stage.json marker file — no stage argument. DESTRUCTIVE AND IRREVERSIBLE: unlike processes/folders/projects there is NO recycle bin for variables — the value (secrets included) is gone immediately, and any process still referencing {{env_var[@name]}} will fail at runtime. SAFETY: apply=false (default) is a dry-run that shows the variable's full details plus a local reference scan — nothing is deleted. To delete you MUST show the user the dry-run warning block VERBATIM, get their explicit confirmation, then call with apply=true AND confirm=\"<short_name>#<obj_id>\". Never delete a variable without the user confirming.",
+		Description: "PERMANENTLY delete a Corezoid environment variable from the current stage. The stage is resolved from the workspace's <id>_<name>.stage.json marker — no stage argument. DESTRUCTIVE AND IRREVERSIBLE: unlike processes/folders/projects there is NO recycle bin for variables — the value (secrets included) is gone immediately, and any process still referencing {{env_var[@name]}} fails at runtime. SAFETY: apply=false (default) is a dry-run showing the variable's full details plus a local reference scan — nothing is deleted. To delete you MUST show the user that warning block VERBATIM, get explicit confirmation, then call with apply=true AND confirm=\"<short_name>#<obj_id>\". Never delete a variable without the user confirming.",
 		Annotations: toolHints(hintMutates, hintDestructive, hintNonIdempotent, hintOpenWorld),
 		InputSchema: map[string]interface{}{
 			"type": "object",
@@ -216,7 +216,7 @@ var toolRegistry = []mcpTool{
 	},
 	{
 		Name:        "push-process",
-		Description: "Validate and deploy a process file to Corezoid. Runs lint-process first and blocks deploy-breaking findings; advisory findings do not block. Also blocks when the process changed on the server since pull, reporting local edits, server changes, true overlap, and the last known author. Resolve by re-pulling; or merge=true to write a reviewable local 3-way merge plus a .pre-merge backup without deploying; or overwrite_server_change=true to overwrite only after being shown the report. force=true is the generic-lint override ONLY: it never waives the concurrency gate (so a force set for a lint finding can never pre-authorise dropping a concurrent change nobody has seen), never confirms Stub Mode, and never bypasses structural lint findings (broken links, old-format nodes, self-referencing api_copy/api_rpc) — those describe an invalid graph the server rejects and must be fixed in the process design. A pre-push server snapshot is always attempted for existing processes. Overwriting live state that was never compared (overwrite_server_change or adopt_existing) with no snapshot, or pushing when the snapshot call itself failed, is refused unless allow_no_snapshot=true is passed AND the stage resolves as mutable and non-production-like: that combination is irreversible, so the flag is ignored on immutable, production-like or unresolvable stages, including installations whose API has no snapshot object at all (retrying once the API recovers is the safer default). A never-deployed process is exempt — it has no version to lose. Every waived gate is reported in the push result, not only in the server log. If the server-state fetch fails for any reason other than a genuine 'not found', the push is also blocked — the same API is about to be called by the deploy itself. Active Call Process Stub Mode (obj_type:4) is warning-only on a resolved mutable non-production-like stage, while immutable/prod/unknown stages require allow_active_stub_mode=true after explicit confirmation. The server regenerates node IDs and rewrites the local file with the canonical scheme, so reference nodes by title and re-read the file after push.",
+		Description: "Validate and deploy a process file to Corezoid. Runs lint-process first; deploy-breaking findings block, advisory ones do not. Also blocks when the process changed on the server since pull, reporting local edits, server changes, true overlap and the last known author — resolve by re-pulling, by merge=true (writes a reviewable local 3-way merge plus a .pre-merge backup without deploying), or by overwrite_server_change=true after being shown that report. force=true is the generic-lint override ONLY: it never waives the concurrency gate, never confirms Stub Mode, and never bypasses structural lint findings (broken links, old-format nodes, self-referencing api_copy/api_rpc) — those describe an invalid graph the server rejects and must be fixed in the design. A pre-push snapshot is always attempted for existing processes; overwriting never-compared live state (overwrite_server_change or adopt_existing) without one, or when the snapshot call itself failed, is refused unless allow_no_snapshot=true AND the stage resolves as mutable and non-production-like — that combination is irreversible, so the flag is ignored on immutable, production-like or unresolvable stages, including installations whose API has no snapshot object at all. Never-deployed processes are exempt. A server-state fetch failing for anything but a genuine 'not found' also blocks, since the deploy is about to call that same API. Active Call Process Stub Mode (obj_type:4) is warning-only on a resolved mutable non-production-like stage; immutable/prod/unknown stages require allow_active_stub_mode=true after explicit confirmation. Every waived gate is reported in the push result, not only the server log. The server regenerates node IDs and rewrites the local file with the canonical scheme, so reference nodes by title and re-read the file after push.",
 		Annotations: toolHints(hintMutates, hintDestructive, hintNonIdempotent, hintOpenWorld),
 		InputSchema: map[string]interface{}{
 			"type": "object",
@@ -227,11 +227,11 @@ var toolRegistry = []mcpTool{
 				},
 				"force": map[string]interface{}{
 					"type":        "boolean",
-					"description": "Deploy despite generic blocking lint findings. LINT ONLY: it does not overwrite a concurrent server change (use overwrite_server_change), does not confirm active Stub Mode (use allow_active_stub_mode) and does not waive the snapshot requirement (use allow_no_snapshot). Advisory findings never block. Does NOT bypass pre-deployment validation errors such as self-referencing api_copy/api_rpc nodes — those must be fixed in the process design. Default false.",
+					"description": "Deploy despite generic blocking lint findings. LINT ONLY: does not overwrite a concurrent server change (use overwrite_server_change), confirm active Stub Mode (allow_active_stub_mode) or waive the snapshot requirement (allow_no_snapshot). Advisory findings never block. Does NOT bypass pre-deployment validation errors such as self-referencing api_copy/api_rpc nodes — fix those in the design. Default false.",
 				},
 				"overwrite_server_change": map[string]interface{}{
 					"type":        "boolean",
-					"description": "Deploy over a process that changed on the server since your pull, dropping those server changes. Pass it only in reply to the block report that describes what would be lost — never speculatively, and never as a default: set ahead of time it authorises overwriting a concurrent change that has not happened yet and that nobody will ever see. Separate from force on purpose: force overrides lint findings, this one overrides another person's edit. Refused when no pre-push snapshot exists unless allow_no_snapshot=true is passed too (a never-deployed process is exempt). Default false.",
+					"description": "Deploy over a process that changed on the server since your pull, dropping those changes. Pass it only in reply to the block report describing what would be lost — never speculatively: set ahead of time it authorises overwriting a concurrent change nobody has seen. Unlike force (which overrides lint findings) this overrides another person's edit. Refused when no pre-push snapshot exists unless allow_no_snapshot=true is also passed (never-deployed processes are exempt). Default false.",
 				},
 				"allow_active_stub_mode": map[string]interface{}{
 					"type":        "boolean",
@@ -243,11 +243,11 @@ var toolRegistry = []mcpTool{
 				},
 				"allow_no_snapshot": map[string]interface{}{
 					"type":        "boolean",
-					"description": "Deploy over an existing process even though no pre-push snapshot could be taken — either because project_id/stage_id could not be resolved, or because the CreateSnapshot API call itself failed (e.g. a transient platform error) — i.e. accept that the overwritten version cannot be restored. Honoured ONLY on a stage that resolves and is mutable; refused on immutable, production-like or unresolvable stages. Separate from force and overwrite_server_change on purpose: those override findings or a shown conflict, this waives the ability to undo. Passing it together with overwrite_server_change or adopt_existing is the explicit, deliberate way to make an irreversible overwrite. Prefer fixing the workspace configuration (corezoid-init) or retrying once the API recovers. Default false.",
+					"description": "Deploy over an existing process although no pre-push snapshot could be taken — project_id/stage_id unresolvable, or the CreateSnapshot call itself failed — i.e. accept that the overwritten version cannot be restored. Honoured ONLY on a stage that resolves and is mutable; refused on immutable, production-like or unresolvable ones. Where force and overwrite_server_change override findings or a shown conflict, this waives the ability to undo; combining it with overwrite_server_change or adopt_existing is the deliberate way to make an irreversible overwrite. Prefer fixing the workspace config (corezoid-init) or retrying once the API recovers. Default false.",
 				},
 				"adopt_existing": map[string]interface{}{
 					"type":        "boolean",
-					"description": "Deploy a file that has no pull baseline over a process that already has a deployed version — overwriting server state without knowing what it contains. Use only when the local file is deliberately authoritative (an import or a restored copy); otherwise run pull-process first so real conflicts can be detected. Not needed for processes that were never deployed. Separate from force and from overwrite_server_change on purpose: those resolve a conflict you were shown, this one declares you do not know what is on the server. Refused when no pre-push snapshot exists unless allow_no_snapshot=true is passed too (a never-deployed process is exempt). Default false.",
+					"description": "Deploy a file that has no pull baseline over a process that already has a deployed version — overwriting server state without knowing what it contains. Use only when the local file is deliberately authoritative (an import or a restored copy); otherwise pull-process first so real conflicts surface. Not needed for never-deployed processes. Where force and overwrite_server_change resolve a conflict you were shown, this declares you do not know what is on the server. Refused when no pre-push snapshot exists unless allow_no_snapshot=true is also passed. Default false.",
 				},
 			},
 			"required": []string{"process_path"},
@@ -278,7 +278,7 @@ var toolRegistry = []mcpTool{
 	},
 	{
 		Name:        "lint-process",
-		Description: "Validate process structure. Reports orphaned nodes, noop conditions, unused set_params, passthrough escalations, shared error clusters (an error node fed by several different failing nodes — each needs its own Reply/Error cluster), old-format nodes (obj_type:0 err_node_id targets, or action logic mixed with go_if_const — the UI would force-convert the process), finals reachable without api_rpc_reply in a process that replies elsewhere (an RPC caller would hang), nodes whose logics do not end with a default go and time semaphors under the 30s server minimum (both reject the deploy), literal non-string values in api_rpc_reply res_data (a scheme shape that hangs the server commit on push), active Call Process Stub Mode nodes (obj_type:4) that bypass the real called process, self-referencing api_copy/api_rpc nodes (valid in the Corezoid UI but always blocked by push-process — force=true does not bypass this), and git_call (api_git) usage (advisory: hosted sandbox measurements show an approximately 60s execution deadline; default resources are 50 MB/0.1 CPU from a shared, super-admin-configurable pool; local storage is ephemeral; use only when native nodes plus a Code node cannot provide the required file parsing, external library, cryptography, or custom runtime, and avoid long-running or latency-critical work).",
+		Description: "Validate process structure. Reports orphaned nodes, noop conditions, unused set_params, passthrough escalations, shared error clusters (an error node fed by several different failing nodes — each needs its own Reply/Error cluster), old-format nodes (obj_type:0 err_node_id targets, or action logic mixed with go_if_const — the UI would force-convert the process), finals reachable without api_rpc_reply in a process that replies elsewhere (an RPC caller would hang), nodes whose logics do not end with a default go and time semaphors under the 30s server minimum (both reject the deploy), literal non-string values in api_rpc_reply res_data (a scheme shape that hangs the server commit on push), active Call Process Stub Mode nodes (obj_type:4) that bypass the real called process, self-referencing api_copy/api_rpc nodes (valid in the Corezoid UI but always blocked by push-process — force=true does not bypass this), and git_call (api_git) usage (advisory: ~60s execution deadline, 50 MB/0.1 CPU shared defaults, ephemeral local storage — see the corezoid-gitcall skill).",
 		Annotations: toolHints(hintReadOnly, hintSafe, hintIdempotent, hintLocal),
 		InputSchema: map[string]interface{}{
 			"type": "object",
@@ -292,8 +292,31 @@ var toolRegistry = []mcpTool{
 		},
 	},
 	{
+		Name:        "clean-process",
+		Description: "Remove nodes with no traffic in the last N days (default 90) from a Corezoid process, saving a reviewable proposal as <ID>_<title>.cleaned.json — NOT a .conv.json, so it never collides with the pulled process; pass that path explicitly to lint-process/push-process to deploy it. Never deploys. Structurally required inactive nodes are kept (escalation chains, unconditional-go and set_param targets), references to removed nodes are redirected to their go-successor, and only delay→final nodes this cleanup rewired are dropped — hand-authored delays stay. Refuses to write if no node shows traffic, if the start node would be lost, or if the result fails validation. Reports counts per step plus any outgoing branch that could not be redirected.",
+		Annotations: toolHints(hintMutates, hintSafe, hintIdempotent, hintOpenWorld),
+		InputSchema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"process_id": map[string]interface{}{
+					"type":        "integer",
+					"description": "Numeric ID of the process to clean.",
+				},
+				"days": map[string]interface{}{
+					"type":        "integer",
+					"description": "Look-back period in days for node activity statistics. Nodes with no traffic in this window are considered inactive. Default 90.",
+				},
+				"overwrite": map[string]interface{}{
+					"type":        "boolean",
+					"description": "Allow overwriting an existing _cleaned.conv.json file. Default false — the tool refuses to overwrite to protect manual edits made to a previously cleaned file.",
+				},
+			},
+			"required": []string{"process_id"},
+		},
+	},
+	{
 		Name:        "run-task",
-		Description: "Run a task on an already-deployed Corezoid process (without re-deploying) and wait for it to reach a final node. Never commits or deploys, so it needs only run access and works on immutable stages; if the deployed node list is unreadable the task is still sent, just reported without node names. Identify the target with EXACTLY ONE of process_path (a local .conv.json file) or process_id (the numeric Corezoid process ID, same as show-task/list-task-history) — process_id needs no local file at all, so this also works in hosts with no local process repository (no pull-process required); passing both is rejected as ambiguous. Polls up to wait_sec (default 30), so tasks that cross async nodes (api, api_rpc, db_call, delay) still return their final result. On timeout reports the node the task is parked at, plus TaskRef/TaskID for follow-up via list-task-history.",
+		Description: "Run a task on an already-deployed Corezoid process (without re-deploying) and wait for it to reach a final node. Never commits or deploys, so it needs only run access and works on immutable stages; if the deployed node list is unreadable the task is still sent, just reported without node names. Identify the target with EXACTLY ONE of process_path (a local .conv.json) or process_id (the numeric ID, as in show-task/list-task-history) — process_id needs no local file, so it works in hosts with no process repository; passing both is rejected as ambiguous. Polls up to wait_sec (default 30), so tasks crossing async nodes (api, api_rpc, db_call, delay) still return their final result. On timeout reports the node the task is parked at, plus TaskRef/TaskID for follow-up via list-task-history.",
 		Annotations: toolHints(hintMutates, hintSafe, hintNonIdempotent, hintOpenWorld),
 		InputSchema: map[string]interface{}{
 			"type": "object",
@@ -304,7 +327,7 @@ var toolRegistry = []mcpTool{
 				},
 				"process_id": map[string]interface{}{
 					"type":        []string{"integer", "null"},
-					"description": "Corezoid process (conv) ID, greater than zero. Alternative to process_path — use this to run a task without a local .conv.json file, without a preceding pull-process. Mutually exclusive with process_path.",
+					"description": "Corezoid process (conv) ID, > 0. Alternative to process_path — use this to run a task without a local .conv.json file, without a preceding pull-process. Mutually exclusive with process_path.",
 				},
 				"data": map[string]interface{}{
 					"type":        "string",
@@ -477,7 +500,7 @@ var toolRegistry = []mcpTool{
 	},
 	{
 		Name:        "pause-process",
-		Description: "Pause one Corezoid process without changing or deploying its graph. CONSEQUENTIAL: Corezoid rejects NEW task creation for a paused process with conveyor_is_not_active. This is admission control, not proof that tasks already running or parked in nodes have stopped; inspect them separately. EXPLICIT-INTENT ONLY: never invoke because a process merely looks unused, during a review/refactor, or as an inferred safety step. Use only when the user directly asks to pause this exact process. SAFETY: apply=false (default) reads live status and returns a dry-run. After showing it to the user and receiving explicit approval, call apply=true with confirm=\"process#<id>:<live_status>->paused\". The live status is re-read on every invocation and the result is post-verified.",
+		Description: "Pause one Corezoid process without changing or deploying its graph. CONSEQUENTIAL: Corezoid rejects NEW task creation for a paused process with conveyor_is_not_active — that is admission control, not proof that tasks already running or parked in nodes have stopped; inspect those separately. EXPLICIT-INTENT ONLY: never invoke because a process looks unused, during a review/refactor, or as an inferred safety step — only when the user asks to pause this exact process. SAFETY: apply=false (default) reads live status and returns a dry-run; after showing it and receiving explicit approval, call apply=true with confirm=\"process#<id>:<live_status>->paused\". The live status is re-read on every invocation and the result is post-verified.",
 		Annotations: toolHints(hintMutates, hintDestructive, hintNonIdempotent, hintOpenWorld),
 		InputSchema: map[string]interface{}{
 			"type": "object",
@@ -501,7 +524,7 @@ var toolRegistry = []mcpTool{
 	},
 	{
 		Name:        "resume-process",
-		Description: "Resume (activate) one paused/debug Corezoid process without changing or deploying its graph. CONSEQUENTIAL: after activation, API clients, schedules, callbacks, and other processes may create new tasks immediately. EXPLICIT-INTENT ONLY: never resume automatically after edits, tests, a review, or a previous pause; use only when the user directly asks to resume this exact process and accepts incoming traffic. SAFETY: apply=false (default) reads live status and returns a dry-run. After showing it to the user and receiving explicit approval, call apply=true with confirm=\"process#<id>:<live_status>->active\". The live status is re-read on every invocation and the result is post-verified.",
+		Description: "Resume (activate) one paused/debug Corezoid process without changing or deploying its graph. CONSEQUENTIAL: after activation, API clients, schedules, callbacks and other processes may create new tasks immediately. EXPLICIT-INTENT ONLY: never resume automatically after edits, tests, a review or a previous pause — only when the user asks to resume this exact process and accepts incoming traffic. SAFETY: apply=false (default) reads live status and returns a dry-run; after showing it and receiving explicit approval, call apply=true with confirm=\"process#<id>:<live_status>->active\". The live status is re-read on every invocation and the result is post-verified.",
 		Annotations: toolHints(hintMutates, hintDestructive, hintNonIdempotent, hintOpenWorld),
 		InputSchema: map[string]interface{}{
 			"type": "object",
@@ -525,7 +548,7 @@ var toolRegistry = []mcpTool{
 	},
 	{
 		Name:        "move-process",
-		Description: "Move (reparent) one existing Corezoid process/state diagram to another folder in the configured workspace. This preserves the same object ID and graph; it is NOT copy, import, or deploy. EXPLICIT-INTENT ONLY: never reorganize objects automatically during create/edit/review/refactor. Use only when the user directly identifies the object and destination. SAFETY: apply=false (default) reads the live current parent, destination, and effective project/stage contexts and returns a dry-run. To apply, show it to the user and pass the exact context-bound confirm token returned by that dry-run. Moving the source, destination, or either effective stage/project context invalidates an old token; completion is post-verified. destination_folder_id=0 means workspace root. Cross-stage/project/root moves additionally require allow_cross_stage=true because stage-scoped aliases/variables, access, and deployment behavior are not migrated. Local mirror files are not relocated automatically.",
+		Description: "Move (reparent) one existing Corezoid process/state diagram to another folder in the configured workspace, preserving its object ID and graph; NOT copy, import, or deploy. EXPLICIT-INTENT ONLY: never reorganize objects automatically during create/edit/review/refactor — use only when the user names both object and destination. SAFETY: apply=false (default) reads the live current parent, destination and effective project/stage contexts and returns a dry-run; to apply, show it to the user and pass the exact context-bound confirm token it returned. Moving the source, destination or either effective stage/project context invalidates an old token; completion is post-verified. destination_folder_id=0 means workspace root. Cross-stage/project/root moves also require allow_cross_stage=true, because stage-scoped aliases/variables, access and deployment behavior are not migrated. Local mirror files are not relocated automatically.",
 		Annotations: toolHints(hintMutates, hintDestructive, hintNonIdempotent, hintOpenWorld),
 		InputSchema: map[string]interface{}{
 			"type": "object",
@@ -558,7 +581,7 @@ var toolRegistry = []mcpTool{
 	},
 	{
 		Name:        "move-folder",
-		Description: "Move (reparent) one existing NORMAL Corezoid folder to another folder in the configured workspace. Projects and stages are intentionally rejected. This preserves the same folder ID and descendants; it is NOT copy, import, or deploy. EXPLICIT-INTENT ONLY: never reorganize automatically during create/edit/review/refactor. SAFETY: apply=false (default) reads the live parent, destination, and effective project/stage contexts; checks destination ancestry to prevent self/descendant cycles; and returns a dry-run. To apply, show it to the user and pass the exact context-bound confirm token returned by that dry-run. Moving the source, destination, or either effective stage/project context invalidates an old token; completion is post-verified. destination_folder_id=0 means workspace root. Cross-stage/project/root moves additionally require allow_cross_stage=true and affect every descendant's environment context. Local mirror directories are not relocated automatically.",
+		Description: "Move (reparent) one existing NORMAL Corezoid folder to another folder in the configured workspace, preserving its folder ID and descendants; NOT copy, import, or deploy. Projects and stages are intentionally rejected. EXPLICIT-INTENT ONLY: never reorganize automatically during create/edit/review/refactor. SAFETY: apply=false (default) reads the live parent, destination and effective project/stage contexts, checks destination ancestry to prevent self/descendant cycles, and returns a dry-run; to apply, show it to the user and pass the exact context-bound confirm token it returned. Moving the source, destination or either effective stage/project context invalidates an old token; completion is post-verified. destination_folder_id=0 means workspace root. Cross-stage/project/root moves also require allow_cross_stage=true and affect every descendant's environment context. Local mirror directories are not relocated automatically.",
 		Annotations: toolHints(hintMutates, hintDestructive, hintNonIdempotent, hintOpenWorld),
 		InputSchema: map[string]interface{}{
 			"type": "object",
@@ -653,7 +676,7 @@ var toolRegistry = []mcpTool{
 	},
 	{
 		Name:        "deploy-stage",
-		Description: "Deploy (promote) one stage's processes onto another within a Corezoid project — e.g. develop → production. Wraps the admin obj_scheme compare+merge that the UI \"Deploy\" button issues (on /api/2/compare and /api/2/merge). DESTRUCTIVE, and irreversible on an immutable target. SAFETY: apply=false (default) is a dry-run that only shows the diff and any conflicts — nothing is deployed. To actually deploy you MUST first get the user's explicit confirmation of the exact source→target, then call with apply=true AND confirm=\"<source_stage_id>-><target_stage_id>\". Never deploy without the user confirming. The merge is asynchronous; this tool waits for it to finish over the progress WebSocket.",
+		Description: "Deploy (promote) one stage's processes onto another within a Corezoid project — e.g. develop → production. Wraps the admin obj_scheme compare+merge behind the UI's \"Deploy\" button (/api/2/compare, /api/2/merge). DESTRUCTIVE, and irreversible on an immutable target. SAFETY: apply=false (default) is a dry-run showing only the diff and any conflicts — nothing is deployed. To deploy you MUST first get the user's explicit confirmation of the exact source→target, then call with apply=true AND confirm=\"<source_stage_id>-><target_stage_id>\". Never deploy without the user confirming. The merge is asynchronous; this tool waits for it to finish over the progress WebSocket.",
 		Annotations: toolHints(hintMutates, hintDestructive, hintNonIdempotent, hintOpenWorld),
 		InputSchema: map[string]interface{}{
 			"type": "object",
@@ -838,11 +861,11 @@ var toolRegistry = []mcpTool{
 				},
 				"stage_id": map[string]interface{}{
 					"type":        "string",
-					"description": "Corezoid stage (root folder) ID. Only pass this when the user explicitly dictates a stage ID (or asks to switch stages) — otherwise leave it out and let the interactive stage picker handle selection. The chosen stage is materialized on disk as the <id>_<name>.stage.json marker; every other MCP tool resolves stage from that marker, so you do not need to remember it.",
+					"description": "Corezoid stage (root folder) ID. Pass it only when the user dictates a stage ID or asks to switch stages — otherwise omit it and let the interactive picker choose. The chosen stage lands on disk as the <id>_<name>.stage.json marker, which every other MCP tool reads.",
 				},
 				"api_login": map[string]interface{}{
 					"type":        "string",
-					"description": "API key login (alternative to OAuth2 browser flow). If both api_login and api_secret are provided, browser authentication is skipped.",
+					"description": "API key login (alternative to the OAuth2 browser flow). Providing both api_login and api_secret skips browser authentication.",
 				},
 				"api_secret": map[string]interface{}{
 					"type":        "string",
@@ -1165,7 +1188,7 @@ var toolRegistry = []mcpTool{
 	},
 	{
 		Name:        "modify-task",
-		Description: "Modify an existing task's data. At least one of task_id or ref must be provided. WARNING: the Corezoid API performs a SHALLOW (top-level) merge — if a top-level key already holds a nested object (e.g. data.currencies), its entire value is replaced and any sub-keys absent from your payload are silently lost. Pass deep_merge: true to fetch the current task data first and perform a recursive merge that preserves existing sub-keys.",
+		Description: "Modify an existing task's data; at least one of task_id or ref is required. WARNING: the Corezoid API does a SHALLOW (top-level) merge — if a top-level key holds a nested object (e.g. data.currencies), its whole value is replaced and sub-keys absent from your payload are silently lost. Pass deep_merge: true to fetch current task data first and merge recursively, preserving sub-keys.",
 		Annotations: toolHints(hintMutates, hintSafe, hintIdempotent, hintOpenWorld),
 		InputSchema: map[string]interface{}{
 			"type": "object",
@@ -1556,18 +1579,18 @@ var toolRegistry = []mcpTool{
 	},
 	{
 		Name:        "create-snapshot",
-		Description: "Create a snapshot of the current server state of a process before making changes. Useful as a manual checkpoint before experiments. Auto-snapshot is also created automatically before every push-process on existing processes. Identify the target with EXACTLY ONE of process_path (a local .conv.json file) or process_id (the numeric Corezoid process ID) — process_id works with no local process repository; passing both is rejected as ambiguous.",
+		Description: "Snapshot a process's current server state as a manual checkpoint before experiments. push-process already auto-snapshots existing processes. Target it with EXACTLY ONE of process_path (a local .conv.json) or process_id (the numeric ID, usable with no local repository); both is rejected as ambiguous.",
 		Annotations: toolHints(hintMutates, hintSafe, hintNonIdempotent, hintOpenWorld),
 		InputSchema: map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
 				"process_path": map[string]interface{}{
 					"type":        []string{"string", "null"},
-					"description": "Path to the .conv.json file. Omit and pass process_id instead when there is no local process repository. Mutually exclusive with process_id.",
+					"description": "Path to the .conv.json file. Omit it and pass process_id when there is no local repository. Mutually exclusive with process_id.",
 				},
 				"process_id": map[string]interface{}{
 					"type":        []string{"integer", "null"},
-					"description": "Corezoid process (conv) ID, greater than zero. Alternative to process_path — works with no local file. Mutually exclusive with process_path.",
+					"description": "Corezoid process (conv) ID, > 0. Alternative to process_path; needs no local file. Mutually exclusive with process_path.",
 				},
 				"title": map[string]interface{}{
 					"type":        "string",
@@ -1579,18 +1602,18 @@ var toolRegistry = []mcpTool{
 	},
 	{
 		Name:        "list-snapshots",
-		Description: "List all snapshots for a process. Returns version, title, author and creation time for each snapshot. Identify the target with EXACTLY ONE of process_path (a local .conv.json file) or process_id (the numeric Corezoid process ID) — process_id works with no local process repository; passing both is rejected as ambiguous.",
+		Description: "List all snapshots for a process. Returns version, title, author and creation time for each snapshot. Target it with EXACTLY ONE of process_path (a local .conv.json) or process_id (the numeric ID, usable with no local repository); both is rejected as ambiguous.",
 		Annotations: toolHints(hintReadOnly, hintSafe, hintIdempotent, hintOpenWorld),
 		InputSchema: map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
 				"process_path": map[string]interface{}{
 					"type":        []string{"string", "null"},
-					"description": "Path to the .conv.json file. Omit and pass process_id instead when there is no local process repository. Mutually exclusive with process_id.",
+					"description": "Path to the .conv.json file. Omit it and pass process_id when there is no local repository. Mutually exclusive with process_id.",
 				},
 				"process_id": map[string]interface{}{
 					"type":        []string{"integer", "null"},
-					"description": "Corezoid process (conv) ID, greater than zero. Alternative to process_path — works with no local file. Mutually exclusive with process_path.",
+					"description": "Corezoid process (conv) ID, > 0. Alternative to process_path; needs no local file. Mutually exclusive with process_path.",
 				},
 			},
 			"anyOf": processTargetAnyOf(),
@@ -1598,18 +1621,18 @@ var toolRegistry = []mcpTool{
 	},
 	{
 		Name:        "delete-snapshot",
-		Description: "Delete a snapshot by its obj_id. Use list-snapshots to find the snapshot_id. Identify the target with EXACTLY ONE of process_path (a local .conv.json file) or process_id (the numeric Corezoid process ID) — process_id works with no local process repository; passing both is rejected as ambiguous.",
+		Description: "Delete a snapshot by its obj_id. Use list-snapshots to find the snapshot_id. Target it with EXACTLY ONE of process_path (a local .conv.json) or process_id (the numeric ID, usable with no local repository); both is rejected as ambiguous.",
 		Annotations: toolHints(hintMutates, hintDestructive, hintNonIdempotent, hintOpenWorld),
 		InputSchema: map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
 				"process_path": map[string]interface{}{
 					"type":        []string{"string", "null"},
-					"description": "Path to the .conv.json file. Omit and pass process_id instead when there is no local process repository. Mutually exclusive with process_id.",
+					"description": "Path to the .conv.json file. Omit it and pass process_id when there is no local repository. Mutually exclusive with process_id.",
 				},
 				"process_id": map[string]interface{}{
 					"type":        []string{"integer", "null"},
-					"description": "Corezoid process (conv) ID, greater than zero. Alternative to process_path — works with no local file. Mutually exclusive with process_path.",
+					"description": "Corezoid process (conv) ID, > 0. Alternative to process_path; needs no local file. Mutually exclusive with process_path.",
 				},
 				"snapshot_id": map[string]interface{}{
 					"type":        "integer",
@@ -1622,18 +1645,18 @@ var toolRegistry = []mcpTool{
 	},
 	{
 		Name:        "get-snapshot",
-		Description: "Get the node list of a specific snapshot for diff comparison against the current process state. Returns all nodes as they existed at snapshot time. Identify the target with EXACTLY ONE of process_path (a local .conv.json file) or process_id (the numeric Corezoid process ID) — process_id works with no local process repository; passing both is rejected as ambiguous.",
+		Description: "Get one snapshot's node list, as it existed at snapshot time, for diffing against the current process. Target it with EXACTLY ONE of process_path (a local .conv.json) or process_id (the numeric ID, usable with no local repository); both is rejected as ambiguous.",
 		Annotations: toolHints(hintReadOnly, hintSafe, hintIdempotent, hintOpenWorld),
 		InputSchema: map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
 				"process_path": map[string]interface{}{
 					"type":        []string{"string", "null"},
-					"description": "Path to the .conv.json file. Omit and pass process_id instead when there is no local process repository. Mutually exclusive with process_id.",
+					"description": "Path to the .conv.json file. Omit it and pass process_id when there is no local repository. Mutually exclusive with process_id.",
 				},
 				"process_id": map[string]interface{}{
 					"type":        []string{"integer", "null"},
-					"description": "Corezoid process (conv) ID, greater than zero. Alternative to process_path — works with no local file. Mutually exclusive with process_path.",
+					"description": "Corezoid process (conv) ID, > 0. Alternative to process_path; needs no local file. Mutually exclusive with process_path.",
 				},
 				"snapshot_id": map[string]interface{}{
 					"type":        "integer",
