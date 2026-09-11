@@ -47,6 +47,30 @@ func confineToWorkdir(p string) (string, error) {
 	if clean == ".." || strings.HasPrefix(clean, ".."+string(filepath.Separator)) {
 		return "", fmt.Errorf("path %q escapes working directory", p)
 	}
+	// The lexical check above only rejects paths that SAY they leave the
+	// workspace. A symlink says nothing: "exports/x.conv.json" is a clean
+	// relative path whether "exports" is a real directory or a link to /etc,
+	// and every handler here writes with the user's full permissions. The
+	// absolute branch has resolved both sides since it was written, so the
+	// relative spelling — the one callers actually use — gets the same
+	// treatment instead of a weaker one.
+	//
+	// ensureInsideRoot is the guard unzipFile already uses for the same
+	// question: it resolves the deepest ancestor that exists, so a write
+	// target whose parent directory has yet to be created (create-process into
+	// a new folder) is still allowed, while an existing symlinked component —
+	// or an existing symlinked leaf — is resolved and compared.
+	cwd, err := os.Getwd()
+	if err != nil {
+		return "", fmt.Errorf("cannot determine working directory: %v", err)
+	}
+	cwdReal, err := filepath.EvalSymlinks(cwd)
+	if err != nil {
+		return "", fmt.Errorf("cannot resolve working directory: %v", err)
+	}
+	if err := ensureInsideRoot(filepath.Join(cwdReal, clean), cwdReal); err != nil {
+		return "", fmt.Errorf("path %q resolves outside the working directory: %v", p, err)
+	}
 	return p, nil
 }
 
@@ -68,7 +92,20 @@ func relativeToCwd(p string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("cannot resolve path: %v", err)
 	}
-	rel, err := filepath.Rel(cwdReal, filepath.Join(dirReal, filepath.Base(p)))
+	leaf := filepath.Join(dirReal, filepath.Base(p))
+	// The leaf itself may be a symlink, and a write follows it. Resolving the
+	// parent alone would accept "workspace/x.conv.json" whose file is a link
+	// to ~/.ssh/authorized_keys — the name is inside the workspace, the write
+	// is not. A leaf that does not exist yet is a legitimate write target, so
+	// only an existing one is resolved.
+	if _, statErr := os.Lstat(leaf); statErr == nil {
+		leafReal, resolveErr := filepath.EvalSymlinks(leaf)
+		if resolveErr != nil {
+			return "", fmt.Errorf("cannot resolve path: %v", resolveErr)
+		}
+		leaf = leafReal
+	}
+	rel, err := filepath.Rel(cwdReal, leaf)
 	if err != nil {
 		return "", fmt.Errorf("cannot relativize path: %v", err)
 	}
@@ -186,6 +223,18 @@ func intArg(args map[string]interface{}, key string) (int, error) {
 	}
 	switch val := v.(type) {
 	case float64:
+		// Truncating here is how a mistyped id becomes a correct-looking
+		// operation on a DIFFERENT object: delete-process{process_id: 123.9}
+		// used to delete process 123 and report success. Declaring the
+		// property as "integer" in the tool's InputSchema does not prevent it
+		// — unknownArgsError checks argument NAMES, nothing validates values,
+		// and JSON has one number type, so every id arrives here as float64.
+		// Individual handlers grew their own whole-number guards for this
+		// (commsFieldInt, commsCheckTargetID, resolveProcessID); the shared
+		// reader every other tool uses did not have one.
+		if val != math.Trunc(val) {
+			return 0, fmt.Errorf("argument %s must be a whole number, got %v", key, val)
+		}
 		return int(val), nil
 	case int:
 		return val, nil

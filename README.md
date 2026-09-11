@@ -381,8 +381,8 @@ Claude Code / Codex
         ├── Workspace     list-workspaces, list-stages, list-projects,
         │                 create-project, modify-project, delete-project, show-project,
         │                 deploy-stage, set-stage-immutable
-        ├── Processes     pull-process, pull-folder, push-process, lint-process, layout-process
-        │                 create-process, create-state-diagram, create-folder,
+        ├── Processes     pull-process, pull-folder, push-process, lint-process, layout-process,
+        │                 clean-process, create-process, create-state-diagram, create-folder,
         │                 create-alias, create-variable,
         │                 list-variables, modify-variable, delete-variable,
         │                 show-folder, list-folders, modify-folder, delete-folder, delete-process

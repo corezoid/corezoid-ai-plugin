@@ -11,9 +11,10 @@ import (
 )
 
 // handleCleanProcess removes inactive nodes from a Corezoid process and saves
-// the result as <title>_cleaned.conv.json next to the original.
+// the result as <ID>_<title>.cleaned.json next to the original — deliberately
+// not a .conv.json; see the comment on the save step below for why.
 //
-// Algorithm (mirrors the clean-corezoid-process skill):
+// Algorithm:
 //  1. Export the process and collect per-node time-series statistics.
 //  2. Apply three exclusion criteria to protect structurally important inactive nodes.
 //  3. Delete inactive nodes, redirect dangling references to their go-successors,
@@ -295,7 +296,7 @@ func handleCleanProcess(ctx context.Context, args map[string]interface{}) (strin
 	if marshalErr != nil {
 		return fmt.Sprintf("Error marshaling cleaned process: %v", marshalErr), true
 	}
-	if writeErr := os.WriteFile(filePath, data, 0644); writeErr != nil {
+	if writeErr := writeFileAtomically(filePath, data, 0644); writeErr != nil {
 		return fmt.Sprintf("Error writing file: %v", writeErr), true
 	}
 
@@ -312,7 +313,11 @@ func handleCleanProcess(ctx context.Context, args map[string]interface{}) (strin
 			"Saved: %s\n"+
 			"This is a reviewable proposal, not a pulled process — it is intentionally not a "+
 			".conv.json file, so review the diff first, then pass the path explicitly: "+
-			"lint-process/push-process with process_path=%s.",
+			"lint-process/push-process with process_path=%s.\n"+
+			"It was built from the process as it is on the server right now, not from any "+
+			"local .conv.json: a diff against a file pulled earlier also shows whatever "+
+			"changed on the server since that pull. Run pull-process first if the diff "+
+			"must show this cleanup alone.",
 		processID, title,
 		originalCount, finalCount, originalCount-finalCount,
 		days,

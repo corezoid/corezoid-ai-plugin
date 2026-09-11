@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math"
 	"strconv"
 	"time"
 )
@@ -18,6 +19,14 @@ func argInt(args map[string]interface{}, key string) (int, bool) {
 	}
 	switch v := raw.(type) {
 	case float64:
+		// A fractional value is reported as unusable rather than truncated,
+		// for the reason spelled out on intArg: these are ids and offsets, and
+		// silently dropping the fraction acts on something the caller did not
+		// name. Callers that treat !ok as "absent" fall back to their default
+		// instead of to a neighbouring object.
+		if v != math.Trunc(v) {
+			return 0, false
+		}
 		return int(v), true
 	case string:
 		n, err := strconv.Atoi(v)

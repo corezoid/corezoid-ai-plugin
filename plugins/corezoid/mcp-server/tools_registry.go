@@ -294,7 +294,7 @@ var toolRegistry = []mcpTool{
 	{
 		Name:        "clean-process",
 		Description: "Remove nodes with no traffic in the last N days (default 90) from a Corezoid process, saving a reviewable proposal as <ID>_<title>.cleaned.json — NOT a .conv.json, so it never collides with the pulled process; pass that path explicitly to lint-process/push-process to deploy it. Never deploys. Structurally required inactive nodes are kept (escalation chains, unconditional-go and set_param targets), references to removed nodes are redirected to their go-successor, and only delay→final nodes this cleanup rewired are dropped — hand-authored delays stay. Refuses to write if no node shows traffic, if the start node would be lost, or if the result fails validation. Reports counts per step plus any outgoing branch that could not be redirected.",
-		Annotations: toolHints(hintMutates, hintSafe, hintIdempotent, hintOpenWorld),
+		Annotations: toolHints(hintMutates, hintSafe, hintNonIdempotent, hintOpenWorld),
 		InputSchema: map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
@@ -308,7 +308,7 @@ var toolRegistry = []mcpTool{
 				},
 				"overwrite": map[string]interface{}{
 					"type":        "boolean",
-					"description": "Allow overwriting an existing _cleaned.conv.json file. Default false — the tool refuses to overwrite to protect manual edits made to a previously cleaned file.",
+					"description": "Allow overwriting an existing <ID>_<title>.cleaned.json file. Default false — the tool refuses to overwrite to protect manual edits made to a previously cleaned file.",
 				},
 			},
 			"required": []string{"process_id"},

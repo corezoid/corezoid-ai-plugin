@@ -123,8 +123,8 @@ first becomes ~150 dead processes someone removes by hand.
 - Check PLAN.md's `orchestrator.folder_id` before Phase 4. Set → resume from
   Phase 5.
 - The tool now refuses to build without `apply=true` plus a confirm token bound
-  to the target stage and channel set, so a stray call previews instead of
-  building. Treat that as a backstop, not as permission to skip the checks
+  to the target stage, the channel set and the channel credentials, so a stray
+  call previews instead of building. Treat that as a backstop, not as permission to skip the checks
   here: the token is trivial to supply, and the gate cannot tell an approved
   build from a repeated one.
 - Write the wizard's response into PLAN.md **immediately**. A crash between
@@ -497,7 +497,16 @@ create-communications-orchestrator                     # 1. preview
   stage_id:   {corezoid.stage_id}     # omit to use the marker's stage
   project_id: {corezoid.project_id}   # omit to resolve from the stage
   lang:       {lang}
+  apply:      false                   # REQUIRED, see below — never omit it
 ```
+
+`apply: false` is the default, so passing it changes nothing about what the
+tool does. Pass it anyway, every time. A server old enough not to know the
+argument rejects the whole call as unknown — while the same call with `apply`
+omitted is, to that server, a plain build request, and it mints ~150 processes
+and takes over the channel's webhook at the step this skill treats as free.
+Spelling the flag out is what makes a version mismatch fail loudly instead of
+building a bot nobody approved.
 
 Show the preview to the user — it names the target stage, the channel set and
 what cannot be undone — and wait for the approval Phase 4's gate already
@@ -511,13 +520,16 @@ create-communications-orchestrator                     # 2. build
   project_id: {corezoid.project_id}
   lang:       {lang}
   apply:      true
-  confirm:    "orchestrator@stage#{stage_id}:{channels, sorted, +-joined}"
+  confirm:    "<copied verbatim from the preview output>"
 ```
 
-The token is bound to the stage and the channel set. If it is rejected, the
-build did **not** start — something differs from what the user approved (a
-changed stage, an added or dropped channel). Re-run the preview and compare;
-never hand-assemble a token to make the call go through.
+The token is bound to the stage, the channel set **and** the channel
+credentials, and its last segment is a hash — it cannot be assembled by hand,
+which is deliberate. If it is rejected, the build did **not** start: something
+differs from what the user approved — a changed stage, an added or dropped
+channel, or a different bot token for the same channel. Re-run the preview,
+show the user what differs, and never edit a token to make the call go
+through.
 
 `messengers` is a **JSON string**. The build is asynchronous; the tool polls it
 and returns only when the wizard hands back a `folder_url`:

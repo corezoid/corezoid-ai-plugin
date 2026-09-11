@@ -1,6 +1,9 @@
 package main
 
-import "testing"
+import (
+	"encoding/json"
+	"testing"
+)
 
 // ---- test fixtures ---------------------------------------------------------
 
@@ -373,5 +376,114 @@ func TestCleanApplyExclusions_ProtectsEscalationChainAndGoTargets(t *testing.T) 
 	}
 	if excluded["COLD"] {
 		t.Error("COLD is inactive and unreferenced by any live node; it must stay removable")
+	}
+}
+
+// TestCleanIsNodeActive pins the one get_node_stat response shape clean-process
+// understands. Everything this function returns false for is a node the tool
+// proposes to delete, so a shape it fails to read is not a parse error — it is
+// a deletion. The whole-response case is caught by the "no node showed any
+// traffic" guard in handleCleanProcess; a PARTIAL drift (some nodes readable,
+// some not) is not, which is why the unrecognised shapes below are asserted
+// explicitly rather than left to the reader.
+func TestCleanIsNodeActive(t *testing.T) {
+	// Responses are built by decoding JSON, not by hand-writing Go literals:
+	// the live path always arrives through encoding/json, so every number is a
+	// float64 there. A hand-built map[string]interface{}{"in": 1} would pass a
+	// test that the real response shape fails.
+	decode := func(t *testing.T, raw string) map[string]interface{} {
+		t.Helper()
+		var m map[string]interface{}
+		if err := json.Unmarshal([]byte(raw), &m); err != nil {
+			t.Fatalf("bad test fixture: %v", err)
+		}
+		return m
+	}
+
+	tests := []struct {
+		name string
+		resp string
+		want bool
+	}{
+		{
+			name: "traffic in",
+			resp: `{"ops":[{"data":[{"time":1,"in":4,"out":0}]}]}`,
+			want: true,
+		},
+		{
+			name: "traffic out only",
+			resp: `{"ops":[{"data":[{"time":1,"in":0,"out":7}]}]}`,
+			want: true,
+		},
+		{
+			name: "zero traffic across the window",
+			resp: `{"ops":[{"data":[{"time":1,"in":0,"out":0},{"time":2,"in":0,"out":0}]}]}`,
+			want: false,
+		},
+		{
+			name: "traffic only in a later interval",
+			resp: `{"ops":[{"data":[{"time":1,"in":0,"out":0},{"time":2,"in":3,"out":0}]}]}`,
+			want: true,
+		},
+		{
+			name: "empty window",
+			resp: `{"ops":[{"data":[]}]}`,
+			want: false,
+		},
+		{
+			name: "malformed entries are skipped, real one still counts",
+			resp: `{"ops":[{"data":["nonsense",{"time":1,"in":2,"out":0}]}]}`,
+			want: true,
+		},
+		{
+			name: "no ops",
+			resp: `{"ops":[]}`,
+			want: false,
+		},
+		{
+			name: "ops missing entirely",
+			resp: `{"request_proc":"ok"}`,
+			want: false,
+		},
+
+		// ── Shapes this function does NOT recognise ──────────────────────────
+		//
+		// These assert current behaviour, not desired behaviour. Each one means
+		// "delete this node". If get_node_stat ever answers in one of these
+		// forms, the fix is here, not in the caller: the caller's guard only
+		// fires when EVERY node comes back unreadable.
+		{
+			name: "aggregate response with no per-interval data array",
+			resp: `{"ops":[{"in":42,"out":42}]}`,
+			want: false,
+		},
+		{
+			name: "counters delivered as strings",
+			resp: `{"ops":[{"data":[{"time":1,"in":"42","out":"0"}]}]}`,
+			want: false,
+		},
+		{
+			name: "renamed counter fields",
+			resp: `{"ops":[{"data":[{"time":1,"count_in":42,"count_out":0}]}]}`,
+			want: false,
+		},
+		{
+			name: "data nested one level deeper",
+			resp: `{"ops":[{"data":{"items":[{"time":1,"in":42,"out":0}]}}]}`,
+			want: false,
+		},
+		{
+			name: "traffic reported only on a second op",
+			resp: `{"ops":[{"data":[]},{"data":[{"time":1,"in":42,"out":0}]}]}`,
+			want: false,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := cleanIsNodeActive(decode(t, tc.resp)); got != tc.want {
+				t.Errorf("cleanIsNodeActive(%s) = %v, want %v", tc.resp, got, tc.want)
+			}
+		})
 	}
 }

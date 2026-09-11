@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"math"
@@ -283,17 +285,19 @@ func handleCreateCommsOrchestrator(ctx context.Context, args map[string]interfac
 		channels = append(channels, fmt.Sprint(m["channel"]))
 	}
 
-	// The token binds the approval to what the user actually saw: the target
-	// stage and the exact channel set. Adding a channel or retargeting the
-	// stage after the dry-run invalidates it, because either change builds a
-	// different bot against different credentials.
-	wantConfirm := commsConfirmToken(stageID, channels)
+	// The token binds the approval to the whole operation: the target stage,
+	// the exact channel set, AND the credentials those channels carry. The
+	// channel set alone is not enough — swapping a bot token between the
+	// preview and the build keeps "telegram+viber" identical, so the approval
+	// the user gave for bot A would authorise a webhook takeover of bot B,
+	// which is precisely the consequence this gate exists to stop.
+	wantConfirm := commsConfirmToken(stageID, channels, commsCredentialFingerprint(messengers))
 	preview := commsOrchestratorPreview(stageID, projectID, lang, channels)
 	if !boolishArg(args, "apply") {
 		return fmt.Sprintf("%s\n\nDRY-RUN - nothing was created. Show this preview to the user, get explicit approval, then re-run with apply=true and confirm=%q.", preview, wantConfirm), false
 	}
 	if strings.TrimSpace(optStrArg(args, "confirm")) != wantConfirm {
-		return fmt.Sprintf("Confirmation required - nothing was created.\n\n%s\n\nAfter explicit user approval, re-run with apply=true and confirm=%q.", preview, wantConfirm), true
+		return fmt.Sprintf("Confirmation required - nothing was created.\n\n%s\n\nAfter explicit user approval, re-run with apply=true and confirm=%q. If you are re-sending a token from an earlier preview, something changed since it was issued — the stage, the channel set, or one of the channel credentials. Re-run the preview and show the user what differs; never edit a token to make the call go through.", preview, wantConfirm), true
 	}
 
 	createOp := map[string]any{
@@ -331,10 +335,44 @@ func handleCreateCommsOrchestrator(ctx context.Context, args map[string]interfac
 // build. Channels are sorted so the token does not depend on the order the
 // caller happened to list them in — the same build always asks for the same
 // token, and a token only stops matching when the build genuinely changes.
-func commsConfirmToken(stageID int, channels []string) string {
+// The fingerprint covers the credentials, so "the same build" means the same
+// bots and not merely the same channel names.
+func commsConfirmToken(stageID int, channels []string, fingerprint string) string {
 	sorted := append([]string(nil), channels...)
 	sort.Strings(sorted)
-	return fmt.Sprintf("orchestrator@stage#%d:%s", stageID, strings.Join(sorted, "+"))
+	return fmt.Sprintf("orchestrator@stage#%d:%s/%s", stageID, strings.Join(sorted, "+"), fingerprint)
+}
+
+// commsCredentialFingerprint derives a stable, non-reversible fingerprint of
+// the exact messenger set a build would use — every field of every entry,
+// credentials included.
+//
+// It is a truncated SHA-256 rather than any part of the values themselves: the
+// token is printed to the model, shown to the user, and quoted back on the
+// next call, so it travels through logs and transcripts. 48 bits is far too
+// little to recover a bot token from and far more than enough to make two
+// different credential sets collide by accident, which is the only property
+// the gate needs. Entries are canonicalised — keys sorted within an entry,
+// entries sorted among themselves — so the preview and the build agree even if
+// the caller reorders the list or its keys between the two calls, while any
+// change to a value at all produces a different token.
+func commsCredentialFingerprint(messengers []map[string]any) string {
+	parts := make([]string, 0, len(messengers))
+	for _, m := range messengers {
+		keys := make([]string, 0, len(m))
+		for k := range m {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		var b strings.Builder
+		for _, k := range keys {
+			fmt.Fprintf(&b, "%s=%v;", k, m[k])
+		}
+		parts = append(parts, b.String())
+	}
+	sort.Strings(parts)
+	sum := sha256.Sum256([]byte(strings.Join(parts, "|")))
+	return hex.EncodeToString(sum[:])[:12]
 }
 
 // commsOrchestratorPreview describes what the build will do, in the terms that

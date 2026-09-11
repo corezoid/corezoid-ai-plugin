@@ -139,7 +139,7 @@ func commsConfirmTokenForArgs(args map[string]interface{}) string {
 	for _, m := range ms {
 		channels = append(channels, fmt.Sprint(m["channel"]))
 	}
-	return commsConfirmToken(stage, channels)
+	return commsConfirmToken(stage, channels, commsCredentialFingerprint(ms))
 }
 
 const commsTelegramOnly = `[{"channel":"telegram","key":"1234"}]`
@@ -187,11 +187,12 @@ func TestCommsOrchestrator_CreateIsNeverRetried(t *testing.T) {
 	stageID = 647738
 	t.Cleanup(func() { accountURL = origAccount; stageID = origStage })
 
-	out, isErr := handleToolCall(context.Background(), "create-communications-orchestrator", map[string]interface{}{
+	args := map[string]interface{}{
 		"messengers": commsTelegramOnly,
 		"apply":      true,
-		"confirm":    "orchestrator@stage#647738:telegram",
-	})
+	}
+	args["confirm"] = commsConfirmTokenForArgs(args)
+	out, isErr := handleToolCall(context.Background(), "create-communications-orchestrator", args)
 	if !isErr {
 		t.Fatalf("a 503 on create must surface as an error, got: %s", out)
 	}
@@ -271,9 +272,15 @@ func TestCommsOrchestrator_DryRunCarriesTheConfirmToken(t *testing.T) {
 		t.Fatalf("a dry-run is not an error: %s", out)
 	}
 	// Channels are sorted, so the token does not depend on the order the caller
-	// happened to list them in.
-	if want := `confirm="orchestrator@stage#647738:telegram+viber"`; !strings.Contains(out, want) {
-		t.Errorf("dry-run should print %s, got: %s", want, out)
+	// happened to list them in. The trailing segment is the credential
+	// fingerprint, asserted by shape here and by behaviour in
+	// TestCommsOrchestrator_ConfirmTokenIsBoundToCredentials.
+	prefix := `confirm="orchestrator@stage#647738:telegram+viber/`
+	if !strings.Contains(out, prefix) {
+		t.Errorf("dry-run should print %s<fingerprint>\", got: %s", prefix, out)
+	}
+	if fp := commsCredentialFingerprint(mustParseMessengers(t, `[{"channel":"viber","viber_token":"v"},{"channel":"telegram","key":"1234"}]`)); !strings.Contains(out, prefix+fp+`"`) {
+		t.Errorf("dry-run token should end in the credential fingerprint %q, got: %s", fp, out)
 	}
 	for _, phrase := range []string{"NO UNDO", "webhook", "~150 processes"} {
 		if !strings.Contains(out, phrase) {
@@ -617,5 +624,65 @@ func TestCommsOrchestrator_RejectsFractionalUserID(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "user_id") {
 		t.Errorf("error must name user_id, got: %v", err)
+	}
+}
+
+// mustParseMessengers parses a messengers payload the way the handler does, so
+// a test can compute the fingerprint the gate will demand.
+func mustParseMessengers(t *testing.T, raw string) []map[string]any {
+	t.Helper()
+	ms, err := parseMessengers(raw)
+	if err != nil {
+		t.Fatalf("parseMessengers(%s): %v", raw, err)
+	}
+	return ms
+}
+
+// TestCommsOrchestrator_ConfirmTokenIsBoundToCredentials covers the gap an
+// inbound review found: the token used to be derived from the stage and the
+// channel NAMES only, so a confirm token issued for a preview of bot A was
+// accepted for a build against bot B. Channel names are the one thing that
+// does not change when the credentials are swapped, and taking over the wrong
+// live bot's webhook is the exact harm the gate exists to prevent.
+func TestCommsOrchestrator_ConfirmTokenIsBoundToCredentials(t *testing.T) {
+	const previewed = `[{"channel":"telegram","key":"BOT-A"}]`
+	const swapped = `[{"channel":"telegram","key":"BOT-B"}]`
+
+	tokenFor := func(raw string) string {
+		return commsConfirmToken(647738, []string{"telegram"}, commsCredentialFingerprint(mustParseMessengers(t, raw)))
+	}
+	if tokenFor(previewed) == tokenFor(swapped) {
+		t.Fatal("swapping the bot token must change the confirm token")
+	}
+
+	m := &commsMock{checkResults: []map[string]interface{}{commsOKCheck("https://admin.corezoid.com/folder/9")}}
+	out, isErr := callCommsTool(t, m, map[string]interface{}{
+		"messengers": swapped,
+		"apply":      true,
+		"confirm":    tokenFor(previewed), // approved for BOT-A
+	})
+	if !isErr {
+		t.Fatalf("a token issued for different credentials must be refused, got: %s", out)
+	}
+	if !strings.Contains(out, "Confirmation required") {
+		t.Errorf("the refusal should be the confirm gate, got: %s", out)
+	}
+	if m.createOp != nil {
+		t.Error("the build was queued against credentials the user never approved")
+	}
+}
+
+// The preview and the build are two separate calls, so the fingerprint has to
+// survive an agent re-serialising the payload between them. Only the values
+// matter — not the order of the entries, nor the order of keys within one.
+func TestCommsCredentialFingerprint_IgnoresOrderingOnly(t *testing.T) {
+	base := commsCredentialFingerprint(mustParseMessengers(t, `[{"channel":"telegram","key":"1234"},{"channel":"viber","viber_token":"v"}]`))
+	reordered := commsCredentialFingerprint(mustParseMessengers(t, `[{"viber_token":"v","channel":"viber"},{"key":"1234","channel":"telegram"}]`))
+	if base != reordered {
+		t.Errorf("reordering entries or keys must not change the fingerprint: %q vs %q", base, reordered)
+	}
+	changed := commsCredentialFingerprint(mustParseMessengers(t, `[{"channel":"telegram","key":"1235"},{"channel":"viber","viber_token":"v"}]`))
+	if base == changed {
+		t.Error("a one-character change to a credential must change the fingerprint")
 	}
 }

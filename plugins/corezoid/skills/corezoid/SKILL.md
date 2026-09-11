@@ -26,6 +26,7 @@ You have access to the Corezoid API via the `corezoid` MCP server.
 | `push-process` | Validate and deploy a `.conv.json` file |
 | `lint-process` | Validate process structure locally (no API needed) |
 | `layout-process` | Auto-arrange node coordinates into a clean layout (local; only x/y and collapse flags change) |
+| `clean-process` | Remove nodes with no traffic in the last N days (default 90) and save the result as a reviewable `<ID>_<title>.cleaned.json` proposal — never deploys. Review the diff, then pass that path explicitly to `lint-process`/`push-process` |
 | `run-task` | Run a task on an already-deployed process, by `process_path` or `process_id` — `process_id` needs no local file, so it also works in hosts with no local process repository (no `pull-process` required) |
 | `show-task` | Look up one task by `ref` and/or `task_id` — returns its current `data`, `node_id` and status. Read-only; use it instead of paging `list-node-tasks` |
 | `create-process` | Create a new empty process (`conv_type: "process"`) in a folder |

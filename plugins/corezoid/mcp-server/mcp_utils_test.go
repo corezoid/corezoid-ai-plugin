@@ -254,8 +254,8 @@ func TestConfineToWorkdir_AllowsAbsoluteInsideCwd(t *testing.T) {
 		t.Fatal(err)
 	}
 	cases := map[string]string{
-		filepath.Join(dir, "ok.conv.json"):          "ok.conv.json",
-		filepath.Join(dir, "sub", "in.conv.json"):   filepath.Join("sub", "in.conv.json"),
+		filepath.Join(dir, "ok.conv.json"):        "ok.conv.json",
+		filepath.Join(dir, "sub", "in.conv.json"): filepath.Join("sub", "in.conv.json"),
 	}
 	for abs, want := range cases {
 		got, err := confineToWorkdir(abs)
@@ -659,5 +659,86 @@ func TestResolvePullDest_ReturnsRootPathFromDeeperCWD(t *testing.T) {
 	rootReal, _ := filepath.EvalSymlinks(rootDir)
 	if gotReal != rootReal {
 		t.Errorf("expected pull to anchor at Folder.RootPath=%q from subfolder cwd=%q, got %q", rootReal, sub, gotReal)
+	}
+}
+
+// TestIntArg_RejectsFractional covers the defect an inbound review reproduced:
+// delete-process{process_id: 123.9} deleted process 123 and reported success.
+// JSON has one number type, so every id reaches intArg as a float64, and
+// declaring the property "integer" in the tool schema changes nothing — the
+// argument validator checks NAMES, not values. Truncation here is not a
+// rounding question, it is an operation on a different object than the caller
+// named, and several of the tools reading ids this way delete things.
+func TestIntArg_RejectsFractional(t *testing.T) {
+	for _, v := range []interface{}{123.9, 123.0001, -123.5} {
+		if got, err := intArg(map[string]interface{}{"process_id": v}, "process_id"); err == nil {
+			t.Errorf("intArg(%v) = %d, want an error — a fractional id must never be truncated onto a neighbouring object", v, got)
+		}
+	}
+	// Whole numbers keep working in every form ids actually arrive in.
+	for _, v := range []interface{}{float64(123), 123, "123"} {
+		got, err := intArg(map[string]interface{}{"process_id": v}, "process_id")
+		if err != nil || got != 123 {
+			t.Errorf("intArg(%#v) = %d, %v; want 123, nil", v, got, err)
+		}
+	}
+}
+
+// argInt is the dashboard-side reader. It reports a fractional value as
+// unusable rather than truncating it, so callers fall back to their documented
+// default instead of to a neighbouring object.
+func TestArgInt_RejectsFractional(t *testing.T) {
+	if got, ok := argInt(map[string]interface{}{"stage_id": 12345.6}, "stage_id"); ok {
+		t.Errorf("argInt(12345.6) = %d, true; want not-ok", got)
+	}
+	if got, ok := argInt(map[string]interface{}{"stage_id": float64(12345)}, "stage_id"); !ok || got != 12345 {
+		t.Errorf("argInt(12345) = %d, %v; want 12345, true", got, ok)
+	}
+}
+
+// TestConfineToWorkdir_RejectsSymlinkEscape covers the second half of the
+// symlink hole an inbound review found. unzipFile was fixed to resolve
+// symlinks; confineToWorkdir — the guard every process_path argument goes
+// through — was still lexical on the relative branch, which is the spelling
+// callers actually use. A clean relative path says nothing about where its
+// components point.
+func TestConfineToWorkdir_RejectsSymlinkEscape(t *testing.T) {
+	outside := t.TempDir()
+	work := t.TempDir()
+	t.Chdir(work)
+
+	if err := os.Symlink(outside, filepath.Join(work, "exports")); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+	// A symlinked DIRECTORY component: the path is clean and relative, and
+	// every byte written through it lands outside the workspace.
+	if got, err := confineToWorkdir("exports/stolen.conv.json"); err == nil {
+		t.Errorf("confineToWorkdir through a symlinked directory = %q, want an error", got)
+	}
+
+	// A symlinked LEAF: the parent is a genuine workspace directory, so
+	// resolving the parent alone accepts it — the write still follows the link.
+	target := filepath.Join(outside, "target.conv.json")
+	if err := os.WriteFile(target, []byte("{}"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(target, filepath.Join(work, "leaf.conv.json")); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+	if got, err := confineToWorkdir("leaf.conv.json"); err == nil {
+		t.Errorf("confineToWorkdir through a symlinked leaf = %q, want an error", got)
+	}
+
+	// The guard must not cost the ordinary cases: an existing file, and a
+	// write target whose directory does not exist yet (create-process into a
+	// folder that push will materialise).
+	if err := os.WriteFile(filepath.Join(work, "real.conv.json"), []byte("{}"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := confineToWorkdir("real.conv.json"); err != nil {
+		t.Errorf("a real file inside the workspace must be accepted: %v", err)
+	}
+	if _, err := confineToWorkdir("not/created/yet.conv.json"); err != nil {
+		t.Errorf("a write target under a not-yet-created directory must be accepted: %v", err)
 	}
 }
