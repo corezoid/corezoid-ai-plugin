@@ -231,7 +231,7 @@ var toolRegistry = []mcpTool{
 				},
 				"overwrite_server_change": map[string]interface{}{
 					"type":        "boolean",
-					"description": "Deploy over a process that changed on the server since your pull, dropping those changes. Pass it only in reply to the block report describing what would be lost — never speculatively: set ahead of time it authorises overwriting a concurrent change nobody has seen. Unlike force (which overrides lint findings) this overrides another person's edit. Refused when no pre-push snapshot exists unless allow_no_snapshot=true is also passed (never-deployed processes are exempt). Default false.",
+					"description": "Deploy over a process that changed on the server since your pull, dropping those changes. Pass it only in reply to the block report describing what would be lost — never speculatively, never as a default: set ahead of time it authorises overwriting a concurrent change nobody has seen. Unlike force (which overrides lint findings) this overrides another person's edit. Refused when no pre-push snapshot exists unless allow_no_snapshot=true is also passed (never-deployed processes are exempt). Default false.",
 				},
 				"allow_active_stub_mode": map[string]interface{}{
 					"type":        "boolean",
@@ -247,7 +247,7 @@ var toolRegistry = []mcpTool{
 				},
 				"adopt_existing": map[string]interface{}{
 					"type":        "boolean",
-					"description": "Deploy a file that has no pull baseline over a process that already has a deployed version — overwriting server state without knowing what it contains. Use only when the local file is deliberately authoritative (an import or a restored copy); otherwise pull-process first so real conflicts surface. Not needed for never-deployed processes. Where force and overwrite_server_change resolve a conflict you were shown, this declares you do not know what is on the server. Refused when no pre-push snapshot exists unless allow_no_snapshot=true is also passed. Default false.",
+					"description": "Deploy a file that has no pull baseline over a process that already has a deployed version — overwriting server state without knowing what it contains. Use only when the local file is deliberately authoritative (an import or a restored copy); otherwise pull-process first so real conflicts surface. Not needed for never-deployed processes. Where force and overwrite_server_change resolve a conflict you were shown, this declares you do not know what is on the server. Refused when no pre-push snapshot exists unless allow_no_snapshot=true is also passed (a never-deployed process is exempt). Default false.",
 				},
 			},
 			"required": []string{"process_path"},
