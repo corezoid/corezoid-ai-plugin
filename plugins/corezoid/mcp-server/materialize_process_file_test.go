@@ -188,3 +188,97 @@ func TestMaterializeProcessFile_FallsBackToTheFileOnDisk(t *testing.T) {
 		t.Errorf("got %q, want the single .conv.json in the directory", got)
 	}
 }
+
+func TestMaterializeProcessFile_ReusesTheDirectoryTheProcessWasPulledTo(t *testing.T) {
+	inTempWorkdir(t)
+
+	// A pulled process keeps its baseline sidecar next to the file. Writing a
+	// second copy in the root would leave the push with no baseline, which the
+	// concurrency gate reads as "never pulled" and blocks on.
+	pulled := filepath.Join("projects", "7_Demo", "stages", "9_Dev", "123_Foo.conv.json")
+	if err := os.MkdirAll(filepath.Dir(pulled), 0755); err != nil {
+		t.Fatalf("seeding tree: %v", err)
+	}
+	if err := os.WriteFile(pulled, []byte(`{"obj_id": 123, "title": "Foo"}`), 0644); err != nil {
+		t.Fatalf("seeding file: %v", err)
+	}
+
+	got, err := materializeProcessFile(map[string]interface{}{
+		"content": `{"obj_id": 123, "title": "Foo", "rev": 2}`,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got != pulled {
+		t.Errorf("wrote to %q, want the pulled copy at %q", got, pulled)
+	}
+	if _, err := os.Stat("123_Foo.conv.json"); err == nil {
+		t.Error("a duplicate was created in the working directory root")
+	}
+}
+
+func TestMaterializeProcessFile_RefusesAnIDMismatchBetweenContentAndPath(t *testing.T) {
+	inTempWorkdir(t)
+
+	// push takes the deploy target from the file name and the body from
+	// content, so a mismatch deploys one process over another.
+	got, err := materializeProcessFile(map[string]interface{}{
+		"content":      `{"obj_id": 5, "title": "Five"}`,
+		"process_path": "9_Other.conv.json",
+	})
+	if err == nil {
+		t.Fatalf("expected refusal, got %q", got)
+	}
+	if !strings.Contains(err.Error(), "#5") || !strings.Contains(err.Error(), "#9") {
+		t.Errorf("error should name both ids, got %v", err)
+	}
+	if _, err := os.Stat("9_Other.conv.json"); err == nil {
+		t.Error("refused call still created the file")
+	}
+}
+
+func TestMaterializeProcessFile_BacksUpTheFileItReplaces(t *testing.T) {
+	inTempWorkdir(t)
+
+	target := "7_Backed.conv.json"
+	original := `{"obj_id": 7, "title": "Backed", "rev": 1}`
+	if err := os.WriteFile(target, []byte(original), 0644); err != nil {
+		t.Fatalf("seeding file: %v", err)
+	}
+
+	if _, err := materializeProcessFile(map[string]interface{}{
+		"content":      `{"obj_id": 7, "title": "Backed", "rev": 2}`,
+		"process_path": target,
+	}); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Content is validated only after this point, so a push rejected by lint
+	// must leave the pulled version recoverable.
+	data, err := os.ReadFile(target + ".pre-write")
+	if err != nil {
+		t.Fatalf("expected a backup of the replaced file: %v", err)
+	}
+	if string(data) != original {
+		t.Errorf("backup holds %s, want %s", data, original)
+	}
+}
+
+func TestMaterializeProcessFile_RefusesContentThatIsNotAString(t *testing.T) {
+	inTempWorkdir(t)
+
+	if err := os.WriteFile("3_OnDisk.conv.json", []byte(`{"obj_id": 3}`), 0644); err != nil {
+		t.Fatalf("seeding file: %v", err)
+	}
+	// An object in the content field must not degrade into "no content given",
+	// which would deploy the unrelated file sitting on disk.
+	got, err := materializeProcessFile(map[string]interface{}{
+		"content": map[string]interface{}{"obj_id": 3},
+	})
+	if err == nil {
+		t.Fatalf("expected refusal, got %q", got)
+	}
+	if !strings.Contains(err.Error(), "string") {
+		t.Errorf("error should name the expected type, got %v", err)
+	}
+}

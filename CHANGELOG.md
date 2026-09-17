@@ -2,7 +2,8 @@
 
 ## [3.6.0]
 
-- `push-process` accepts the process JSON inline via `content`, writing it to `process_path` (or a name derived from `obj_id` and `title`) before the usual validation and deploy. This completes the authoring cycle on hosts that withhold file-editing tools from the agent, where the plugin could previously create an empty process but never give it nodes. Writes are restricted to `.conv.json` targets inside the working directory.
+- `push-process` accepts the process JSON inline via `content`, writing it before the usual validation and deploy. This completes the authoring cycle on hosts that withhold file-editing tools from the agent, where the plugin could previously create an empty process but never give it nodes.
+- Inline writes are restricted to `.conv.json` targets inside the working directory, reuse the directory the process was pulled to so the concurrency baseline is still found, keep the replaced file as `<file>.pre-write` because validation runs afterwards, and are refused when `content`'s `obj_id` disagrees with the id in `process_path` or when `content` is not a string.
 
 ## [3.5.0]
 

@@ -227,7 +227,7 @@ var toolRegistry = []mcpTool{
 				},
 				"content": map[string]interface{}{
 					"type":        "string",
-					"description": "Process JSON to write to process_path before validating and deploying, for hosts whose agent has no file-editing tools. Omit process_path to derive the file name from obj_id and title. Omit content to deploy the file as it is on disk.",
+					"description": "Process JSON to write before validating and deploying, for hosts whose agent cannot write files. Without process_path it targets the pulled file for its obj_id. Omit to deploy the file on disk.",
 				},
 				"force": map[string]interface{}{
 					"type":        "boolean",
