@@ -425,9 +425,150 @@ func categorizeLintForPush(lintRes *LintResult) (structural, overridable, adviso
 	return structural, overridable, advisory
 }
 
+// contentArg returns the inline process JSON, distinguishing "not supplied"
+// from "supplied in the wrong type". The schema says string, but JSON in a
+// string field invites an object, and optStrArg would turn that into "" — the
+// push would then silently deploy whatever file happened to be on disk instead
+// of what the caller sent.
+func contentArg(args map[string]interface{}) (string, error) {
+	v, ok := args["content"]
+	if !ok || v == nil {
+		return "", nil
+	}
+	s, ok := v.(string)
+	if !ok {
+		return "", fmt.Errorf("content must be a string holding the process JSON, got %T — serialise the object before sending it", v)
+	}
+	return s, nil
+}
+
+// processFileForID returns the existing file for procID anywhere under the
+// working directory, or "" when the process has not been pulled here.
+//
+// Where the file sits is not cosmetic: the concurrency baseline and the merge
+// ancestor are sidecars in the file's own directory (see conflict.go, which
+// resolves them from filepath.Dir), so a second copy of a pulled process
+// written somewhere else reads as a process with no baseline at all.
+func processFileForID(procID int) string {
+	for _, e := range scanProcessFiles(".") {
+		if e.ObjID == procID {
+			return filepath.FromSlash(e.Path)
+		}
+	}
+	return ""
+}
+
+// materializeProcessFile resolves the file push-process will work on, writing
+// it first when the caller supplied the process JSON inline.
+//
+// Inline content exists for hosts that withhold file-editing tools from the
+// agent — a sandboxed runtime holding the caller's credentials typically does.
+// Without it such a host can create an empty process and lint it, but can never
+// give it nodes: the whole authoring cycle runs through a local .conv.json.
+//
+// The write stays deliberately narrow: a .conv.json target, inside the working
+// directory, nothing else. An MCP server that writes arbitrary paths hands the
+// agent back exactly the capability its host withheld, including that host's own
+// configuration files, which for several runtimes means code execution on their
+// next turn. update-context-file is scoped the same way, for the same reason.
+//
+// An existing file is backed up as <file>.pre-write before it is replaced. The
+// content has not been validated at this point — schema, lint and the
+// concurrency gate all run afterwards on the file — so a rejected push must not
+// be able to destroy a pulled process nobody has a copy of.
+func materializeProcessFile(args map[string]interface{}) (string, error) {
+	content, err := contentArg(args)
+	if err != nil {
+		return "", err
+	}
+	if content == "" {
+		return resolveProcessPath(args, "process_path")
+	}
+
+	// Parse before writing: JSON that never parsed would otherwise fail later
+	// as "schema validation failed", which reads as "your process is wrong"
+	// rather than "what you sent was not JSON".
+	var doc map[string]interface{}
+	if err := json.Unmarshal([]byte(content), &doc); err != nil {
+		return "", fmt.Errorf("content is not a JSON object: %v", err)
+	}
+	contentID := 0
+	if id, ok := doc["obj_id"].(float64); ok {
+		contentID = int(id)
+	}
+
+	target := optStrArg(args, "process_path")
+	if target == "" {
+		// Derive the conventional name so a caller that just ran create-process
+		// (which returns the id) need not know the file layout. With no obj_id
+		// there is nothing to derive from, and a guessed name would produce a
+		// file push cannot match to a process.
+		if contentID == 0 {
+			return "", fmt.Errorf("content has no obj_id, so the file name cannot be derived — pass process_path, or set obj_id to the id create-process returned")
+		}
+		// Prefer the place the process was pulled to. Writing a second copy in
+		// the working directory root would strand the push from its baseline
+		// sidecar, and the gate would then either block the push or demand
+		// adopt_existing, which overwrites the server version unexamined.
+		if existing := processFileForID(contentID); existing != "" {
+			target = existing
+		} else {
+			title, _ := doc["title"].(string)
+			target = convFileName(contentID, title)
+		}
+	}
+
+	safe, err := confineToWorkdir(target)
+	if err != nil {
+		return "", err
+	}
+	if !strings.HasSuffix(safe, ".conv.json") {
+		return "", fmt.Errorf("process_path must name a .conv.json file (got %q); content writes process files only", target)
+	}
+	// The deploy targets the id in the file name while the body comes from
+	// content. Pulled files agree by construction; an inline push can disagree,
+	// and that silently deploys one process over another.
+	if pathID, errMsg := extractProcessIDFromPath(safe); errMsg == "" && contentID != 0 && pathID != contentID {
+		return "", fmt.Errorf("content is process #%d but process_path names #%d (%s) — push would deploy this body over the other process; fix obj_id or the path", contentID, pathID, safe)
+	}
+
+	// Intermediate directories are created: a pulled folder tree is exactly
+	// where a new process belongs, and requiring a prior mkdir would need the
+	// very file tools this argument exists to replace.
+	if dir := filepath.Dir(safe); dir != "." {
+		if err := os.MkdirAll(dir, 0755); err != nil {
+			return "", fmt.Errorf("creating directory for %s: %v", safe, err)
+		}
+	}
+	if err := backupBeforeWrite(safe); err != nil {
+		return "", err
+	}
+	if err := os.WriteFile(safe, []byte(content), 0644); err != nil {
+		return "", fmt.Errorf("writing %s: %v", safe, err)
+	}
+	return safe, nil
+}
+
+// backupBeforeWrite copies an existing process file to <file>.pre-write, so a
+// push whose content is rejected downstream is recoverable. Mirrors the
+// .pre-merge backup the merge path takes for the same reason.
+func backupBeforeWrite(path string) error {
+	prev, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil // nothing to preserve
+		}
+		return fmt.Errorf("reading %s before overwriting it: %v", path, err)
+	}
+	if err := os.WriteFile(path+".pre-write", prev, 0644); err != nil {
+		return fmt.Errorf("backing up %s: %v", path, err)
+	}
+	return nil
+}
+
 // handlePushProcess validates a local .conv.json and deploys it to Corezoid.
 func handlePushProcess(ctx context.Context, args map[string]interface{}) (string, bool) {
-	filePath, err := resolveProcessPath(args, "process_path")
+	filePath, err := materializeProcessFile(args)
 	if err != nil {
 		return "Error: " + err.Error(), true
 	}

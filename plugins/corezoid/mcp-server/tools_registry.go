@@ -225,6 +225,10 @@ var toolRegistry = []mcpTool{
 					"type":        "string",
 					"description": "Path to the process JSON file, relative to the project root (absolute paths are accepted when they point inside the project).",
 				},
+				"content": map[string]interface{}{
+					"type":        "string",
+					"description": "Process JSON to write before validating and deploying, for hosts whose agent cannot write files. Without process_path it targets the pulled file for its obj_id. Omit to deploy the file on disk.",
+				},
 				"force": map[string]interface{}{
 					"type":        "boolean",
 					"description": "Deploy despite generic blocking lint findings. LINT ONLY: does not overwrite a concurrent server change (use overwrite_server_change), confirm active Stub Mode (allow_active_stub_mode) or waive the snapshot requirement (allow_no_snapshot). Advisory findings never block. Does NOT bypass pre-deployment validation errors such as self-referencing api_copy/api_rpc nodes — fix those in the design. Default false.",
