@@ -1,5 +1,9 @@
 # Changelog
 
+## [3.6.0]
+
+- `push-process` accepts the process JSON inline via `content`, writing it to `process_path` (or a name derived from `obj_id` and `title`) before the usual validation and deploy. This completes the authoring cycle on hosts that withhold file-editing tools from the agent, where the plugin could previously create an empty process but never give it nodes. Writes are restricted to `.conv.json` targets inside the working directory.
+
 ## [3.5.0]
 
 - Feat(mcp-server): new `clean-process` tool removes nodes with no traffic in the last N days (default 90) and writes the result as a reviewable `<ID>_<title>.cleaned.json` proposal — it never deploys, and the suffix is deliberately not `.conv.json` so auto-discovery does not see two files for one process. Structurally required nodes are kept, references to removed nodes are redirected through chained pass-throughs, and three refusals bound the damage: no node showing any traffic, a result that loses the start node or empties the scheme, and a result that fails validation. Known limit: activity is read from `ops[0].data[].in/out` only, so a partially unrecognised `get_node_stat` response reads as "no traffic" for the nodes that did not parse.

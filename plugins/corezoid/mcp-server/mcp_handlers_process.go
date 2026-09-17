@@ -426,8 +426,71 @@ func categorizeLintForPush(lintRes *LintResult) (structural, overridable, adviso
 }
 
 // handlePushProcess validates a local .conv.json and deploys it to Corezoid.
+// materializeProcessFile resolves the file push-process will work on, writing
+// it first when the caller supplied the process JSON inline.
+//
+// Inline content exists for hosts that withhold file-editing tools from the
+// agent — a sandboxed runtime holding the caller's credentials typically does.
+// Without it such a host can create an empty process and lint it, but can never
+// give it nodes: the whole authoring cycle runs through a local .conv.json.
+//
+// The write stays deliberately narrow: a .conv.json target, inside the working
+// directory, nothing else. An MCP server that writes arbitrary paths hands the
+// agent back exactly the capability its host withheld, including that host's own
+// configuration files, which for several runtimes means code execution on their
+// next turn. update-context-file is scoped the same way, for the same reason.
+func materializeProcessFile(args map[string]interface{}) (string, error) {
+	content := optStrArg(args, "content")
+	if content == "" {
+		return resolveProcessPath(args, "process_path")
+	}
+
+	// Parse before writing: JSON that never parsed would otherwise fail later
+	// as "schema validation failed", which reads as "your process is wrong"
+	// rather than "what you sent was not JSON".
+	var doc map[string]interface{}
+	if err := json.Unmarshal([]byte(content), &doc); err != nil {
+		return "", fmt.Errorf("content is not a JSON object: %v", err)
+	}
+
+	target := optStrArg(args, "process_path")
+	if target == "" {
+		// Derive the conventional name so a caller that just ran create-process
+		// (which returns the id) need not know the file layout. With no obj_id
+		// there is nothing to derive from, and a guessed name would produce a
+		// file push cannot match to a process.
+		objID := extractObjIDFromJSON(content)
+		if objID == 0 {
+			return "", fmt.Errorf("content has no obj_id, so the file name cannot be derived — pass process_path, or set obj_id to the id create-process returned")
+		}
+		title, _ := doc["title"].(string)
+		target = convFileName(objID, title)
+	}
+
+	safe, err := confineToWorkdir(target)
+	if err != nil {
+		return "", err
+	}
+	if !strings.HasSuffix(safe, ".conv.json") {
+		return "", fmt.Errorf("process_path must name a .conv.json file (got %q); content writes process files only", target)
+	}
+
+	// Intermediate directories are created: a pulled folder tree is exactly
+	// where a new process belongs, and requiring a prior mkdir would need the
+	// very file tools this argument exists to replace.
+	if dir := filepath.Dir(safe); dir != "." {
+		if err := os.MkdirAll(dir, 0755); err != nil {
+			return "", fmt.Errorf("creating directory for %s: %v", safe, err)
+		}
+	}
+	if err := os.WriteFile(safe, []byte(content), 0644); err != nil {
+		return "", fmt.Errorf("writing %s: %v", safe, err)
+	}
+	return safe, nil
+}
+
 func handlePushProcess(ctx context.Context, args map[string]interface{}) (string, bool) {
-	filePath, err := resolveProcessPath(args, "process_path")
+	filePath, err := materializeProcessFile(args)
 	if err != nil {
 		return "Error: " + err.Error(), true
 	}
