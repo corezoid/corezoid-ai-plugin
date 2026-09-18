@@ -1633,3 +1633,24 @@ func TestHandleToolCall_CreateDashboard_MissingArg(t *testing.T) {
 	}
 	_ = result
 }
+
+// deep_merge is the one boolean whose FALSE direction destroys data: it
+// replaces nested objects wholesale. An unreadable value must be refused, not
+// resolved to false the way an optional waiver flag is.
+func TestHandleToolCall_ModifyTask_RefusesUnreadableDeepMerge(t *testing.T) {
+	resetGlobals(t)
+	// Called directly: the argument check runs before anything reaches the
+	// network, and going through handleToolCall would only exercise auth.
+	result, isErr := handleModifyTask(context.Background(), map[string]interface{}{
+		"process_id": float64(123),
+		"task_id":    "abc",
+		"data":       `{"a":1}`,
+		"deep_merge": "yes",
+	})
+	if !isErr {
+		t.Fatalf("expected isError=true, got %q", result)
+	}
+	if !strings.Contains(result, "deep_merge") {
+		t.Errorf("error should name deep_merge, got %q", result)
+	}
+}

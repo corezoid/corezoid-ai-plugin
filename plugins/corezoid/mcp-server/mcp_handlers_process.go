@@ -492,9 +492,14 @@ func materializeProcessFile(args map[string]interface{}) (string, error) {
 	if err := json.Unmarshal([]byte(content), &doc); err != nil {
 		return "", fmt.Errorf("content is not a JSON object: %v", err)
 	}
-	contentID := 0
-	if id, ok := doc["obj_id"].(float64); ok {
-		contentID = int(id)
+	// Read the id the same way every tool argument is read. Taking only
+	// float64 here meant a quoted "834936" — ordinary in JSON a model wrote —
+	// left contentID at 0, which reads as "no id given" and skips the
+	// process_path cross-check below entirely: the body landed in another
+	// process's file and the next push deployed it there.
+	contentID, err := docIntField(doc, "obj_id")
+	if err != nil {
+		return "", fmt.Errorf("content: %v — that id is what stops this body being deployed over another process", err)
 	}
 
 	target := optStrArg(args, "process_path")

@@ -398,16 +398,73 @@ func resolveDirPath(args map[string]interface{}, key string) string {
 // allow_no_snapshot, apply), where a wrong guess in the other direction would
 // bypass a gate rather than leave it standing.
 //
-// Every handler reads boolean arguments through this, and
-// TestNoDirectBooleanArgAssertions keeps it that way.
+// Every handler reads boolean arguments through this (or through
+// strictBoolArg / requiredBoolArg, which share parseBoolish so the three
+// cannot drift apart), and TestNoDirectBooleanArgAssertions keeps it that way.
 func boolishArg(args map[string]interface{}, key string) bool {
-	if b, ok := args[key].(bool); ok {
-		return b
+	v, _ := parseBoolish(args[key])
+	return v
+}
+
+// parseBoolish is the single reading of a boolean value; the three callers
+// differ only in what they do when ok is false.
+//
+// It exists because they had drifted: boolishArg read " true" as false while
+// requiredBoolArg read it as true, and a host that serialises booleans as the
+// JSON numbers 0/1 got false from both — for deep_merge that silently meant a
+// shallow write. The accepted spellings are exactly the ones the CHANGELOG
+// promises, in every form the value can arrive in: the bool itself, the string
+// the CLI and some hosts send, and the number.
+//
+// ok=false means "present but unreadable as a boolean". Nothing beyond the
+// listed spellings is guessed at — "yes" and 2 are not affirmatives — so a
+// caller that treats !ok as false lands on the safe side of a waiver flag.
+func parseBoolish(raw interface{}) (value, ok bool) {
+	switch v := raw.(type) {
+	case bool:
+		return v, true
+	case string:
+		switch strings.ToLower(strings.TrimSpace(v)) {
+		case "true", "1":
+			return true, true
+		case "false", "0":
+			return false, true
+		}
+	case float64: // JSON numbers decode as float64
+		switch v {
+		case 1:
+			return true, true
+		case 0:
+			return false, true
+		}
+	case int:
+		switch v {
+		case 1:
+			return true, true
+		case 0:
+			return false, true
+		}
 	}
-	if s, ok := args[key].(string); ok {
-		return strings.EqualFold(s, "true") || s == "1"
+	return false, false
+}
+
+// strictBoolArg reads an optional flag whose FALSE direction is destructive.
+//
+// boolishArg answers false for anything it cannot read, which is right when
+// false just leaves a gate standing. It is wrong for modify-task's deep_merge:
+// there false is a shallow write that drops every nested key the caller did
+// not send. Absent still means the documented default (false, shallow), but a
+// value that is present and unreadable — deep_merge:"yes" — is refused rather
+// than silently taken as the destructive answer.
+func strictBoolArg(args map[string]interface{}, key string) (bool, string) {
+	raw, given := args[key]
+	if !given || raw == nil {
+		return false, ""
 	}
-	return false
+	if v, ok := parseBoolish(raw); ok {
+		return v, ""
+	}
+	return false, fmt.Sprintf("Error: %q must be a boolean (true or false); got %#v.", key, raw)
 }
 
 // requiredBoolArg reads a boolean argument that has no safe default.
@@ -422,16 +479,47 @@ func requiredBoolArg(args map[string]interface{}, key string) (bool, string) {
 	if !given || raw == nil {
 		return false, fmt.Sprintf("Error: %q (boolean) is required.", key)
 	}
-	switch v := raw.(type) {
-	case bool:
+	if v, ok := parseBoolish(raw); ok {
 		return v, ""
-	case string:
-		switch strings.ToLower(strings.TrimSpace(v)) {
-		case "true", "1":
-			return true, ""
-		case "false", "0":
-			return false, ""
-		}
 	}
 	return false, fmt.Sprintf("Error: %q must be a boolean (true or false); got %T.", key, raw)
+}
+
+// docIntField reads an integer field out of a DECODED JSON document, applying
+// the same two rules intArg applies to a tool argument: a quoted "834936" is
+// the id it spells, and a non-integral 1234.9 is refused instead of being
+// truncated to 1234 — a different, existing process.
+//
+// Absent (missing, null, or an empty string) is not an error: the caller
+// decides whether the field is required. Present-but-unreadable IS, because
+// the alternative is what materializeProcessFile used to do — read only
+// float64, leave everything else at 0, and treat that 0 as "no id given",
+// which skipped the very guard that stops one process's body being written
+// over another's file.
+func docIntField(doc map[string]interface{}, key string) (int, error) {
+	raw, present := doc[key]
+	if !present || raw == nil {
+		return 0, nil
+	}
+	switch v := raw.(type) {
+	case float64:
+		if v != math.Trunc(v) {
+			return 0, fmt.Errorf("%s must be a whole number, got %v", key, v)
+		}
+		return int(v), nil
+	case int:
+		return v, nil
+	case string:
+		s := strings.TrimSpace(v)
+		if s == "" {
+			return 0, nil
+		}
+		n, err := strconv.Atoi(s)
+		if err != nil {
+			return 0, fmt.Errorf("%s must be an integer, got %q", key, v)
+		}
+		return n, nil
+	default:
+		return 0, fmt.Errorf("%s has unexpected type %T", key, raw)
+	}
 }

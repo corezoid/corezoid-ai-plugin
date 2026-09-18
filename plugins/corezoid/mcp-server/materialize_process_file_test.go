@@ -282,3 +282,94 @@ func TestMaterializeProcessFile_RefusesContentThatIsNotAString(t *testing.T) {
 		t.Errorf("error should name the expected type, got %v", err)
 	}
 }
+
+// A model writing JSON quotes ids as often as not. Reading only float64 left
+// contentID at 0, which is indistinguishable from "no id given" — so the
+// mismatch check below was skipped and the body was written into, and then
+// deployed over, an unrelated process.
+func TestMaterializeProcessFile_RefusesAnIDMismatchWhenTheIDIsQuoted(t *testing.T) {
+	inTempWorkdir(t)
+
+	got, err := materializeProcessFile(map[string]interface{}{
+		"content":      `{"obj_id": "5", "title": "Five"}`,
+		"process_path": "9_Other.conv.json",
+	})
+	if err == nil {
+		t.Fatalf("expected refusal, got %q", got)
+	}
+	if !strings.Contains(err.Error(), "#5") || !strings.Contains(err.Error(), "#9") {
+		t.Errorf("error should name both ids, got %v", err)
+	}
+	if _, err := os.Stat("9_Other.conv.json"); err == nil {
+		t.Error("refused call still created the file")
+	}
+}
+
+// A quoted id is the id it spells, so it must still satisfy a matching path
+// and still derive the conventional file name.
+func TestMaterializeProcessFile_AcceptsAQuotedIDThatAgrees(t *testing.T) {
+	inTempWorkdir(t)
+
+	got, err := materializeProcessFile(map[string]interface{}{
+		"content": `{"obj_id": "1832359", "title": "Rates", "scheme": {"nodes": []}}`,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got != convFileName(1832359, "Rates") {
+		t.Errorf("wrote %q, want the conventional name for #1832359", got)
+	}
+}
+
+// 1234.9 truncated to 1234 is a correct-looking write onto a DIFFERENT
+// process — the same failure intArg grew a whole-number guard for.
+func TestMaterializeProcessFile_RefusesANonIntegralID(t *testing.T) {
+	inTempWorkdir(t)
+
+	got, err := materializeProcessFile(map[string]interface{}{
+		"content":      `{"obj_id": 1234.9, "title": "Drifted"}`,
+		"process_path": "1234_Victim.conv.json",
+	})
+	if err == nil {
+		t.Fatalf("expected refusal, got %q", got)
+	}
+	if !strings.Contains(err.Error(), "whole number") {
+		t.Errorf("error should name the whole-number rule, got %v", err)
+	}
+	if _, err := os.Stat("1234_Victim.conv.json"); err == nil {
+		t.Error("refused call still created the file")
+	}
+}
+
+// An id nobody can read must not degrade into "no id given" — that is the
+// state that skips the guard.
+func TestMaterializeProcessFile_RefusesAnUnreadableID(t *testing.T) {
+	inTempWorkdir(t)
+
+	got, err := materializeProcessFile(map[string]interface{}{
+		"content":      `{"obj_id": "not-an-id", "title": "Junk"}`,
+		"process_path": "1234_Victim.conv.json",
+	})
+	if err == nil {
+		t.Fatalf("expected refusal, got %q", got)
+	}
+	if _, err := os.Stat("1234_Victim.conv.json"); err == nil {
+		t.Error("refused call still created the file")
+	}
+}
+
+// null obj_id is how a never-deployed process is spelled; it stays "absent".
+func TestMaterializeProcessFile_TreatsNullIDAsAbsent(t *testing.T) {
+	inTempWorkdir(t)
+
+	got, err := materializeProcessFile(map[string]interface{}{
+		"content":      `{"obj_id": null, "title": "New", "scheme": {"nodes": []}}`,
+		"process_path": "9_Other.conv.json",
+	})
+	if err != nil {
+		t.Fatalf("a null id must not block an explicit path: %v", err)
+	}
+	if got != "9_Other.conv.json" {
+		t.Errorf("wrote %q, want the path that was asked for", got)
+	}
+}

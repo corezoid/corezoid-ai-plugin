@@ -263,10 +263,17 @@ func handleModifyTask(ctx context.Context, args map[string]interface{}) (string,
 		return fmt.Sprintf("Error parsing data JSON: %v", err), true
 	}
 
-	v := NewValidator(ctx, processID)
+	// deep_merge decides whether this is a merge or a wholesale replace, so it
+	// is read strictly and with the other argument checks: absent keeps the
+	// documented shallow default, but an unreadable value is refused rather
+	// than resolved to false, because false is the destructive answer here —
+	// it replaces nested objects and drops the sub-keys the caller did not send.
+	deepMergeMode, bErr := strictBoolArg(args, "deep_merge")
+	if bErr != "" {
+		return bErr + " Refusing rather than defaulting to a shallow write, which would drop nested keys you did not send.", true
+	}
 
-	// deep_merge: fetch current task data and recursively merge into it.
-	deepMergeMode := boolishArg(args, "deep_merge")
+	v := NewValidator(ctx, processID)
 	if deepMergeMode {
 		snap, err := showTask(v, processID, taskID, ref)
 		if err != nil {
