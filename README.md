@@ -308,6 +308,8 @@ The CRUD-shaped domains sit behind one router tool each, so `tools/list` stays s
 
 Add `"help": true` to get an action's full argument schema back instead of running it; a call with no action, an unknown action, or arguments outside `args` answers with the action list too. Every action name below is also accepted directly by the CLI (`convctl delete-group group_id=7`).
 
+**Permissions are per router, not per action.** A router's safety annotations are the worst case across its actions — `cz-access` reports itself destructive because `delete-group` is, even though `list-groups` is read-only — and a host permission rule names a tool. So an allow rule for `cz-tasks` covers `delete-task` as well as `show-task`. Grant a router only when the whole domain is acceptable; otherwise leave it prompting.
+
 
 ### `cz-access`
 

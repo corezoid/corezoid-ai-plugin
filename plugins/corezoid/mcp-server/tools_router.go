@@ -202,6 +202,15 @@ func indexRouterActions() map[string]map[string]routerAction {
 // worst case wins: a router is read-only only if every action is, and
 // destructive as soon as one action is. Advertising anything softer would
 // tell a client "no confirmation needed" for a call that can delete a group.
+//
+// The known cost, accepted deliberately: 21 read-only actions now sit behind
+// an entry that does not claim readOnlyHint, and a host permission rule names
+// a TOOL — so allowing cz-tasks allows delete-task along with show-task, where
+// before a rule could allow show-task alone. Splitting each domain into read
+// and write halves would restore both signals at roughly 6 KB and twice the
+// entry points for a model to miss on; the collapse is only worth doing if it
+// stays a collapse. Revisit if a host starts auto-approving by annotation, or
+// if telemetry shows people writing allow rules for whole write domains.
 func (r toolRouter) aggregateHints() *toolAnnotations {
 	readOnly, idempotent := true, true
 	destructive, openWorld := false, false
