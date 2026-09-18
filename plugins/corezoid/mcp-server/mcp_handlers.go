@@ -165,8 +165,12 @@ func handleToolCall(ctx context.Context, name string, args map[string]interface{
 
 	if routed := resolveRouterCall(name, args); routed.Handled {
 		if routed.Tool == "" {
-			// Help text, or a routing error that already explains itself.
-			// Nothing was executed, so there is nothing to gate or report.
+			// Help text, or a routing miss that already explains itself. No
+			// handler runs, so there is nothing to gate — but the call still
+			// happened, and both outcomes are reported: help tells us which
+			// actions a model cannot use from their summary alone, and a miss
+			// is the cost of having collapsed the domain in the first place.
+			emitToolEvent(ctx, name, time.Now(), routed.IsError, errorTypeRouterMiss)
 			return routed.Text, routed.IsError
 		}
 		name, args = routed.Tool, routed.Args
@@ -218,30 +222,41 @@ func handleToolCall(ctx context.Context, name string, args map[string]interface{
 		result, isError = h(ctx, args)
 	}
 
-	if analyticsEnabled.Load() {
-		apiURLv, _, _, _, _ := authSnapshot()
-		clientNameV, clientVersionV := clientIdentityFor(ctx)
-		e := AnalyticsEvent{
-			Ts:             start.UTC().Format(time.RFC3339),
-			Product:        "corezoid",
-			Tool:           name,
-			DurationMs:     time.Since(start).Milliseconds(),
-			IsError:        isError,
-			APIURL:         hostnameOnly(apiURLv),
-			Transport:      analyticsTransport,
-			ServerVersion:  serverVersion(),
-			InstallationID: installationID,
-			UserEmail:      telemetryEmailValue(),
-			ClientName:     clientNameV,
-			ClientVersion:  clientVersionV,
-		}
-		if isError {
-			e.ErrorType = classifyError(result)
-		}
-		emitAnalyticsEvent(e)
-	}
+	emitToolEvent(ctx, name, start, isError, classifyError(result))
 
 	return result, isError
+}
+
+// emitToolEvent records one tool invocation. Factored out of handleToolCall so
+// every path that answers a call reports it — including the router paths that
+// answer without reaching a handler. How often a model fails to find an action
+// from its one-line summary is the number that tells us whether collapsing the
+// CRUD domains was worth it, and an unreported miss looks exactly like a call
+// that never happened.
+func emitToolEvent(ctx context.Context, tool string, start time.Time, isError bool, errorType string) {
+	if !analyticsEnabled.Load() {
+		return
+	}
+	apiURLv, _, _, _, _ := authSnapshot()
+	clientNameV, clientVersionV := clientIdentityFor(ctx)
+	e := AnalyticsEvent{
+		Ts:             start.UTC().Format(time.RFC3339),
+		Product:        "corezoid",
+		Tool:           tool,
+		DurationMs:     time.Since(start).Milliseconds(),
+		IsError:        isError,
+		APIURL:         hostnameOnly(apiURLv),
+		Transport:      analyticsTransport,
+		ServerVersion:  serverVersion(),
+		InstallationID: installationID,
+		UserEmail:      telemetryEmailValue(),
+		ClientName:     clientNameV,
+		ClientVersion:  clientVersionV,
+	}
+	if isError {
+		e.ErrorType = errorType
+	}
+	emitAnalyticsEvent(e)
 }
 
 func isInSet(name string, set map[string]struct{}) bool {

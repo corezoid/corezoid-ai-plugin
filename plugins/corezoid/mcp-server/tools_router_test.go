@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"strings"
 	"testing"
@@ -353,5 +354,85 @@ func TestRouterActionArgs_RejectsNonObjects(t *testing.T) {
 	}
 	if _, err := routerActionArgs(`["a"]`); err == nil {
 		t.Error("a JSON array should not be accepted as args")
+	}
+}
+
+// help is a documentation flag, so every ambiguity in it must resolve toward
+// documentation. A bare bool assertion read help:"true" as false and ran the
+// action — i.e. asking delete-group for its schema deleted the group. The
+// schema says boolean; hosts and models do not always agree.
+func TestResolveRouterCall_NonBooleanHelpNeverExecutes(t *testing.T) {
+	asksForHelp := []interface{}{true, "true", "True", " true ", "yes", "on", 1, 1.0, float64(2), []string{"?"}}
+	for _, v := range asksForHelp {
+		got := resolveRouterCall("cz-access", map[string]interface{}{
+			"action": "delete-group",
+			"args":   map[string]interface{}{"group_id": 7},
+			"help":   v,
+		})
+		if got.Tool != "" || got.IsError {
+			t.Errorf("help=%#v: got Tool=%q IsError=%v — a documentation request must never reach a handler",
+				v, got.Tool, got.IsError)
+		}
+		if !strings.Contains(got.Text, "Arguments (inside args)") {
+			t.Errorf("help=%#v: expected the action's schema, got %q", v, got.Text)
+		}
+	}
+
+	runsTheAction := []interface{}{nil, false, "false", "False", "", "  ", "no", "off", 0, 0.0}
+	for _, v := range runsTheAction {
+		args := map[string]interface{}{
+			"action": "delete-group",
+			"args":   map[string]interface{}{"group_id": 7},
+		}
+		if v != nil {
+			args["help"] = v
+		}
+		got := resolveRouterCall("cz-access", args)
+		if got.Tool != "delete-group" || got.IsError {
+			t.Errorf("help=%#v: got Tool=%q IsError=%v — an explicit negative must run the action",
+				v, got.Tool, got.IsError)
+		}
+	}
+}
+
+// A routing miss is the cost of having collapsed a domain, and help is the
+// signal that a one-line summary was not enough — both are answered without
+// reaching a handler, so both have to be reported explicitly or they look like
+// calls that never happened.
+func TestHandleToolCall_RouterOnlyOutcomesReachAnalytics(t *testing.T) {
+	prevCh, prevEnabled := analyticsCh, analyticsEnabled.Load()
+	analyticsCh = make(chan AnalyticsEvent, 8)
+	analyticsEnabled.Store(true)
+	t.Cleanup(func() {
+		analyticsCh, _ = prevCh, prevEnabled
+		analyticsEnabled.Store(prevEnabled)
+	})
+
+	cases := []struct {
+		name    string
+		args    map[string]interface{}
+		isError bool
+	}{
+		{"unknown action", map[string]interface{}{"action": "delete-everything"}, true},
+		{"no action", map[string]interface{}{}, true},
+		{"flat args", map[string]interface{}{"action": "delete-group", "group_id": 7}, true},
+		{"help", map[string]interface{}{"action": "delete-group", "help": true}, false},
+	}
+	for _, tc := range cases {
+		handleToolCall(context.Background(), "cz-access", tc.args)
+		select {
+		case e := <-analyticsCh:
+			if e.Tool != "cz-access" {
+				t.Errorf("%s: event tool = %q, want the router name", tc.name, e.Tool)
+			}
+			if e.IsError != tc.isError {
+				t.Errorf("%s: isError = %v, want %v", tc.name, e.IsError, tc.isError)
+			}
+			if tc.isError && e.ErrorType != errorTypeRouterMiss {
+				t.Errorf("%s: error_type = %q, want %q", tc.name, e.ErrorType, errorTypeRouterMiss)
+			}
+		default:
+			t.Errorf("%s: no analytics event was emitted", tc.name)
+		}
 	}
 }

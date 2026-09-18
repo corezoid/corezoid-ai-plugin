@@ -300,7 +300,7 @@ func resolveRouterCall(name string, args map[string]interface{}) routerCallResul
 
 	action, _ := args["action"].(string)
 	action = strings.TrimSpace(action)
-	wantHelp, _ := args["help"].(bool)
+	wantHelp := helpRequested(args["help"])
 
 	_, isRealAction := routerActions[r.Name][action]
 	// "help" and "list" are conveniences for "show me what this router does",
@@ -341,6 +341,37 @@ func strayRouterArgs(r toolRouter, args map[string]interface{}) string {
 	return fmt.Sprintf("Error: %s takes only action, args and help at the top level. "+
 		"Move these inside args: %s — i.e. call it as {\"action\": \"<action>\", \"args\": {…}}.\n%s",
 		r.Name, strings.Join(stray, ", "), r.actionListText())
+}
+
+// helpRequested reads the help flag the way a caller means it, not the way the
+// schema wishes it were typed. A bare `.(bool)` assertion reads help:"true" as
+// FALSE and runs the action — so asking delete-group for its schema deletes the
+// group. coerceCLIArgs carries the same lesson from the other direction, where
+// a string `apply=true` degraded into a silent dry-run; here the failure opens
+// toward execution, which is the worse half.
+//
+// So: anything present that is not an explicit negative asks for help. An
+// unrecognised value resolves to help as well — a caller who typed something
+// odd into a documentation flag gets documentation, never a destructive call.
+func helpRequested(v interface{}) bool {
+	switch h := v.(type) {
+	case nil:
+		return false
+	case bool:
+		return h
+	case string:
+		switch strings.ToLower(strings.TrimSpace(h)) {
+		case "", "false", "0", "no", "off":
+			return false
+		}
+		return true
+	case float64: // JSON numbers decode as float64
+		return h != 0
+	case int:
+		return h != 0
+	default:
+		return true
+	}
 }
 
 // routerActionArgs normalizes the args payload. A JSON string is accepted

@@ -113,6 +113,13 @@ func saveUserPreferences(p userPreferences) error {
 	return os.WriteFile(path, data, 0600)
 }
 
+// errorTypeRouterMiss marks a call that named a domain router but no usable
+// action — no action at all, an unknown one, or arguments outside args. It is
+// its own error_type because it measures something no other value does: how
+// often a model cannot reach an action from the one-line summary that replaced
+// the action's own tool entry.
+const errorTypeRouterMiss = "router_miss"
+
 // classifyError maps an error result string to one of the fixed error_type enum values.
 // It never returns free-form text — only the predefined enum values.
 func classifyError(result string) string {
