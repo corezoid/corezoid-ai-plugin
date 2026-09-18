@@ -20,8 +20,42 @@ func (v *Executor) createTask(ref string, taskData map[string]interface{}) error
 	if v.Debug {
 		logger.Debug("Sending create task request")
 	}
-	response, err := v.req("create_task", ops)
+	// reqOnce, not req: creating a task starts a live process, and whatever
+	// that process does to the outside world — charge a card, send a message,
+	// call a partner API — is not something the user can undo from here. A
+	// 429/503 is not proof the request was rejected, so a retry can deliver a
+	// second copy of that side effect.
+	//
+	// Retrying was never as safe as it looked even with the `ref` guard:
+	// Corezoid rejects a duplicate ref, so the retry's response was the
+	// REJECTION, and the caller was told the task failed while the first
+	// delivery was running. That reading pushes the user into an explicit
+	// re-run — which mints a fresh ref and buys the duplicate execution the
+	// retry was supposed to avoid.
+	response, err := v.reqOnce("create_task", ops)
 	if err != nil {
+		// Probe only when the outcome is genuinely unknown. reqAttempts hands
+		// back the decoded response alongside an op-level error, and a nil
+		// response when the call never produced one — which is precisely the
+		// difference between "the server answered, and the answer was no" and
+		// "we never heard back". A lost response does not mean a rejected
+		// request: Corezoid can accept the task and still fail to reply, and
+		// `ref` is that task's server-side identity, so asking whether it
+		// exists beats reporting a failure for work already running. A false
+		// failure is what drives the user to re-run by hand — the duplicate
+		// execution this whole path exists to avoid.
+		//
+		// A definitive rejection must never be probed away. The case that
+		// makes it matter is a caller-supplied ref colliding with an earlier
+		// run: create is refused as a duplicate, the probe would find that OLD
+		// task, and reporting success would silently hand the caller somebody
+		// else's result.
+		if response == nil {
+			if _, showErr := v.showTask(ref); showErr == nil {
+				logger.Info("create_task gave no response for ref %s, but the task exists on the server — treating as created: %v", ref, err)
+				return nil
+			}
+		}
 		return fmt.Errorf("failed to create task: %w", err)
 	}
 	if opsArray, ok := response["ops"].([]interface{}); ok {

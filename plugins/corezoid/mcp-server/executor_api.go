@@ -47,8 +47,9 @@ func (v *Executor) req(method string, ops []map[string]any) (map[string]interfac
 // second one's id — the first becomes orphaned state nobody knows to clean up.
 // For most creates that is a duplicate object in a folder listing: visible,
 // and one delete away. For `bot_wizzard create` it is ~150 processes plus a
-// silent webhook takeover of whatever bot already served that channel token,
-// which is why that op is the one caller here today.
+// silent webhook takeover of whatever bot already served that channel token.
+// For `create_task` it is a second run of whatever the process does to the
+// outside world. Those two are the callers here today.
 //
 // The trade is deliberate: opting out of retry means a genuinely transient
 // overload surfaces to the user as an error instead of recovering on its own.
