@@ -116,9 +116,20 @@ def generate_index_json(skills):
     }
 
 
-TOOLS_REGISTRY = os.path.join(
-    ROOT, "plugins", "corezoid", "mcp-server", "tools_registry.go"
-)
+MCP_SERVER = os.path.join(ROOT, "plugins", "corezoid", "mcp-server")
+
+# Tool definitions live in two files since the CRUD domains moved behind
+# routers: the advertised ones, and the ones a router fronts. Both are real,
+# callable tools — a discovery index that listed only the advertised half would
+# hide two thirds of the product.
+TOOLS_REGISTRY = os.path.join(MCP_SERVER, "tools_registry.go")
+COLLAPSED_REGISTRY = os.path.join(MCP_SERVER, "tools_registry_collapsed.go")
+TOOLS_ROUTER = os.path.join(MCP_SERVER, "tools_router.go")
+
+# Matches one router action entry: {"delete-group", "delete a group ..."}.
+_ACTION_RE = re.compile(r'\{"(?P<action>[a-z0-9-]+)",\s*"(?P<summary>(?:[^"\\]|\\.)*)"\}')
+# Matches a router declaration's Name, to attribute the actions that follow it.
+_ROUTER_RE = re.compile(r'Name:\s*"(?P<name>cz-[a-z-]+)"')
 
 # Matches one registry entry's Name/Description pair. Description values are
 # single Go string literals with escaped inner quotes; [^"\\] plus an escape
@@ -153,18 +164,27 @@ def read_mcp_tools():
     create-communications-orchestrator). A generated list cannot drift: a tool
     that exists is listed, and one that is renamed is renamed here too.
     """
-    with open(TOOLS_REGISTRY, encoding="utf-8") as fh:
-        src = fh.read()
+    tools = []
+    for path in (TOOLS_REGISTRY, COLLAPSED_REGISTRY):
+        with open(path, encoding="utf-8") as fh:
+            src = fh.read()
+        found = [(m.group("name"), _first_sentence(m.group("desc")))
+                 for m in _TOOL_RE.finditer(src)]
+        if not found:
+            sys.exit(
+                f"generate-discovery: found no tools in {path} — the "
+                "registry format changed and this parser needs updating; refusing "
+                "to publish a discovery file with an empty tool list"
+            )
+        tools += found
 
-    tools = [(m.group("name"), _first_sentence(m.group("desc")))
-             for m in _TOOL_RE.finditer(src)]
-
-    if not tools:
-        sys.exit(
-            f"generate-discovery: found no tools in {TOOLS_REGISTRY} — the "
-            "registry format changed and this parser needs updating; refusing "
-            "to publish a discovery file with an empty tool list"
-        )
+    # Say how a collapsed tool is reached, or the index reads as a list of 72
+    # top-level tools that a client will not find in tools/list.
+    router_of = read_router_actions()
+    tools = [(name, f"{desc} (action of `{router_of[name]}`)" if name in router_of else desc)
+             for name, desc in tools]
+    tools += [(router, f"Router tool: call it as {{\"action\": \"<action>\", \"args\": {{…}}}}")
+              for router in sorted(set(router_of.values()))]
 
     seen = set()
     for name, _ in tools:
@@ -173,6 +193,29 @@ def read_mcp_tools():
         seen.add(name)
 
     return sorted(tools)
+
+
+def read_router_actions():
+    """Map each router-fronted action to the router tool that fronts it."""
+    with open(TOOLS_ROUTER, encoding="utf-8") as fh:
+        src = fh.read()
+
+    router_of = {}
+    current = None
+    for line in src.splitlines():
+        m = _ROUTER_RE.search(line)
+        if m:
+            current = m.group("name")
+            continue
+        for a in _ACTION_RE.finditer(line):
+            if current:
+                router_of[a.group("action")] = current
+    if not router_of:
+        sys.exit(
+            f"generate-discovery: found no router actions in {TOOLS_ROUTER} — "
+            "the router format changed and this parser needs updating"
+        )
+    return router_of
 
 
 def generate_llms_txt(skills, version):

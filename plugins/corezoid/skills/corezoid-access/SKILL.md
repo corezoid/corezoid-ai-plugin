@@ -13,9 +13,23 @@ description: >
 # Corezoid Access Control
 
 You are the specialist for sharing Corezoid objects and managing principals
-(users, groups, API keys) inside a workspace. You drive the `share-object`,
-`create-group`, `create-api-key`, `find-principal`, `invite-user` and
-related MCP tools.
+(users, groups, API keys) inside a workspace. You drive `share-object`,
+`create-group`, `create-api-key`, `find-principal`, `invite-user` and the
+related operations.
+
+## How to call them
+
+All of them are **actions of the single `cz-access` MCP tool** — there is
+no `share-object` tool to call on its own:
+
+```
+cz-access {"action": "share-object", "args": {"obj": "conv", "obj_id": 834936, "obj_to": "user", "obj_to_id": 78545, "privs": "view"}}
+```
+
+Every argument goes inside `args`. The examples in this skill use a shorthand —
+`share-object obj=conv obj_id=834936` means exactly the call above. When unsure
+about an action's arguments, call `cz-access {"action": "<action>", "help":
+true}`: it returns the action's full schema and runs nothing.
 
 ## Mental model
 

@@ -58,13 +58,13 @@ func resolveEnvVarTarget(v *Executor, args map[string]interface{}) (stage int, t
 	for _, ev := range all {
 		if (objID != 0 && ev.ObjID == objID) || (objID == 0 && ev.ShortName == name) {
 			if objID != 0 && ev.ShortName != name {
-				return 0, EnvVar{}, nil, fmt.Sprintf("Error: obj_id %d is variable '@%s', not '@%s' — name and obj_id disagree. Re-run list-variables and retry with matching values.", objID, ev.ShortName, name)
+				return 0, EnvVar{}, nil, fmt.Sprintf("Error: obj_id %d is variable '@%s', not '@%s' — name and obj_id disagree. Re-run cz-variables {\"action\":\"list-variables\"} and retry with matching values.", objID, ev.ShortName, name)
 			}
 			return stage, ev, all, ""
 		}
 	}
 	if objID != 0 {
-		return 0, EnvVar{}, nil, fmt.Sprintf("Error: no env variable with obj_id %d in stage %d ('@%s' was given as name — run list-variables to see current ids).", objID, stage, name)
+		return 0, EnvVar{}, nil, fmt.Sprintf("Error: no env variable with obj_id %d in stage %d ('@%s' was given as name — run cz-variables {\"action\":\"list-variables\"} to see current ids).", objID, stage, name)
 	}
 	return 0, EnvVar{}, nil, envVarNotFoundMsg(name, stage, all)
 }
@@ -90,12 +90,12 @@ func envVarNotFoundMsg(name string, stage int, all []EnvVar) string {
 	}
 	names := append(near, rest...)
 	if len(names) == 0 {
-		return msg + " The stage has no variables — run list-variables to confirm."
+		return msg + " The stage has no variables — run cz-variables {\"action\":\"list-variables\"} to confirm."
 	}
 	if len(names) > 20 {
 		names = append(names[:20], "…")
 	}
-	return msg + " Variables in this stage: " + strings.Join(names, ", ") + " (run list-variables for details)."
+	return msg + " Variables in this stage: " + strings.Join(names, ", ") + " (run cz-variables {\"action\":\"list-variables\"} for details)."
 }
 
 // maskedEnvVarValue is the ONLY way a variable's value may be rendered.
@@ -328,7 +328,7 @@ func handleModifyVariable(ctx context.Context, args map[string]interface{}) (str
 	// same rule as the delete path.
 	verified := ""
 	if after, lerr := v.ListEnvVars(stage); lerr != nil {
-		verified = fmt.Sprintf("\n⚠ Modify op reported ok, but the state could not be re-verified against the server (%v) — check list-variables before relying on it.", lerr)
+		verified = fmt.Sprintf("\n⚠ Modify op reported ok, but the state could not be re-verified against the server (%v) — check cz-variables {\"action\":\"list-variables\"} before relying on it.", lerr)
 	} else {
 		for _, ev := range after {
 			if ev.ObjID == cur.ObjID {
@@ -433,7 +433,7 @@ func handleDeleteVariable(ctx context.Context, args map[string]interface{}) (str
 	// verification that could not run must never be reported as passed.
 	verifyNote := "Verified gone on the server."
 	if after, lerr := v.ListEnvVars(stage); lerr != nil {
-		verifyNote = fmt.Sprintf("⚠ Could not re-verify against the server (%v) — check list-variables.", lerr)
+		verifyNote = fmt.Sprintf("⚠ Could not re-verify against the server (%v) — check cz-variables {\"action\":\"list-variables\"}.", lerr)
 	} else {
 		for _, ev := range after {
 			if ev.ObjID == cur.ObjID {

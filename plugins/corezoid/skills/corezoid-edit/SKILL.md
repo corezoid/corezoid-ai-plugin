@@ -54,7 +54,7 @@ Apply changes to `PROCESS_PATH`.
 All constants (URLs, tokens, endpoints, hosts) must be stored as variables — never hardcoded:
 
 1. Check `_ENV_VARS_.json` (from `pull-folder`) or `.processes/variables.json` (from this session) for existing variables
-2. Create a new variable if needed: call MCP tool **`create-variable`** with `name`, `description`, `value`
+2. Create a new variable if needed: call **`cz-variables`** with `action: "create-variable"` and `args` `name`, `description`, `value`
 3. Reference in logic using `{{env_var[@variable-name]}}`
 
 See `${CLAUDE_PLUGIN_ROOT}/docs/variables-guide.md` for details.
@@ -97,7 +97,7 @@ Follow the **Description Update Rule** from the `corezoid` skill:
 
 Write the updated `description` directly into the JSON file. This costs nothing extra — the description rides the same `push-process` call.
 
-If the parent folder was structurally affected (process added, removed, or renamed), also call MCP tool **`modify-folder`** with a one-sentence `description` of what the folder contains.
+If the parent folder was structurally affected (process added, removed, or renamed), also call **`cz-structure`** with `action: "modify-folder"` and a one-sentence `description` in `args`.
 
 ---
 
@@ -109,7 +109,7 @@ Deploy the modified process by calling MCP tool **`push-process`** with `process
 
 If deployment fails, fix the reported errors and re-run `push-process` until it succeeds. Do not skip this step or postpone it — changes exist only in memory until pushed.
 
-> **Auto-snapshot:** if the process already existed on the server (`obj_id` ≠ null), `push-process` automatically creates a snapshot of the current server state before deploying your changes. No action needed — this is transparent. The snapshot appears in the Corezoid UI and can be managed with `list-snapshots` / `get-snapshot` / `delete-snapshot`. Environments whose API has no snapshot object (some on-prem / older installations) are detected by a read-only probe, confirmed against control requests and re-checked periodically per project/stage: the snapshot is skipped, the push proceeds, and the push result says so — keep the `.conv.json` under version control there, because the platform holds no rollback point.
+> **Auto-snapshot:** if the process already existed on the server (`obj_id` ≠ null), `push-process` automatically creates a snapshot of the current server state before deploying your changes. No action needed — this is transparent. The snapshot appears in the Corezoid UI and can be managed with the `cz-snapshots` actions `list-snapshots` / `get-snapshot` / `delete-snapshot`. Environments whose API has no snapshot object (some on-prem / older installations) are detected by a read-only probe, confirmed against control requests and re-checked periodically per project/stage: the snapshot is skipped, the push proceeds, and the push result says so — keep the `.conv.json` under version control there, because the platform holds no rollback point.
 
 > **Concurrent-change detection & 3-way merge:** `pull-process`/`pull-folder` capture the server version **before** export in a per-folder `.corezoid-baseline.json` sidecar, plus a copy of the pulled process under `.corezoid-baseline/` (add both to `.gitignore`). If someone else changed the process between pull and push, `push-process` **blocks** — a plain push could silently drop their edits — and reports local/server/overlap changes across nodes and process-level fields such as `title`, `description`, `params`, and `scheme.web_settings`. Reconcile one of three ways: re-pull and re-apply; `merge=true` to save the original as `<process>.pre-merge` and graft non-overlapping server changes into the local file for review; or `overwrite_server_change=true` to overwrite after being shown the report (a server snapshot is attempted first, and recovery is possible only if it succeeds). `force=true` is the **lint** override only and does not waive this gate — pass `overwrite_server_change` in reply to the block report, never ahead of it, because set in advance it authorises dropping a change that has not happened yet and that nobody will see. Overwriting live server state that was never compared (`overwrite_server_change`, or `adopt_existing` on a file with no baseline) while no pre-push snapshot could be taken is refused outright unless `allow_no_snapshot=true` is passed as well: neither reported nor recoverable is not a state a single flag should reach. A never-deployed process is exempt — there is no previous version to protect, so the create → push flow never needs the second flag. Every waived gate is named in the push result. Files with no baseline push with an advisory; an unreadable/corrupt baseline blocks until a re-pull rebuilds it, because silently ignoring it would disable lost-update protection. A pre-v3.1.3 sidecar with no recorded merge ancestor cannot run the same-second content check: the push proceeds, says so, and records the ancestor from the live server scheme, so only that one push is unchecked.
 

@@ -45,10 +45,16 @@ Every short `references/<file>` named later in this document lives in
 ## 0. Preflight
 
 - **Corezoid MCP tools present** — `pull-process`, `pull-folder`, `push-process`,
-  `lint-process`, `layout-process`, `create-alias`, `run-task`, `show-task`,
-  `modify-task`, `list-node-tasks`, `create-variable`, and
-  `create-communications-orchestrator`. Missing → tell the user to install the
-  Corezoid plugin and run `/corezoid-init`.
+  `lint-process`, `layout-process`, `create-alias`, `run-task` and
+  `create-communications-orchestrator`, plus the router actions `show-task`,
+  `modify-task`, `list-node-tasks` (`cz-tasks`) and `create-variable`
+  (`cz-variables`). Missing → tell the user to install the Corezoid plugin
+  and run `/corezoid-init`.
+- **Router call shape** — an action is called as
+  `cz-tasks {"action": "show-task", "args": {"process_id": 123, "ref": "localization"}}`,
+  every argument inside `args`; the `show-task process_id: … ref: …` shorthand
+  used below means exactly that. `"help": true` returns an action's full schema
+  and runs nothing.
 - **A stage resolves.** The usual sign is a `<id>_<name>.stage.json` marker at
   the workspace root, and most tools resolve stage from it. But the marker is
   not the only source: the MCP server also resolves stage from
@@ -584,7 +590,7 @@ workspace root if it exists. A workspace that has been logged into but never
 pulled has **no marker yet** (see Phase 0) — there the stage id is the
 `stage_id` recorded for this directory in `~/.corezoid/config.json`, which is
 also the value Phase 4.1 passed to `create-communications-orchestrator`. Reuse
-that one; do not re-derive it with `list-stages` and risk a different stage.
+that one; do not re-derive it with the `list-stages` action and risk a different stage.
 
 > **Do NOT pass the orchestrator's `folder_id` here.** `pull-folder` unzips a
 > server-produced archive into the **stage root** (the `RootPath` registered for

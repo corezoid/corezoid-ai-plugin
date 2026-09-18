@@ -95,9 +95,9 @@ because this session originally paused the process.
 Use:
 
 ```text
-move-process(process_id=<id>, destination_folder_id=<folder>)
-move-process(process_id=<id>, destination_folder_id=<folder>, apply=true,
-             confirm="<exact context-bound token from the fresh dry-run>")
+cz-structure {"action": "move-process", "args": {"process_id": <id>, "destination_folder_id": <folder>}}
+cz-structure {"action": "move-process", "args": {"process_id": <id>, "destination_folder_id": <folder>,
+                    "apply": true, "confirm": "<exact context-bound token from the fresh dry-run>"}}
 ```
 
 The operation reparents the existing process. It preserves the same ID and
@@ -113,12 +113,12 @@ call.
 Use:
 
 ```text
-move-folder(folder_id=<id>, destination_folder_id=<folder>)
-move-folder(folder_id=<id>, destination_folder_id=<folder>, apply=true,
-            confirm="<exact context-bound token from the fresh dry-run>")
+cz-structure {"action": "move-folder", "args": {"folder_id": <id>, "destination_folder_id": <folder>}}
+cz-structure {"action": "move-folder", "args": {"folder_id": <id>, "destination_folder_id": <folder>,
+                    "apply": true, "confirm": "<exact context-bound token from the fresh dry-run>"}}
 ```
 
-Only normal folders can be moved. The tool rejects projects/stages, self-move,
+Only normal folders can be moved. The action rejects projects/stages, self-move,
 and moving a folder into a descendant. For cross-stage/root moves, the risks
 apply to every descendant and `allow_cross_stage=true` is required after the
 user accepts them.

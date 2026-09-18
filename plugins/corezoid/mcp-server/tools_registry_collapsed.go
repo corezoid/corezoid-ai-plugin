@@ -1,0 +1,1225 @@
+package main
+
+// collapsedToolRegistry holds the definitions of the tools fronted by a
+// domain router (tools_router.go). They are full definitions, unchanged: the
+// same descriptions, schemas and annotations they had as standalone entries.
+//
+// The difference is where that text is spent. These 54 definitions are 42 KB
+// — two thirds of what tools/list used to cost every session — for operations
+// a typical session calls none of. Now tools/list carries a one-line summary
+// per action, and this file's text is served on demand: by help=true, by the
+// error a wrong call gets back, and by the CLI, which still accepts every
+// name here directly.
+//
+// Anything added here must be reachable through exactly one router action —
+// tools_router_test.go fails otherwise, so a tool cannot be defined into
+// unreachability.
+
+var collapsedToolRegistry = []mcpTool{
+	// ---- cz-access ----
+	{
+		Name:        "share-object",
+		Description: "Grant or revoke access to a Corezoid object (process/folder/stage/project) for a user, API key, or group. To revoke, pass privs=\"none\" — that's the same wire operation as a share with empty privs. API keys share as obj_to=\"user\" with the api key's obj_id.",
+		Annotations: toolHints(hintMutates, hintDestructive, hintNonIdempotent, hintOpenWorld),
+		InputSchema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"obj": map[string]interface{}{
+					"type":        "string",
+					"description": "Object kind: conv | folder | stage | project",
+				},
+				"obj_id": map[string]interface{}{
+					"type":        "integer",
+					"description": "Numeric ID of the object being shared",
+				},
+				"obj_to": map[string]interface{}{
+					"type":        "string",
+					"description": "Recipient kind: user (includes API keys) | group",
+				},
+				"obj_to_id": map[string]interface{}{
+					"type":        "integer",
+					"description": "Recipient obj_id (resolve via find-principal)",
+				},
+				"privs": map[string]interface{}{
+					"type":        "string",
+					"description": "Comma-separated list, JSON array, or keyword. Allowed values: view, create (task management), modify, delete, all (default), none (revoke all access).",
+				},
+				"notify": map[string]interface{}{
+					"type":        "boolean",
+					"description": "Send notification to recipient (default true). Ignored when revoking.",
+				},
+			},
+			"required": []string{"obj", "obj_id", "obj_to", "obj_to_id"},
+		},
+	},
+	{
+		Name:        "list-shares",
+		Description: "List users, API keys and groups that currently have access to a Corezoid object.",
+		Annotations: toolHints(hintReadOnly, hintSafe, hintIdempotent, hintOpenWorld),
+		InputSchema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"obj": map[string]interface{}{
+					"type":        "string",
+					"description": "Object kind: conv | folder | stage | project",
+				},
+				"obj_id": map[string]interface{}{
+					"type":        "integer",
+					"description": "Object ID",
+				},
+			},
+			"required": []string{"obj", "obj_id"},
+		},
+	},
+	{
+		Name:        "find-principal",
+		Description: "Search users, groups or API keys in the workspace by substring. Returns obj_ids to pass as obj_to_id in share-object.",
+		Annotations: toolHints(hintReadOnly, hintSafe, hintIdempotent, hintOpenWorld),
+		InputSchema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"name": map[string]interface{}{
+					"type":        "string",
+					"description": "Substring to match against title (omit to list all)",
+				},
+				"kind": map[string]interface{}{
+					"type":        "string",
+					"description": "What to search: user | group | api_key | shared. Defaults to user.",
+				},
+			},
+		},
+	},
+	{
+		Name:        "list-groups",
+		Description: "List user groups visible in the current workspace.",
+		Annotations: toolHints(hintReadOnly, hintSafe, hintIdempotent, hintOpenWorld),
+		InputSchema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"name": map[string]interface{}{
+					"type":        "string",
+					"description": "Optional substring filter on group title",
+				},
+			},
+		},
+	},
+	{
+		Name:        "create-group",
+		Description: "Create a new user group in the current workspace. Returns the group's obj_id (use as obj_to_id when sharing).",
+		Annotations: toolHints(hintMutates, hintSafe, hintNonIdempotent, hintOpenWorld),
+		InputSchema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"title": map[string]interface{}{
+					"type":        "string",
+					"description": "Group title",
+				},
+				"description": map[string]interface{}{
+					"type":        "string",
+					"description": "Optional group description",
+				},
+			},
+			"required": []string{"title"},
+		},
+	},
+	{
+		Name:        "modify-group",
+		Description: "Rename a user group and/or update its description. At least one of title or description must be supplied.",
+		Annotations: toolHints(hintMutates, hintSafe, hintIdempotent, hintOpenWorld),
+		InputSchema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"group_id": map[string]interface{}{
+					"type":        "integer",
+					"description": "Group obj_id",
+				},
+				"title": map[string]interface{}{
+					"type":        "string",
+					"description": "New group title",
+				},
+				"description": map[string]interface{}{
+					"type":        "string",
+					"description": "New group description",
+				},
+			},
+			"required": []string{"group_id"},
+		},
+	},
+	{
+		Name:        "delete-group",
+		Description: "Delete a user group. By default refuses to delete if the group still has active shares — pass force=true to override. Existing share links are revoked when the group is deleted.",
+		Annotations: toolHints(hintMutates, hintDestructive, hintNonIdempotent, hintOpenWorld),
+		InputSchema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"group_id": map[string]interface{}{
+					"type":        "integer",
+					"description": "Group obj_id",
+				},
+				"force": map[string]interface{}{
+					"type":        "boolean",
+					"description": "Delete even if the group still has active shares (default false).",
+				},
+			},
+			"required": []string{"group_id"},
+		},
+	},
+	{
+		Name:        "list-group-objects",
+		Description: "List the processes (conv objects) currently shared with a group. Used to audit group impact before destructive operations. Note: folders/stages/projects shared to the group are not retrievable via this endpoint.",
+		Annotations: toolHints(hintReadOnly, hintSafe, hintIdempotent, hintOpenWorld),
+		InputSchema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"group_id": map[string]interface{}{
+					"type":        "integer",
+					"description": "Group obj_id",
+				},
+			},
+			"required": []string{"group_id"},
+		},
+	},
+	{
+		Name:        "add-to-group",
+		Description: "Add a user (or API key user) to a group.",
+		Annotations: toolHints(hintMutates, hintSafe, hintIdempotent, hintOpenWorld),
+		InputSchema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"group_id": map[string]interface{}{
+					"type":        "integer",
+					"description": "Group obj_id",
+				},
+				"user_id": map[string]interface{}{
+					"type":        "integer",
+					"description": "User or API-key user obj_id",
+				},
+			},
+			"required": []string{"group_id", "user_id"},
+		},
+	},
+	{
+		Name:        "remove-from-group",
+		Description: "Remove a user from a group.",
+		Annotations: toolHints(hintMutates, hintDestructive, hintNonIdempotent, hintOpenWorld),
+		InputSchema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"group_id": map[string]interface{}{
+					"type":        "integer",
+					"description": "Group obj_id",
+				},
+				"user_id": map[string]interface{}{
+					"type":        "integer",
+					"description": "User or API-key user obj_id",
+				},
+			},
+			"required": []string{"group_id", "user_id"},
+		},
+	},
+	{
+		Name:        "list-api-keys",
+		Description: "List API keys visible in the current workspace.",
+		Annotations: toolHints(hintReadOnly, hintSafe, hintIdempotent, hintOpenWorld),
+		InputSchema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"name": map[string]interface{}{
+					"type":        "string",
+					"description": "Optional substring filter on key title",
+				},
+			},
+		},
+	},
+	{
+		Name:        "create-api-key",
+		Description: "Create a new API key in the workspace. The secret is written to ~/.corezoid/api-keys/<slug>-<obj_id>.json (mode 0600) and the chat output reports only the file path — the secret is never printed in agent responses.",
+		Annotations: toolHints(hintMutates, hintSafe, hintNonIdempotent, hintOpenWorld),
+		InputSchema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"title": map[string]interface{}{
+					"type":        "string",
+					"description": "API key title",
+				},
+				"description": map[string]interface{}{
+					"type":        "string",
+					"description": "Optional API key description",
+				},
+			},
+			"required": []string{"title"},
+		},
+	},
+	{
+		Name:        "modify-api-key",
+		Description: "Update title and/or description of an existing API key. Does not regenerate the secret.",
+		Annotations: toolHints(hintMutates, hintSafe, hintIdempotent, hintOpenWorld),
+		InputSchema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"api_key_id": map[string]interface{}{
+					"type":        "integer",
+					"description": "API key obj_id",
+				},
+				"title": map[string]interface{}{
+					"type":        "string",
+					"description": "New title",
+				},
+				"description": map[string]interface{}{
+					"type":        "string",
+					"description": "New description",
+				},
+			},
+			"required": []string{"api_key_id"},
+		},
+	},
+	{
+		Name:        "delete-api-key",
+		Description: "Delete an API key. The secret is invalidated immediately — subsequent requests return 401. Objects owned by the key are reassigned to the workspace owner.",
+		Annotations: toolHints(hintMutates, hintDestructive, hintNonIdempotent, hintOpenWorld),
+		InputSchema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"api_key_id": map[string]interface{}{
+					"type":        "integer",
+					"description": "API-key user obj_id",
+				},
+			},
+			"required": []string{"api_key_id"},
+		},
+	},
+	{
+		Name:        "invite-user",
+		Description: "Invite an external email to the workspace AND share a process/folder/stage/project with them in one call. Returns the invite URL the recipient must open.",
+		Annotations: toolHints(hintMutates, hintSafe, hintNonIdempotent, hintOpenWorld),
+		InputSchema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"email": map[string]interface{}{
+					"type":        "string",
+					"description": "Invitee email",
+				},
+				"login_type": map[string]interface{}{
+					"type":        "string",
+					"description": "Login type: google | corezoid | phone (defaults to google)",
+				},
+				"obj": map[string]interface{}{
+					"type":        "string",
+					"description": "Object to share: conv | folder | stage | project",
+				},
+				"obj_id": map[string]interface{}{
+					"type":        "integer",
+					"description": "Object ID",
+				},
+				"privs": map[string]interface{}{
+					"type":        "string",
+					"description": "Privs to grant (view, create, modify, delete, all). Defaults to view.",
+				},
+			},
+			"required": []string{"email", "obj", "obj_id"},
+		},
+	},
+	// ---- cz-structure ----
+	{
+		Name:        "list-workspaces",
+		Description: "Return the list of Corezoid workspaces (companies) available to the authenticated user.",
+		Annotations: toolHints(hintReadOnly, hintSafe, hintIdempotent, hintOpenWorld),
+		InputSchema: map[string]interface{}{
+			"type":       "object",
+			"properties": map[string]interface{}{},
+		},
+	},
+	{
+		Name:        "list-projects",
+		Description: "Return the list of projects inside a Corezoid workspace (company), sorted by title.",
+		Annotations: toolHints(hintReadOnly, hintSafe, hintIdempotent, hintOpenWorld),
+		InputSchema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"company_id": map[string]interface{}{
+					"type":        "string",
+					"description": "Workspace (company) ID whose projects to list",
+				},
+			},
+			"required": []string{"company_id"},
+		},
+	},
+	{
+		Name:        "show-project",
+		Description: "Show a Corezoid project's metadata and the stages available to the caller. Returns project obj_id, short_name, parent folder ID and the list of stage IDs/titles.",
+		Annotations: toolHints(hintReadOnly, hintSafe, hintIdempotent, hintOpenWorld),
+		InputSchema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"company_id": map[string]interface{}{
+					"type":        "string",
+					"description": "Workspace (company) ID the project belongs to",
+				},
+				"project_id": map[string]interface{}{
+					"type":        "integer",
+					"description": "Project ID (obj_id) to show",
+				},
+			},
+			"required": []string{"company_id", "project_id"},
+		},
+	},
+	{
+		Name:        "create-project",
+		Description: "Create a new Corezoid project (with optional stages) inside a workspace. Returns the new project_id and the stage IDs that were created.",
+		Annotations: toolHints(hintMutates, hintSafe, hintNonIdempotent, hintOpenWorld),
+		InputSchema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"company_id": map[string]interface{}{
+					"type":        "string",
+					"description": "Workspace (company) ID where the project will be created",
+				},
+				"title": map[string]interface{}{
+					"type":        "string",
+					"description": "Project title",
+				},
+				"short_name": map[string]interface{}{
+					"type":        "string",
+					"description": "Project short name (alphanumeric, used in URLs). If omitted the server derives one from the title.",
+				},
+				"description": map[string]interface{}{
+					"type":        "string",
+					"description": "Optional project description",
+				},
+				"stages": map[string]interface{}{
+					"type":        "string",
+					"description": `Optional JSON array of stages to create with the project: [{"title":"production","immutable":true},{"title":"develop","immutable":false}]`,
+				},
+			},
+			"required": []string{"company_id", "title"},
+		},
+	},
+	{
+		Name:        "modify-project",
+		Description: "Update a Corezoid project's title, short_name and/or description. At least one of title/short_name/description must be provided.",
+		Annotations: toolHints(hintMutates, hintSafe, hintIdempotent, hintOpenWorld),
+		InputSchema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"company_id": map[string]interface{}{
+					"type":        "string",
+					"description": "Workspace (company) ID the project belongs to",
+				},
+				"project_id": map[string]interface{}{
+					"type":        "integer",
+					"description": "Project ID (obj_id) to modify",
+				},
+				"title": map[string]interface{}{
+					"type":        "string",
+					"description": "New project title",
+				},
+				"short_name": map[string]interface{}{
+					"type":        "string",
+					"description": "New project short name",
+				},
+				"description": map[string]interface{}{
+					"type":        "string",
+					"description": "New project description",
+				},
+			},
+			"required": []string{"company_id", "project_id"},
+		},
+	},
+	{
+		Name:        "delete-project",
+		Description: "Move a Corezoid project to the recycle bin (Trash). Use restore-project to undo. Use destroy via the Corezoid UI to permanently delete.",
+		Annotations: toolHints(hintMutates, hintDestructive, hintNonIdempotent, hintOpenWorld),
+		InputSchema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"company_id": map[string]interface{}{
+					"type":        "string",
+					"description": "Workspace (company) ID the project belongs to",
+				},
+				"project_id": map[string]interface{}{
+					"type":        "integer",
+					"description": "Project ID (obj_id) to delete",
+				},
+			},
+			"required": []string{"company_id", "project_id"},
+		},
+	},
+	{
+		Name:        "list-stages",
+		Description: "Return the list of stages (environments) inside a Corezoid project.",
+		Annotations: toolHints(hintReadOnly, hintSafe, hintIdempotent, hintOpenWorld),
+		InputSchema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"project_id": map[string]interface{}{
+					"type":        "integer",
+					"description": "Project ID whose stages to list",
+				},
+				"company_id": map[string]interface{}{
+					"type":        "string",
+					"description": "Workspace (company) ID the project belongs to",
+				},
+			},
+			"required": []string{"project_id", "company_id"},
+		},
+	},
+	{
+		Name:        "set-stage-immutable",
+		Description: "Set a stage's immutable (read-only) flag. Immutable stages are the ONLY valid deploy/merge targets (see deploy-stage); an immutable stage can no longer be edited directly — only changed via deploy. Consequential: making a stage editable removes that protection. Requires explicit user confirmation — call with confirm=\"<stage_id>:<true|false>\" (e.g. \"684082:true\"). Never change immutability without the user confirming.",
+		// Destructive in the immutable=false direction: it strips a stage's
+		// read-only protection, which is why the handler demands a confirm
+		// token. Reported as non-idempotent per the registry-wide rule, even
+		// though re-sending the same flag is a no-op.
+		Annotations: toolHints(hintMutates, hintDestructive, hintNonIdempotent, hintOpenWorld),
+		InputSchema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"stage_id": map[string]interface{}{
+					"type":        "integer",
+					"description": "Stage ID whose immutable flag to set.",
+				},
+				"project_id": map[string]interface{}{
+					"type":        "integer",
+					"description": "Project ID the stage belongs to.",
+				},
+				"company_id": map[string]interface{}{
+					"type":        "string",
+					"description": "Workspace (company) ID the project belongs to.",
+				},
+				"immutable": map[string]interface{}{
+					"type":        "boolean",
+					"description": "true = make read-only (a valid deploy target); false = make editable again.",
+				},
+				"confirm": map[string]interface{}{
+					"type":        "string",
+					"description": "Required: must equal \"<stage_id>:<immutable>\" (e.g. \"684082:true\"). Guards against accidental read-only changes.",
+				},
+			},
+			"required": []string{"stage_id", "project_id", "company_id", "immutable"},
+		},
+	},
+	{
+		Name:        "list-folders",
+		Description: "List the immediate children of a Corezoid folder (subfolders + processes + state diagrams). Lighter than pull-folder — does not write anything to disk.",
+		Annotations: toolHints(hintReadOnly, hintSafe, hintIdempotent, hintOpenWorld),
+		InputSchema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"folder_id": map[string]interface{}{
+					"type":        "integer",
+					"description": "Corezoid folder ID whose children to list",
+				},
+			},
+			"required": []string{"folder_id"},
+		},
+	},
+	{
+		Name:        "show-folder",
+		Description: "Show metadata for a single Corezoid folder: title, obj_type (0 normal, 2 project, 3 stage), parent folder ID and parent type.",
+		Annotations: toolHints(hintReadOnly, hintSafe, hintIdempotent, hintOpenWorld),
+		InputSchema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"folder_id": map[string]interface{}{
+					"type":        "integer",
+					"description": "Corezoid folder ID to show",
+				},
+			},
+			"required": []string{"folder_id"},
+		},
+	},
+	{
+		Name:        "create-folder",
+		Description: "Create a new folder inside a parent Corezoid folder.",
+		Annotations: toolHints(hintMutates, hintSafe, hintNonIdempotent, hintOpenWorld),
+		InputSchema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"folder_id": map[string]interface{}{
+					"type":        "integer",
+					"description": "Explicit Corezoid folder/stage ID to create the folder in; overrides parent_path resolution",
+				},
+				"parent_path": map[string]interface{}{
+					"type":        "string",
+					"description": "Relative path to the parent folder directory. Omit to use the current directory.",
+				},
+				"folder_name": map[string]interface{}{
+					"type":        "string",
+					"description": "Name for the new folder",
+				},
+			},
+			"required": []string{"folder_name"},
+		},
+	},
+	{
+		Name:        "modify-folder",
+		Description: "Rename a Corezoid folder and/or update its description. At least one of title or description must be supplied.",
+		Annotations: toolHints(hintMutates, hintSafe, hintIdempotent, hintOpenWorld),
+		InputSchema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"folder_id": map[string]interface{}{
+					"type":        "integer",
+					"description": "Corezoid folder ID to modify",
+				},
+				"title": map[string]interface{}{
+					"type":        "string",
+					"description": "New folder title",
+				},
+				"description": map[string]interface{}{
+					"type":        "string",
+					"description": "New folder description",
+				},
+			},
+			"required": []string{"folder_id"},
+		},
+	},
+	{
+		Name:        "delete-folder",
+		Description: "Move a Corezoid folder to the recycle bin (Trash). Can be restored from the Corezoid UI.",
+		Annotations: toolHints(hintMutates, hintDestructive, hintNonIdempotent, hintOpenWorld),
+		InputSchema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"folder_id": map[string]interface{}{
+					"type":        "integer",
+					"description": "Corezoid folder ID to delete",
+				},
+			},
+			"required": []string{"folder_id"},
+		},
+	},
+	{
+		Name:        "move-folder",
+		Description: "Move (reparent) one existing NORMAL Corezoid folder to another folder in the configured workspace, preserving its folder ID and descendants; NOT copy, import, or deploy. Projects and stages are intentionally rejected. EXPLICIT-INTENT ONLY: never reorganize automatically during create/edit/review/refactor. SAFETY: apply=false (default) reads the live parent, destination and effective project/stage contexts, checks destination ancestry to prevent self/descendant cycles, and returns a dry-run; to apply, show it to the user and pass the exact context-bound confirm token it returned. Moving the source, destination or either effective stage/project context invalidates an old token; completion is post-verified. destination_folder_id=0 means workspace root. Cross-stage/project/root moves also require allow_cross_stage=true and affect every descendant's environment context. Local mirror directories are not relocated automatically.",
+		Annotations: toolHints(hintMutates, hintDestructive, hintNonIdempotent, hintOpenWorld),
+		InputSchema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"folder_id": map[string]interface{}{
+					"type":        "integer",
+					"minimum":     1,
+					"description": "Exact normal-folder ID to move. Project/stage IDs are rejected.",
+				},
+				"destination_folder_id": map[string]interface{}{
+					"type":        "integer",
+					"minimum":     0,
+					"description": "Exact destination folder/stage/project ID. Use 0 for workspace root.",
+				},
+				"allow_cross_stage": map[string]interface{}{
+					"type":        "boolean",
+					"description": "Required only when the destination changes project/stage context or moves the folder to/from workspace root. Set true only after the user accepts risks for every descendant.",
+				},
+				"apply": map[string]interface{}{
+					"type":        "boolean",
+					"description": "false (default) = resolve source/destination and preview only. true = move (also requires exact confirm).",
+				},
+				"confirm": map[string]interface{}{
+					"type":        "string",
+					"description": "Required when apply=true. Pass the exact token returned by the fresh dry-run; it binds source parent, destination parent, and both effective project/stage contexts.",
+				},
+			},
+			"required": []string{"folder_id", "destination_folder_id"},
+		},
+	},
+	{
+		Name:        "move-process",
+		Description: "Move (reparent) one existing Corezoid process/state diagram to another folder in the configured workspace, preserving its object ID and graph; NOT copy, import, or deploy. EXPLICIT-INTENT ONLY: never reorganize objects automatically during create/edit/review/refactor — use only when the user names both object and destination. SAFETY: apply=false (default) reads the live current parent, destination and effective project/stage contexts and returns a dry-run; to apply, show it to the user and pass the exact context-bound confirm token it returned. Moving the source, destination or either effective stage/project context invalidates an old token; completion is post-verified. destination_folder_id=0 means workspace root. Cross-stage/project/root moves also require allow_cross_stage=true, because stage-scoped aliases/variables, access and deployment behavior are not migrated. Local mirror files are not relocated automatically.",
+		Annotations: toolHints(hintMutates, hintDestructive, hintNonIdempotent, hintOpenWorld),
+		InputSchema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"process_id": map[string]interface{}{
+					"type":        "integer",
+					"minimum":     1,
+					"description": "Exact process/state-diagram ID to move.",
+				},
+				"destination_folder_id": map[string]interface{}{
+					"type":        "integer",
+					"minimum":     0,
+					"description": "Exact destination folder/stage/project ID. Use 0 for workspace root.",
+				},
+				"allow_cross_stage": map[string]interface{}{
+					"type":        "boolean",
+					"description": "Required only when the destination changes project/stage context or moves the process to/from workspace root. Set true only after the user accepts alias, variable, access, and deployment risks.",
+				},
+				"apply": map[string]interface{}{
+					"type":        "boolean",
+					"description": "false (default) = resolve source/destination and preview only. true = move (also requires exact confirm).",
+				},
+				"confirm": map[string]interface{}{
+					"type":        "string",
+					"description": "Required when apply=true. Pass the exact token returned by the fresh dry-run; it binds source parent, destination parent, and both effective project/stage contexts.",
+				},
+			},
+			"required": []string{"process_id", "destination_folder_id"},
+		},
+	},
+	// ---- cz-tasks ----
+	{
+		Name:        "show-task",
+		Description: "Return the current state of a single task — data, obj_id (task_id), node_id and status — resolved by task_id and/or ref. At least one of task_id or ref must be provided; when both are given task_id wins. This is the way to look a task up from an external ref: list-node-tasks needs the node the task is parked in and pages through it, while this is a single lookup. Read-only — it commits nothing, so it also works on immutable stages and with view-only access.",
+		Annotations: toolHints(hintReadOnly, hintSafe, hintIdempotent, hintOpenWorld),
+		InputSchema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"process_id": map[string]interface{}{
+					"type":        "integer",
+					"description": "Corezoid process (conv) ID",
+				},
+				"task_id": map[string]interface{}{
+					"type":        "string",
+					"minLength":   1,
+					"description": "Task ID (obj_id)",
+				},
+				"ref": map[string]interface{}{
+					"type":        "string",
+					"minLength":   1,
+					"description": "Task reference string",
+				},
+			},
+			"required": []string{"process_id"},
+			"anyOf": []map[string]interface{}{
+				{"required": []string{"task_id"}},
+				{"required": []string{"ref"}},
+			},
+		},
+	},
+	{
+		Name:        "modify-task",
+		Description: "Modify an existing task's data; at least one of task_id or ref is required. WARNING: the Corezoid API does a SHALLOW (top-level) merge — if a top-level key holds a nested object (e.g. data.currencies), its whole value is replaced and sub-keys absent from your payload are silently lost. Pass deep_merge: true to fetch current task data first and merge recursively, preserving sub-keys.",
+		Annotations: toolHints(hintMutates, hintSafe, hintIdempotent, hintOpenWorld),
+		InputSchema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"process_id": map[string]interface{}{
+					"type":        "integer",
+					"description": "Corezoid process (conv) ID",
+				},
+				"data": map[string]interface{}{
+					"type":        "string",
+					"description": "JSON string with fields to merge into the task. Each top-level key overwrites the full existing value at that key (shallow merge). Use deep_merge: true to recursively preserve existing sub-keys inside nested objects.",
+				},
+				"task_id": map[string]interface{}{
+					"type":        "string",
+					"description": "Task ID (obj_id)",
+				},
+				"ref": map[string]interface{}{
+					"type":        "string",
+					"description": "Task reference string",
+				},
+				"deep_merge": map[string]interface{}{
+					"type":        "boolean",
+					"description": "If true, fetch the current task data first and recursively merge your data into it before writing; existing sub-keys not present in your payload are preserved. Default: false (standard shallow merge).",
+				},
+			},
+			"required": []string{"process_id", "data"},
+		},
+	},
+	{
+		Name:        "delete-task",
+		Description: "Delete a task from a process. At least one of task_id or ref must be provided. If only ref is given, the task_id and node_id are resolved automatically.",
+		Annotations: toolHints(hintMutates, hintDestructive, hintNonIdempotent, hintOpenWorld),
+		InputSchema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"process_id": map[string]interface{}{
+					"type":        "integer",
+					"description": "Corezoid process (conv) ID",
+				},
+				"task_id": map[string]interface{}{
+					"type":        "string",
+					"description": "Task ID (obj_id)",
+				},
+				"ref": map[string]interface{}{
+					"type":        "string",
+					"description": "Task reference string",
+				},
+			},
+			"required": []string{"process_id"},
+		},
+	},
+	{
+		Name:        "list-node-tasks",
+		Description: "Return tasks currently sitting in a specific node of a process. This is a paged scan of one node, not a lookup — to find one task by ref or task_id use show-task instead.",
+		Annotations: toolHints(hintReadOnly, hintSafe, hintIdempotent, hintOpenWorld),
+		InputSchema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"process_id": map[string]interface{}{
+					"type":        "integer",
+					"description": "Corezoid process (conv) ID",
+				},
+				"node_id": map[string]interface{}{
+					"type":        "string",
+					"description": "24-character hex node ID",
+				},
+				"limit": map[string]interface{}{
+					"type":        "integer",
+					"description": "Maximum number of tasks to return (default 50)",
+				},
+				"offset": map[string]interface{}{
+					"type":        "integer",
+					"description": "Pagination offset (default 0)",
+				},
+			},
+			"required": []string{"process_id", "node_id"},
+		},
+	},
+	{
+		Name:        "list-task-history",
+		Description: "Return the execution history (node path) for a task. Shows each node transition with node_id, node_prev_id, create_time_ms. NOTE: the Corezoid API does not record data snapshots — the data field is always null in history entries. To inspect the current data payload, use show-task (read-only); it also resolves the task_id this tool requires from a ref.",
+		Annotations: toolHints(hintReadOnly, hintSafe, hintIdempotent, hintOpenWorld),
+		InputSchema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"process_id": map[string]interface{}{
+					"type":        "integer",
+					"description": "Corezoid process (conv) ID",
+				},
+				"task_id": map[string]interface{}{
+					"type":        "string",
+					"description": "Task ID (obj_id) to retrieve history for",
+				},
+			},
+			"required": []string{"process_id", "task_id"},
+		},
+	},
+	{
+		Name:        "get-node-stat",
+		Description: "Return time-series statistics (in/out counts) for a node over a time range. node_id is the ID shown in the Corezoid UI archive URL (/diagram/{node_id}/archive). ops[0]['data'] contains [{\"date\":\"YYYY-MM-DD\",\"in\":N,\"out\":M}] for non-zero buckets. ops[0]['title'] is the node title.",
+		Annotations: toolHints(hintReadOnly, hintSafe, hintIdempotent, hintOpenWorld),
+		InputSchema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"process_id": map[string]interface{}{
+					"type":        "integer",
+					"description": "Corezoid process (conv) ID",
+				},
+				"node_id": map[string]interface{}{
+					"type":        "string",
+					"description": "Node ID from the Corezoid UI archive URL",
+				},
+				"start": map[string]interface{}{
+					"type":        "integer",
+					"description": "Unix timestamp — start of the period",
+				},
+				"end": map[string]interface{}{
+					"type":        "integer",
+					"description": "Unix timestamp — end of the period",
+				},
+				"interval": map[string]interface{}{
+					"type":        "string",
+					"description": "Aggregation bucket: 'day' or 'hour' (default: 'day')",
+				},
+				"timezone_offset": map[string]interface{}{
+					"type":        "integer",
+					"description": "UTC offset in minutes, negative westward (e.g. -180 for UTC+3, default: 0)",
+				},
+			},
+			"required": []string{"process_id", "node_id", "start", "end"},
+		},
+	},
+	// ---- cz-dashboards ----
+	{
+		Name:        "create-dashboard",
+		Description: "Create a new Corezoid dashboard for visualizing process node metrics. Returns dashboard_id needed for adding charts.",
+		Annotations: toolHints(hintMutates, hintSafe, hintNonIdempotent, hintOpenWorld),
+		InputSchema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"title": map[string]interface{}{
+					"type":        "string",
+					"description": "Dashboard title",
+				},
+				"description": map[string]interface{}{
+					"type":        "string",
+					"description": "Optional dashboard description",
+				},
+				"timezone_offset": map[string]interface{}{
+					"type":        "integer",
+					"description": "UTC offset in minutes (e.g. -180 for UTC+3). Defaults to 0 (UTC).",
+				},
+				"folder_id": map[string]interface{}{
+					"type":        "integer",
+					"description": "Optional. Folder ID where the dashboard will be created — pass a subfolder ID to nest the dashboard inside it. Defaults to the current stage (resolved from the workspace's <id>_<name>.stage.json marker file). LLM does not need to look this up.",
+				},
+			},
+			"required": []string{"title"},
+		},
+	},
+	{
+		Name:        "get-dashboard",
+		Description: "Get a Corezoid dashboard with its charts and series. Use after add-chart to verify series is populated.",
+		Annotations: toolHints(hintReadOnly, hintSafe, hintIdempotent, hintOpenWorld),
+		InputSchema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"dashboard_id": map[string]interface{}{
+					"type":        "integer",
+					"description": "Dashboard ID",
+				},
+			},
+			"required": []string{"dashboard_id"},
+		},
+	},
+	{
+		Name:        "add-chart",
+		Description: "Add a chart to a Corezoid dashboard. chart_type must be one of: column, pie, funnel, table. Use 'column' for bar/comparison charts — 'bar' is not a valid type.",
+		Annotations: toolHints(hintMutates, hintSafe, hintNonIdempotent, hintOpenWorld),
+		InputSchema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"dashboard_id": map[string]interface{}{
+					"type":        "integer",
+					"description": "Dashboard ID to add the chart to",
+				},
+				"name": map[string]interface{}{
+					"type":        "string",
+					"description": "Chart name/title",
+				},
+				"chart_type": map[string]interface{}{
+					"type":        "string",
+					"description": "Chart type: column, pie, funnel, or table",
+				},
+				"series": map[string]interface{}{
+					"type":        "string",
+					"description": `JSON array of series: [{"conv_id": 123, "node_id": "<24-char-hex>", "title": "Label"}]`,
+				},
+			},
+			"required": []string{"dashboard_id", "name", "chart_type", "series"},
+		},
+	},
+	{
+		Name:        "modify-chart",
+		Description: "Modify an existing Corezoid chart. Always provide the full series array — partial updates are not supported.",
+		Annotations: toolHints(hintMutates, hintSafe, hintIdempotent, hintOpenWorld),
+		InputSchema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"chart_id": map[string]interface{}{
+					"type":        "string",
+					"description": "Chart obj_id (hex string returned by add-chart or get-dashboard)",
+				},
+				"dashboard_id": map[string]interface{}{
+					"type":        "integer",
+					"description": "Dashboard ID that contains this chart",
+				},
+				"name": map[string]interface{}{
+					"type":        "string",
+					"description": "Chart name/title",
+				},
+				"chart_type": map[string]interface{}{
+					"type":        "string",
+					"description": "Chart type: column, pie, funnel, or table",
+				},
+				"series": map[string]interface{}{
+					"type":        "string",
+					"description": `JSON array of series (full replacement): [{"conv_id": 123, "node_id": "<id>", "title": "Label"}]`,
+				},
+			},
+			"required": []string{"chart_id", "dashboard_id", "name", "chart_type", "series"},
+		},
+	},
+	{
+		Name:        "get-chart",
+		Description: "Get a single chart with its series data.",
+		Annotations: toolHints(hintReadOnly, hintSafe, hintIdempotent, hintOpenWorld),
+		InputSchema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"chart_id": map[string]interface{}{
+					"type":        "string",
+					"description": "Chart obj_id (hex string)",
+				},
+				"dashboard_id": map[string]interface{}{
+					"type":        "integer",
+					"description": "Dashboard ID that contains this chart",
+				},
+			},
+			"required": []string{"chart_id", "dashboard_id"},
+		},
+	},
+	{
+		Name:        "set-dashboard-layout",
+		Description: "Save chart positions on a dashboard grid. Must be called after add-chart/modify-chart to make charts visible. Each grid entry positions one chart by its chart_id (hex string from add-chart).",
+		Annotations: toolHints(hintMutates, hintSafe, hintIdempotent, hintOpenWorld),
+		InputSchema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"dashboard_id": map[string]interface{}{
+					"type":        "integer",
+					"description": "Dashboard ID",
+				},
+				"grid": map[string]interface{}{
+					"type":        "string",
+					"description": `JSON array of chart positions: [{"chart_id":"<hex>","x":0,"y":0,"width":6,"height":4},...]. Standard width=6, height=4. Grid is 12 columns wide.`,
+				},
+				"timezone_offset": map[string]interface{}{
+					"type":        "integer",
+					"description": "UTC offset in minutes (e.g. -180 for UTC+3). Defaults to 0.",
+				},
+			},
+			"required": []string{"dashboard_id", "grid"},
+		},
+	},
+	// ---- cz-variables ----
+	{
+		Name:        "list-variables",
+		Description: "List all environment variables (env_var) in the current Corezoid stage: short_name, obj_id, data_type (raw/json), env_var_type (visible/secret), title, value and change time. Read-only. The stage is resolved automatically from the workspace's <id>_<name>.stage.json marker file — no stage argument. Secret variables are ALWAYS shown masked. Returns the obj_id needed by modify-variable / delete-variable.",
+		Annotations: toolHints(hintReadOnly, hintSafe, hintIdempotent, hintOpenWorld),
+		InputSchema: map[string]interface{}{
+			"type":       "object",
+			"properties": map[string]interface{}{},
+			"required":   []string{},
+		},
+	},
+	{
+		Name:        "create-variable",
+		Description: "Create an environment variable in the current Corezoid stage. The stage is resolved automatically from the workspace's <id>_<name>.stage.json marker file — no stage argument.",
+		Annotations: toolHints(hintMutates, hintSafe, hintIdempotent, hintOpenWorld),
+		InputSchema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"name": map[string]interface{}{
+					"type":        "string",
+					"description": "Variable name",
+				},
+				"description": map[string]interface{}{
+					"type":        "string",
+					"description": "Variable description",
+				},
+				"value": map[string]interface{}{
+					"type":        "string",
+					"description": "Variable value",
+				},
+			},
+			"required": []string{"name", "description", "value"},
+		},
+	},
+	{
+		Name:        "modify-variable",
+		Description: "Modify a Corezoid environment variable in the current stage: its value, description (display title), data_type (raw/json), and/or rename it (new_name). The stage is resolved from the workspace's <id>_<name>.stage.json marker — no stage argument. CONSEQUENTIAL: renaming breaks every {{env_var[@old-name]}} reference in the stage's processes, and a value change takes effect immediately in running processes without redeploy. env_var_type (visible/secret) CANNOT be changed after creation — the server silently ignores such changes. Modify is partial: omitted fields keep their current value (a secret's value survives a modify that does not send value). SAFETY: apply=false (default) is a dry-run showing the current → new diff plus, for renames, a local reference scan — nothing is changed. To apply you MUST show that diff to the user, get explicit confirmation, then call with apply=true AND confirm=\"<short_name>#<obj_id>\" (the CURRENT short_name, before any rename). Never modify a variable without the user confirming.",
+		Annotations: toolHints(hintMutates, hintDestructive, hintNonIdempotent, hintOpenWorld),
+		InputSchema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"name": map[string]interface{}{
+					"type":        "string",
+					"description": "Current short_name of the variable (as used in {{env_var[@name]}}).",
+				},
+				"obj_id": map[string]interface{}{
+					"type":        "integer",
+					"description": "Optional numeric variable ID (from list-variables). If given together with name, both must refer to the same variable.",
+				},
+				"new_name": map[string]interface{}{
+					"type":        "string",
+					"description": "New short_name (rename). WARNING: breaks all {{env_var[@old-name]}} references — the dry-run reports affected local .conv.json files.",
+				},
+				"description": map[string]interface{}{
+					"type":        "string",
+					"description": "New human-readable label (stored as the variable's title, same as create-variable). An empty string is ignored — titles cannot be cleared.",
+				},
+				"value": map[string]interface{}{
+					"type":        "string",
+					"description": "New value. For data_type=json, a JSON-encoded string. Omit to keep the current value (secrets survive).",
+				},
+				"data_type": map[string]interface{}{
+					"type":        "string",
+					"enum":        []string{"raw", "json"},
+					"description": "New data type (raw or json).",
+				},
+				"apply": map[string]interface{}{
+					"type":        "boolean",
+					"description": "false (default) = dry-run: show the current → new diff only. true = perform the modification (also requires a matching confirm).",
+				},
+				"confirm": map[string]interface{}{
+					"type":        "string",
+					"description": "Required when apply=true: must equal \"<short_name>#<obj_id>\" of the CURRENT variable (e.g. \"payment-api-url#2192\"). Guards against accidental and wrong-variable modifications.",
+				},
+			},
+			"required": []string{"name"},
+		},
+	},
+	{
+		Name:        "delete-variable",
+		Description: "PERMANENTLY delete a Corezoid environment variable from the current stage. The stage is resolved from the workspace's <id>_<name>.stage.json marker — no stage argument. DESTRUCTIVE AND IRREVERSIBLE: unlike processes/folders/projects there is NO recycle bin for variables — the value (secrets included) is gone immediately, and any process still referencing {{env_var[@name]}} fails at runtime. SAFETY: apply=false (default) is a dry-run showing the variable's full details plus a local reference scan — nothing is deleted. To delete you MUST show the user that warning block VERBATIM, get explicit confirmation, then call with apply=true AND confirm=\"<short_name>#<obj_id>\". Never delete a variable without the user confirming.",
+		Annotations: toolHints(hintMutates, hintDestructive, hintNonIdempotent, hintOpenWorld),
+		InputSchema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"name": map[string]interface{}{
+					"type":        "string",
+					"description": "short_name of the variable to delete.",
+				},
+				"obj_id": map[string]interface{}{
+					"type":        "integer",
+					"description": "Optional numeric variable ID (from list-variables). If given together with name, both must match.",
+				},
+				"apply": map[string]interface{}{
+					"type":        "boolean",
+					"description": "false (default) = dry-run preview only. true = perform the permanent deletion (also requires a matching confirm).",
+				},
+				"confirm": map[string]interface{}{
+					"type":        "string",
+					"description": "Required when apply=true: must equal \"<short_name>#<obj_id>\" (e.g. \"stripe-key#2192\"). Guards against accidental and wrong-variable deletion.",
+				},
+			},
+			"required": []string{"name"},
+		},
+	},
+	// ---- cz-snapshots ----
+	{
+		Name:        "create-snapshot",
+		Description: "Snapshot a process's current server state as a manual checkpoint before experiments. push-process already auto-snapshots existing processes. Target it with EXACTLY ONE of process_path (a local .conv.json) or process_id (the numeric ID, usable with no local repository); both is rejected as ambiguous.",
+		Annotations: toolHints(hintMutates, hintSafe, hintNonIdempotent, hintOpenWorld),
+		InputSchema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"process_path": map[string]interface{}{
+					"type":        []string{"string", "null"},
+					"description": "Path to the .conv.json file. Omit it and pass process_id when there is no local repository. Mutually exclusive with process_id.",
+				},
+				"process_id": map[string]interface{}{
+					"type":        []string{"integer", "null"},
+					"description": "Corezoid process (conv) ID, > 0. Alternative to process_path; needs no local file. Mutually exclusive with process_path.",
+				},
+				"title": map[string]interface{}{
+					"type":        "string",
+					"description": "Optional snapshot title. Defaults to 'manual snapshot <ProcessName> <datetime>'.",
+				},
+			},
+			"anyOf": processTargetAnyOf(),
+		},
+	},
+	{
+		Name:        "list-snapshots",
+		Description: "List all snapshots for a process. Returns version, title, author and creation time for each snapshot. Target it with EXACTLY ONE of process_path (a local .conv.json) or process_id (the numeric ID, usable with no local repository); both is rejected as ambiguous.",
+		Annotations: toolHints(hintReadOnly, hintSafe, hintIdempotent, hintOpenWorld),
+		InputSchema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"process_path": map[string]interface{}{
+					"type":        []string{"string", "null"},
+					"description": "Path to the .conv.json file. Omit it and pass process_id when there is no local repository. Mutually exclusive with process_id.",
+				},
+				"process_id": map[string]interface{}{
+					"type":        []string{"integer", "null"},
+					"description": "Corezoid process (conv) ID, > 0. Alternative to process_path; needs no local file. Mutually exclusive with process_path.",
+				},
+			},
+			"anyOf": processTargetAnyOf(),
+		},
+	},
+	{
+		Name:        "get-snapshot",
+		Description: "Get one snapshot's node list, as it existed at snapshot time, for diffing against the current process. Target it with EXACTLY ONE of process_path (a local .conv.json) or process_id (the numeric ID, usable with no local repository); both is rejected as ambiguous.",
+		Annotations: toolHints(hintReadOnly, hintSafe, hintIdempotent, hintOpenWorld),
+		InputSchema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"process_path": map[string]interface{}{
+					"type":        []string{"string", "null"},
+					"description": "Path to the .conv.json file. Omit it and pass process_id when there is no local repository. Mutually exclusive with process_id.",
+				},
+				"process_id": map[string]interface{}{
+					"type":        []string{"integer", "null"},
+					"description": "Corezoid process (conv) ID, > 0. Alternative to process_path; needs no local file. Mutually exclusive with process_path.",
+				},
+				"snapshot_id": map[string]interface{}{
+					"type":        "integer",
+					"description": "The obj_id of the snapshot to retrieve (from list-snapshots).",
+				},
+			},
+			"required": []string{"snapshot_id"},
+			"anyOf":    processTargetAnyOf(),
+		},
+	},
+	{
+		Name:        "delete-snapshot",
+		Description: "Delete a snapshot by its obj_id. Use list-snapshots to find the snapshot_id. Target it with EXACTLY ONE of process_path (a local .conv.json) or process_id (the numeric ID, usable with no local repository); both is rejected as ambiguous.",
+		Annotations: toolHints(hintMutates, hintDestructive, hintNonIdempotent, hintOpenWorld),
+		InputSchema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"process_path": map[string]interface{}{
+					"type":        []string{"string", "null"},
+					"description": "Path to the .conv.json file. Omit it and pass process_id when there is no local repository. Mutually exclusive with process_id.",
+				},
+				"process_id": map[string]interface{}{
+					"type":        []string{"integer", "null"},
+					"description": "Corezoid process (conv) ID, > 0. Alternative to process_path; needs no local file. Mutually exclusive with process_path.",
+				},
+				"snapshot_id": map[string]interface{}{
+					"type":        "integer",
+					"description": "The obj_id of the snapshot to delete (from list-snapshots).",
+				},
+			},
+			"required": []string{"snapshot_id"},
+			"anyOf":    processTargetAnyOf(),
+		},
+	},
+	// ---- cz-git-context ----
+	// git mirror
+	{
+		Name:        "git-pull-context",
+		Description: "Clone or pull the Corezoid git mirror for the current workspace into .git-context/. Requires git_url, api_login, and api_secret to be set in the current Folder in ~/.corezoid/config.json. Silently skipped if not configured.",
+		Annotations: toolHints(hintMutates, hintSafe, hintIdempotent, hintOpenWorld),
+		InputSchema: map[string]interface{}{
+			"type":       "object",
+			"properties": map[string]interface{}{},
+		},
+	},
+	{
+		Name:        "read-context-file",
+		Description: "Read a file from .git-context/ of the current workspace (git mirror local copy). Returns content and a found flag.",
+		Annotations: toolHints(hintReadOnly, hintSafe, hintIdempotent, hintLocal),
+		InputSchema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"path": map[string]interface{}{
+					"type":        "string",
+					"description": "Relative path inside .git-context/, e.g. projects/123_Name/stages/456_Stage/_ext/docs/context.md",
+				},
+			},
+			"required": []string{"path"},
+		},
+	},
+	{
+		Name:        "update-context-file",
+		Description: "Write or append to a file inside _ext/ of the git mirror local copy (.git-context/). Path must start with _ext/. Use git-push-context to publish the changes.",
+		Annotations: toolHints(hintMutates, hintSafe, hintNonIdempotent, hintLocal),
+		InputSchema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"path": map[string]interface{}{
+					"type":        "string",
+					"description": "Relative path inside .git-context/, must start with _ext/ (e.g. _ext/docs/context.md or projects/123/stages/456/_ext/docs/context.md)",
+				},
+				"content": map[string]interface{}{
+					"type":        "string",
+					"description": "Text content to write",
+				},
+				"mode": map[string]interface{}{
+					"type":        "string",
+					"description": "Write mode: 'replace' (default) overwrites the file; 'append' adds to the end",
+				},
+			},
+			"required": []string{"path", "content"},
+		},
+	},
+	{
+		Name:        "git-push-context",
+		Description: "Commit and push local _ext/ changes to the Corezoid git mirror. Requires api_login and api_secret in the current Folder in ~/.corezoid/config.json. Returns a warning (not an error) if nothing changed.",
+		Annotations: toolHints(hintMutates, hintSafe, hintNonIdempotent, hintOpenWorld),
+		InputSchema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"commit_message": map[string]interface{}{
+					"type":        "string",
+					"description": "Optional git commit message. Defaults to 'docs: update _ext/ after task session <timestamp>'.",
+				},
+			},
+		},
+	},
+}

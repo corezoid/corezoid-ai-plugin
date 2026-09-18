@@ -151,9 +151,25 @@ var tokenOnlyTools = map[string]struct{}{
 // The handler tables above keep this function deliberately small: it does
 // auth gating, then a single map lookup. Per-tool logic lives in the
 // mcp_handlers_*.go files alongside related tools.
+//
+// A call naming a domain router (cz-access & co.) is resolved to the
+// action's real tool name FIRST, and everything downstream — auth gating,
+// argument validation, the handler lookup, analytics — sees that real name.
+// Gating on the router instead would be a security bug: cz-structure
+// fronts both list-workspaces (token-only, pre-workspace setup) and
+// delete-project, and the router itself is neither.
 func handleToolCall(ctx context.Context, name string, args map[string]interface{}) (result string, isError bool) {
 	if ctx == nil {
 		ctx = context.Background()
+	}
+
+	if routed := resolveRouterCall(name, args); routed.Handled {
+		if routed.Tool == "" {
+			// Help text, or a routing error that already explains itself.
+			// Nothing was executed, so there is nothing to gate or report.
+			return routed.Text, routed.IsError
+		}
+		name, args = routed.Tool, routed.Args
 	}
 
 	// Detect an abandoned workspace before auth gating: if Folder.RootPath was

@@ -489,7 +489,7 @@ func handleLogin(ctx context.Context, args map[string]interface{}) (string, bool
 					}
 					sb.WriteString(line + "\n")
 				}
-				sb.WriteString(fmt.Sprintf("\nPlease ask the user which project to use. Call list-stages(project_id=<id>, company_id=%s) to see available stages, then ask the user to pick one and call login(account_url=<url>, workspace_id=%s, stage_id=<stage_id>).", snapWorkspaceID, snapWorkspaceID))
+				sb.WriteString(fmt.Sprintf("\nPlease ask the user which project to use. Call cz-structure {\"action\":\"list-stages\",\"args\":{\"project_id\":<id>,\"company_id\":%s}} to see available stages, then ask the user to pick one and call login(account_url=<url>, workspace_id=%s, stage_id=<stage_id>).", snapWorkspaceID, snapWorkspaceID))
 			}
 			return sb.String(), false
 		}
@@ -561,7 +561,7 @@ func handleLogin(ctx context.Context, args map[string]interface{}) (string, bool
 	// account_url/workspace_id/token trio.
 	if !noProjectSelected && finalStageID == 0 {
 		msg := "Setup incomplete: stage not selected. "
-		msg += fmt.Sprintf("Call list-stages(project_id=<id>, company_id=%s) to see available stages, ", snapWorkspaceID)
+		msg += fmt.Sprintf("Call cz-structure {\"action\":\"list-stages\",\"args\":{\"project_id\":<id>,\"company_id\":%s}} to see available stages, ", snapWorkspaceID)
 		msg += fmt.Sprintf("then call login(account_url=%s, workspace_id=%s, stage_id=<stage_id>).", snapAccountURL, snapWorkspaceID)
 		if !tokenExpiry.IsZero() {
 			msg += " (Fresh token obtained but not persisted — the next login call will start a new OAuth flow.)"

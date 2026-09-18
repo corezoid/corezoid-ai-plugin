@@ -11,6 +11,19 @@ description: >
 
 # Corezoid Variable Manager
 
+## How to call these tools
+
+Every operation in this skill is an **action of the single `cz-variables` MCP tool** —
+the individual names below are action strings, not tools of their own:
+
+```
+cz-variables {"action": "list-variables"}
+```
+
+Arguments always go inside `args`; the shorthand used in the examples below — `create-variable(name="payment-api-url", …)` — means exactly that call. When unsure about an action's
+arguments, call `cz-variables {"action": "<action>", "help": true}` — it returns the
+full schema and runs nothing.
+
 ## What variables are
 
 Environment variables store constants (URLs, tokens, API keys, IDs, configuration values)
@@ -44,27 +57,27 @@ Variables are **stage-scoped**: shared across all processes within a stage.
 
 ---
 
-## MCP Tools
+## Actions of `cz-variables`
 
-| Tool | Purpose |
-|------|---------|
+| Action | Purpose |
+|--------|---------|
 | `create-variable` | Create a `raw` + `visible` variable in one step |
 | `list-variables` | List a stage's variables with obj_id, types, values (secrets masked) |
 | `modify-variable` | Change value/title/data_type or rename — dry-run + confirm-gated |
 | `delete-variable` | PERMANENTLY delete (no recycle bin) — dry-run + confirm-gated |
 
-> **Note:** creating `secret` or `json` variables is not yet exposed as an MCP tool —
+> **Note:** creating `secret` or `json` variables is not yet exposed as an action —
 > use the direct API calls documented below for creation; manage them afterwards with
-> the tools above.
+> the actions above.
 
 ## Double-confirmation etiquette (modify / delete)
 
 `modify-variable` and `delete-variable` are consequential: a deleted variable is gone
 FOREVER (env vars have NO recycle bin), a renamed one breaks every
 `{{env_var[@old-name]}}` reference, and a changed value takes effect immediately in
-running processes. The tools enforce a two-step gate, and you must drive it honestly:
+running processes. The actions enforce a two-step gate, and you must drive it honestly:
 
-1. Call the tool WITHOUT `apply` — you get a dry-run: a current → new diff (modify) or
+1. Call the action WITHOUT `apply` — you get a dry-run: a current → new diff (modify) or
    a red `🔴 PERMANENT DELETION` block (delete), including a local reference scan.
 2. Show that dry-run output to the user **verbatim** — do not summarize away the
    warnings, especially the red block and the list of files that still reference the
@@ -187,7 +200,7 @@ Two files store variable information locally. Check **both** before creating a n
 | File | Created by | Contains |
 |------|------------|---------|
 | `_ENV_VARS_.json` | `pull-folder` (ZIP export from Corezoid) | All variables in the stage |
-| `.processes/variables.json` | MCP `create-variable` tool | Only variables created in this session |
+| `.processes/variables.json` | the `create-variable` action | Only variables created in this session |
 
 If neither file exists, run `pull-folder` or call the list API (see below) to get the
 current state.
@@ -203,20 +216,20 @@ If found, reuse it — do not create a duplicate.
 
 ### Step 2 — Create the variable
 
-Call MCP tool **`create-variable`** with:
+Call **`cz-variables`** with `action: "create-variable"` and these `args`:
 - `name`: the `short_name` (kebab-case, e.g. `stripe-api-key`)
 - `description`: human-readable label (min 3 chars), used as `title` in the API
 - `value`: the actual value
 
 ```
-create-variable(
-  name="payment-api-url",
-  description="Payment Service Base URL",
-  value="https://api.payments.example.com"
-)
+cz-variables {"action": "create-variable", "args": {
+  "name": "payment-api-url",
+  "description": "Payment Service Base URL",
+  "value": "https://api.payments.example.com"
+}}
 ```
 
-The tool creates the variable in Corezoid and appends it to `.processes/variables.json`.
+The action creates the variable in Corezoid and appends it to `.processes/variables.json`.
 
 ### Step 3 — Reference in process JSON
 
@@ -398,7 +411,7 @@ Content-Type: application/json
 
 ## Resolving environment values
 
-When calling the MCP `create-variable` / `modify-variable` / `delete-variable` / `list-variables` tools you do **not** need to look up `stage_id` or `project_id` — MCP resolves both from the `<id>_<name>.stage.json` marker at the workspace root.
+When calling the `create-variable` / `modify-variable` / `delete-variable` / `list-variables` actions you do **not** need to look up `stage_id` or `project_id` — MCP resolves both from the `<id>_<name>.stage.json` marker at the workspace root.
 
 For **direct** `/api/2/json` calls (the raw workflows below) you need the values explicitly:
 
