@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"testing"
+	"time"
 )
 
 // ---- test fixtures ---------------------------------------------------------
@@ -485,5 +486,102 @@ func TestCleanIsNodeActive(t *testing.T) {
 				t.Errorf("cleanIsNodeActive(%s) = %v, want %v", tc.resp, got, tc.want)
 			}
 		})
+	}
+}
+
+// ---- error-branch protection ------------------------------------------------
+
+// The shape that used to lose a node. An error branch does not carry traffic
+// unless something went wrong, so over a clean window every node in it reads as
+// "inactive" — including the set_param that enriches the error payload before
+// the terminal. Protecting only the branch's final left that set_param
+// removable, and removing it was silent: the branch stayed valid, still reached
+// a final, dropped no err_node_id or to_node_id reference, and the report still
+// said "Validation: passed".
+func TestCleanApplyExclusions_ProtectsActionNodeInsideErrBranch(t *testing.T) {
+	nodes := []map[string]interface{}{
+		cleanNode("LIVE", 0, []interface{}{cleanLogic("go", "END", "ERRH")}, nil),
+		cleanNode("ERRH", 3, []interface{}{cleanLogic("go", "ENRICH", "")}, nil),
+		cleanNode("ENRICH", 0, []interface{}{cleanLogic("go", "ERR_FINAL", "")}, nil),
+		cleanNode("ERR_FINAL", 2, nil, nil),
+		cleanNode("COLD", 0, []interface{}{cleanLogic("go", "END", "")}, nil),
+		cleanNode("END", 2, nil, nil),
+	}
+	activeIDs := map[string]bool{"LIVE": true, "END": true}
+	inactiveIDs := map[string]bool{
+		"ERRH": true, "ENRICH": true, "ERR_FINAL": true, "COLD": true,
+	}
+
+	excluded := cleanApplyExclusions(nodes, activeIDs, inactiveIDs)
+
+	for _, id := range []string{"ERRH", "ENRICH", "ERR_FINAL"} {
+		if !excluded[id] {
+			t.Errorf("%s must be excluded: it is part of an error branch, and an idle error branch is unproven, not dead", id)
+		}
+	}
+	if excluded["COLD"] {
+		t.Error("COLD is inactive and reachable from no live node; it must stay removable")
+	}
+}
+
+// Retry shapes send the task from the error branch back through a delay into
+// the node that failed, so the branch contains a cycle. A walk without a
+// visited set descends forever on this input.
+func TestCleanApplyExclusions_ErrBranchCycleTerminates(t *testing.T) {
+	nodes := []map[string]interface{}{
+		cleanNode("LIVE", 0, []interface{}{cleanLogic("go", "END", "ERRH")}, nil),
+		cleanNode("ERRH", 3, []interface{}{
+			cleanLogic("go", "RETRY_DELAY", ""),
+			cleanLogic("go", "ERR_FINAL", ""),
+		}, nil),
+		// Delay carries its continuation on a semaphor, pointing back at ERRH.
+		cleanNode("RETRY_DELAY", 0, nil, []interface{}{cleanSem("ERRH")}),
+		cleanNode("ERR_FINAL", 2, nil, nil),
+		cleanNode("END", 2, nil, nil),
+	}
+	activeIDs := map[string]bool{"LIVE": true, "END": true}
+	inactiveIDs := map[string]bool{"ERRH": true, "RETRY_DELAY": true, "ERR_FINAL": true}
+
+	done := make(chan map[string]bool, 1)
+	go func() { done <- cleanApplyExclusions(nodes, activeIDs, inactiveIDs) }()
+
+	var excluded map[string]bool
+	select {
+	case excluded = <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("cleanApplyExclusions did not terminate on a cyclic error branch")
+	}
+
+	for _, id := range []string{"ERRH", "RETRY_DELAY", "ERR_FINAL"} {
+		if !excluded[id] {
+			t.Errorf("%s must be excluded: it is part of the retry branch", id)
+		}
+	}
+}
+
+// The walk is bounded at any node that is not inactive. Such a node is kept
+// regardless, and continuing through it would drag the live flow behind it into
+// the protected set — which would leave clean-process proposing nothing.
+func TestCleanApplyExclusions_ErrBranchWalkStopsAtLiveNode(t *testing.T) {
+	nodes := []map[string]interface{}{
+		cleanNode("LIVE", 0, []interface{}{cleanLogic("go", "END", "ERRH")}, nil),
+		// Error branch rejoins the main flow at REJOIN, which carries traffic.
+		cleanNode("ERRH", 3, []interface{}{cleanLogic("go", "REJOIN", "")}, nil),
+		// api_rpc, not go/set_param — so the direct-successor criterion does
+		// not protect COLD_TAIL and this test measures only the walk's bound.
+		cleanNode("REJOIN", 0, []interface{}{cleanLogic("api_rpc", "COLD_TAIL", "")}, nil),
+		cleanNode("COLD_TAIL", 0, []interface{}{cleanLogic("go", "END", "")}, nil),
+		cleanNode("END", 2, nil, nil),
+	}
+	activeIDs := map[string]bool{"LIVE": true, "REJOIN": true, "END": true}
+	inactiveIDs := map[string]bool{"ERRH": true, "COLD_TAIL": true}
+
+	excluded := cleanApplyExclusions(nodes, activeIDs, inactiveIDs)
+
+	if !excluded["ERRH"] {
+		t.Error("ERRH is the error handler of a live node and must be excluded")
+	}
+	if excluded["COLD_TAIL"] {
+		t.Error("the walk must stop at REJOIN, which is active and kept anyway; expanding past it protects the live flow and neuters the tool")
 	}
 }

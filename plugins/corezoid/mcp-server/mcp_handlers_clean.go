@@ -570,72 +570,87 @@ func cleanApplyExclusions(
 	return excluded
 }
 
-// cleanProtectErrChildren protects the children of a condition/err_handler node
-// that must stay alive when the parent is kept in the schema.
+// cleanProtectErrChildren protects the branch hanging off a condition or
+// err_handler node: every inactive node reachable from it through other
+// inactive nodes is excluded from removal.
+//
+// The walk is transitive, and that is the whole point. Traffic is a poor
+// witness for error handling, because staying idle is what a correct error
+// branch DOES — over any window without incidents it is indistinguishable
+// from dead code by counters alone. The previous version protected only a
+// branch's final node and its delay nodes, so the ordinary shape
+//
+//	err_handler → set_param (enrich the error) → final
+//
+// lost the set_param: no errors in the window meant zero counters on it. The
+// branch stayed structurally valid and still reached a final, so no dropped
+// err_node_id or to_node_id warning fired and the report still said
+// "Validation: passed" — a silent edit to the one part of a process nobody
+// exercises until they need it.
+//
+// The walk stops at any node that is not inactive. Such a node is kept
+// regardless, and expanding through it would pull the live flow behind it
+// into the protected set. What survives that bound is exactly the idle
+// sub-branch — "unproven", not "dead".
+//
+// This makes clean-process propose fewer removals, deliberately. For a tool
+// whose output a human reads and pushes by hand, an extra node left in costs
+// a line of diff; one taken out costs an error path discovered in production.
 func cleanProtectErrChildren(
 	errNode map[string]interface{},
 	nmap map[string]map[string]interface{},
 	inactiveIDs, excluded map[string]bool,
 ) bool {
 	added := false
-	for _, l := range cleanNodeLogics(errNode) {
-		logic, ok := l.(map[string]interface{})
-		if !ok {
-			continue
-		}
-		childID, _ := logic["to_node_id"].(string)
-		if childID == "" {
-			continue
-		}
-		child := nmap[childID]
-		if child == nil {
-			continue
-		}
-		switch ct := cleanObjType(child); ct {
-		case 2: // final node
-			if inactiveIDs[childID] && !excluded[childID] {
+	// Error branches loop: a retry sends the task back through a delay to the
+	// node that failed. Without a visited set that is an infinite descent.
+	visited := make(map[string]bool)
+	if id, _ := errNode["id"].(string); id != "" {
+		visited[id] = true
+	}
+
+	var walk func(node map[string]interface{})
+	walk = func(node map[string]interface{}) {
+		for _, childID := range cleanOutgoingIDs(node) {
+			if visited[childID] {
+				continue
+			}
+			visited[childID] = true
+			child := nmap[childID]
+			if child == nil || !inactiveIDs[childID] {
+				continue
+			}
+			if !excluded[childID] {
 				excluded[childID] = true
 				added = true
 			}
-		case 0:
-			if len(cleanNodeSemaphors(child)) == 0 {
-				continue // not a delay node
+			walk(child)
+		}
+	}
+	walk(errNode)
+	return added
+}
+
+// cleanOutgoingIDs returns every node id this node can hand a task to — logic
+// targets and semaphor targets alike. A delay node carries its continuation on
+// semaphors, so a walk that reads only logics stops dead at the first delay in
+// an error branch, which is where retry and escalation shapes put one.
+func cleanOutgoingIDs(node map[string]interface{}) []string {
+	var ids []string
+	collect := func(entries []interface{}) {
+		for _, e := range entries {
+			m, ok := e.(map[string]interface{})
+			if !ok {
+				continue
 			}
-			// Delay node with semaphors
-			if inactiveIDs[childID] && !excluded[childID] {
-				excluded[childID] = true
-				added = true
-			}
-			// Protect only final targets (not retry/self-back targets)
-			for _, sl := range cleanNodeSemaphors(child) {
-				sem, ok := sl.(map[string]interface{})
-				if !ok {
-					continue
-				}
-				tid, _ := sem["to_node_id"].(string)
-				if tn := nmap[tid]; tn != nil && cleanObjType(tn) == 2 {
-					if inactiveIDs[tid] && !excluded[tid] {
-						excluded[tid] = true
-						added = true
-					}
-				}
-			}
-			for _, dl := range cleanNodeLogics(child) {
-				dlogic, ok := dl.(map[string]interface{})
-				if !ok {
-					continue
-				}
-				did, _ := dlogic["to_node_id"].(string)
-				if dn := nmap[did]; dn != nil && cleanObjType(dn) == 2 {
-					if inactiveIDs[did] && !excluded[did] {
-						excluded[did] = true
-						added = true
-					}
-				}
+			if id, _ := m["to_node_id"].(string); id != "" {
+				ids = append(ids, id)
 			}
 		}
 	}
-	return added
+	collect(cleanNodeLogics(node))
+	collect(cleanNodeSemaphors(node))
+	return ids
 }
 
 // ── Step 4: Delete + cascade with redirect ────────────────────────────────────
