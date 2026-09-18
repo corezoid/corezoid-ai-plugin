@@ -113,9 +113,6 @@ func maskedEnvVarValue(ev EnvVar) string {
 	return ev.Value
 }
 
-// boolishArg reads a boolean argument, tolerating the CLI's string form
-// ("apply=true") — the same failure mode deploy-stage had, where a silently
-// unread boolean turned an apply into a dry-run.
 func fmtUnix(t int64) string {
 	if t == 0 {
 		return "-"

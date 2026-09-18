@@ -412,9 +412,12 @@ func routerActionArgs(v interface{}) (map[string]interface{}, error) {
 // replaces. Without it the CLI's own escape hatch stopped at the router: the
 // top-level keys were coerced and the action's arguments were not.
 //
-// CLI only. Over MCP the same mistake is refused by argTypeError rather than
-// guessed at — see the note there on why coercion is the wrong answer when the
-// transport already has a boolean type.
+// CLI only, and it does not need an MCP counterpart: over MCP the handlers
+// themselves read booleans through boolishArg, which accepts the same "true"
+// this converts. What the CLI needs on top of that is the OTHER conversions
+// coerceCLIArgs performs and the loud refusal of a value that is no boolean at
+// all ("maybe") — over MCP such a value reads as false, i.e. the flag stays
+// off, which is the safe side for every waiver flag this can carry.
 func coerceRouterCLIArgs(tool string, args map[string]interface{}) error {
 	r, isRouter := routerByName[tool]
 	if !isRouter {

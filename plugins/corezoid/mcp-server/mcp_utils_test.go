@@ -1,9 +1,11 @@
 package main
 
 import (
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"os"
 	"path/filepath"
-	"regexp"
 	"strings"
 	"testing"
 )
@@ -754,35 +756,63 @@ func TestConfineToWorkdir_RejectsSymlinkEscape(t *testing.T) {
 // The CLI passes every argument as a string, and hosts and models do send
 // quoted booleans, so the reading has to be one function: boolishArg, or
 // requiredBoolArg where false is itself an instruction.
+//
+// Scope, stated so nobody over-trusts it: this walks the AST for a bool type
+// assertion applied directly to an index of a map named args, in any function
+// other than the two readers. It therefore catches args["x"].(bool) however it
+// is wrapped or line-broken, and does NOT catch a value copied into a local
+// first (v := args["x"]; b, _ := v.(bool)). Assertions on server responses
+// (op["immutable"].(bool)) are untouched on purpose — those decode an API
+// payload, not a caller's argument.
 func TestNoDirectBooleanArgAssertions(t *testing.T) {
+	const argsMap = "args"
+	readers := map[string]bool{"boolishArg": true, "requiredBoolArg": true}
+
 	entries, err := os.ReadDir(".")
 	if err != nil {
 		t.Fatalf("read package dir: %v", err)
 	}
-	direct := regexp.MustCompile(`args\[("[a-z_]+"|key)\]\.\(bool\)`)
+	fset := token.NewFileSet()
+	checked := 0
 	for _, e := range entries {
 		name := e.Name()
 		if e.IsDir() || !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
 			continue
 		}
-		src, err := os.ReadFile(name)
+		file, err := parser.ParseFile(fset, name, nil, 0)
 		if err != nil {
-			t.Fatalf("read %s: %v", name, err)
+			t.Fatalf("parse %s: %v", name, err)
 		}
-		for i, line := range strings.Split(string(src), "\n") {
-			if strings.HasPrefix(strings.TrimSpace(line), "//") {
-				continue // the explanation of why this is wrong may quote it
-			}
-			if !direct.MatchString(line) {
+		checked++
+		for _, decl := range file.Decls {
+			fn, ok := decl.(*ast.FuncDecl)
+			if !ok || readers[fn.Name.Name] {
 				continue
 			}
-			// boolishArg is the one place allowed to do the assertion.
-			if name == "mcp_utils.go" {
-				continue
-			}
-			t.Errorf("%s:%d asserts a boolean argument directly — use boolishArg "+
-				"(or requiredBoolArg), or a quoted \"true\" silently reads as false:\n  %s",
-				name, i+1, strings.TrimSpace(line))
+			ast.Inspect(fn, func(n ast.Node) bool {
+				assert, ok := n.(*ast.TypeAssertExpr)
+				if !ok || assert.Type == nil {
+					return true
+				}
+				if id, ok := assert.Type.(*ast.Ident); !ok || id.Name != "bool" {
+					return true
+				}
+				index, ok := assert.X.(*ast.IndexExpr)
+				if !ok {
+					return true
+				}
+				base, ok := index.X.(*ast.Ident)
+				if !ok || base.Name != argsMap {
+					return true
+				}
+				t.Errorf("%s: %s asserts a boolean argument directly — use boolishArg "+
+					"(or requiredBoolArg), or a quoted \"true\" silently reads as false",
+					fset.Position(assert.Pos()), fn.Name.Name)
+				return true
+			})
 		}
+	}
+	if checked == 0 {
+		t.Fatal("no source files were checked — the guard would pass vacuously")
 	}
 }
