@@ -40,10 +40,7 @@ func handleDeployStage(ctx context.Context, args map[string]interface{}) (string
 	if err != nil {
 		return "Error: " + err.Error(), true
 	}
-	apply := false
-	if b, ok := args["apply"].(bool); ok {
-		apply = b
-	}
+	apply := boolishArg(args, "apply")
 	confirm, _ := args["confirm"].(string)
 
 	if sourceStage == targetStage {
@@ -272,9 +269,9 @@ func handleSetStageImmutable(ctx context.Context, args map[string]interface{}) (
 		return "Error: " + err.Error(), true
 	}
 	_ = companyID // company scoping comes from the executor's WorkspaceID
-	immutable, ok := args["immutable"].(bool)
-	if !ok {
-		return "Error: 'immutable' (boolean) is required — true = read-only, false = editable.", true
+	immutable, berr := requiredBoolArg(args, "immutable")
+	if berr != "" {
+		return berr + " true = read-only, false = editable.", true
 	}
 	confirm, _ := args["confirm"].(string)
 

@@ -173,6 +173,12 @@ func runCLI(toolName string, rawArgs []string) {
 		fmt.Println("Error:", cerr)
 		os.Exit(1)
 	}
+	// A router call carries the real arguments one level down, as JSON; coerce
+	// those too, or the CLI's string→bool conversion would stop at the router.
+	if cerr := coerceRouterCLIArgs(toolName, args); cerr != nil {
+		fmt.Println("Error:", cerr)
+		os.Exit(1)
+	}
 	// Apply env-based defaults so folder tools work with zero arguments —
 	// but only where the schema REQUIRES folder_id (pull-folder & friends).
 	// Injecting it blindly into every call passed a junk argument to tools

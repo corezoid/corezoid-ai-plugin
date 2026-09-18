@@ -406,6 +406,36 @@ func routerActionArgs(v interface{}) (map[string]interface{}, error) {
 	}
 }
 
+// coerceRouterCLIArgs applies the CLI's string→type conversion to the args of
+// a router call, so `convctl cz-tasks action=modify-task args='{"deep_merge":
+// "true"}'` behaves like the flat `convctl modify-task deep_merge=true` it
+// replaces. Without it the CLI's own escape hatch stopped at the router: the
+// top-level keys were coerced and the action's arguments were not.
+//
+// CLI only. Over MCP the same mistake is refused by argTypeError rather than
+// guessed at — see the note there on why coercion is the wrong answer when the
+// transport already has a boolean type.
+func coerceRouterCLIArgs(tool string, args map[string]interface{}) error {
+	r, isRouter := routerByName[tool]
+	if !isRouter {
+		return nil
+	}
+	action, _ := args["action"].(string)
+	action = strings.TrimSpace(action)
+	if _, known := routerActions[r.Name][action]; !known {
+		return nil // the router itself will explain what is wrong
+	}
+	actionArgs, err := routerActionArgs(args["args"])
+	if err != nil {
+		return nil // likewise: resolveRouterCall reports this with the schema
+	}
+	if err := coerceCLIArgs(action, actionArgs); err != nil {
+		return err
+	}
+	args["args"] = actionArgs
+	return nil
+}
+
 // actionListText is the router's own documentation: every action with its
 // one-liner. Returned when a call names no action, asks for help, or names an
 // action that does not exist.

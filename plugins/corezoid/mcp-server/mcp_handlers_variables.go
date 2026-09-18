@@ -116,16 +116,6 @@ func maskedEnvVarValue(ev EnvVar) string {
 // boolishArg reads a boolean argument, tolerating the CLI's string form
 // ("apply=true") — the same failure mode deploy-stage had, where a silently
 // unread boolean turned an apply into a dry-run.
-func boolishArg(args map[string]interface{}, key string) bool {
-	if b, ok := args[key].(bool); ok {
-		return b
-	}
-	if s, ok := args[key].(string); ok {
-		return strings.EqualFold(s, "true") || s == "1"
-	}
-	return false
-}
-
 func fmtUnix(t int64) string {
 	if t == 0 {
 		return "-"

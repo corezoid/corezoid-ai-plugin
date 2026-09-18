@@ -436,3 +436,39 @@ func TestHandleToolCall_RouterOnlyOutcomesReachAnalytics(t *testing.T) {
 		}
 	}
 }
+
+// The CLI passes every argument as a string, which is why coerceCLIArgs exists.
+// A router call carries the real arguments one level down, so the conversion
+// has to reach into args — otherwise `convctl cz-tasks action=modify-task
+// args='{"deep_merge":"true"}'` runs a shallow write while the flat
+// `convctl modify-task deep_merge=true` it replaces merges correctly.
+func TestCoerceRouterCLIArgs_ReachesIntoArgs(t *testing.T) {
+	call := map[string]interface{}{"action": "modify-task", "args": `{"deep_merge":"true"}`}
+	if err := coerceRouterCLIArgs("cz-tasks", call); err != nil {
+		t.Fatalf("coerce: %v", err)
+	}
+	actionArgs, ok := call["args"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("args is %T, want a decoded object", call["args"])
+	}
+	if actionArgs["deep_merge"] != true {
+		t.Errorf("deep_merge = %#v, want true", actionArgs["deep_merge"])
+	}
+
+	// A value that is not a boolean in any spelling still fails loudly.
+	bad := map[string]interface{}{"action": "modify-task", "args": `{"deep_merge":"maybe"}`}
+	if err := coerceRouterCLIArgs("cz-tasks", bad); err == nil {
+		t.Error("expected junk boolean to be refused")
+	}
+
+	// Non-router calls and unresolvable ones are left exactly as they were —
+	// resolveRouterCall reports those with the action list or the schema.
+	flat := map[string]interface{}{"process_id": "1"}
+	if err := coerceRouterCLIArgs("push-process", flat); err != nil || flat["process_id"] != "1" {
+		t.Errorf("a non-router call must pass through untouched: %v, %v", flat, err)
+	}
+	unknown := map[string]interface{}{"action": "nope", "args": `{"x":"true"}`}
+	if err := coerceRouterCLIArgs("cz-tasks", unknown); err != nil {
+		t.Errorf("an unknown action must be left to the router: %v", err)
+	}
+}

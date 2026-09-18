@@ -266,7 +266,7 @@ func handleModifyTask(ctx context.Context, args map[string]interface{}) (string,
 	v := NewValidator(ctx, processID)
 
 	// deep_merge: fetch current task data and recursively merge into it.
-	deepMergeMode, _ := args["deep_merge"].(bool)
+	deepMergeMode := boolishArg(args, "deep_merge")
 	if deepMergeMode {
 		snap, err := showTask(v, processID, taskID, ref)
 		if err != nil {

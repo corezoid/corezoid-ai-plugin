@@ -33,10 +33,7 @@ func handleCleanProcess(ctx context.Context, args map[string]interface{}) (strin
 	if d, err2 := intArg(args, "days"); err2 == nil && d > 0 {
 		days = d
 	}
-	overwrite := false
-	if ow, ok := args["overwrite"].(bool); ok {
-		overwrite = ow
-	}
+	overwrite := boolishArg(args, "overwrite")
 
 	v := NewValidator(ctx, processID)
 

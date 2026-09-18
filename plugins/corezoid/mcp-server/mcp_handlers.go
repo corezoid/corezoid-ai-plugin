@@ -170,7 +170,7 @@ func handleToolCall(ctx context.Context, name string, args map[string]interface{
 			// happened, and both outcomes are reported: help tells us which
 			// actions a model cannot use from their summary alone, and a miss
 			// is the cost of having collapsed the domain in the first place.
-			emitToolEvent(ctx, name, time.Now(), routed.IsError, errorTypeRouterMiss)
+			emitRouterEvent(ctx, name, routed.IsError)
 			return routed.Text, routed.IsError
 		}
 		name, args = routed.Tool, routed.Args
@@ -222,7 +222,7 @@ func handleToolCall(ctx context.Context, name string, args map[string]interface{
 		result, isError = h(ctx, args)
 	}
 
-	emitToolEvent(ctx, name, start, isError, classifyError(result))
+	emitToolEvent(ctx, name, start, isError, result)
 
 	return result, isError
 }
@@ -233,7 +233,11 @@ func handleToolCall(ctx context.Context, name string, args map[string]interface{
 // from its one-line summary is the number that tells us whether collapsing the
 // CRUD domains was worth it, and an unreported miss looks exactly like a call
 // that never happened.
-func emitToolEvent(ctx context.Context, tool string, start time.Time, isError bool, errorType string) {
+// result is classified here rather than by the caller: classifyError lowercases
+// the whole result string, and a tool result can be a pulled folder listing or
+// a lint report. Computing that on every successful call — and with analytics
+// switched off — is a copy nobody reads.
+func emitToolEvent(ctx context.Context, tool string, start time.Time, isError bool, result string) {
 	if !analyticsEnabled.Load() {
 		return
 	}
@@ -254,7 +258,36 @@ func emitToolEvent(ctx context.Context, tool string, start time.Time, isError bo
 		ClientVersion:  clientVersionV,
 	}
 	if isError {
-		e.ErrorType = errorType
+		e.ErrorType = classifyError(result)
+	}
+	emitAnalyticsEvent(e)
+}
+
+// emitRouterEvent reports an outcome the router answered by itself: help, or a
+// miss. The classification is fixed rather than derived from the text — the
+// text is documentation, and running it through classifyError would file "no
+// such action" under whatever keyword happened to appear in an action summary.
+func emitRouterEvent(ctx context.Context, router string, isError bool) {
+	if !analyticsEnabled.Load() {
+		return
+	}
+	apiURLv, _, _, _, _ := authSnapshot()
+	clientNameV, clientVersionV := clientIdentityFor(ctx)
+	e := AnalyticsEvent{
+		Ts:             time.Now().UTC().Format(time.RFC3339),
+		Product:        "corezoid",
+		Tool:           router,
+		IsError:        isError,
+		APIURL:         hostnameOnly(apiURLv),
+		Transport:      analyticsTransport,
+		ServerVersion:  serverVersion(),
+		InstallationID: installationID,
+		UserEmail:      telemetryEmailValue(),
+		ClientName:     clientNameV,
+		ClientVersion:  clientVersionV,
+	}
+	if isError {
+		e.ErrorType = errorTypeRouterMiss
 	}
 	emitAnalyticsEvent(e)
 }

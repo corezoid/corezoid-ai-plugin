@@ -3,6 +3,7 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -740,5 +741,48 @@ func TestConfineToWorkdir_RejectsSymlinkEscape(t *testing.T) {
 	}
 	if _, err := confineToWorkdir("not/created/yet.conv.json"); err != nil {
 		t.Errorf("a write target under a not-yet-created directory must be accepted: %v", err)
+	}
+}
+
+// TestNoDirectBooleanArgAssertions pins the one policy for reading boolean
+// arguments. Handlers used to be split between two: variables and access read
+// a stringified "true" as true, while push-process, deploy-stage, layout,
+// clean and modify-task asserted it straight to FALSE and ran with the flag
+// off. That is how modify-task{deep_merge:"true"} shallow-replaced a task and
+// dropped every key it did not send — no error, just missing data.
+//
+// The CLI passes every argument as a string, and hosts and models do send
+// quoted booleans, so the reading has to be one function: boolishArg, or
+// requiredBoolArg where false is itself an instruction.
+func TestNoDirectBooleanArgAssertions(t *testing.T) {
+	entries, err := os.ReadDir(".")
+	if err != nil {
+		t.Fatalf("read package dir: %v", err)
+	}
+	direct := regexp.MustCompile(`args\[("[a-z_]+"|key)\]\.\(bool\)`)
+	for _, e := range entries {
+		name := e.Name()
+		if e.IsDir() || !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
+			continue
+		}
+		src, err := os.ReadFile(name)
+		if err != nil {
+			t.Fatalf("read %s: %v", name, err)
+		}
+		for i, line := range strings.Split(string(src), "\n") {
+			if strings.HasPrefix(strings.TrimSpace(line), "//") {
+				continue // the explanation of why this is wrong may quote it
+			}
+			if !direct.MatchString(line) {
+				continue
+			}
+			// boolishArg is the one place allowed to do the assertion.
+			if name == "mcp_utils.go" {
+				continue
+			}
+			t.Errorf("%s:%d asserts a boolean argument directly — use boolishArg "+
+				"(or requiredBoolArg), or a quoted \"true\" silently reads as false:\n  %s",
+				name, i+1, strings.TrimSpace(line))
+		}
 	}
 }

@@ -100,11 +100,11 @@ func handleShareObject(ctx context.Context, args map[string]interface{}) (string
 		}
 		privs = p
 	}
+	// notify defaults to TRUE, so it cannot go through boolishArg's
+	// absent-means-false reading: only an explicitly supplied value turns it off.
 	notify := true
-	if v, ok := args["notify"]; ok {
-		if b, ok := v.(bool); ok {
-			notify = b
-		}
+	if _, given := args["notify"]; given {
+		notify = boolishArg(args, "notify")
 	}
 
 	v := NewValidator(ctx, 0)
@@ -271,14 +271,7 @@ func handleDeleteGroup(ctx context.Context, args map[string]interface{}) (string
 	if err != nil {
 		return "Error: " + err.Error(), true
 	}
-	force := false
-	if v, ok := args["force"]; ok {
-		if b, ok := v.(bool); ok {
-			force = b
-		} else if s, ok := v.(string); ok {
-			force = strings.EqualFold(s, "true") || s == "1"
-		}
-	}
+	force := boolishArg(args, "force")
 	v := NewValidator(ctx, 0)
 	blockers, err := v.DeleteGroup(groupID, force)
 	if err != nil {

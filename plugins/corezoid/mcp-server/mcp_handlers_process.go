@@ -640,10 +640,10 @@ func handlePushProcess(ctx context.Context, args map[string]interface{}) (string
 	// covering both meant a force passed for a lint finding also pre-authorised
 	// overwriting a concurrent server change that had not happened yet and was
 	// therefore never shown to anyone (see resolveConflict).
-	force, _ := args["force"].(bool)
-	overwriteServerChange, _ := args["overwrite_server_change"].(bool)
-	allowStubMode, _ := args["allow_active_stub_mode"].(bool)
-	allowNoSnapshot, _ := args["allow_no_snapshot"].(bool)
+	force := boolishArg(args, "force")
+	overwriteServerChange := boolishArg(args, "overwrite_server_change")
+	allowStubMode := boolishArg(args, "allow_active_stub_mode")
+	allowNoSnapshot := boolishArg(args, "allow_no_snapshot")
 	var lintNote, lintNoteHeader string // findings surfaced on a proceeding push (see below)
 	// Every gate this push waived, reported in the tool result. A waiver visible
 	// only on stderr is not an audit trail: an MCP host is free to surface just
@@ -699,8 +699,8 @@ func handlePushProcess(ctx context.Context, args map[string]interface{}) (string
 	// Block with an impact report unless overwrite_server_change=true, which is
 	// meant to be passed in reply to that report — not ahead of it. New/never-
 	// pulled processes have no baseline and are unaffected.
-	merge, _ := args["merge"].(bool)
-	adoptExisting, _ := args["adopt_existing"].(bool)
+	merge := boolishArg(args, "merge")
+	adoptExisting := boolishArg(args, "adopt_existing")
 	// Set when the gate authorised writing over a live server version whose
 	// content was never reconciled. Paired with the snapshot outcome below.
 	overwroteLiveState, overwriteWaiver := false, ""
