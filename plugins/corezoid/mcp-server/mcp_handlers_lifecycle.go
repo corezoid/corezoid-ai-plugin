@@ -140,7 +140,7 @@ func handleMoveFolder(ctx context.Context, args map[string]interface{}) (string,
 	}
 	if info.ObjType != 0 {
 		kind := folderKind(info.ObjType)
-		return fmt.Sprintf("Error: folder #%d %q is kind %s. move-folder only moves normal folders; %s containers cannot be reparented by this tool.", folderID, info.Title, kind, kind), true
+		return fmt.Sprintf("Error: folder #%d %q is kind %s. the move-folder action only moves normal folders; %s containers cannot be reparented by this tool.", folderID, info.Title, kind, kind), true
 	}
 	return moveWithConfirmation(v, args, moveSubject{
 		kind:          "folder",

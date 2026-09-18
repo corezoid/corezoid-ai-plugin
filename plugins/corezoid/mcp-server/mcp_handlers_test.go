@@ -888,7 +888,7 @@ func TestHandleToolCall_CreateAlias_UsesParentIDFromFile(t *testing.T) {
 
 func TestShowTaskSchemaRequiresNonEmptyIdentifier(t *testing.T) {
 	var schema map[string]interface{}
-	for _, tool := range toolRegistry {
+	for _, tool := range allToolDefs() {
 		if tool.Name == "show-task" {
 			schema, _ = tool.InputSchema.(map[string]interface{})
 			break

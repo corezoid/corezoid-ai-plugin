@@ -20,8 +20,10 @@ func TestToolRegistryNoDuplicates(t *testing.T) {
 	}
 }
 
-// TestToolRegistryMatchesREADME verifies every tool name in toolRegistry
-// appears in the root README.md MCP tools table.
+// TestToolRegistryMatchesREADME verifies every callable name — advertised
+// tool, router, and router action — appears in the root README.md MCP tools
+// section. Collapsing a tool took it out of tools/list, not out of the
+// product: an action nobody documents is one nobody can discover.
 func TestToolRegistryMatchesREADME(t *testing.T) {
 	_, thisFile, _, ok := runtime.Caller(0)
 	if !ok {
@@ -37,10 +39,18 @@ func TestToolRegistryMatchesREADME(t *testing.T) {
 	}
 	content := string(data)
 
+	documented := func(kind, name string) {
+		// README uses backtick-quoted names in the tables
+		if !strings.Contains(content, "`"+name+"`") {
+			t.Errorf("%s %q is callable but missing from the README.md MCP tools section", kind, name)
+		}
+	}
 	for _, tool := range toolRegistry {
-		// README uses backtick-quoted tool names in the table
-		if !strings.Contains(content, "`"+tool.Name+"`") {
-			t.Errorf("tool %q is in toolRegistry but missing from README.md MCP tools table", tool.Name)
+		documented("tool", tool.Name)
+	}
+	for _, r := range toolRouters {
+		for _, a := range r.Actions {
+			documented("action", a.Action)
 		}
 	}
 }

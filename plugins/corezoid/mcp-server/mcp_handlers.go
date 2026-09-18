@@ -151,9 +151,29 @@ var tokenOnlyTools = map[string]struct{}{
 // The handler tables above keep this function deliberately small: it does
 // auth gating, then a single map lookup. Per-tool logic lives in the
 // mcp_handlers_*.go files alongside related tools.
+//
+// A call naming a domain router (cz-access & co.) is resolved to the
+// action's real tool name FIRST, and everything downstream — auth gating,
+// argument validation, the handler lookup, analytics — sees that real name.
+// Gating on the router instead would be a security bug: cz-structure
+// fronts both list-workspaces (token-only, pre-workspace setup) and
+// delete-project, and the router itself is neither.
 func handleToolCall(ctx context.Context, name string, args map[string]interface{}) (result string, isError bool) {
 	if ctx == nil {
 		ctx = context.Background()
+	}
+
+	if routed := resolveRouterCall(name, args); routed.Handled {
+		if routed.Tool == "" {
+			// Help text, or a routing miss that already explains itself. No
+			// handler runs, so there is nothing to gate — but the call still
+			// happened, and both outcomes are reported: help tells us which
+			// actions a model cannot use from their summary alone, and a miss
+			// is the cost of having collapsed the domain in the first place.
+			emitRouterEvent(ctx, name, routed.IsError)
+			return routed.Text, routed.IsError
+		}
+		name, args = routed.Tool, routed.Args
 	}
 
 	// Detect an abandoned workspace before auth gating: if Folder.RootPath was
@@ -202,30 +222,74 @@ func handleToolCall(ctx context.Context, name string, args map[string]interface{
 		result, isError = h(ctx, args)
 	}
 
-	if analyticsEnabled.Load() {
-		apiURLv, _, _, _, _ := authSnapshot()
-		clientNameV, clientVersionV := clientIdentityFor(ctx)
-		e := AnalyticsEvent{
-			Ts:             start.UTC().Format(time.RFC3339),
-			Product:        "corezoid",
-			Tool:           name,
-			DurationMs:     time.Since(start).Milliseconds(),
-			IsError:        isError,
-			APIURL:         hostnameOnly(apiURLv),
-			Transport:      analyticsTransport,
-			ServerVersion:  serverVersion(),
-			InstallationID: installationID,
-			UserEmail:      telemetryEmailValue(),
-			ClientName:     clientNameV,
-			ClientVersion:  clientVersionV,
-		}
-		if isError {
-			e.ErrorType = classifyError(result)
-		}
-		emitAnalyticsEvent(e)
-	}
+	emitToolEvent(ctx, name, start, isError, result)
 
 	return result, isError
+}
+
+// emitToolEvent records one tool invocation. Factored out of handleToolCall so
+// every path that answers a call reports it — including the router paths that
+// answer without reaching a handler. How often a model fails to find an action
+// from its one-line summary is the number that tells us whether collapsing the
+// CRUD domains was worth it, and an unreported miss looks exactly like a call
+// that never happened.
+// result is classified here rather than by the caller: classifyError lowercases
+// the whole result string, and a tool result can be a pulled folder listing or
+// a lint report. Computing that on every successful call — and with analytics
+// switched off — is a copy nobody reads.
+func emitToolEvent(ctx context.Context, tool string, start time.Time, isError bool, result string) {
+	if !analyticsEnabled.Load() {
+		return
+	}
+	apiURLv, _, _, _, _ := authSnapshot()
+	clientNameV, clientVersionV := clientIdentityFor(ctx)
+	e := AnalyticsEvent{
+		Ts:             start.UTC().Format(time.RFC3339),
+		Product:        "corezoid",
+		Tool:           tool,
+		DurationMs:     time.Since(start).Milliseconds(),
+		IsError:        isError,
+		APIURL:         hostnameOnly(apiURLv),
+		Transport:      analyticsTransport,
+		ServerVersion:  serverVersion(),
+		InstallationID: installationID,
+		UserEmail:      telemetryEmailValue(),
+		ClientName:     clientNameV,
+		ClientVersion:  clientVersionV,
+	}
+	if isError {
+		e.ErrorType = classifyError(result)
+	}
+	emitAnalyticsEvent(e)
+}
+
+// emitRouterEvent reports an outcome the router answered by itself: help, or a
+// miss. The classification is fixed rather than derived from the text — the
+// text is documentation, and running it through classifyError would file "no
+// such action" under whatever keyword happened to appear in an action summary.
+func emitRouterEvent(ctx context.Context, router string, isError bool) {
+	if !analyticsEnabled.Load() {
+		return
+	}
+	apiURLv, _, _, _, _ := authSnapshot()
+	clientNameV, clientVersionV := clientIdentityFor(ctx)
+	e := AnalyticsEvent{
+		Ts:             time.Now().UTC().Format(time.RFC3339),
+		Product:        "corezoid",
+		Tool:           router,
+		IsError:        isError,
+		APIURL:         hostnameOnly(apiURLv),
+		Transport:      analyticsTransport,
+		ServerVersion:  serverVersion(),
+		InstallationID: installationID,
+		UserEmail:      telemetryEmailValue(),
+		ClientName:     clientNameV,
+		ClientVersion:  clientVersionV,
+	}
+	if isError {
+		e.ErrorType = errorTypeRouterMiss
+	}
+	emitAnalyticsEvent(e)
 }
 
 func isInSet(name string, set map[string]struct{}) bool {

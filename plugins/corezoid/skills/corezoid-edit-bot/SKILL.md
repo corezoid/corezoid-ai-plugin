@@ -59,12 +59,22 @@ the Corezoid workspace as the working directory. Every short
 
 ## 0. Preflight — the tools, and the three things none of them can do
 
-Corezoid MCP tools this skill uses: `pull-process`, `pull-folder`,
+Corezoid MCP tools this skill uses directly: `pull-process`, `pull-folder`,
 `push-process`, `lint-process`, `layout-process`, `create-process`,
 `delete-process`, `pause-process`, `resume-process`, `create-alias`,
-`create-snapshot`, `run-task`, `show-task`, `modify-task`,
-`list-task-history`, `list-node-tasks`, `create-variable`, `modify-variable`,
-`deploy-stage`. Missing → tell the user to install the Corezoid plugin and run
+`run-task`, `deploy-stage`.
+
+The rest are **actions of a router tool** — call them as
+`<router> {"action": "<action>", "args": {…}}`, every argument inside `args`:
+
+| Action | Router |
+|--------|--------|
+| `show-task`, `modify-task`, `list-task-history`, `list-node-tasks` | `cz-tasks` |
+| `create-variable`, `modify-variable` | `cz-variables` |
+| `create-snapshot` | `cz-snapshots` |
+
+Add `"help": true` to any of them to get its full argument schema back without
+running it. Missing → tell the user to install the Corezoid plugin and run
 `/corezoid-init`.
 
 Three things are **not possible** with this toolset. Say so plainly rather than
@@ -462,8 +472,9 @@ the create/delete lists.
 
 ### 4.2 Tasks — Localization and Attachments
 
-These hold runtime task data, so they are written with task tools, never
-`push-process`.
+These hold runtime task data, so they are written with the task actions, never
+`push-process`. The lines below are shorthand: `show-task process_id: X ref: Y`
+means `cz-tasks {"action": "show-task", "args": {"process_id": X, "ref": "Y"}}`.
 
 ```
 show-task    process_id: {template_ids.localization}  ref: localization     # read before writing

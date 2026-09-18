@@ -46,7 +46,7 @@ func reportViolations(t *testing.T, rule string, violations []string) {
 
 func TestToolAnnotations_AllToolsAnnotated(t *testing.T) {
 	var violations []string
-	for _, tool := range toolRegistry {
+	for _, tool := range allToolDefs() {
 		if tool.Annotations == nil {
 			violations = append(violations, tool.Name+": Annotations is nil")
 			continue
@@ -76,7 +76,7 @@ func TestToolAnnotations_DestructiveTaxonomy(t *testing.T) {
 
 	var violations []string
 	seenExact := make(map[string]bool, len(exact))
-	for _, tool := range toolRegistry {
+	for _, tool := range allToolDefs() {
 		if exact[tool.Name] {
 			seenExact[tool.Name] = true
 		}
@@ -97,14 +97,14 @@ func TestToolAnnotations_DestructiveTaxonomy(t *testing.T) {
 	// silently stop checking it.
 	for name := range exact {
 		if !seenExact[name] {
-			t.Errorf("tool %q is missing from toolRegistry — update destructiveExact", name)
+			t.Errorf("tool %q is missing from the registry — update destructiveExact", name)
 		}
 	}
 }
 
 func TestToolAnnotations_ReadOnlyTaxonomy(t *testing.T) {
 	var violations []string
-	for _, tool := range toolRegistry {
+	for _, tool := range allToolDefs() {
 		if !hasAnyPrefix(tool.Name, readOnlyPrefixes) {
 			continue
 		}
@@ -124,7 +124,7 @@ func TestToolAnnotations_ReadOnlyTaxonomy(t *testing.T) {
 // free, so destructive tools never claim idempotency.
 func TestToolAnnotations_DestructiveIsNonIdempotent(t *testing.T) {
 	var violations []string
-	for _, tool := range toolRegistry {
+	for _, tool := range allToolDefs() {
 		if tool.Annotations == nil || !isTrue(tool.Annotations.DestructiveHint) {
 			continue
 		}
@@ -139,7 +139,7 @@ func TestToolAnnotations_DestructiveIsNonIdempotent(t *testing.T) {
 // cannot accumulate an effect by being called twice.
 func TestToolAnnotations_ReadOnlyIsIdempotent(t *testing.T) {
 	var violations []string
-	for _, tool := range toolRegistry {
+	for _, tool := range allToolDefs() {
 		if tool.Annotations == nil || !isTrue(tool.Annotations.ReadOnlyHint) {
 			continue
 		}
@@ -177,7 +177,7 @@ func schemaHasProperty(schema interface{}, name string) bool {
 func TestToolAnnotations_ConfirmGatedIsDestructive(t *testing.T) {
 	var violations []string
 	gated := 0
-	for _, tool := range toolRegistry {
+	for _, tool := range allToolDefs() {
 		if !schemaHasProperty(tool.InputSchema, "confirm") {
 			continue
 		}
@@ -244,15 +244,25 @@ func TestToolAnnotations_Representative(t *testing.T) {
 		"lint-process":   {true, false, true, false},
 		"show-task":      {true, false, true, true},
 		"layout-process": {false, false, true, false},
+		// Routers aggregate worst case across their actions: one destructive
+		// action makes the whole entry destructive, so a client never gets a
+		// softer answer than the call it is about to make deserves.
+		"cz-access":      {false, true, false, true},
+		"cz-structure":   {false, true, false, true},
+		"cz-tasks":       {false, true, false, true},
+		"cz-dashboards":  {false, false, false, true},
+		"cz-variables":   {false, true, false, true},
+		"cz-snapshots":   {false, true, false, true},
+		"cz-git-context": {false, false, false, true},
 	}
 	byName := make(map[string]mcpTool, len(toolRegistry))
-	for _, tool := range toolRegistry {
+	for _, tool := range append(allToolDefs(), routerToolDefs()...) {
 		byName[tool.Name] = tool
 	}
 	for name, exp := range want {
 		tool, ok := byName[name]
 		if !ok {
-			t.Errorf("tool %q is missing from toolRegistry", name)
+			t.Errorf("tool %q is missing from the registry", name)
 			continue
 		}
 		a := tool.Annotations

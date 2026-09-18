@@ -26,13 +26,7 @@ func handleLayoutProcess(ctx context.Context, args map[string]interface{}) (stri
 	default:
 		return fmt.Sprintf("Error: unknown density %q — use compact, medium or roomy.", density), true
 	}
-	dry := false
-	if b, ok := args["dry"].(bool); ok {
-		dry = b
-	} else if ds, ok := args["dry"].(string); ok {
-		// CLI mode passes args as strings
-		dry = strings.EqualFold(ds, "true") || ds == "1"
-	}
+	dry := boolishArg(args, "dry")
 
 	doc, err := loadLayoutDoc(filePath)
 	if err != nil {

@@ -30,7 +30,7 @@ The `login` tool handles everything automatically in sequence:
 ### Interpreting the `login` response
 
 - **`"Setup complete! ... Stage <N> selected."`** → stage was picked and pulled. Proceed to **Step 2**.
-- **`"Setup incomplete: stage not selected. ..."`** → elicitation was cancelled or returned no stage. Follow the instructions in the message (usually: run `list-stages` + call `login(stage_id=…)` again). Do **not** fall back to Mode B — the token and workspace are already saved.
+- **`"Setup incomplete: stage not selected. ..."`** → elicitation was cancelled or returned no stage. Follow the instructions in the message (usually: run `cz-structure {"action": "list-stages", …}` + call `login(stage_id=…)` again). Do **not** fall back to Mode B — the token and workspace are already saved.
 
 ---
 
@@ -48,7 +48,7 @@ The tool opens a browser for OAuth2 authentication and saves the token to the cu
 
 ### B2 — Select Workspace
 
-→ Call **`list-workspaces`**
+→ Call **`cz-structure {"action": "list-workspaces"}`**
 
 → Show the full workspace list to the user. **Ask the user to choose** — do not select automatically.
 
@@ -56,7 +56,7 @@ The tool opens a browser for OAuth2 authentication and saves the token to the cu
 
 ### B3 — Select Project
 
-→ Call **`list-projects(company_id=<workspace_id>)`** using the workspace the user chose.
+→ Call **`cz-structure {"action": "list-projects", "args": {"company_id": <workspace_id>}}`** using the workspace the user chose.
 
 → Show the full project list to the user. **Ask the user to choose** — do not select automatically.
 
@@ -64,7 +64,7 @@ The tool opens a browser for OAuth2 authentication and saves the token to the cu
 
 ### B4 — Select Stage
 
-→ Call **`list-stages(project_id=<id>, company_id=<workspace_id>)`** using the project the user chose.
+→ Call **`cz-structure {"action": "list-stages", "args": {"project_id": <id>, "company_id": <workspace_id>}}`** using the project the user chose.
 
 → Show the full stage list to the user. **Ask the user to choose** — do not select automatically.
 
@@ -169,7 +169,7 @@ Every field below lives in the current Folder inside `~/.corezoid/config.json`. 
 | `workspace_id` | login step 3 — workspace selection |
 | `api_login` / `api_secret` | login arguments (API-key auth mode) |
 | `project_id` | cached on first pull-folder / push-process |
-| `git_url` / `git_stage_path` | cached on first git-pull-context |
+| `git_url` / `git_stage_path` | cached on the first `git-pull-context` action |
 
 `COREZOID_OAUTH_CLIENT_ID` remains an environment variable (not a Folder field) — pre-login only, on-prem deployments with a custom authorization server. Cloud users do not need it.
 

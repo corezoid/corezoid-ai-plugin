@@ -145,7 +145,7 @@ Fill in `description` based on the requirements gathered in Step 1 (see Descript
 - **Do not create active Stub Mode unless the user explicitly asks for a temporary mock.** Stub Mode is `obj_type: 4` plus `condition.stub`; it bypasses the called process and returns configured mock replies. Use it only while the target process is not ready or for controlled integration tests, and avoid production unless the user explicitly confirms `allow_active_stub_mode=true`.
 - All constants (URLs, tokens, IDs) must be Corezoid variables — never hardcoded:
   1. Check for existing variables: read `_ENV_VARS_.json` (from `pull-folder`) or `.processes/variables.json` (from this session)
-  2. Create a new variable if needed: call MCP tool **`create-variable`** with `name`, `description`, `value`
+  2. Create a new variable if needed: call **`cz-variables`** with `action: "create-variable"` and `args` `name`, `description`, `value`
   3. Reference in logic: `{{env_var[@variable-name]}}`
 - Use descriptive `title` values (e.g., "Call Payment Process", not "RPC")
 - Position main-flow nodes top-to-bottom, incrementing `y` by 200–250px

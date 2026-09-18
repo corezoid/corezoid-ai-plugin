@@ -294,9 +294,20 @@ func TestMCPProtocol_ToolsList(t *testing.T) {
 	for _, tool := range result.Tools {
 		names[tool.Name] = true
 	}
-	for _, required := range []string{"login", "logout", "lint-process", "pull-process", "push-process", "pause-process", "resume-process", "move-process", "move-folder"} {
+	for _, required := range []string{"login", "logout", "lint-process", "pull-process", "push-process", "pause-process", "resume-process"} {
 		if !names[required] {
 			t.Errorf("expected tool %q in tools/list", required)
+		}
+	}
+	// The CRUD domains reach the wire as routers, not as their actions.
+	for _, router := range []string{"cz-access", "cz-structure", "cz-tasks", "cz-dashboards", "cz-variables", "cz-snapshots", "cz-git-context"} {
+		if !names[router] {
+			t.Errorf("expected router %q in tools/list", router)
+		}
+	}
+	for _, collapsed := range []string{"move-process", "move-folder", "list-variables", "delete-group"} {
+		if names[collapsed] {
+			t.Errorf("%q is advertised individually again — it should only be reachable as a router action", collapsed)
 		}
 	}
 
@@ -305,8 +316,8 @@ func TestMCPProtocol_ToolsList(t *testing.T) {
 	wantHints := map[string]struct{ readOnly, destructive bool }{
 		"delete-process": {readOnly: false, destructive: true},
 		"pause-process":  {readOnly: false, destructive: true},
-		"move-folder":    {readOnly: false, destructive: true},
-		"list-variables": {readOnly: true, destructive: false},
+		"cz-structure":   {readOnly: false, destructive: true},
+		"cz-variables":   {readOnly: false, destructive: true},
 	}
 	for _, tool := range result.Tools {
 		if tool.Annotations == nil {

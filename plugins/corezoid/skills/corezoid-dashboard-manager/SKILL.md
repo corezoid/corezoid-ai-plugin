@@ -11,6 +11,19 @@ description: >
 
 # Corezoid Dashboard Manager
 
+## How to call these tools
+
+Every operation in this skill is an **action of the single `cz-dashboards` MCP tool** —
+the individual names below are action strings, not tools of their own:
+
+```
+cz-dashboards {"action": "add-chart", "args": {"dashboard_id": 1234, "name": "Errors", "chart_type": "column", "series": "[…]"}}
+```
+
+Arguments always go inside `args`; the shorthand used in the examples below — `add-chart(dashboard_id=1234, …)` — means exactly that call. When unsure about an action's
+arguments, call `cz-dashboards {"action": "<action>", "help": true}` — it returns the
+full schema and runs nothing.
+
 ## What dashboards are
 
 A Corezoid dashboard visualizes **task counters in process nodes** — it shows how many tasks
@@ -21,17 +34,19 @@ Key implication: processes must be deployed and have tasks flowing through them 
 
 ---
 
-## MCP Tools Reference
+## Actions of `cz-dashboards`
 
-| Tool | Purpose |
-|------|---------|
+| Action | Purpose |
+|--------|---------|
 | `create-dashboard` | Create a new dashboard, returns `obj_id` (= dashboard_id) |
 | `get-dashboard` | Get dashboard details including all charts and series |
 | `add-chart` | Add a chart to a dashboard, returns `obj_id` (hex chart ID) |
 | `get-chart` | Get a single chart with its series |
 | `modify-chart` | Modify an existing chart — always provide full series array |
 | `set-dashboard-layout` | Save chart positions on the grid — **required** to make charts visible |
-| `pull-process` | Pull process JSON to find node IDs for series |
+
+`pull-process` is a tool of its own (not an action): call it directly to pull the
+process JSON and find the node IDs a series points at.
 
 ---
 
@@ -69,7 +84,7 @@ Note the returned `dashboard_id` — needed for adding charts.
 
 ### Step 3 — Add charts
 
-One chart per visualization. The `add-chart` tool returns a hex `obj_id` for the chart — save it for `modify-chart` calls.
+One chart per visualization. The `add-chart` action returns a hex `obj_id` for the chart — save it for `modify-chart` calls.
 
 ```
 add-chart(
@@ -93,17 +108,17 @@ Chart types:
 
 ### Step 4 — Verify series after creation
 
-After creating a chart, call `get-chart` to verify that `series` is populated. If it's empty, use `modify-chart` to add the series.
+After creating a chart, call the `get-chart` action to verify that `series` is populated. If it's empty, use `modify-chart` to add the series.
 
 ```
 get-chart(chart_id=<hex_obj_id>, dashboard_id=<dashboard_id>)
 ```
 
-If `series` is empty, call `modify-chart` with the full series array.
+If `series` is empty, call the `modify-chart` action with the full series array.
 
 ### Step 5 — Save the dashboard layout (MANDATORY)
 
-**Charts are invisible until the grid layout is saved.** After all charts are created and have series, call `set-dashboard-layout`:
+**Charts are invisible until the grid layout is saved.** After all charts are created and have series, call the `set-dashboard-layout` action:
 
 ```
 set-dashboard-layout(
@@ -187,7 +202,7 @@ The funnel visualizes drop-off from each step to the next.
 - Create separate dashboards: one for real-time ops monitoring, one for historical reporting
 - Group all metrics from one business flow (e.g., payment processing) on a single dashboard
 - Always verify `series` after chart creation — empty series means the chart won't render
-- Always call `set-dashboard-layout` after all charts are ready — charts are invisible without it
+- Always call the `set-dashboard-layout` action after all charts are ready — charts are invisible without it
 - For drill-down: create the high-level dashboard first, then the detail dashboard, then link charts
 
 ---

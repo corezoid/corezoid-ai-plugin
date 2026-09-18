@@ -1,6 +1,9 @@
 package main
 
 import (
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"os"
 	"path/filepath"
 	"strings"
@@ -740,5 +743,76 @@ func TestConfineToWorkdir_RejectsSymlinkEscape(t *testing.T) {
 	}
 	if _, err := confineToWorkdir("not/created/yet.conv.json"); err != nil {
 		t.Errorf("a write target under a not-yet-created directory must be accepted: %v", err)
+	}
+}
+
+// TestNoDirectBooleanArgAssertions pins the one policy for reading boolean
+// arguments. Handlers used to be split between two: variables and access read
+// a stringified "true" as true, while push-process, deploy-stage, layout,
+// clean and modify-task asserted it straight to FALSE and ran with the flag
+// off. That is how modify-task{deep_merge:"true"} shallow-replaced a task and
+// dropped every key it did not send — no error, just missing data.
+//
+// The CLI passes every argument as a string, and hosts and models do send
+// quoted booleans, so the reading has to be one function: boolishArg, or
+// requiredBoolArg where false is itself an instruction.
+//
+// Scope, stated so nobody over-trusts it: this walks the AST for a bool type
+// assertion applied directly to an index of a map named args, in any function
+// other than the two readers. It therefore catches args["x"].(bool) however it
+// is wrapped or line-broken, and does NOT catch a value copied into a local
+// first (v := args["x"]; b, _ := v.(bool)). Assertions on server responses
+// (op["immutable"].(bool)) are untouched on purpose — those decode an API
+// payload, not a caller's argument.
+func TestNoDirectBooleanArgAssertions(t *testing.T) {
+	const argsMap = "args"
+	readers := map[string]bool{"boolishArg": true, "requiredBoolArg": true}
+
+	entries, err := os.ReadDir(".")
+	if err != nil {
+		t.Fatalf("read package dir: %v", err)
+	}
+	fset := token.NewFileSet()
+	checked := 0
+	for _, e := range entries {
+		name := e.Name()
+		if e.IsDir() || !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
+			continue
+		}
+		file, err := parser.ParseFile(fset, name, nil, 0)
+		if err != nil {
+			t.Fatalf("parse %s: %v", name, err)
+		}
+		checked++
+		for _, decl := range file.Decls {
+			fn, ok := decl.(*ast.FuncDecl)
+			if !ok || readers[fn.Name.Name] {
+				continue
+			}
+			ast.Inspect(fn, func(n ast.Node) bool {
+				assert, ok := n.(*ast.TypeAssertExpr)
+				if !ok || assert.Type == nil {
+					return true
+				}
+				if id, ok := assert.Type.(*ast.Ident); !ok || id.Name != "bool" {
+					return true
+				}
+				index, ok := assert.X.(*ast.IndexExpr)
+				if !ok {
+					return true
+				}
+				base, ok := index.X.(*ast.Ident)
+				if !ok || base.Name != argsMap {
+					return true
+				}
+				t.Errorf("%s: %s asserts a boolean argument directly — use boolishArg "+
+					"(or requiredBoolArg), or a quoted \"true\" silently reads as false",
+					fset.Position(assert.Pos()), fn.Name.Name)
+				return true
+			})
+		}
+	}
+	if checked == 0 {
+		t.Fatal("no source files were checked — the guard would pass vacuously")
 	}
 }

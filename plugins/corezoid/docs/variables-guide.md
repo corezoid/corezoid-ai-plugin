@@ -20,14 +20,14 @@ Variables store constants (URLs, tokens, endpoints, credentials) that should nev
 Check both local cache files before creating anything. If the variable exists, reuse it:
 
 - `_ENV_VARS_.json` — created by `pull-folder` (contains all variables exported from Corezoid)
-- `.processes/variables.json` — created by the MCP `create-variable` tool during the current session
+- `.processes/variables.json` — created by the `create-variable` action during the current session
 
 ### 2. Create a new variable
 
-Call MCP tool **`create-variable`** with `name`, `description`, and `value`.
+Call **`cz-variables`** with `action: "create-variable"` and `args` `name`, `description`, `value`.
 
-Manage existing variables with **`list-variables`** (read-only, secrets masked),
-**`modify-variable`** and **`delete-variable`**. The write tools are dry-run by
+Manage existing variables with the same tool's **`list-variables`** action (read-only,
+secrets masked), **`modify-variable`** and **`delete-variable`**. The write actions are dry-run by
 default and require `apply=true` + `confirm="<short_name>#<obj_id>"` after the user
 has explicitly approved the shown diff / deletion warning. Deletion is PERMANENT —
 environment variables have no recycle bin. `env_var_type` (visible/secret) cannot be

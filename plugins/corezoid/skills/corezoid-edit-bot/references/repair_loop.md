@@ -56,6 +56,8 @@ Cheapest first; stop at the first failure in a layer before moving on.
 
 ## Diagnosis tools
 
+These four are actions of `cz-tasks` — `cz-tasks {"action": "<action>", "args": {…}}`:
+
 - `list-task-history` — where a task actually went, when it did not go where you
   expected. First thing to reach for on a parked or misbranched task.
 - `list-node-tasks` — what is sitting in a given node right now; useful for

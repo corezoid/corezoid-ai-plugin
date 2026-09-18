@@ -20,14 +20,15 @@ var processTargetTools = []string{
 func compileAdvertisedSchema(t *testing.T, tool string) *jsonschema.Schema {
 	t.Helper()
 	var mt *mcpTool
-	for i := range toolRegistry {
-		if toolRegistry[i].Name == tool {
-			mt = &toolRegistry[i]
+	defs := allToolDefs()
+	for i := range defs {
+		if defs[i].Name == tool {
+			mt = &defs[i]
 			break
 		}
 	}
 	if mt == nil {
-		t.Fatalf("tool %q is not in toolRegistry", tool)
+		t.Fatalf("tool %q is not in any registry", tool)
 	}
 	raw, err := json.Marshal(mt.InputSchema)
 	if err != nil {
@@ -114,11 +115,12 @@ func TestAdvertisedSchema_RejectsNoProcessTarget(t *testing.T) {
 // empty-optional hosts, so no process-target tool may reintroduce it.
 func TestAdvertisedSchema_ProcessTargetUsesAnyOf(t *testing.T) {
 	for _, tool := range processTargetTools {
-		for i := range toolRegistry {
-			if toolRegistry[i].Name != tool {
+		defs := allToolDefs()
+		for i := range defs {
+			if defs[i].Name != tool {
 				continue
 			}
-			schema, ok := toolRegistry[i].InputSchema.(map[string]interface{})
+			schema, ok := defs[i].InputSchema.(map[string]interface{})
 			if !ok {
 				t.Fatalf("%s InputSchema is not an object", tool)
 			}

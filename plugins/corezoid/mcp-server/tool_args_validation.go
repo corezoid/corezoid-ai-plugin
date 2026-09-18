@@ -8,8 +8,8 @@ import (
 )
 
 // toolAllowedArgs maps tool name → the set of argument names its InputSchema
-// declares. Built once from toolRegistry — the single source of truth for
-// tool definitions.
+// declares. Built once from allToolDefs() — every definition, router-fronted
+// or not — plus the router entries themselves.
 var (
 	toolAllowedArgsOnce sync.Once
 	toolAllowedArgs     map[string]map[string]bool
@@ -18,10 +18,16 @@ var (
 )
 
 func buildToolAllowedArgs() {
-	toolAllowedArgs = make(map[string]map[string]bool, len(toolRegistry))
-	toolRequiredArgs = make(map[string]map[string]bool, len(toolRegistry))
-	toolArgTypes = make(map[string]map[string]string, len(toolRegistry))
-	for _, t := range toolRegistry {
+	defs := allToolDefs()
+	// The router entries are validated by resolveRouterCall, which knows the
+	// {action, args, help} shape; their actions are validated here under their
+	// own names, so a collapsed tool keeps the exact argument contract it had
+	// as a standalone entry.
+	defs = append(defs, routerToolDefs()...)
+	toolAllowedArgs = make(map[string]map[string]bool, len(defs))
+	toolRequiredArgs = make(map[string]map[string]bool, len(defs))
+	toolArgTypes = make(map[string]map[string]string, len(defs))
+	for _, t := range defs {
 		allowed := make(map[string]bool)
 		required := make(map[string]bool)
 		argTypes := make(map[string]string)
@@ -134,6 +140,13 @@ func unknownArgsError(tool string, args map[string]interface{}) string {
 	acceptedDesc := "no arguments"
 	if len(accepted) > 0 {
 		acceptedDesc = strings.Join(accepted, ", ")
+	}
+	// Name the entry point the caller actually has: a router-fronted tool is
+	// not callable under its own name, so reporting it as "tool X" invites a
+	// second failed call under that name.
+	if router, fronted := actionRouter[tool]; fronted {
+		return fmt.Sprintf("Error: unknown argument(s) %s for action %s of %s (accepted inside args: %s)",
+			strings.Join(unknown, ", "), tool, router, acceptedDesc)
 	}
 	return fmt.Sprintf("Error: unknown argument(s) %s for tool %s (accepted: %s)",
 		strings.Join(unknown, ", "), tool, acceptedDesc)

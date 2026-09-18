@@ -17,6 +17,8 @@ You have access to the Corezoid API via the `corezoid` MCP server.
 
 ## MCP Tools Reference
 
+Tools come in two shapes. These are called directly, one tool per operation:
+
 | Tool | Purpose |
 |------|---------|
 | `login` | Authenticate via OAuth2 (opens browser) |
@@ -28,21 +30,26 @@ You have access to the Corezoid API via the `corezoid` MCP server.
 | `layout-process` | Auto-arrange node coordinates into a clean layout (local; only x/y and collapse flags change) |
 | `clean-process` | Remove nodes with no traffic in the last N days (default 90) and save the result as a reviewable `<ID>_<title>.cleaned.json` proposal — never deploys. Review the diff, then pass that path explicitly to `lint-process`/`push-process` |
 | `run-task` | Run a task on an already-deployed process, by `process_path` or `process_id` — `process_id` needs no local file, so it also works in hosts with no local process repository (no `pull-process` required) |
-| `show-task` | Look up one task by `ref` and/or `task_id` — returns its current `data`, `node_id` and status. Read-only; use it instead of paging `list-node-tasks` |
 | `create-process` | Create a new empty process (`conv_type: "process"`) in a folder |
 | `create-state-diagram` | Create a new empty state diagram (`conv_type: "state"`) in a folder |
-| `create-folder` | Create a new subfolder |
 | `pause-process` / `resume-process` | Explicitly pause or reactivate one process; dry-run + exact confirmation required |
-| `move-process` / `move-folder` | Explicitly reparent an existing object without copying/deploying; dry-run + exact confirmation required |
 | `create-alias` | Create a short alias for a process |
-| `create-variable` | Create a Corezoid environment variable |
 | `create-communications-orchestrator` | Build a multi-platform messenger robot (Telegram / Facebook Messenger / Viber / Apple Messages for Business). Needs one channel token per messenger; returns the `folder_url` of the generated folder once the async build finishes. Two calls: `apply=false` previews and prints a confirm token, `apply=true` + that token builds |
-| `create-dashboard` | Create a new dashboard for process metrics |
-| `get-dashboard` | Get dashboard details with charts and series |
-| `add-chart` | Add a chart (column/pie/funnel/table) to a dashboard |
-| `get-chart` | Get a single chart with its series data |
-| `modify-chart` | Modify an existing chart (full series required) |
-| `set-dashboard-layout` | Save chart positions on the grid (required to make charts visible) |
+
+### Router tools
+
+The CRUD-shaped domains are grouped behind one tool each, so `tools/list` costs 35 KB instead of 65 KB of every session. Call a router with the action name and the action's own arguments:
+
+```
+cz-access {"action": "share-object", "args": {"obj": "conv", "obj_id": 1234567, "obj_to": "user", "obj_to_id": 890, "privs": "view,modify"}}
+```
+
+Arguments go **inside `args`**, never at the top level. Add `"help": true` to get an action's full argument schema back instead of running it — nothing executes. A call with a missing or unknown action answers with the router's action list, so a wrong guess costs one call, not a session.
+
+#### `cz-access` — sharing, groups, API keys, invites
+
+| Action | Purpose |
+|--------|---------|
 | `share-object` | Grant or revoke access on a process / folder / stage / project (use privs="none" to revoke — same wire op as share with empty privs) |
 | `list-shares` | Audit who currently has access to an object |
 | `create-group` / `modify-group` / `delete-group` | Manage workspace user groups (delete refuses if group has active shares unless force=true) |
@@ -55,10 +62,70 @@ You have access to the Corezoid API via the `corezoid` MCP server.
 | `list-api-keys` | List API keys in the workspace |
 | `find-principal` | Resolve user / group / API-key name → obj_id (call before share-object) |
 | `invite-user` | Invite an external email AND share an object in one call |
+
+#### `cz-structure` — workspaces, projects, stages, folders, moves
+
+| Action | Purpose |
+|--------|---------|
+| `create-folder` | Create a new subfolder |
+| `move-process` / `move-folder` | Explicitly reparent an existing object without copying/deploying; dry-run + exact confirmation required |
+| `list-workspaces` | Workspaces (companies) available to the authenticated user |
+| `list-projects` | Projects in a workspace |
+| `show-project` | One project's metadata and the stages visible to the caller |
+| `create-project` | Create a project, optionally with stages |
+| `modify-project` | Rename a project / change short_name or description |
+| `delete-project` | Move a project to Trash (destructive) |
+| `list-stages` | Stages (environments) of a project |
+| `set-stage-immutable` | Set/clear a stage's immutable flag (needs confirm) |
+| `list-folders` | Immediate children of a folder: subfolders, processes, state diagrams |
+| `show-folder` | One folder's metadata: title, obj_type, parent |
+| `modify-folder` | Rename a folder / change its description |
+| `delete-folder` | Move a folder to Trash (destructive) |
+
+#### `cz-tasks` — tasks inside a deployed process
+
+| Action | Purpose |
+|--------|---------|
+| `show-task` | Look up one task by `ref` and/or `task_id` — returns its current `data`, `node_id` and status. Read-only; use it instead of paging `list-node-tasks` |
+| `modify-task` | Change a task's data; deep_merge=true merges instead of replacing |
+| `delete-task` | Delete a task from a process (destructive) |
+| `list-node-tasks` | Tasks currently parked in a node |
+| `list-task-history` | The node path a task has taken |
+| `get-node-stat` | In/out counts for a node over a time range |
+
+#### `cz-dashboards` — dashboards and charts
+
+| Action | Purpose |
+|--------|---------|
+| `create-dashboard` | Create a new dashboard for process metrics |
+| `get-dashboard` | Get dashboard details with charts and series |
+| `add-chart` | Add a chart (column/pie/funnel/table) to a dashboard |
+| `get-chart` | Get a single chart with its series data |
+| `modify-chart` | Modify an existing chart (full series required) |
+| `set-dashboard-layout` | Save chart positions on the grid (required to make charts visible) |
+
+#### `cz-variables` — stage environment variables
+
+| Action | Purpose |
+|--------|---------|
+| `create-variable` | Create a Corezoid environment variable |
+| `list-variables` | All variables of the stage: short_name, obj_id, type, title, value |
+| `modify-variable` | Change value/title/data_type or rename; apply=false dry-run first, then apply=true + confirm |
+| `delete-variable` | Permanently delete a variable; apply=false dry-run first, then apply=true + confirm (destructive) |
+
+#### `cz-snapshots` — manual process checkpoints
+
+| Action | Purpose |
+|--------|---------|
 | `create-snapshot` | Create a snapshot of a process (auto-created before every push-process on existing processes; skipped where the environment has no snapshot support) |
 | `list-snapshots` | List all snapshots for a process |
 | `delete-snapshot` | Delete a snapshot by snapshot_id |
 | `get-snapshot` | Get snapshot node list for diff comparison against current process |
+
+#### `cz-git-context` — the git mirror in .git-context/
+
+| Action | Purpose |
+|--------|---------|
 | `git-pull-context` | Clone or pull the Corezoid git mirror into `.git-context/` |
 | `git-push-context` | Commit and push `_ext/` changes to the git mirror |
 | `read-context-file` | Read a file from `.git-context/` |
@@ -125,13 +192,13 @@ run-task(process_path="./folder/12345_MyProcess.conv.json", data={"key": "value"
 ```
 run-task(process_id=12345, data={"key": "value"})
 ```
-`process_id` needs no `pull-process` first — it identifies the process the same way `process_path`'s filename does, just without a file (same argument name `show-task`/`list-task-history`/`pull-process` already use). `create-snapshot`, `list-snapshots`, `delete-snapshot`, and `get-snapshot` accept `process_id` the same way. Pass exactly one of the two — both together is rejected as ambiguous, and `process_id` must be greater than zero. These tools still need `stage_id`/`project_id` resolved from Corezoid credentials (`login`, or `COREZOID_*` env vars — see `corezoid-init`), even when no local file is used.
+`process_id` needs no `pull-process` first — it identifies the process the same way `process_path`'s filename does, just without a file (same argument name `pull-process` and the `cz-tasks` actions already use). The `cz-snapshots` actions accept `process_id` the same way. Pass exactly one of the two — both together is rejected as ambiguous, and `process_id` must be greater than zero. These tools still need `stage_id`/`project_id` resolved from Corezoid credentials (`login`, or `COREZOID_*` env vars — see `corezoid-init`), even when no local file is used.
 
 ### Inspect a task by its external reference
 ```
-show-task(process_id=12345678, ref="ORDER-4711")
+cz-tasks {"action": "show-task", "args": {"process_id": 12345678, "ref": "ORDER-4711"}}
 ```
-Read-only — never scan a node with `list-node-tasks` to find a known `ref`.
+Read-only — never scan a node with the `list-node-tasks` action to find a known `ref`.
 
 ### Validate locally without deploying
 ```
@@ -197,8 +264,8 @@ After any successful change to a process, folder, or project, always set or refr
 
 Summary:
 - **Process** — update `description` in `.conv.json` root **before** `push-process` (no second push needed). 1–2 sentences, start with a verb (*Calls*, *Creates*, *Validates*…), under 200 characters, no *"This process…"*
-- **Folder** — call `modify-folder` with `description` if the folder was structurally changed. Resolve `folder_id` from the process's parent or by name via `list-folders`; if unresolvable, skip.
-- **Project** — call `modify-project` with `description` if project scope changed.
+- **Folder** — call `cz-structure` action `modify-folder` with `description` if the folder was structurally changed. Resolve `folder_id` from the process's parent or by name via the `list-folders` action; if unresolvable, skip.
+- **Project** — call `cz-structure` action `modify-project` with `description` if project scope changed.
 
 ---
 

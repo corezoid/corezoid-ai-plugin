@@ -154,7 +154,7 @@ Produce a valid `.conv.json` file with the following root envelope:
 
 ### Variables for constants
 
-If a node references an external id (e.g. another process to notify), store it as a Corezoid variable and reference it as `{{env_var[@variable-name]}}` — never hardcode. Use **`create-variable`** if the variable does not yet exist. See `${CLAUDE_PLUGIN_ROOT}/docs/variables-guide.md`.
+If a node references an external id (e.g. another process to notify), store it as a Corezoid variable and reference it as `{{env_var[@variable-name]}}` — never hardcode. Use **`cz-variables`** with `action: "create-variable"` if the variable does not yet exist. See `${CLAUDE_PLUGIN_ROOT}/docs/variables-guide.md`.
 
 ### Common pitfalls
 

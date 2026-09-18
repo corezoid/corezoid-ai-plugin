@@ -1,7 +1,8 @@
 # Process Lifecycle and Object Moves
 
 This document describes the Corezoid behavior behind `pause-process`,
-`resume-process`, `move-process`, and `move-folder`. The wire behavior was
+`resume-process`, and the `cz-structure` actions `move-process` and
+`move-folder`. The wire behavior was
 verified against Corezoid UI/API v6.12.0.
 
 ## Safety model

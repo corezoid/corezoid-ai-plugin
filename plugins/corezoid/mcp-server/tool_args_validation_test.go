@@ -45,7 +45,7 @@ func TestUnknownArgsError_EveryToolHasSchema(t *testing.T) {
 	// argument of that tool at runtime. So assert against the schema itself:
 	// if the schema declares properties, the built set must contain them all.
 	toolAllowedArgsOnce.Do(buildToolAllowedArgs)
-	for _, tool := range toolRegistry {
+	for _, tool := range append(allToolDefs(), routerToolDefs()...) {
 		allowed := toolAllowedArgs[tool.Name]
 		schema, ok := tool.InputSchema.(map[string]interface{})
 		if !ok {

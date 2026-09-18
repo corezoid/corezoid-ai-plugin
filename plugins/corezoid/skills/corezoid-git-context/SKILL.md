@@ -16,10 +16,23 @@ description: >
 
 You manage the documentation layer for the Corezoid stage in the git mirror.
 Your only write surface is `_ext/docs/` inside the stage directory.
-You use four MCP tools: `read-context-file`, `update-context-file`,
+You use four operations: `read-context-file`, `update-context-file`,
 `git-pull-context`, `git-push-context`.
 
 ---
+
+## How to call these tools
+
+Every operation in this skill is an **action of the single `cz-git-context` MCP tool** —
+the individual names below are action strings, not tools of their own:
+
+```
+cz-git-context {"action": "read-context-file", "args": {"path": "_ext/docs/architecture.md"}}
+```
+
+Arguments always go inside `args`; the shorthand used below — `read-context-file(path=…)` — means exactly that call. When unsure about an action's
+arguments, call `cz-git-context {"action": "<action>", "help": true}` — it returns the
+full schema and runs nothing.
 
 ## Prerequisites — skip entirely if any condition is not met
 
@@ -168,7 +181,7 @@ For each file that needs updating:
    If the file does not exist yet, `mode: replace` with the full content
    creates it — the directory structure is created automatically.
 
-2. After **all** files are written, call `git-push-context` once with a
+2. After **all** files are written, call the `git-push-context` action once with a
    meaningful commit message, e.g.:
    `"docs: update _ext/docs/ after session — {brief summary of what changed}"`
 

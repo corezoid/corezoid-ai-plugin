@@ -43,11 +43,11 @@ If not clear, ask:
 Use the first available source in this order:
 1. **Explicit ID** — user provided a numeric folder ID → use it directly
 2. **Process context** — a `.conv.json` is known → read its `parent_id` field → that is the `folder_id`
-3. **Name search** — user provided only a folder name → call `list-folders(folder_id=0)` and find the matching entry by title
+3. **Name search** — user provided only a folder name → call `cz-structure {"action": "list-folders", "args": {"folder_id": 0}}` and find the matching entry by title
 4. **Not found** — name search returns no match → skip the folder description update silently (do not error)
 
 **For a project:**
-1. Call `list-projects` or `show-project` to get current metadata
+1. Call `cz-structure` with `action: "list-projects"` or `"show-project"` to get current metadata
 2. Inspect the top-level folder structure to understand what the project covers
 
 ---
@@ -94,10 +94,10 @@ Write 1–2 sentences describing the project's overall purpose and the main syst
 
 **For a folder:**
 Use the `folder_id` resolved in Step 2a. If it was not resolved (source 4 — not found), skip this step.
-Call MCP tool **`modify-folder`** with `folder_id` and `description`.
+Call **`cz-structure`** with `action: "modify-folder"` and `args` `folder_id` + `description`.
 
 **For a project:**
-Call MCP tool **`modify-project`** with `company_id`, `project_id`, and `description`.
+Call **`cz-structure`** with `action: "modify-project"` and `args` `company_id`, `project_id`, `description`.
 
 ---
 

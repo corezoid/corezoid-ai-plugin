@@ -269,8 +269,8 @@ Response — `ops[0]` carries the task itself:
 }
 ```
 
-Via the MCP server this is the `show-task` tool
-(`show-task(process_id=67890, ref="REF_98765")`). Prefer it over listing a
-node's tasks: `list-node-tasks` requires knowing which node the task is parked
+Via the MCP server this is the `show-task` action
+(`cz-tasks {"action": "show-task", "args": {"process_id": 67890, "ref": "REF_98765"}}`).
+Prefer it over listing a node's tasks: `list-node-tasks` requires knowing which node the task is parked
 in and pages through that node, which does not scale on nodes holding tens of
 thousands of tasks.

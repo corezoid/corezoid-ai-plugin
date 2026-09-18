@@ -383,3 +383,55 @@ func resolveDirPath(args map[string]interface{}, key string) string {
 	}
 	return safe
 }
+
+// boolishArg reads a boolean argument the way callers actually send it.
+//
+// The schema says boolean and JSON has the type, but the CLI passes every
+// argument as a string, and hosts and models do send "true" for a declared
+// boolean. A bare args[key].(bool) asserts those to FALSE and runs the call
+// with the flag off — which is how modify-task{deep_merge:"true"} used to
+// shallow-replace a task and drop every key it did not send, silently.
+//
+// Only the unambiguous affirmatives ("true", "1") count as true: anything
+// else, including a value nobody can read as a boolean, stays false. That
+// keeps the failure pointing at the safe side for the waiver flags (force,
+// allow_no_snapshot, apply), where a wrong guess in the other direction would
+// bypass a gate rather than leave it standing.
+//
+// Every handler reads boolean arguments through this, and
+// TestNoDirectBooleanArgAssertions keeps it that way.
+func boolishArg(args map[string]interface{}, key string) bool {
+	if b, ok := args[key].(bool); ok {
+		return b
+	}
+	if s, ok := args[key].(string); ok {
+		return strings.EqualFold(s, "true") || s == "1"
+	}
+	return false
+}
+
+// requiredBoolArg reads a boolean argument that has no safe default.
+//
+// boolishArg answers false for anything it cannot read, which is right for an
+// optional flag — the call proceeds with the flag off. It is wrong where false
+// is itself an instruction: set-stage-immutable{immutable:"maybe"} would make
+// a stage editable on the strength of a typo. So here an unreadable value is
+// refused, and the message says what the two accepted spellings are.
+func requiredBoolArg(args map[string]interface{}, key string) (bool, string) {
+	raw, given := args[key]
+	if !given || raw == nil {
+		return false, fmt.Sprintf("Error: %q (boolean) is required.", key)
+	}
+	switch v := raw.(type) {
+	case bool:
+		return v, ""
+	case string:
+		switch strings.ToLower(strings.TrimSpace(v)) {
+		case "true", "1":
+			return true, ""
+		case "false", "0":
+			return false, ""
+		}
+	}
+	return false, fmt.Sprintf("Error: %q must be a boolean (true or false); got %T.", key, raw)
+}

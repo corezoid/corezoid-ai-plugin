@@ -69,14 +69,23 @@ need a post-extract substitution step on every machine.
 | `push-process` | Validate and deploy a `.conv.json`. |
 | `lint-process` | Static checks: orphaned nodes, noop conditions, unused params. |
 | `run-task` | Execute a task on a deployed process. |
-| `create-process` / `create-folder` / `create-variable` | Bootstrap resources. |
+| `create-process` | Bootstrap a process. |
 | `pause-process` / `resume-process` | Preview and explicitly change process admission state. |
-| `move-process` / `move-folder` | Preview and explicitly reparent existing objects without copying them. |
-| `create-dashboard` / `add-chart` | Visualise node metrics. |
-| `list-workspaces` / `list-projects` / `list-stages` | Workspace navigation. |
-| `show-task` | Look up one task by `ref` / `task_id` — read-only, works on immutable stages. |
-| `modify-task` / `delete-task` | Per-task ops on deployed processes. |
 | `send-feedback` | Submit feedback/bug reports to the Corezoid team. |
+
+The CRUD-shaped domains are grouped behind one router tool each — call them as
+`<router> {"action": "<action>", "args": {…}}`, and add `"help": true` to get an
+action's full schema without running it:
+
+| Router | Actions include |
+|---|---|
+| `cz-structure` | `list-workspaces`, `list-projects`, `list-stages`, `create-folder`, `move-process`, `move-folder` — workspace navigation and confirm-gated reparenting. |
+| `cz-tasks` | `show-task` (read-only, works on immutable stages), `modify-task`, `delete-task`, `list-node-tasks`, `list-task-history`, `get-node-stat`. |
+| `cz-variables` | `create-variable`, `list-variables`, `modify-variable`, `delete-variable`. |
+| `cz-dashboards` | `create-dashboard`, `add-chart`, `modify-chart`, `set-dashboard-layout` — visualise node metrics. |
+| `cz-access` | `share-object`, `find-principal`, group and API-key management, `invite-user`. |
+| `cz-snapshots` | `create-snapshot`, `list-snapshots`, `get-snapshot`, `delete-snapshot`. |
+| `cz-git-context` | `git-pull-context`, `read-context-file`, `update-context-file`, `git-push-context`. |
 
 ## Skills
 
