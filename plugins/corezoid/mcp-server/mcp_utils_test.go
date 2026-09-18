@@ -816,3 +816,170 @@ func TestNoDirectBooleanArgAssertions(t *testing.T) {
 		t.Fatal("no source files were checked — the guard would pass vacuously")
 	}
 }
+
+// ---- path confinement: symlink escapes -------------------------------------
+
+// The guard validates filepath.Clean(p) but the OS resolves the path the
+// caller was handed. Those two readings diverge exactly when a symlink meets
+// "..": Clean("link/../victim") is "victim" — lexically inside cwd, which is
+// what passes the check — while the kernel walks through "link" to wherever it
+// points and only then applies "..", landing outside. The fix is that
+// confineToWorkdir returns the cleaned spelling it actually validated, so this
+// test asserts on the RETURNED path, not just on the absence of an error.
+func TestConfineToWorkdir_SymlinkDotDotCannotEscape(t *testing.T) {
+	outside := t.TempDir()
+	sub := filepath.Join(outside, "sub")
+	if err := os.Mkdir(sub, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	victim := filepath.Join(outside, "victim.txt")
+	if err := os.WriteFile(victim, []byte("ORIGINAL"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	work := t.TempDir()
+	if err := os.Symlink(sub, filepath.Join(work, "link")); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+	t.Chdir(work)
+
+	got, err := confineToWorkdir("link/../victim.txt")
+	if err != nil {
+		return // rejecting outright is also a correct answer
+	}
+	// Accepted — then the path handed back must not reach outside when a
+	// handler opens it, which is the only thing the caller does with it.
+	if writeErr := os.WriteFile(got, []byte("OVERWRITTEN"), 0o600); writeErr != nil {
+		t.Fatalf("writing the returned path: %v", writeErr)
+	}
+	b, readErr := os.ReadFile(victim)
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	if string(b) != "ORIGINAL" {
+		t.Fatalf("confineToWorkdir returned %q, and writing it overwrote a file outside the working directory", got)
+	}
+}
+
+// Auto-discovery is the zero-argument path: no process_path, so the handler
+// scans cwd and takes the single .conv.json it finds. os.ReadDir reports a
+// symlink as an ordinary entry, so that scan used to accept a link pointing at
+// somebody else's file and hand it straight to a writer. An explicit
+// process_path naming the same link is rejected; the implicit route must not
+// be the more permissive of the two.
+func TestResolveProcessPath_AutoDiscoveredSymlinkCannotEscape(t *testing.T) {
+	outside := t.TempDir()
+	victim := filepath.Join(outside, "999_live.conv.json")
+	if err := os.WriteFile(victim, []byte(`{"obj_type":1}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	work := t.TempDir()
+	if err := os.Symlink(victim, filepath.Join(work, "999_live.conv.json")); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+	t.Chdir(work)
+
+	got, err := resolveProcessPath(map[string]interface{}{}, "process_path")
+	if err != nil {
+		return // rejected, which is the intended outcome
+	}
+	if writeErr := os.WriteFile(got, []byte(`{"obj_type":1,"clobbered":true}`), 0o600); writeErr != nil {
+		t.Fatalf("writing the returned path: %v", writeErr)
+	}
+	b, readErr := os.ReadFile(victim)
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	if string(b) != `{"obj_type":1}` {
+		t.Fatalf("auto-discovery returned %q, and writing it overwrote a file outside the working directory", got)
+	}
+}
+
+// The three readers had drifted: boolishArg read " true" as false while
+// requiredBoolArg read it as true, and a JSON number 1 — what a host that
+// serialises booleans as 0/1 sends — was false to one, an error to the other.
+// They now share parseBoolish, so this table is the whole policy, once.
+func TestBoolReaders_AgreeOnEveryAcceptedSpelling(t *testing.T) {
+	affirmative := []interface{}{true, "true", "TRUE", " true ", "1", " 1", float64(1), 1}
+	negative := []interface{}{false, "false", "FALSE", " false ", "0", float64(0), 0}
+	unreadable := []interface{}{"yes", "on", "maybe", float64(2), 1.5, []interface{}{}}
+
+	for _, v := range affirmative {
+		args := map[string]interface{}{"f": v}
+		if !boolishArg(args, "f") {
+			t.Errorf("boolishArg(%#v) = false, want true", v)
+		}
+		if got, msg := strictBoolArg(args, "f"); !got || msg != "" {
+			t.Errorf("strictBoolArg(%#v) = %v, %q; want true with no error", v, got, msg)
+		}
+		if got, msg := requiredBoolArg(args, "f"); !got || msg != "" {
+			t.Errorf("requiredBoolArg(%#v) = %v, %q; want true with no error", v, got, msg)
+		}
+	}
+	for _, v := range negative {
+		args := map[string]interface{}{"f": v}
+		if boolishArg(args, "f") {
+			t.Errorf("boolishArg(%#v) = true, want false", v)
+		}
+		if got, msg := strictBoolArg(args, "f"); got || msg != "" {
+			t.Errorf("strictBoolArg(%#v) = %v, %q; want false with no error", v, got, msg)
+		}
+		if got, msg := requiredBoolArg(args, "f"); got || msg != "" {
+			t.Errorf("requiredBoolArg(%#v) = %v, %q; want false with no error", v, got, msg)
+		}
+	}
+	// Nothing outside the listed spellings is guessed at. boolishArg answers
+	// false — the safe side of a waiver flag — while the strict readers refuse.
+	for _, v := range unreadable {
+		args := map[string]interface{}{"f": v}
+		if boolishArg(args, "f") {
+			t.Errorf("boolishArg(%#v) = true; unreadable must not turn a flag on", v)
+		}
+		if _, msg := strictBoolArg(args, "f"); msg == "" {
+			t.Errorf("strictBoolArg(%#v) accepted an unreadable value", v)
+		}
+		if _, msg := requiredBoolArg(args, "f"); msg == "" {
+			t.Errorf("requiredBoolArg(%#v) accepted an unreadable value", v)
+		}
+	}
+}
+
+// Absent is the one place the strict readers differ: strictBoolArg fronts a
+// flag with a documented default, requiredBoolArg one where false is itself
+// an instruction and silence cannot stand in for it.
+func TestBoolReaders_DisagreeOnlyOnAbsence(t *testing.T) {
+	for _, args := range []map[string]interface{}{{}, {"f": nil}} {
+		if got, msg := strictBoolArg(args, "f"); got || msg != "" {
+			t.Errorf("strictBoolArg(absent) = %v, %q; want the default with no error", got, msg)
+		}
+		if _, msg := requiredBoolArg(args, "f"); msg == "" {
+			t.Error("requiredBoolArg(absent) must demand the argument")
+		}
+	}
+}
+
+func TestDocIntField(t *testing.T) {
+	absent := []map[string]interface{}{{}, {"obj_id": nil}, {"obj_id": ""}, {"obj_id": "  "}}
+	for _, doc := range absent {
+		got, err := docIntField(doc, "obj_id")
+		if got != 0 || err != nil {
+			t.Errorf("docIntField(%#v) = %d, %v; want 0 with no error", doc, got, err)
+		}
+	}
+	readable := map[string]interface{}{"f": float64(834936), "s": "834936", "i": 834936, "p": " 834936 "}
+	for key := range readable {
+		got, err := docIntField(readable, key)
+		if got != 834936 || err != nil {
+			t.Errorf("docIntField(%q) = %d, %v; want 834936", key, got, err)
+		}
+	}
+	// Truncating 1234.9 to 1234 would name a different, existing process.
+	for _, doc := range []map[string]interface{}{
+		{"obj_id": 1234.9}, {"obj_id": "not-an-id"}, {"obj_id": true}, {"obj_id": []interface{}{}},
+	} {
+		if got, err := docIntField(doc, "obj_id"); err == nil {
+			t.Errorf("docIntField(%#v) = %d with no error; unreadable must not read as absent", doc, got)
+		}
+	}
+}

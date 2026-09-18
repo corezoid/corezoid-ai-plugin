@@ -71,7 +71,14 @@ func confineToWorkdir(p string) (string, error) {
 	if err := ensureInsideRoot(filepath.Join(cwdReal, clean), cwdReal); err != nil {
 		return "", fmt.Errorf("path %q resolves outside the working directory: %v", p, err)
 	}
-	return p, nil
+	// Return the CLEANED path, not p. The check above runs on clean, and the
+	// two disagree the moment a symlink meets "..": filepath.Clean("link/../x")
+	// is "x" — lexically inside the workspace, and that is what gets validated
+	// — while the OS resolves the original spelling left to right, walking
+	// through link to wherever it points and only then applying "..". Handing
+	// the caller back p meant every handler re-derived the escaping path the
+	// guard had just cleared under a different name.
+	return clean, nil
 }
 
 // relativeToCwd converts an absolute path to its cwd-relative form, resolving
@@ -297,7 +304,17 @@ func resolveProcessPath(args map[string]interface{}, key string) (string, error)
 		}
 	}
 	if len(matches) == 1 {
-		return matches[0], nil
+		// Auto-discovery used to hand this back unchecked, which made the
+		// zero-argument call the weakest way in: os.ReadDir reports a symlink
+		// as a regular entry, so "999_x.conv.json" linked at somebody else's
+		// file matched, and the handler wrote through it. An explicit
+		// process_path naming that same link is rejected, so the implicit
+		// route has no business being more permissive.
+		safe, err := confineToWorkdir(matches[0])
+		if err != nil {
+			return "", err
+		}
+		return safe, nil
 	}
 	if len(matches) > 1 {
 		return "", fmt.Errorf("multiple .conv.json files found in current directory — pass process_path explicitly: %v", matches)
