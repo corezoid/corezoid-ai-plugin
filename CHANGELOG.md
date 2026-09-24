@@ -1,5 +1,10 @@
 # Changelog
 
+## [Unreleased]
+
+- Fix(mcp-server): the project-root `CLAUDE.md` no longer gains another copy of the developer's own notes on every MCP server start. In local mode `generateLocalCLAUDEMD` wrote the whole merged root file into the stage copy (`.git-context/<stage>/CLAUDE.md`), and `copyStageCLAUDEMD` then injected that copy, notes included, in place of the mirror block while keeping the notes already in the root. One real workspace grew to 24 copies and 350 KB, all of it loaded into every session's context. The stage copy now holds only the mirror block, and `injectMirrorBlock` injects only the marker-delimited part of its source, so a stage copy written by an older version stops the growth too. Files that are already polluted are not deduplicated automatically, because the extra copies sit outside the markers where developer content lives. Remove them by hand once.
+- Fix(mcp-server): `injectMirrorBlock` is idempotent. It stripped one newline after the END marker and wrote two, so every regeneration added a blank line between the mirror block and the notes after it.
+
 ## [3.6.0]
 
 - The CRUD-shaped domains moved behind seven router tools — `cz-access`, `cz-structure`, `cz-tasks`, `cz-dashboards`, `cz-variables`, `cz-snapshots`, `cz-git-context` — called as `{"action": "<action>", "args": {…}}`. `tools/list` drops from 72 entries and 65 400 bytes to 25 entries and 35 900 bytes, i.e. ~16k tokens of every session's context down to ~9k, and the 64 KiB line budget goes from 136 bytes of headroom to 29 KB. Nothing was removed: all 54 collapsed definitions keep their exact descriptions, schemas, annotations and handlers, and the CLI still accepts every name directly.
