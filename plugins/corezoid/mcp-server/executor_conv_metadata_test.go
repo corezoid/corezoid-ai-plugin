@@ -170,6 +170,67 @@ func TestProcessJSON_PushesEditedDescriptionOfExistingProcess(t *testing.T) {
 	}
 }
 
+// ModifyConv is a live, unversioned write with no rollback — issue #175's fix
+// deferred it to run only after Commit succeeds, precisely so a rejected
+// commit (a bad timer, an invalid node) cannot leave the process renamed or
+// re-described on the server while push reports the whole thing as failed.
+func TestProcessJSON_CommitFailureSkipsModifyConv(t *testing.T) {
+	content, _ := loadSampleDoc(t, map[string]interface{}{
+		"obj_id":      float64(777),
+		"title":       "Valid Process (renamed)",
+		"description": "Description written by corezoid-describe.",
+	})
+	filePath := filepath.Join(t.TempDir(), "777_valid_process.conv.json")
+	if err := os.WriteFile(filePath, []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	convModifies := 0
+	_, e := mockAPIServer(t, func(ops []map[string]interface{}) interface{} {
+		if len(ops) == 0 {
+			return okResponse(ops)
+		}
+		op := ops[0]
+		switch {
+		case op["type"] == "list" && op["obj"] == "conv":
+			return wrapOp(map[string]interface{}{
+				"proc": "ok",
+				"list": []interface{}{
+					map[string]interface{}{
+						"obj_id":   "eeeeeeeeeeeeeeeeeeee0001",
+						"obj_type": float64(1),
+						"title":    "Start",
+					},
+				},
+			})
+		case op["type"] == "create" && op["obj"] == "node":
+			results := make([]interface{}, len(ops))
+			for i, createOp := range ops {
+				localID, _ := createOp["id"].(string)
+				results[i] = map[string]interface{}{"proc": "ok", "id": localID, "obj_id": localID}
+			}
+			return map[string]interface{}{"request_proc": "ok", "ops": results}
+		case op["type"] == "modify" && op["obj"] == "conv":
+			convModifies++
+			return okResponse(ops)
+		case op["type"] == "confirm" && op["obj"] == "commit":
+			return wrapOp(map[string]interface{}{"proc": "error", "description": "Timer value 15 sec is less than minimum limit 30 sec"})
+		default:
+			return okResponse(ops)
+		}
+	})
+	e.ProcessID = 777
+	e.Version = 1
+	e.WorkspaceID = "workspace"
+
+	if _, err := e.ProcessJSON(filePath, content); err == nil {
+		t.Fatal("expected ProcessJSON to fail when commit is rejected")
+	}
+	if convModifies != 0 {
+		t.Fatalf("commit was rejected; expected no modify/conv op, got %d", convModifies)
+	}
+}
+
 // A brand-new process has no conv to modify yet, so its description has to ride
 // along with the create op — and must not cost a second round trip afterwards.
 func TestProcessJSON_CreateCarriesDescription(t *testing.T) {
