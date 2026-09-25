@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [3.7.0]
 
 - Fix(mcp-server): the project-root `CLAUDE.md` no longer gains another copy of the developer's own notes on every MCP server start. In local mode `generateLocalCLAUDEMD` wrote the whole merged root file into the stage copy (`.git-context/<stage>/CLAUDE.md`), and `copyStageCLAUDEMD` then injected that copy, notes included, in place of the mirror block while keeping the notes already in the root. One real workspace grew to 24 copies and 350 KB, all of it loaded into every session's context. The stage copy now holds only the mirror block, and `injectMirrorBlock` injects only the marker-delimited part of its source, so a stage copy written by an older version stops the growth too. Files that are already polluted are not deduplicated automatically, because the extra copies sit outside the markers where developer content lives. Remove them by hand once.
 - Fix(mcp-server): `injectMirrorBlock` is idempotent. It stripped one newline after the END marker and wrote two, so every regeneration added a blank line between the mirror block and the notes after it.
