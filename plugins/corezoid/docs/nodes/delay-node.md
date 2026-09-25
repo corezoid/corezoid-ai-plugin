@@ -13,7 +13,7 @@
 1. **Delay Duration** (Number)
 
    - The amount of time to hold the task.
-   - Minimum value: 30 seconds — **but this limit is only enforced on a static numeric literal at deploy time** (e.g., `"value": 15` is rejected with `"Timer value 15 sec is less than minimum limit 30 sec"`). A **dynamic** `value` (a `{{placeholder}}` string resolved at runtime) is **not** subject to this static check. See [Scheduled & sub-30s timers via a dynamic absolute timestamp](#scheduled--sub-30s-timers-via-a-dynamic-absolute-timestamp).
+   - Minimum value: 30 seconds — **but this limit is only enforced on a static numeric literal at deploy time** (e.g., `"value": 15` is rejected with `"Timer value 15 sec is less than minimum limit 30 sec"`). A **dynamic** `value` (a `{{placeholder}}` string resolved at runtime) is **not** subject to this static check. See [Scheduled & sub-30s timers via a dynamic absolute timestamp](#scheduled--sub-30s-timers-via-a-dynamic-absolute-timestamp). The limit is specific to this node: a time semaphore on a node that performs work (API Call, Call Process, Code, DB Call, Git Call, Copy Task, Waiting for Callback) is an escalation timeout, not a hold, and is not subject to the floor.
    - Example: `"value": 30`
 
 2. **Time Unit** (String)

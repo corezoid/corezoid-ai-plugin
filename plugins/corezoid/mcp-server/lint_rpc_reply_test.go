@@ -138,3 +138,49 @@ func TestShortTimers(t *testing.T) {
 		t.Fatalf("count semaphor must not be treated as a timer, got %+v", got)
 	}
 }
+
+// Regression for issue #176: a time semaphor on a node that DOES something is
+// a call timeout, not a delay, and the server's 30-second floor does not apply
+// to it. Flagging those blocked pushes of processes the server had already
+// accepted and was running.
+func TestShortTimers_TimeoutsOnActionNodesAreNotDelays(t *testing.T) {
+	sem10s := map[string]interface{}{"type": "time", "value": float64(10), "dimension": "sec", "to_node_id": nFin}
+
+	// Every node shape whose time semaphor is an escalation timeout.
+	for _, lgType := range []string{"api_rpc", "api", "api_code", "db_call", "git_call", "api_copy", "api_callback", "set_param", "api_sum", "api_rpc_reply"} {
+		nodes := []processNode{
+			lintNode(nStart, "Start", 1, []map[string]interface{}{lgGo(nA)}),
+			lintNode(nA, "call", 0, []map[string]interface{}{
+				{"type": lgType, "err_node_id": nFin}, lgGo(nFin),
+			}, sem10s),
+			lintNode(nFin, "done", 2, nil),
+		}
+		if got := findShortTimers(nodes); len(got) != 0 {
+			t.Errorf("%s timeout must not be flagged as a short delay, got %+v", lgType, got)
+		}
+	}
+
+	// The Delay shape in the same process is still caught.
+	nodes := []processNode{
+		lintNode(nStart, "Start", 1, []map[string]interface{}{lgGo(nA)}),
+		lintNode(nA, "call", 0, []map[string]interface{}{
+			{"type": "api_rpc", "err_node_id": nFin}, lgGo(nB),
+		}, sem10s),
+		lintNode(nB, "cooldown", 0, []map[string]interface{}{lgGo(nFin)}, sem10s),
+		lintNode(nFin, "done", 2, nil),
+	}
+	got := findShortTimers(nodes)
+	if len(got) != 1 || got[0].ID != nB {
+		t.Fatalf("expected only the Delay node flagged, got %+v", got)
+	}
+
+	// A routing-only Condition node that holds the task is a delay too.
+	cond := []processNode{
+		lintNode(nStart, "Start", 1, []map[string]interface{}{lgGo(nA)}),
+		lintNode(nA, "retry gate", 3, []map[string]interface{}{lgIf(nFin), lgGo(nFin)}, sem10s),
+		lintNode(nFin, "done", 2, nil),
+	}
+	if got := findShortTimers(cond); len(got) != 1 {
+		t.Fatalf("routing-only node with a hold timer must be flagged, got %+v", got)
+	}
+}

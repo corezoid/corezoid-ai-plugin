@@ -298,6 +298,11 @@ the specified time, the task is routed to a timeout node:
 This provides an alternative to the built-in timeout mechanism and allows for more flexible timeout
 handling.
 
+The 30-second minimum documented for the [Delay node](delay-node.md) does **not** apply here. On a
+Delay node the time semaphore is how long the task is held, and the server enforces a floor on it;
+on an API Call node the same JSON is an escalation timeout, and a shorter value — 10 sec, say —
+deploys and runs normally.
+
 ### Count Semaphores
 
 Count semaphores can be used to implement rate limiting for API calls. If the number of concurrent

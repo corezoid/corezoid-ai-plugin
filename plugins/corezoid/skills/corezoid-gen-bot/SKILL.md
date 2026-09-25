@@ -772,7 +772,7 @@ Per entry in PLAN.md `Commands`:
    ```
    Fix every deploy-blocking finding in the design. Do **not** pass
    `force=true`: the structural findings this generator can plausibly trip
-   (missing default `go`, a shared error cluster, a sub-30 s semaphore, an
+   (missing default `go`, a shared error cluster, a sub-30 s Delay, an
    `err_node_id` pointing at an `obj_type:0` node, a self-referencing
    `api_copy`) describe a graph the server rejects, and `force` does not bypass
    them.
