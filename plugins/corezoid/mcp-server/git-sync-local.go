@@ -181,16 +181,46 @@ func buildMirrorBlock(stageID int, stageName, extDocsDir string, processes []pro
 	return sb.String()
 }
 
+// extractMirrorBlock returns the BEGIN…END corezoid-mirror region of s,
+// markers included and terminated by a single newline, and true. It returns
+// "", false when s holds no complete block.
+func extractMirrorBlock(s string) (string, bool) {
+	start := strings.Index(s, mirrorBeginMarker)
+	if start == -1 {
+		return "", false
+	}
+	end := strings.Index(s[start:], mirrorEndMarker)
+	if end == -1 {
+		return "", false
+	}
+	return s[start:start+end+len(mirrorEndMarker)] + "\n", true
+}
+
 // injectMirrorBlock replaces the corezoid-mirror block inside existing content,
 // or prepends a new block if none is present.
 // Content outside the markers (e.g. Developer Notes added by the skill) is preserved.
+//
+// Only the marker-delimited part of newBlock is injected: a source that also
+// carries content outside the markers (a stage CLAUDE.md that an older version
+// wrote as the whole merged root file) would otherwise add that content again
+// next to the copy already in existing, on every call. Blank lines between the
+// block and what follows it are normalised, so repeated calls are idempotent.
 func injectMirrorBlock(existing, newBlock string) string {
-	start := strings.Index(existing, mirrorBeginMarker)
-	end := strings.Index(existing, mirrorEndMarker)
-	if start != -1 && end != -1 && end > start {
-		before := existing[:start]
-		after := strings.TrimPrefix(existing[end+len(mirrorEndMarker):], "\n")
-		return before + newBlock + "\n" + after
+	if block, ok := extractMirrorBlock(newBlock); ok {
+		newBlock = block
+	}
+	if start := strings.Index(existing, mirrorBeginMarker); start != -1 {
+		if end := strings.Index(existing[start:], mirrorEndMarker); end != -1 {
+			before := existing[:start]
+			after := strings.TrimLeft(existing[start+end+len(mirrorEndMarker):], "\r\n")
+			if after == "" {
+				return before + newBlock
+			}
+			return before + newBlock + "\n" + after
+		}
+	}
+	if strings.TrimSpace(existing) == "" {
+		return newBlock
 	}
 	return newBlock + "\n" + existing
 }
@@ -226,7 +256,11 @@ func generateLocalCLAUDEMD(ctx context.Context, stagePath string) error {
 	}
 	merged := injectMirrorBlock(existing, newBlock)
 
-	if err := os.WriteFile(stageClaudeFile, []byte(merged), 0644); err != nil {
+	// The stage copy holds only the mirror block, the shape the mirror bot
+	// produces. Writing the merged root file here made copyStageCLAUDEMD put
+	// the developer's own notes back into the root on the next server start,
+	// adding one more copy of them per launch.
+	if err := os.WriteFile(stageClaudeFile, []byte(newBlock), 0644); err != nil {
 		return fmt.Errorf("cannot write stage CLAUDE.md: %w", err)
 	}
 
