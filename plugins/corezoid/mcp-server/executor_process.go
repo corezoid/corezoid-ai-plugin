@@ -388,23 +388,6 @@ func (validator *Executor) ProcessJSON(filePath, jsonContent string) (newProcess
 		return nil, err
 	}
 
-	// Conv-level metadata is not part of the scheme, so everything uploaded
-	// above left the server's title and description exactly as they were. Send
-	// them from the file, which push treats as the source of truth for the rest
-	// of the process too (issue #175). Skipped right after a create — that op
-	// already carried both fields.
-	if !validator.NewProc {
-		title, _ := newProcessData["title"].(string)
-		var desc *string
-		if d, ok := newProcessData["description"].(string); ok {
-			desc = &d
-		}
-		if err = validator.ModifyConv(validator.ProcessID, title, desc); err != nil {
-			err = fmt.Errorf("error updating process title/description: %v", err)
-			return nil, err
-		}
-	}
-
 	err = validator.ModifyNodes(nodes)
 	if err != nil {
 		return nil, err
@@ -477,6 +460,26 @@ func (validator *Executor) ProcessJSON(filePath, jsonContent string) (newProcess
 	}
 
 	committed = true
+
+	// Conv-level metadata is not part of the scheme, so everything uploaded
+	// above left the server's title and description exactly as they were. Send
+	// them from the file, which push treats as the source of truth for the rest
+	// of the process too (issue #175). Skipped right after a create — that op
+	// already carried both fields. Done only after the node graph itself has
+	// committed: ModifyConv is a live, unversioned write with no rollback, so
+	// running it before Commit could succeed and stick even when a later step
+	// (compile, git_call build, commit) failed the overall push.
+	if !validator.NewProc {
+		title, _ := newProcessData["title"].(string)
+		var desc *string
+		if d, ok := newProcessData["description"].(string); ok {
+			desc = &d
+		}
+		if err = validator.ModifyConv(validator.ProcessID, title, desc); err != nil {
+			err = fmt.Errorf("process deployed, but failed to update title/description: %v", err)
+			return nil, err
+		}
+	}
 
 	// The deploy is committed — now it is safe to sync the local file to the
 	// server's canonical node IDs.
