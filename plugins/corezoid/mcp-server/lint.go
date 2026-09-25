@@ -152,8 +152,9 @@ type MissingDefaultGo struct {
 	Issue string
 }
 
-// ShortTimer is a time semaphor below the platform minimum: the server rejects
-// the deploy with "Timer value N sec is less than minimum limit 30 sec".
+// ShortTimer is a Delay node holding a task for less than the platform
+// minimum: the server rejects the deploy with "Timer value N sec is less than
+// minimum limit 30 sec". Only delay-shaped nodes qualify — see findShortTimers.
 type ShortTimer struct {
 	ID    string
 	Title string
@@ -695,13 +696,50 @@ func findMissingDefaultGo(nodes []processNode) []MissingDefaultGo {
 	return result
 }
 
-// findShortTimers flags numeric time semaphors under 30 seconds — the server
-// minimum. Template values ("{{delay}}") are left alone: they resolve at run
-// time and cannot be checked statically.
+// lintRoutingLogicTypes are the logic types that only move a task onward
+// without doing anything to it. A node built from nothing but these holds the
+// task and then routes it — that is a Delay node, and its time semaphor IS the
+// delay.
+var lintRoutingLogicTypes = map[string]bool{
+	"go":          true,
+	"go_if_const": true,
+}
+
+// isDelayNode reports whether a node's only job is to hold the task.
+//
+// The allowlist is deliberately the routing types rather than a denylist of
+// action types: an unrecognised logic type reads as "this node does something",
+// so a node type added to the platform later never starts failing pushes over a
+// timeout it is entitled to have.
+func isDelayNode(n processNode) bool {
+	for _, lg := range n.logics {
+		t, _ := lg["type"].(string)
+		if !lintRoutingLogicTypes[t] {
+			return false
+		}
+	}
+	return true
+}
+
+// findShortTimers flags numeric time semaphors under 30 seconds on Delay nodes
+// — the server minimum. Template values ("{{delay}}") are left alone: they
+// resolve at run time and cannot be checked statically.
+//
+// The node shape is the whole point of the rule. The same
+// {"type":"time","value":10} appears in two unrelated roles: on a Delay node it
+// is how long the task is held, and the server enforces a 30 s floor on it; on
+// a node that performs work (api, api_rpc, api_code, db_call, git_call,
+// api_copy, api_callback, …) it is the timeout after which the task escalates
+// to to_node_id, and no floor applies — 10 s call timeouts deploy and run
+// normally. Flagging both shapes blocked pushes over timers the server accepts
+// (issue #176), so only delay-shaped nodes are checked.
 func findShortTimers(nodes []processNode) []ShortTimer {
 	dimSeconds := map[string]float64{"": 1, "sec": 1, "min": 60, "hour": 3600, "day": 86400}
 	var result []ShortTimer
 	for _, n := range nodes {
+		if !isDelayNode(n) {
+			continue // time semaphor here is a timeout, not a delay
+		}
 		for _, sem := range n.sems {
 			if t, _ := sem["type"].(string); t != "time" {
 				continue
@@ -735,7 +773,7 @@ func findShortTimers(nodes []processNode) []ShortTimer {
 			result = append(result, ShortTimer{
 				ID:    n.id,
 				Title: title,
-				Issue: fmt.Sprintf("time semaphor resolves to %g sec — below the server minimum of 30 sec; the deploy is rejected", v*mult),
+				Issue: fmt.Sprintf("delay holds the task %g sec — below the server minimum of 30 sec; the deploy is rejected with \"Timer value %g sec is less than minimum limit 30 sec\". Raise it to 30 sec, or use a dynamic {{...}} value for a shorter hold", v*mult, v*mult),
 			})
 		}
 	}
