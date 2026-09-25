@@ -184,3 +184,29 @@ func TestShortTimers_TimeoutsOnActionNodesAreNotDelays(t *testing.T) {
 		t.Fatalf("routing-only node with a hold timer must be flagged, got %+v", got)
 	}
 }
+
+// Regression: the Corezoid UI's default Delay node shape puts the hold value
+// directly on a `"type":"delay"` logic entry, not on a time semaphor (see
+// docs/nodes/delay-node.md "Default Configuration"). That value must be
+// checked against the same 30-second floor.
+func TestShortTimers_DelayLogicType(t *testing.T) {
+	lgDelay := func(v interface{}, dim string) map[string]interface{} {
+		return map[string]interface{}{"type": "delay", "value": v, "dimension": dim, "to_node_id": nFin}
+	}
+	mk := func(v interface{}, dim string) []processNode {
+		return []processNode{
+			lintNode(nStart, "Start", 1, []map[string]interface{}{lgGo(nA)}),
+			lintNode(nA, "Delay", 0, []map[string]interface{}{lgDelay(v, dim)}),
+			lintNode(nFin, "done", 2, nil),
+		}
+	}
+	if got := findShortTimers(mk(float64(5), "sec")); len(got) != 1 || got[0].ID != nA {
+		t.Fatalf("expected 5s delay-logic timer flagged, got %+v", got)
+	}
+	if got := findShortTimers(mk(float64(30), "sec")); len(got) != 0 {
+		t.Fatalf("30s delay-logic timer is legal, got %+v", got)
+	}
+	if got := findShortTimers(mk("{{delay}}", "sec")); len(got) != 0 {
+		t.Fatalf("template delay-logic value must be left alone, got %+v", got)
+	}
+}

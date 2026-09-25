@@ -721,9 +721,32 @@ func isDelayNode(n processNode) bool {
 	return true
 }
 
-// findShortTimers flags numeric time semaphors under 30 seconds on Delay nodes
-// — the server minimum. Template values ("{{delay}}") are left alone: they
-// resolve at run time and cannot be checked statically.
+// timerSeconds converts a semaphor/logic {value, dimension} pair to seconds.
+// value may be a number or a numeric string; a template ("{{...}}") resolves
+// at run time and cannot be checked statically, so it reports !ok.
+func timerSeconds(value interface{}, dimension string) (seconds float64, ok bool) {
+	dimSeconds := map[string]float64{"": 1, "sec": 1, "min": 60, "hour": 3600, "day": 86400}
+	mult, known := dimSeconds[dimension]
+	if !known {
+		return 0, false // unknown dimension — leave for the server
+	}
+	switch raw := value.(type) {
+	case float64:
+		return raw * mult, true
+	case string:
+		parsed, err := strconv.ParseFloat(strings.TrimSpace(raw), 64)
+		if err != nil {
+			return 0, false
+		}
+		return parsed * mult, true
+	default:
+		return 0, false
+	}
+}
+
+// findShortTimers flags numeric time semaphors/logics under 30 seconds on
+// Delay nodes — the server minimum. Template values ("{{delay}}") are left
+// alone: they resolve at run time and cannot be checked statically.
 //
 // The node shape is the whole point of the rule. The same
 // {"type":"time","value":10} appears in two unrelated roles: on a Delay node it
@@ -732,11 +755,31 @@ func isDelayNode(n processNode) bool {
 // api_copy, api_callback, …) it is the timeout after which the task escalates
 // to to_node_id, and no floor applies — 10 s call timeouts deploy and run
 // normally. Flagging both shapes blocked pushes over timers the server accepts
-// (issue #176), so only delay-shaped nodes are checked.
+// (issue #176), so time semaphors are only checked on routing-only
+// (isDelayNode) nodes. A `"type":"delay"` logic entry has no such dual role —
+// it IS the hold, in whatever node it appears in — so it is always checked.
 func findShortTimers(nodes []processNode) []ShortTimer {
-	dimSeconds := map[string]float64{"": 1, "sec": 1, "min": 60, "hour": 3600, "day": 86400}
 	var result []ShortTimer
 	for _, n := range nodes {
+		title := n.title
+		if title == "" {
+			title = "(untitled)"
+		}
+		for _, lg := range n.logics {
+			if t, _ := lg["type"].(string); t != "delay" {
+				continue
+			}
+			dim, _ := lg["dimension"].(string)
+			v, ok := timerSeconds(lg["value"], dim)
+			if !ok || v >= 30 {
+				continue
+			}
+			result = append(result, ShortTimer{
+				ID:    n.id,
+				Title: title,
+				Issue: fmt.Sprintf("delay holds the task %g sec — below the server minimum of 30 sec; the deploy is rejected with \"Timer value %g sec is less than minimum limit 30 sec\". Raise it to 30 sec, or use a dynamic {{...}} value for a shorter hold", v, v),
+			})
+		}
 		if !isDelayNode(n) {
 			continue // time semaphor here is a timeout, not a delay
 		}
@@ -744,36 +787,15 @@ func findShortTimers(nodes []processNode) []ShortTimer {
 			if t, _ := sem["type"].(string); t != "time" {
 				continue
 			}
-			mult, known := dimSeconds[func() string { d, _ := sem["dimension"].(string); return d }()]
-			if !known {
-				continue // unknown dimension — leave for the server
-			}
-			// value may be a number or a numeric string; a template ("{{...}}")
-			// resolves at run time and cannot be checked statically.
-			var v float64
-			switch raw := sem["value"].(type) {
-			case float64:
-				v = raw
-			case string:
-				parsed, err := strconv.ParseFloat(strings.TrimSpace(raw), 64)
-				if err != nil {
-					continue
-				}
-				v = parsed
-			default:
+			dim, _ := sem["dimension"].(string)
+			v, ok := timerSeconds(sem["value"], dim)
+			if !ok || v >= 30 {
 				continue
-			}
-			if v*mult >= 30 {
-				continue
-			}
-			title := n.title
-			if title == "" {
-				title = "(untitled)"
 			}
 			result = append(result, ShortTimer{
 				ID:    n.id,
 				Title: title,
-				Issue: fmt.Sprintf("delay holds the task %g sec — below the server minimum of 30 sec; the deploy is rejected with \"Timer value %g sec is less than minimum limit 30 sec\". Raise it to 30 sec, or use a dynamic {{...}} value for a shorter hold", v*mult, v*mult),
+				Issue: fmt.Sprintf("delay holds the task %g sec — below the server minimum of 30 sec; the deploy is rejected with \"Timer value %g sec is less than minimum limit 30 sec\". Raise it to 30 sec, or use a dynamic {{...}} value for a shorter hold", v, v),
 			})
 		}
 	}
