@@ -1,6 +1,6 @@
 ---
 name: corezoid-edit-bot
-description: Iteratively edits an already-built messenger bot from corezoid-gen-bot — a Corezoid Communications Orchestrator serving Telegram, Viber, Apple Messages for Business and Facebook Messenger over a backend of existing Corezoid processes called with api_rpc. Runs a lean plan → confirm → apply → lint → push → smoke-test loop. `plan` writes `.corezoid-gen-bot/CHANGE.md` (scope + processes + tasks + the smoke test that proves it) and stops; `execute` reads CHANGE.md, applies it, lints and pushes each touched process, updates Localization/Attachments tasks with deep_merge, and smoke-tests every affected command through the Router and through Send Message; `deploy` promotes one stage onto another. Trigger on phrases like "измени бота", "поправь бота", "добавь команду", "убери команду", "переименуй команду", "подключи ещё процесс", "поменяй текст бота", "поменяй клавиатуру", "добавь язык боту", "добавь шаг в диалог", "бот отвечает пустым сообщением", "бот отвечает дважды", "почему бот не отвечает", "edit bot", "modify bot", "add command to bot", "wire another process into the bot", "change bot copy", "fix the bot", "задеплой бота", "promote stage", or when the user references PLAN.md/CHANGE.md for a bot and asks for a change. Assumes CWD is the Corezoid workspace built by corezoid-gen-bot (contains `.corezoid-gen-bot/PLAN.md`, a `*.stage.json` marker and the pulled orchestrator folder). For a Smart Form web app over the same processes use `simulator-app-generator`.
+description: Iteratively edits an already-built messenger bot from corezoid-gen-bot — a Corezoid Communications Orchestrator serving Telegram, Viber, Apple Messages for Business and Facebook Messenger over a backend of Corezoid processes called with api_rpc. Runs a lean plan → confirm → apply → lint → push → smoke-test loop — see "Modes" for plan/execute/deploy. Trigger on "измени/поправь бота", "добавь/убери/переименуй команду", "подключи ещё процесс", "поменяй текст/клавиатуру бота", "добавь язык боту", "добавь шаг в диалог", "бот отвечает пустым/дважды", "почему бот не отвечает", "edit/modify bot", "add command to bot", "wire another process into the bot", "change bot copy", "fix the bot", "задеплой бота", "promote stage", or when the user references PLAN.md/CHANGE.md for a bot. Assumes CWD is the workspace corezoid-gen-bot built (`.corezoid-gen-bot/PLAN.md`, a `*.stage.json` marker, the pulled orchestrator folder). For a Smart Form web app over the same processes use `simulator-app-generator`.
 ---
 
 # corezoid-edit-bot
@@ -38,6 +38,17 @@ the Corezoid workspace as the working directory. Every short
 `${CLAUDE_PLUGIN_ROOT}/skills/corezoid-edit-bot/references/`, and every
 `corezoid-gen-bot/references/<file>` under
 `${CLAUDE_PLUGIN_ROOT}/skills/corezoid-gen-bot/references/`.
+
+Steps 4–7 (execute mode) are each detailed in their own reference file — load
+the one for the step you're about to run, not all of them up front:
+
+| Document | Step |
+|---|---|
+| `${CLAUDE_PLUGIN_ROOT}/skills/corezoid-edit-bot/references/step4_apply_change.md` | Step 4 — apply the change |
+| `${CLAUDE_PLUGIN_ROOT}/skills/corezoid-edit-bot/references/step5_lint_push.md` | Step 5 — lint and push |
+| `${CLAUDE_PLUGIN_ROOT}/skills/corezoid-edit-bot/references/step6_verify.md` | Step 6 — verify (and Step 6b — deploy mode) |
+| `${CLAUDE_PLUGIN_ROOT}/skills/corezoid-edit-bot/references/step7_report.md` | Step 7 — update PLAN.md and report |
+| `${CLAUDE_PLUGIN_ROOT}/skills/corezoid-edit-bot/references/rules.md` | Full rule list — read before Step 4 |
 
 ## When to use
 
@@ -376,460 +387,75 @@ to it. Never re-extract a domain contract for a CHANGE.md edit.
 
 ## Step 4: Apply the change
 
+Read `references/step4_apply_change.md` before running this step.
+
 Work only inside `processes_touched`, `tasks_touched`, `env_vars_touched` and
-the create/delete lists.
-
-### 4.1 Processes
-
-- **`push-process` cannot create a process.** A local file with `obj_id: 0` is
-  rejected with `Project or stage mismatch`, and once the process exists a push
-  with no recorded baseline is refused too. The working order for a new command
-  is:
-
-  ```
-  create-process  process_name: /{command}  folder_id: {template_ids.bots_folder}
-  pull-process    process_id: <the id it returned>     # records the baseline
-  <write the generated scheme into the pulled file, keeping its obj_id>
-  ```
-
-  `adopt_existing` is **not** the flag for this — it declares you do not know
-  what is on the server, whereas here you created the empty process seconds ago.
-  Keep the filename `create-process`/`pull-process` produced: the `<ID>_` prefix
-  is load-bearing, `push-process` and `lint-process` recover the process id from
-  it.
-- **New command** — start from
-  `corezoid-gen-bot/references/bot_reply.skeleton.json` (single reply) or
-  `bot_dialog.skeleton.json` (anything with a question), substitute every
-  `{{UPPER_CASE}}` placeholder from PLAN.md `template_ids` (including
-  `{{TEMPLATE_USER_ID}}` — read it off an existing `api_copy` in the pulled
-  Router), assign fresh 24-hex node ids unique within the process, then
-  `layout-process`. A `{{UPPER_CASE}}` inside an `api_code` `src` is a
-  generator-time substitution too: Corezoid does not interpolate `{{...}}` in
-  Code nodes. `{{BOTS_FOLDER_ID}}` and `{{TEMPLATE_USER_ID}}` are quoted in the
-  skeletons only to keep those files parseable JSON — **substitute both as bare
-  integers and drop the quotes**, or `push-process` fails schema validation
-  (`'/parent_id': got string, want null or integer`, and the same for `user_id`
-  on every `api_copy`), which `force` does not bypass.
-- **Edited command** — reference nodes **by title**, never by a remembered id:
-  `push-process` regenerates ids and rewrites the file, so any id from before
-  the last push is stale. Re-read the file after every push.
-- **Removed command** — prefer the reversible option and say which you chose:
-  - `pause-process` leaves the graph intact and rejects new tasks
-    (`conveyor_is_not_active`). It is a dry-run by default; to apply, pass
-    `apply: true` with `confirm: "process#<id>:<live_status>->paused"`. Note it
-    is admission control, not proof that tasks already parked in nodes stopped —
-    a user mid-dialog keeps their session.
-  - `delete-process` moves it to the recycle bin, restorable from the Corezoid
-    UI. `pull-process` first if you want a local backup.
-
-  Either way **the alias survives** (§0), still pointing at the paused or
-  trashed process. So the Router keeps dispatching to it and the user does *not*
-  get `commandNotFound` — observe what actually happens in Step 6 instead of
-  assuming, and if the name must stop resolving, that is an
-  `corezoid-alias-manager` job. Drop the `mainKeyboard` button and the
-  `mainMenu` mention, and **leave the Localization keys**: an orphan key costs
-  nothing, and deleting one another command still references renders an empty
-  message.
-- **Dialog step** — repeat the ask → wait → keep → validate block. Copy the new
-  answer into **its own** key in the Keep node; reading `{{message.text}}` later
-  in a multi-step dialog reads the latest message, not the answer that step
-  asked for. Give the step a reply `keyboard` where the value set is closed —
-  an `inline_keyboard` sends `callback_data`, which `Main → PARSE command`
-  interprets as a new command rather than as the answer
-  (`references/invariants.md` §4).
-- **Wire a process in / remap** — the `api_rpc` node's `extra` / `extra_type`
-  and the outcome-mapping Code node change together; a new `extra` key with no
-  source in the dialog is a call that silently sends an empty string. Keep the
-  `time` semaphore ≥ 30 s and prefer `@alias` over a numeric `conv_id` (a
-  numeric id is stage-specific and does not survive a `deploy-stage`
-  promotion). **Verify the alias you are about to call points where you think:**
-  match on `obj_to_id` in `_ALIASES_.json`, never on the name — in the reference
-  workspace `promolist`, `recovery-password` and `registration-verify-success`
-  all resolved to deprecated `..._old/API:` copies rather than to the processes
-  the user handed in. Fragments in
-  `corezoid-gen-bot/references/rpc_call.nodes.json`.
-- **The second domain call in a command is a structural change, not an
-  addition.** An `api_rpc` callee's `res_data` merges into the caller's task at
-  top level, and every process in this family replies with the same
-  `{result, code}` envelope — so adding a second call means the existing call
-  now needs a namespacing **`api_code`** after it too (not a `set_param`: lint
-  cannot see a `data.result` read inside JavaScript and fails the file with
-  `UNUSED SET_PARAM`). Set `namespacing_required: true` in CHANGE.md and touch
-  both calls, or the command starts branching on the wrong verdict.
-- **Forward every value the message needs.** Whenever this change adds a
-  `{{var}}` to a text, adds a dynamic attachment, or repoints a call at a
-  process with different payload keys, the Send Message `api_copy`'s `data`
-  changes too. `references/invariants.md` §1 is the full rule; it is the single
-  most common way an edit passes every test and is wrong in the chat.
-- **Never edit a handed-in domain process.** They are someone else's system and
-  the bot is a caller, not an owner. If one genuinely has to change, say so and
-  hand it to `corezoid:corezoid-edit` with the user's agreement, then
-  `/corezoid-gen-bot refresh` to pick up the new contract.
-- **Template edit** — only with the guard from `references/change_kinds.md`:
-  named confirmation, `create-snapshot` first, no `force`, no
-  `overwrite_server_change`, no `allow_no_snapshot`, and a full-command
-  regression.
-
-### 4.2 Tasks — Localization and Attachments
-
-These hold runtime task data, so they are written with the task actions, never
-`push-process`. The lines below are shorthand: `show-task process_id: X ref: Y`
-means `cz-tasks {"action": "show-task", "args": {"process_id": X, "ref": "Y"}}`.
-
-```
-show-task    process_id: {template_ids.localization}  ref: localization     # read before writing
-modify-task  process_id: {template_ids.localization}  ref: localization \
-             deep_merge: true  data: {"newKey": {"en":"…","ru":"…","uk":"…"}}
-run-task     process_path: <Attachments path>  ref: <new attachment_id>  data: {…}
-modify-task  process_id: {template_ids.attachments}  ref: mainKeyboard \
-             deep_merge: true  data: {…}
-```
-
-`deep_merge: true` is **mandatory** on every `modify-task` here. The Corezoid
-task API merges only top-level keys: a shallow write of one language for a
-`text_id` replaces the whole language map, and a shallow write of one channel
-for an `attachment_id` drops the other three. That failure is silent and only
-shows up as an empty message on the channels you did not send.
-
-**Read the document with `show-task` before writing it.** It tells you which
-keys already exist (so you extend rather than clobber), which languages the
-wizard actually seeded, and whether the key you are "changing" is a shared one
-(§1.1). Notably `serviceError` is **not** shipped by the wizard even though both
-skeletons reference it on every error path — if a command you touch relies on it
-and it is absent, seed it, or every failure delivers an empty message.
-
-**Seed every language the wizard created, not just PLAN.md's `lang`.** It seeds
-`en`, `ru` and `uk` regardless, and Send Message picks the language from
-`User Profile.language`, which the Telegram receiver derives from
-`message.from.language_code`. A user whose client is English gets `en`; if that
-key is missing for your `text_id`, they get nothing — there is no fallback.
-
-Adding a locale means touching **every** key, not just the ones this change
-introduced.
-
-**`run-task` on a state diagram always reports the task as "still in progress /
-parked at a non-final node". That is success, not an error** — on a state
-diagram the task *is* the stored document, and it sits in the state node by
-design. The tool echoes the data it stored; check that and move on. Do not
-retry with a larger `wait_sec`.
-
-Attachment shapes, the `keyboard` vs `inline_keyboard` rule, per-page item caps
-and the `items: ""` trap are in
-`corezoid-gen-bot/references/attachments.seed.json` and
-`references/invariants.md`.
-
-### 4.3 Env vars
-
-Only if the change genuinely needs one. If a domain call has to carry a
-credential the domain process does not source itself, put it in a stage env var
-(`create-variable`, secret) and reference it as `{{env_var[@name]}}` — never
-inline it into process JSON, because a pulled mirror is a git-tracked artifact.
-
-`modify-variable` is a dry-run by default and needs `apply=true` plus
-`confirm="<short_name>#<obj_id>"`. Show the user the diff first. Renaming a
-variable breaks every `{{env_var[@old-name]}}` reference in the stage — prefer
-changing the value.
+the create/delete lists CHANGE.md named. Covers: `push-process` cannot create a
+process (create → pull for baseline → write → push); a new command starts from
+the right skeleton with every `{{UPPER_CASE}}` placeholder substituted
+(`parent_id`/`user_id` are numeric, not string); edited commands are referenced
+by title, never a remembered id; removing a command prefers `pause-process` or
+`delete-process` over deletion, and the alias survives either way; a second
+domain call in a command needs a namespacing `api_code`, not a `set_param`;
+every new `{{var}}` in a text or a repointed call changes the Send Message
+`data` block too; and a handed-in domain process is never edited from this
+skill.
 
 ## Step 5: Lint and push
 
-Per touched process, in order:
+Read `references/step5_lint_push.md` before running this step.
 
-```
-layout-process  process_path: <path>     # x/y only
-lint-process    process_path: <path>
-push-process    process_path: <path>
-create-alias    process_path: <path>  short_name: <command minus slash>   # new commands only
-```
-
-Fix every deploy-blocking lint finding in the design. Do **not** pass
-`force=true`: the findings this generator can plausibly trip — a logics array
-not ending in a default `go`, a shared error cluster, a time semaphore under
-30 s, an `err_node_id` pointing at an `obj_type:0` node, a self-referencing
-`api_copy`/`api_rpc` — describe a graph the server rejects or the UI
-force-converts, and `force` does not bypass them. `force` is the lint override
-only; it waives neither the concurrency gate nor Stub Mode.
-
-`create-alias` needs no `stage_id`: it derives the stage by walking the process
-file's `parent_id` chain. An `Object is not in stage` error means the local file
-is stale — re-`pull-process` it so its `parent_id` points at the current stage.
-
-**A concurrent server change means someone edited this orchestrator elsewhere.**
-The push reports local edits, server changes, the true overlap and the last
-known author. Two honest resolutions, in order of preference:
-
-1. `push-process merge=true` — writes a reviewable local 3-way merge plus a
-   `.pre-merge` backup and deploys **nothing**. Read the merge, fix the
-   conflicts, push again.
-2. Re-pull and re-apply your edit on top.
-
-Do not reach for `overwrite_server_change` without showing the user the report
-and getting explicit agreement — it discards a change nobody has seen.
-
-**Snapshots.** `push-process` takes a pre-push snapshot of every process that
-already has a deployed version; a **never-deployed** process is exempt, so the
-first push of a command you just created via `create-process` needs no waiver on
-current builds. If a snapshot attempt does fail, the push blocks, and the safer
-default is to wait for the API rather than waive. `allow_no_snapshot=true` is
-defensible only on a resolved mutable non-production-like stage, for a process
-whose recorded baseline you have confirmed has **zero nodes** — and it is
-refused outright on immutable or production-like stages even with the flag.
-Report every waived gate in the Step 7 report, never only in the log.
+Per touched process: `layout-process` → `lint-process` → `push-process` →
+`create-alias` for new commands. Never `force=true` past a structural finding.
+A concurrent server change resolves with `merge=true` or a re-pull, never
+`overwrite_server_change` without showing the user the report first. A
+never-deployed process is exempt from the snapshot gate; anything else that
+blocks on a snapshot should wait, not waive.
 
 ## Step 6: Verify
 
-Run the CHANGE.md verification checklist, in this order, stopping at the first
-failure. `references/repair_loop.md` maps a symptom to the layer at fault.
+Read `references/step6_verify.md` before running this step.
 
-1. `grep -rnE '\{\{[A-Z_]+\}\}'` over touched processes — empty.
-2. `grep -rniE 'bot[0-9]{6,}:|page_access_token|viber_token|abc_token'` over
-   the whole tree including PLAN.md/CHANGE.md — empty.
-3. `lint-process` clean on every touched process.
-4. `show-task process_id: {template_ids.localization} ref: localization` — every
-   `text_id` any touched process
-   references exists in **every language the wizard seeded**, and every
-   `{{placeholder}}` in it is a key the sending process actually produces
-   (`success.keys` in `bot-contract.json`). Also: `{{t'key}}` with no dot, and
-   no dotted `{{a.b}}` anywhere — the interpolation regex is `/{{\w+}}/ig` and
-   `\w` excludes `.`, so a dotted placeholder reaches the chat verbatim.
-5. `show-task process_id: {template_ids.attachments} ref: <attachment_id>` per
-   touched attachment — one key per channel in `channels`,
-   remembering the naming asymmetry: the wizard's messenger key is
-   `fbmessenger`, but Send Message dispatches on `channel == "facebook"`, so
-   attachment keys and `go_if_const` conditions use `facebook`. A check written
-   against `fbmessenger` passes while the channel renders nothing.
-6. **Forwarding check — the one nothing else catches.** For every Send Message
-   `api_copy` in every touched process, take the `text_id` it sends, look up
-   that string in Localization, and confirm each `{{var}}` in it is a key of
-   **that node's `data`**; then confirm every node whose `attachment_id` is a
-   dynamic pattern also forwards `items` and `currentPage`. Do this as a script
-   over the schemes, not by eye — `show-task` returns hundreds of lines of
-   template copy with no way to diff it against the graph. Two shapes need care:
-   a node sending the literal `{{text_id}}` can carry any `text_id` a Code node
-   assigns, so union them (and take a ternary's strings from after the `?`); and
-   where the union is wider than a branch can reach, forward the extra values
-   anyway — it costs a few fields and keeps the invariant true if a branch is
-   ever repointed.
-7. **`/end` check.** Every `END -> Router` `api_copy` carries `text_id: ""`
-   **and** a non-empty `attachment_id`, or the reply is delivered twice — the
-   second copy stripped of every interpolated value
-   (`references/invariants.md` §2).
-8. **The command on its own** — `run-task` at the touched command with
-   `{"channel":"telegram","chat_id":"<test id>","message":{"type":"text","text":"/<command>"}}`.
-   Assert the domain `api_rpc` returned, the namespaced keys are populated where
-   CHANGE.md says namespacing is required, `text_id` was set, and the task
-   reached `END -> Router`. A dialog parks on its wait node here **by design** —
-   that is the `api_callback` working; assert it *reached* the node, then deliver
-   the answer the way the Router does (an `api_copy` `mode:"modify"` on ref
-   `<channel>_<chat_id>`, or `modify-task` on the same ref) and confirm it
-   advances. A task parked forever on the domain call means the callee is paused
-   or reply-less: that is a contract misread, not a wiring bug — go back to
-   `/corezoid-gen-bot refresh`. Inspect with `list-task-history` when a task did
-   not go where you expected.
-9. **Render the message the way the user receives it.** Step 8 proves the
-   command computed the right things; it does **not** prove the user sees them.
-   The task data at `Done` will happily show
-   `bonusAmount: "0.00", text_id: "balanceDone"` while the delivered message
-   reads `Your card has {{bonusAmount}} bonus points.`, because the defect lives
-   in the `api_copy`'s `data` block. So per distinct `text_id` this change
-   touched, `run-task` on **Send Message** itself with
-   `{channel, chat_id, text_id, attachment_id}` plus the values the text
-   interpolates, and assert on `data.text` and `reply_markup`. With a synthetic
-   `chat_id` the Telegram call fails with `Bad Request: chat not found` — that is
-   expected and fine, because the text and attachment are resolved *before* the
-   send. **For a `copy` or `keyboard` change this is the primary test**, not the
-   Router run.
-10. **The smoke test from CHANGE.md**, observed, not assumed:
-    ```
-    run-task  process_path: <Router path>  wait_sec: 60 \
-              data: {"channel":"telegram","chat_id":"<test chat id>","command":"/order-status","message":{"type":"text","text":"/order-status"}}
-    ```
-    This is the only layer that proves the alias dispatch. `Command not found`
-    means the alias is wrong or missing. Then `show-task` on the command process
-    (ref `telegram_<chat_id>`) to confirm it started. Walk every alternate
-    outcome you can trigger — those are what a happy-path-only test misses.
-11. **Regression**, per `regression_scope`: at least one command this change did
-    not touch, or **every** command for a shared Localization/Attachments key or
-    a `template-edit` — that is what "shared by all commands and all four
-    channels" means.
-12. **Live check** where the user can do one. `run-task` proves the graph; only a
-    real client proves the webhook, the token and the rendered keyboard.
+Run the CHANGE.md verification checklist in order, stopping at the first
+failure: no leftover placeholders or tokens in the tree, clean lint, every
+`text_id`/`attachment_id` resolves in every seeded language and channel, the
+forwarding check (the one nothing else catches), the `/end` check, the touched
+command on its own via `run-task`, the message rendered through Send Message
+(not just the command's own task data), the CHANGE.md smoke test observed, and
+regression per `regression_scope`. `references/repair_loop.md` maps a symptom
+to the layer at fault. A clean lint is not a passing test.
 
-A clean lint is not a passing test. Never report a command as working without an
-observed run behind it.
-
-### Step 6b: deploy mode
-
-```
-deploy-stage  project_id: <int>  source_stage_id: <int>  target_stage_id: <int> \
-              company_id: "<workspace id, string>"
-              # apply defaults to false — dry run, shows the diff and conflicts
-```
-
-Show the user the diff. Only then, with their confirmation of the exact
-source→target:
-
-```
-deploy-stage  … apply: true  confirm: "<source_stage_id>-><target_stage_id>"
-```
-
-Destructive, and irreversible on an immutable target. After it lands, re-run the
-Step 6 smoke test **against the target stage**: aliases and env vars are
-stage-scoped and are not migrated by the merge, the target's Localization and
-Attachments tasks are runtime data that a scheme merge does not carry, and the
-domain processes the bot calls may not exist there at all. A command carrying a
-**numeric** `conv_id` promotes into a stage where that id means something else
-or nothing — which is why domain calls use `@alias`, and why this check exists.
+**Step 6b — deploy mode:** `deploy-stage` dry-run first, show the diff, then
+`apply: true` with the exact `confirm: "<source>-><target>"`. Re-run the Step 6
+smoke test against the **target** stage afterward — aliases, env vars,
+Localization/Attachments task data and domain processes are not guaranteed to
+carry over, and a numeric `conv_id` promotes into a stage where it means
+something else or nothing. Full detail in `references/step6_verify.md`.
 
 ## Step 7: Update PLAN.md and report
 
-1. **Apply `plan_impact`** — edit PLAN.md's `Commands`, `Coverage`,
-   `Localization keys`, `Attachments`, `Menu wiring`, `locales` and
-   `template_ids` to match what now exists, and `bot-contract.json` if this
-   change re-derived a contract. PLAN.md describes the live orchestrator; a
-   stale plan makes the next edit guess, and a stale `Coverage` table is how a
-   process quietly stops being served.
-2. Leave CHANGE.md in place as the record of this change. The next `plan` run
-   overwrites it.
-3. Report in one compact block:
-   - What changed — processes created/pushed/paused/deleted, aliases created,
-     tasks written, env vars touched.
-   - **Aliases left dangling**, and what still resolves because of it.
-   - **Smoke-test results** — one row per command exercised, with the observed
-     outcome and, for anything red, the node the task parked at. Include the
-     Send Message render for every touched `text_id`.
-   - Regression result, and its scope.
-   - Any waived gate (`allow_no_snapshot`, `overwrite_server_change`) and why.
-   - Anything the user must do by hand (delete an alias through the API,
-     register a webhook, translate a string you could not).
-   - `folder_url` for convenience.
+Read `references/step7_report.md` before running this step.
+
+Apply `plan_impact` to PLAN.md (`Commands`, `Coverage`, `Localization keys`,
+`Attachments`, `Menu wiring`, `locales`, `template_ids`) so it still describes
+the live orchestrator, leave CHANGE.md as the record of this change, then
+report: what changed, aliases left dangling, smoke-test results per command
+including the Send Message render, regression result, any waived gate, what
+the user must do by hand, and `folder_url`.
 
 ## Rules
 
-- **Never call `create-communications-orchestrator` from this skill.** It builds
-  a whole second orchestrator that steals the webhooks from this one, and there
-  is no undo. Adding a channel is the one request that genuinely needs a new
-  build — say so and hand back to `corezoid-gen-bot`.
-- **`create-alias` is the only alias tool there is.** An alias cannot be
-  deleted, repointed or renamed by any MCP tool, so a rename creates a second
-  alias and a removal leaves the name resolving. Say what survives; hand real
-  alias surgery to `corezoid:corezoid-alias-manager`.
-- **`pull-folder` requires a `folder_id`, and that value is the *stage* id from
-  the marker.** It writes to the stage root, not the cwd. The orchestrator's own
-  folder id fetches only that folder and still unzips it at the stage root,
-  destroying the folder boundary — after any pull, find the orchestrator by its
-  `<folder_id>_` name prefix, and stop if it is absent.
-- **Never hardcode a template process id.** Read every id from the pulled
-  mirror into PLAN.md `template_ids`. Ids in
-  `corezoid-gen-bot/references/template_map.md` are examples from one build, and
-  a stale id fails silently — the task simply never arrives.
-- **Never rename a pulled `<ID>_<Title>.conv.json`.** `push-process` and
-  `lint-process` recover the process id from the filename.
-- **`push-process` cannot create a process.** `create-process`, then
-  `pull-process` for the baseline, then write the scheme, then push.
-- **Answer the callability question before wiring a process**
-  (`contract_extraction.md` §2). An `api_rpc` into a paused or reply-less
-  process parks the task until the semaphore fires — a user waiting the full
-  30 s for an error — and `params` does not reveal it.
-- **Every `api_rpc` into a domain process carries a `time` semaphore of ≥ 30 s**,
-  routed to a node that tells the user and then copies `/end` into the Router.
-  Lint rejects anything below 30 s, so 30 s is also the floor on how fast a
-  command can fail.
-- **Call a domain process with `group: ""` and an explicit `extra`.**
-  `group: "all"` forwards the whole task — `channel`, `chat_id`, `message`, the
-  Router's bookkeeping — into somebody else's process.
-- **Adding a second domain call to a command means namespacing both calls**,
-  with an `api_code` rather than a `set_param`.
-- **A generated command must forward everything its message needs.** The
-  `api_copy` into Send Message sends only the fields in its `data`, and
-  `{{var}}` resolves against Send Message's own task — so forward each value the
-  text interpolates, plus `items`/`currentPage` for a dynamic attachment, and
-  use `items: ""` (not `[]`) when there are no rows. Changing copy that adds a
-  placeholder is therefore a process change, not just a task change.
-- **End every path with `text_id: ""` and a non-empty `attachment_id`.**
-  `group:"all"` leaks the command's own `text_id` into `/end`, and the Router
-  then sends the same message a second time without any interpolated value.
-- **`group:"all"` carries the whole task; `group:""` sends only `data`.** Send
-  Message takes `group:""` with explicit `channel`/`chat_id`; the Router takes
-  `group:"all"`.
-- **Every command ends by copying into the Router with `{"command":"/end"}` and
-  `group:"all"`** — including its error and timeout paths. A command that exits
-  any other way leaves the chat's System Diagram state `active`, so the user's
-  next message goes to a finished bot.
-- **Never edit a handed-in domain process.** Hand it to
-  `corezoid:corezoid-edit` with the user's agreement instead, then
-  `/corezoid-gen-bot refresh`.
-- **Never probe or smoke-test a `likely`/`unknown` side effect without the
-  user's agreement.** A `run-task` can send a real SMS or charge a real card.
-- **Keep the coverage table honest.** If a change stops a handed-in process
-  being served, move it to `Skipped processes` with a reason — never leave the
-  coverage row pointing at a command that no longer calls it.
-- **A command must be a legal alias once the `/` is stripped**
-  (`^/[a-z0-9][a-z0-9-]{2,}$`), and it must have an alias. Check candidates
-  against `_ALIASES_.json` — including `obj_to_id: null` rows, which hold a name
-  and resolve to nothing — and match on `obj_to_id`, not on the name, before
-  *calling* anything by `@alias`.
-- **Never generate or rename to `/start`, `/end`, `/exit`**, or to an alias
-  already in the stage.
-- **`modify-task` always with `deep_merge: true`** on Localization and
-  Attachments, and `show-task` before writing. Shallow is the default and it
-  silently drops the sub-keys you did not send.
-- **Seed every language the wizard created (`en`, `ru`, `uk`), not just `lang`.**
-  Send Message reads `User Profile.language` from the client's locale and there
-  is no fallback: a missing language for a `text_id` delivers an empty message.
-- **`serviceError` is not shipped by the wizard** — if a command you touch
-  references it and Localization lacks it, seed it, or every error path delivers
-  an empty message.
-- **`{{t'key}}` has no dot, and `{{var}}` is flat-keys-only.** `{{t'.key}}`
-  matches the replacer's regex and then fails the lookup; `{{a.b}}` is never
-  matched at all (`\w` excludes `.`) and reaches the chat verbatim. Flatten in a
-  Code node first.
-- **Attachment and condition keys use `facebook`; only the wizard's messenger
-  argument is `fbmessenger`.** A per-channel check written against the wrong one
-  passes while that channel renders nothing.
-- **Ask and confirm steps use a reply `keyboard`, never an `inline_keyboard`.**
-  A wait node reads `message.text`; `inline_keyboard` sends `callback_data`,
-  which `Main → PARSE command` interprets as a new command.
-- **Button payloads follow `/cmd__k1-v1_k2-v2`.** A literal `-` or `_` inside a
-  value splits it — never put free text in a payload.
-- **Reference nodes by title, re-read after every push.** `push-process`
-  regenerates node ids and rewrites the local file.
-- **A state-diagram `run-task` reporting "parked at a non-final node"
-  succeeded.** Do not retry it or treat it as an error.
-- **Corezoid Code nodes are ES5, and `{{...}}` is not interpolated in `src`.**
-  No `let`/`const`, arrow functions or template literals; read task data as
-  `data.x`. Any `{{UPPER_CASE}}` in a skeleton's `src` is substituted by the
-  generator, not at runtime.
-- **Alternate outcomes are outcomes, not errors.** `recovery`, `registration`
-  and friends keep their own `text_id`; mapping them to `serviceError` makes the
-  bot answer "something went wrong" to a normal user.
-- **A success text may only use keys in that process's `success.keys`.**
-- **Never `push-process --force`** past a structural lint finding, and prefer
-  `merge=true` over `overwrite_server_change` when the server has changed. Never
-  `overwrite_server_change` or `allow_no_snapshot` without showing the user the
-  report and getting explicit agreement — and never on an immutable or
-  production-like stage, where the platform refuses them anyway.
-- **A template edit needs named confirmation, a snapshot, and a full-command
-  regression.** The wizard's processes are shared by every command and all four
-  channels.
-- **A shared Localization or Attachments key has a template-sized blast
-  radius.** `mainMenu`, `mainKeyboard`, `serviceError`, `timeout`,
-  `commandNotFound`, `selectError`, `carouselPattern` — regression-test every
-  command.
-- **A clean `run-task` at `Done` is not proof the user saw the right message.**
-  Render each touched `text_id` through Send Message and assert on `data.text`
-  and `reply_markup`.
-- **Cap the repair loop at about three passes per defect.** If it is not
-  converging, stop and report precisely what fails, what you tried and what you
-  think the cause is. "7 of 8 commands pass, this one doesn't, here's why" is
-  worth far more than a loop that quietly gives up.
-- **State the evidence for any claim about the backend.** Name the field you
-  read before calling a domain process broken.
-- **Tokens and credentials never touch a file.** Not PLAN.md, not CHANGE.md,
-  not process JSON, not the chat summary.
-- **Never call `EnterPlanMode`.** The plan phase is normal execution — Steps
-  1–3 need Bash, Write and MCP tool calls.
-- **CHANGE.md is written by the AI only,** and it is the sole source of truth
-  for Steps 4–7. If a fact needed there is missing, that is a bug in Step 2 —
-  fix CHANGE.md first.
-- **Report only what was observed.** No command is green on the strength of a
-  clean lint.
+Full rule list, one per line with its reasoning: `references/rules.md`. Read it
+before Step 4 — it is a checklist to re-check against, not new material. The
+handful that matter most, everywhere: never call
+`create-communications-orchestrator` from this skill (no undo, steals the
+webhook from a live bot); `create-alias` is the only alias tool — an alias
+cannot be deleted, repointed or renamed; never hardcode a template process id,
+always re-read `template_ids` from the pulled mirror; never rename a pulled
+`<ID>_<Title>.conv.json`; every `api_rpc` into a domain process needs a ≥30 s
+`time` semaphore and `group: ""` with an explicit `extra`; never edit a
+handed-in domain process from this skill; never probe or smoke-test a
+`likely`/`unknown` side effect without the user's agreement; tokens and
+credentials never touch a file; never call `EnterPlanMode`; cap the repair loop
+at about three passes per defect and report precisely what fails; report only
+what was observed — no command is green on the strength of a clean lint.
