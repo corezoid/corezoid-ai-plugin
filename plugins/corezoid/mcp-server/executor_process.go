@@ -265,7 +265,11 @@ func (validator *Executor) ProcessJSON(filePath, jsonContent string) (newProcess
 	if validator.ProcessID == 0 {
 		validator.NewProc = true
 		title, _ := processDataOfAI["title"].(string)
-		validator.ProcessID, err = validator.CreateEmptyProcess(0, title, "")
+		// The file's description rides along with the create op: there is no
+		// conv to modify yet at this point, and passing "" here is what left
+		// CreateEmptyConv's desc parameter dead code (issue #175).
+		desc, _ := processDataOfAI["description"].(string)
+		validator.ProcessID, err = validator.CreateEmptyProcess(0, title, desc)
 		if validator.ProcessID == 0 {
 			if err == nil {
 				err = fmt.Errorf("failed to create process")
@@ -382,6 +386,23 @@ func (validator *Executor) ProcessJSON(filePath, jsonContent string) (newProcess
 	if err != nil {
 		err = fmt.Errorf("error setting params: %v", err)
 		return nil, err
+	}
+
+	// Conv-level metadata is not part of the scheme, so everything uploaded
+	// above left the server's title and description exactly as they were. Send
+	// them from the file, which push treats as the source of truth for the rest
+	// of the process too (issue #175). Skipped right after a create — that op
+	// already carried both fields.
+	if !validator.NewProc {
+		title, _ := newProcessData["title"].(string)
+		var desc *string
+		if d, ok := newProcessData["description"].(string); ok {
+			desc = &d
+		}
+		if err = validator.ModifyConv(validator.ProcessID, title, desc); err != nil {
+			err = fmt.Errorf("error updating process title/description: %v", err)
+			return nil, err
+		}
 	}
 
 	err = validator.ModifyNodes(nodes)
@@ -555,6 +576,48 @@ func (v *Executor) CreateEmptyConv(folderID int, title, desc, convType string) (
 	}
 	logger.Error("Failed to create empty process")
 	return 0, fmt.Errorf("create returned no obj_id")
+}
+
+// ModifyConv updates the conv-level metadata of a process or state diagram —
+// the fields that live on the object itself rather than inside its scheme.
+// ProcessJSON's draft/commit cycle covers nodes and params only, so until this
+// existed a title or description edited in a .conv.json was uploaded nowhere:
+// push-process reported success and left the server's value untouched, which
+// made the documented corezoid-describe flow for a process a silent no-op
+// (issue #175).
+//
+// title is sent only when non-empty — a conv has no meaningful empty title, the
+// same convention ModifyFolder follows. description is a pointer so that "leave
+// it alone" (nil: the key is absent from the file) stays distinct from "clear
+// it" (a pointer to ""); otherwise a scheme-only file that never carried a
+// description would wipe the one on the server.
+func (v *Executor) ModifyConv(processID int, title string, description *string) error {
+	if title == "" && description == nil {
+		return nil // nothing to change — don't spend a round trip saying so
+	}
+	op := map[string]any{
+		"type":       "modify",
+		"obj":        "conv",
+		"obj_id":     processID,
+		"company_id": v.WorkspaceID,
+	}
+	if title != "" {
+		op["title"] = title
+	}
+	if description != nil {
+		op["description"] = *description
+	}
+	if v.Debug {
+		logger.Debug("Sending modify process metadata request")
+	}
+	resp, err := v.req("modify_process", []map[string]any{op})
+	if err != nil {
+		return fmt.Errorf("ModifyConv request failed: %w", err)
+	}
+	if _, err := firstOp(resp); err != nil {
+		return err
+	}
+	return nil
 }
 
 func (v *Executor) SetParams(params []interface{}) error {
