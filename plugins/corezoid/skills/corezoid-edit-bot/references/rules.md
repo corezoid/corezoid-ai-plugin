@@ -27,10 +27,10 @@ Full rule list for `corezoid-edit-bot`. Each rule restates something already arg
   (`contract_extraction.md` §2). An `api_rpc` into a paused or reply-less
   process parks the task until the semaphore fires — a user waiting the full
   30 s for an error — and `params` does not reveal it.
-- **Every `api_rpc` into a domain process carries a `time` semaphore of ≥ 30 s**,
-  routed to a node that tells the user and then copies `/end` into the Router.
-  Lint rejects anything below 30 s, so 30 s is also the floor on how fast a
-  command can fail.
+- **Every `api_rpc` into a domain process carries a `time` semaphore**, routed
+  to a node that tells the user and then copies `/end` into the Router. Lint
+  enforces no floor on it (it's a timeout, not a hold) — 30 s is a reasonable
+  default, not a required minimum.
 - **Call a domain process with `group: ""` and an explicit `extra`.**
   `group: "all"` forwards the whole task — `channel`, `chat_id`, `message`, the
   Router's bookkeeping — into somebody else's process.

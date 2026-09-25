@@ -100,12 +100,13 @@ smoke-test every command.
 All silent when broken — nothing fails at push time, the bot just misbehaves in
 a chat. Full versions in `invariants.md`.
 
-1. **A `time` semaphore of ≥ 30 s on every `api_rpc` into a domain process**
-   (§6), routed to a node that tells the user and then copies `/end` into the
-   Router. Without it a paused, hung or reply-less callee parks the task
-   forever: no message, and the chat's `System Diagram` state stays `active`, so
-   the user's next message goes into the dead command too. Lint rejects a value
-   below 30 s, so 30 s is also the floor on how fast a command can fail.
+1. **A `time` semaphore on every `api_rpc` into a domain process** (§6), routed
+   to a node that tells the user and then copies `/end` into the Router.
+   Without it a paused, hung or reply-less callee parks the task forever: no
+   message, and the chat's `System Diagram` state stays `active`, so the user's
+   next message goes into the dead command too. Lint enforces no floor on it
+   (it's a timeout, not a hold) — 30 s is a reasonable default, not a required
+   minimum.
 2. **Namespacing once a command makes two or more calls** (§7). `res_data`
    merges into the caller's task at top level and every process in this family
    replies with the same `{result, code}` envelope, so the second callee

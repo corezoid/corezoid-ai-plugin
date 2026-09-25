@@ -171,18 +171,19 @@ payload naming the old command has to be rewritten inside this grammar.
 
 ---
 
-## 6. Every `api_rpc` into a domain process needs a `time` semaphore of ≥ 30 s
+## 6. Every `api_rpc` into a domain process needs a `time` semaphore
 
-Lint rejects a value *below* 30 s but does not require one at all, and the
-template's own `api_rpc` nodes have none — their callees are in the same folder
-and always answer. A domain process is not that: it can be paused, hung or
-reply-less, and without a semaphore the task parks forever. No message, and the
-chat's System Diagram state stays `active`, so the user's next message goes into
-the dead command too.
+An `api_rpc` timeout is not a hold — lint does not enforce any floor on it (a
+sub-30 s value deploys and runs fine) — but it does not require one at all
+either, and the template's own `api_rpc` nodes have none — their callees are in
+the same folder and always answer. A domain process is not that: it can be
+paused, hung or reply-less, and without a semaphore the task parks forever. No
+message, and the chat's System Diagram state stays `active`, so the user's next
+message goes into the dead command too.
 
 Route the semaphore to a node that tells the user and **then copies `/end` into
-the Router** (§2). 30 s is therefore also the floor on how fast a command can
-fail — write the timeout copy to read sensibly after a half-minute.
+the Router** (§2). Pick a value that reads sensibly in the timeout copy —
+30 s is a reasonable default, not a required minimum.
 
 Call with `group: ""` and an explicit `extra`: `group: "all"` would forward the
 whole task — `channel`, `chat_id`, `message`, the Router's bookkeeping — into
