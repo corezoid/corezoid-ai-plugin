@@ -125,7 +125,7 @@ public/
 - `plugins/corezoid/mcp-server/tools_registry_collapsed.go` — the 54 router-fronted definitions, unchanged in content.
 - `plugins/corezoid/mcp-server/tools_router.go` — the routers, the action lists, `resolveRouterCall`, and the `help`/error text that serves an action's schema on demand.
 
-Rules the tests enforce: every collapsed tool is reachable through exactly one action and has a handler; a tool is either advertised or collapsed, never both; routers never appear in `noAuthTools`/`tokenOnlyTools` (gating happens on the resolved action); every advertised entry stays under 4 KB (`push-process` exempt); and every name — tool, router and action — appears in the README tools section.
+Rules the tests enforce: every collapsed tool is reachable through exactly one action and has a handler; a tool is either advertised or collapsed, never both; routers never appear in `noAuthTools`/`tokenOnlyTools` (gating happens on the resolved action); every advertised entry stays under 4 KB (`push-process` exempt); no advertised entry has a top-level `oneOf`/`anyOf`/`allOf` (the Anthropic API rejects the whole request over one); and every name — tool, router and action — appears in the README tools section.
 
 When adding a tool, decide first which half it belongs to: model-facing rules and frequent calls → `coreToolDefs`; one more CRUD operation on an existing domain → `collapsedToolRegistry` plus one `routerAction` line.
 
