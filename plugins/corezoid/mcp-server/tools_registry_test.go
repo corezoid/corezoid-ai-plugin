@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -17,6 +18,35 @@ func TestToolRegistryNoDuplicates(t *testing.T) {
 			t.Errorf("duplicate tool name in registry: %q", tool.Name)
 		}
 		seen[tool.Name] = true
+	}
+}
+
+// TestToolsList_NoTopLevelSchemaCombinators pins what the Anthropic Messages
+// API accepts as a tool's input_schema: a plain object with no oneOf, anyOf
+// or allOf at the top level. Hosts forward inputSchema verbatim, and the API
+// rejects the entire request over one such tool — every message in the
+// session fails, not just calls to it. A full JSON Schema compiler accepts
+// these keywords, which is how run-task shipped with one in 3.4.0–3.7.0.
+// Router-fronted definitions are exempt: their schema is only served as help
+// text, never as an input_schema.
+func TestToolsList_NoTopLevelSchemaCombinators(t *testing.T) {
+	for _, tool := range toolRegistry {
+		raw, err := json.Marshal(tool.InputSchema)
+		if err != nil {
+			t.Fatalf("marshal %s InputSchema: %v", tool.Name, err)
+		}
+		var schema map[string]any
+		if err := json.Unmarshal(raw, &schema); err != nil {
+			t.Fatalf("%s InputSchema is not a JSON object: %v", tool.Name, err)
+		}
+		for _, kw := range []string{"oneOf", "anyOf", "allOf"} {
+			if _, bad := schema[kw]; bad {
+				t.Errorf("%s: top-level %s in an advertised input schema; the Anthropic API "+
+					"rejects it (\"input_schema does not support oneOf, allOf, or anyOf at the "+
+					"top level\"). Move the rule into the description and the handler, or put "+
+					"the tool behind a router", tool.Name, kw)
+			}
+		}
 	}
 }
 

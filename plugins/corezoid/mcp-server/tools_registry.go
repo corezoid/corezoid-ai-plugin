@@ -45,8 +45,17 @@ func toolHints(readOnly, destructive, idempotent, openWorld bool) *toolAnnotatio
 }
 
 // processTargetAnyOf advertises the "identify the process by EXACTLY ONE of
-// process_path or process_id" contract shared by run-task and the snapshot
-// tools.
+// process_path or process_id" contract shared by the router-fronted snapshot
+// tools (create-, list-, get- and delete-snapshot).
+//
+// It must never go on a tool in tools/list. The Anthropic Messages API
+// rejects an input_schema with oneOf/anyOf/allOf at the top level ("tools.N.
+// custom.input_schema: input_schema does not support oneOf, allOf, or anyOf
+// at the top level"), and it rejects the whole request, so one such schema
+// fails every message in the session. run-task is advertised, so it states
+// the contract in its description and leaves enforcement to
+// resolveProcessID; router-fronted schemas are only served as help text.
+// TestToolsList_NoTopLevelSchemaCombinators enforces the split.
 //
 // It is anyOf, not oneOf, on purpose. JSON Schema `required` is satisfied by
 // the mere PRESENCE of a key, whatever its value, while the runtime check in
@@ -245,7 +254,6 @@ var coreToolDefs = []mcpTool{
 				},
 			},
 			"required": []string{"data"},
-			"anyOf":    processTargetAnyOf(),
 		},
 	},
 	{

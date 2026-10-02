@@ -14,6 +14,18 @@ var processTargetTools = []string{
 	"run-task", "create-snapshot", "list-snapshots", "delete-snapshot", "get-snapshot",
 }
 
+// isAdvertised reports whether a tool is in tools/list itself rather than
+// reachable only through a router action. Only the latter may carry the
+// process-target anyOf; see processTargetAnyOf.
+func isAdvertised(tool string) bool {
+	for _, t := range toolRegistry {
+		if t.Name == tool {
+			return true
+		}
+	}
+	return false
+}
+
 // compileAdvertisedSchema compiles a tool's InputSchema exactly as an MCP host
 // receives it: through JSON, so a Go-typed schema that does not survive
 // serialization is caught here rather than in a client.
@@ -93,13 +105,18 @@ func TestAdvertisedSchema_AcceptsWhatResolveProcessIDAccepts(t *testing.T) {
 // the one thing client-side validation can catch better than the server.
 func TestAdvertisedSchema_RejectsNoProcessTarget(t *testing.T) {
 	payloads := map[string]string{
-		"run-task":        `{"data": "{}"}`,
 		"create-snapshot": `{}`,
 		"list-snapshots":  `{}`,
 		"delete-snapshot": `{"snapshot_id": 7}`,
 		"get-snapshot":    `{"snapshot_id": 7}`,
 	}
 	for _, tool := range processTargetTools {
+		// An advertised schema cannot say "one of these two" (see
+		// processTargetAnyOf); resolveProcessID refuses the call instead,
+		// pinned by TestResolveProcessID_NeitherArgGivenMentionsBothOptions.
+		if isAdvertised(tool) {
+			continue
+		}
 		sch := compileAdvertisedSchema(t, tool)
 		var doc any
 		if err := json.Unmarshal([]byte(payloads[tool]), &doc); err != nil {
@@ -129,7 +146,12 @@ func TestAdvertisedSchema_ProcessTargetUsesAnyOf(t *testing.T) {
 					"`required` matches on key presence, so a host sending an empty process_path "+
 					"alongside a valid process_id satisfies both branches and the call is rejected client-side", tool)
 			}
-			if _, ok := schema["anyOf"]; !ok {
+			_, hasAnyOf := schema["anyOf"]
+			switch {
+			case isAdvertised(tool) && hasAnyOf:
+				t.Errorf("%s is in tools/list and must not carry a top-level anyOf: "+
+					"the Anthropic API rejects the whole request", tool)
+			case !isAdvertised(tool) && !hasAnyOf:
 				t.Errorf("%s declares no anyOf for the process_path/process_id pair", tool)
 			}
 		}
