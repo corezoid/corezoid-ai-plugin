@@ -253,3 +253,102 @@ func TestHandleToolCall_ShowProject_OK(t *testing.T) {
 		}
 	}
 }
+
+// ---- list-aliases -----------------------------------------------------------
+
+func TestHandleToolCall_ListAliases_OK(t *testing.T) {
+	resetGlobals(t)
+
+	var captured []map[string]interface{}
+	srv, _ := mockAPIServer(t, func(ops []map[string]interface{}) interface{} {
+		captured = ops
+		return map[string]interface{}{
+			"request_proc": "ok",
+			"ops": []interface{}{
+				map[string]interface{}{
+					"proc": "ok",
+					"list": []interface{}{
+						map[string]interface{}{
+							"obj_id":     float64(153572),
+							"title":      "api-gw-create-smart-api",
+							"short_name": "api-gw-create-smart-api",
+							"obj_to_id":  float64(1922026),
+						},
+						map[string]interface{}{
+							"obj_id":     float64(153574),
+							"title":      "Escalation",
+							"short_name": "esc",
+							"obj_to_id":  float64(1922045),
+						},
+					},
+				},
+			},
+		}
+	})
+	setProjectAuth(t, srv.URL)
+
+	result, isErr := handleToolCall(context.Background(), "list-aliases", map[string]interface{}{
+		"company_id": "i260836082",
+		"project_id": float64(623461),
+		"stage_id":   float64(623462),
+		"short_name": "api-gw-create-smart-api",
+	})
+	if isErr {
+		t.Fatalf("unexpected error: %s", result)
+	}
+	if !strings.Contains(result, "1922026") {
+		t.Errorf("missing target conv_id in output: %s", result)
+	}
+	if strings.Contains(result, "Escalation") {
+		t.Errorf("short_name filter did not exclude the non-matching alias: %s", result)
+	}
+	if len(captured) != 1 {
+		t.Fatalf("expected 1 captured op, got %d", len(captured))
+	}
+	op := captured[0]
+	for k, want := range map[string]interface{}{
+		"type":       "list",
+		"obj":        "aliases",
+		"company_id": "i260836082",
+	} {
+		if got, ok := op[k]; !ok || got != want {
+			t.Errorf("op[%s] = %v, want %v", k, got, want)
+		}
+	}
+}
+
+func TestHandleToolCall_ListAliases_ShortNameNotFound(t *testing.T) {
+	resetGlobals(t)
+	srv, _ := mockAPIServer(t, func(ops []map[string]interface{}) interface{} {
+		return map[string]interface{}{
+			"request_proc": "ok",
+			"ops": []interface{}{
+				map[string]interface{}{
+					"proc": "ok",
+					"list": []interface{}{
+						map[string]interface{}{
+							"obj_id":     float64(1),
+							"title":      "Other",
+							"short_name": "other",
+							"obj_to_id":  float64(2),
+						},
+					},
+				},
+			},
+		}
+	})
+	setProjectAuth(t, srv.URL)
+
+	result, isErr := handleToolCall(context.Background(), "list-aliases", map[string]interface{}{
+		"company_id": "i260836082",
+		"project_id": float64(1),
+		"stage_id":   float64(1),
+		"short_name": "does-not-exist",
+	})
+	if isErr {
+		t.Fatalf("unexpected error: %s", result)
+	}
+	if !strings.Contains(result, "No alias with short_name") {
+		t.Errorf("expected not-found message, got %q", result)
+	}
+}

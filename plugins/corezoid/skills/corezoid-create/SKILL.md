@@ -2,10 +2,10 @@
 name: corezoid-create
 description: >
   Corezoid process creation specialist. Use when the user wants to create a new
-  Corezoid process from scratch, build a new automation flow, design a new BPM
-  process, or implement a new API connector. Activate when the user says
-  "create a process", "build a new flow", "new process", "design from scratch",
-  "implement a connector", "create an automation", or "add a new process".
+  Corezoid process from scratch, build a new automation flow, or design a new BPM
+  process. Activate when the user says "create a process", "build a new flow",
+  "new process", "design from scratch", "create an automation", or "add a new process".
+  Not for API connectors — use /corezoid-connector-create.
 ---
 
 # Create a New Corezoid Process
@@ -14,19 +14,14 @@ You are a specialist in creating Corezoid BPM processes using the `corezoid` MCP
 
 ## Step 1: Gather Requirements
 
+> ⚠️ If the request is a connector to one API endpoint (any HTTP API — external, internal, or Corezoid's own public API), stop here and use `/corezoid-connector-create` instead — it builds the atomic single-endpoint pattern (input contract, validation, API Call, Reply on every outcome, test, Smart API registration). Exception: the user explicitly invoked `/corezoid-api-connector` — do not intercept that.
+
 Ask the user for the following before proceeding:
 
 - **Process purpose** — what should it do?
 - **Input parameters** — what data does it receive?
 - **Expected output** — what should it return on success?
-- **Process type** — API connector (calls an external HTTP API) or business logic (orchestrates other Corezoid processes)?
-
-For **API connector**, also require:
-- `METHOD` — HTTP method (GET, POST, PUT, etc.)
-- `URL` — endpoint URL (use a Corezoid variable, never hardcode)
-- `AUTH` — authentication method and token variable name
-
-> ⚠️ If the target API is the **Corezoid public API** (`/api/2/json/`), stop here and use `/corezoid-api-connector` instead — it follows a different pattern (`api_secret_outer`, `ops` array, no Code Node for signing).
+- **Process type** — business logic that orchestrates other Corezoid processes (several calls; a single-endpoint API connector belongs to the warning above, not here)
 
 If any required information is missing, ask the user before proceeding.
 
@@ -62,8 +57,7 @@ Every process follows this base structure:
 | 6 | Error | 2 | Terminal error node — **one dedicated, descriptively-named node per failure point** |
 | 7 | Final | 2 | Terminal success node |
 
-**API connector** uses `type: "api"` in Step 3.
-**Business logic** uses `type: "api_rpc"` in Step 3 (one node per sub-process call; Code Nodes between calls are allowed).
+**Business logic** uses `type: "api_rpc"` in Step 3 (one node per sub-process call; Code Nodes between calls are allowed). An individual step may still use an `api` Call node alongside `api_rpc` calls — a standalone single-endpoint connector belongs in `/corezoid-connector-create`.
 
 ### Node type quick reference
 
@@ -219,7 +213,7 @@ Use the `Read` tool to load these files when specific node or validation details
 
 | Path | Description |
 |---|---|
-| `${CLAUDE_PLUGIN_ROOT}/samples/api-post.json` | HTTP POST API call (connector pattern) |
+| `${CLAUDE_PLUGIN_ROOT}/samples/api-post.json` | A single `api` Call node inside a business-logic process — not the connector pattern; for a standalone connector use `/corezoid-connector-create` (`references/process-skeleton.md` there has the compliant shape: `debug_info: true`, named result fields) |
 | `${CLAUDE_PLUGIN_ROOT}/samples/corezoid-api-node-list.conv.json` | Corezoid API connector (Node List, `api_secret_outer` pattern) |
 | `${CLAUDE_PLUGIN_ROOT}/samples/stripe-checkout.json` | Stripe payment checkout flow |
 | `${CLAUDE_PLUGIN_ROOT}/samples/create-actors.json` | Business logic with multiple process calls |

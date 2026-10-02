@@ -1598,6 +1598,32 @@ func handleShowFolder(ctx context.Context, args map[string]interface{}) (string,
 		info.ObjID, info.Title, kind, info.ParentObjType, info.ParentObjID), false
 }
 
+// handleShowProcess returns a process's own metadata (title, description,
+// status, owner, project/stage) without exporting its scheme. Lighter than
+// pull-process for a lookup that only needs who owns a process and where it
+// lives — e.g. resolving owner_id/owner_login for a Smart API registration
+// payload.
+func handleShowProcess(ctx context.Context, args map[string]interface{}) (string, bool) {
+	processID, err := intArg(args, "process_id")
+	if err != nil {
+		return "Error: " + err.Error(), true
+	}
+
+	v := NewValidator(ctx, 0)
+	info, err := v.ShowProcessLifecycle(processID)
+	if err != nil {
+		return fmt.Sprintf("Error: %v", err), true
+	}
+
+	return fmt.Sprintf(
+		"Process #%d %q (conv_type=%s, status=%s)\n  owner: %s (owner_id=%d)\n  project_id=%d, stage_id=%d, immutable=%v\n  description: %s",
+		info.ObjID, info.Title, info.ConvType, info.Status,
+		info.OwnerLogin, info.OwnerID,
+		info.ProjectID, info.StageID, info.Immutable,
+		info.Description,
+	), false
+}
+
 // handleListFolders prints the immediate children of a folder in a tabular
 // form. Subfolders come first, then convs (processes + state diagrams).
 func handleListFolders(ctx context.Context, args map[string]interface{}) (string, bool) {

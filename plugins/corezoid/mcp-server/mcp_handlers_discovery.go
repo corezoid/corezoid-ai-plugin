@@ -183,6 +183,104 @@ func handleListStages(ctx context.Context, args map[string]interface{}) (string,
 	return sb.String(), false
 }
 
+// handleListAliases prints the aliases (short_name -> target process) defined
+// in a project's stage. An optional short_name filters the result to one
+// exact match, so a caller that already knows the alias it needs (e.g.
+// resolving a Smart API receiver by name) gets a one-line answer instead of
+// scanning the full table.
+func handleListAliases(ctx context.Context, args map[string]interface{}) (string, bool) {
+	projectID, err := intArg(args, "project_id")
+	if err != nil {
+		return "Error: " + err.Error(), true
+	}
+	stageID, err := intArg(args, "stage_id")
+	if err != nil {
+		return "Error: " + err.Error(), true
+	}
+	companyID, err := strArg(args, "company_id")
+	if err != nil {
+		return "Error: " + err.Error(), true
+	}
+	shortNameFilter := optStrArg(args, "short_name")
+
+	v := NewValidator(ctx, 0)
+	ops := []map[string]any{
+		{
+			"type":       "list",
+			"obj":        "aliases",
+			"id":         companyID,
+			"company_id": companyID,
+			"project_id": projectID,
+			"stage_id":   stageID,
+			"sort":       "date",
+			"order":      "desc",
+		},
+	}
+	resp, err := v.req("list_aliases", ops)
+	if err != nil {
+		return fmt.Sprintf("Error: %v", err), true
+	}
+
+	opsArr, _ := resp["ops"].([]interface{})
+	if len(opsArr) == 0 {
+		return "No aliases found", false
+	}
+	opMap, _ := opsArr[0].(map[string]interface{})
+	if proc, _ := opMap["proc"].(string); proc != "ok" {
+		desc, _ := opMap["description"].(string)
+		return fmt.Sprintf("Error: %s", desc), true
+	}
+	list, _ := opMap["list"].([]interface{})
+	if len(list) == 0 {
+		return "No aliases found", false
+	}
+
+	type aliasRow struct {
+		objID     int64
+		title     string
+		shortName string
+		targetID  int64
+	}
+	var rows []aliasRow
+	for _, item := range list {
+		a, _ := item.(map[string]interface{})
+		shortName, _ := a["short_name"].(string)
+		if shortNameFilter != "" && shortName != shortNameFilter {
+			continue
+		}
+		objID := int64(0)
+		if f, ok := a["obj_id"].(float64); ok {
+			objID = int64(f)
+		}
+		targetID := int64(0)
+		if f, ok := a["obj_to_id"].(float64); ok {
+			targetID = int64(f)
+		}
+		title, _ := a["title"].(string)
+		rows = append(rows, aliasRow{objID: objID, title: title, shortName: shortName, targetID: targetID})
+	}
+
+	if len(rows) == 0 {
+		if shortNameFilter != "" {
+			return fmt.Sprintf("No alias with short_name %q found in stage %d", shortNameFilter, stageID), false
+		}
+		return "No aliases found", false
+	}
+
+	var sb strings.Builder
+	if shortNameFilter != "" {
+		sb.WriteString(fmt.Sprintf("Alias %q in stage %d:\n\n", shortNameFilter, stageID))
+	} else {
+		sb.WriteString(fmt.Sprintf("Aliases in stage %d (%d total):\n\n", stageID, len(rows)))
+	}
+	sb.WriteString(fmt.Sprintf("  %-10s  %-35s  %-30s  %s\n", "ID", "Title", "Short name", "Target conv_id"))
+	sb.WriteString(fmt.Sprintf("  %s\n", strings.Repeat("-", 95)))
+	for _, r := range rows {
+		sb.WriteString(fmt.Sprintf("  %-10d  %-35s  %-30s  %d\n", r.objID, r.title, r.shortName, r.targetID))
+	}
+	return sb.String(), false
+}
+
 // handleCreateProject creates a new project in a workspace. Optional `stages`
 // arg is a JSON array of {"title":"...","immutable":bool}.
 func handleCreateProject(ctx context.Context, args map[string]interface{}) (string, bool) {

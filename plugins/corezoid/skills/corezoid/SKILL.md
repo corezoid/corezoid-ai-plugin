@@ -216,6 +216,7 @@ For domain-specific workflows use the specialized skills:
 - `/corezoid-init` — setting up environment and pulling from Corezoid
 - `/corezoid-logout` — remove saved Corezoid credentials for the current workspace
 - `/corezoid-create` — creating a new process from scratch
+- `/corezoid-connector-create` — connector to an API endpoint (one endpoint = one process): any HTTP API — external, internal, or Corezoid itself
 - `/corezoid-edit` — modifying an existing process
 - `/corezoid-lifecycle` — explicitly pause/resume a process or move a process/folder; never inferred from review/refactoring
 - `/corezoid-state-diagram-create` — creating a new state diagram (`conv_type: "state"`) from scratch

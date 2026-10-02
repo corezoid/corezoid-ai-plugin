@@ -35,8 +35,9 @@ Alias naming rules (same as Corezoid short names):
 | Tool | Purpose |
 |------|---------|
 | `create-alias` | Create an alias and link it to a process in one step |
+| `cz-structure` `list-aliases` | List the aliases of a project's stage (short_name → target conv_id); pass `short_name` to resolve one exact alias instead of scanning the table |
 
-> **Note:** `list`, `modify`, `delete`, and `unlink` operations are not yet exposed as
+> **Note:** `modify`, `delete`, and `unlink` operations are not yet exposed as
 > MCP tools. Use the direct API calls documented below to perform them.
 
 ---
@@ -136,47 +137,29 @@ Then for each modified file, run **`lint-process`** and on success **`push-proce
 
 ## Workflow: List aliases
 
-The MCP server does not yet expose a `list-aliases` tool. Use the Corezoid API directly.
+Call `cz-structure` with action `list-aliases`:
 
-**Required fields for direct API calls:**
-- `company_id` — `workspace_id` field in the current Folder (`~/.corezoid/config.json`)
-- `project_id` — `parent_id` in the `<id>_<name>.stage.json` marker at the workspace root
-- `stage_id` — `obj_id` in the same `<id>_<name>.stage.json`
-
-MCP tools (`create-alias`, `list-aliases`, etc.) resolve these automatically — pass explicit values only when overriding.
-
-**API call:**
 ```
-POST {corezoid_url}/api/2/json
-Authorization: Simulator {access_token}
-Content-Type: application/json
-
-{
-  "ops": [{
-    "type": "list",
-    "obj": "aliases",
-    "sort": "date",
-    "order": "desc",
-    "id": "<WORKSPACE_ID>",
-    "company_id": "<WORKSPACE_ID>",
-    "project_id": <PROJECT_ID>,
-    "stage_id": <STAGE_ID>
-  }]
-}
+cz-structure {"action": "list-aliases", "args": {
+  "company_id": "<WORKSPACE_ID>",
+  "project_id": <PROJECT_ID>,
+  "stage_id": <STAGE_ID>,
+  "short_name": "<optional: filter to one exact alias>"
+}}
 ```
 
-**Response fields per alias:**
+`company_id`, `project_id` and `stage_id` identify the project/stage to search — resolve
+them with `list-projects`/`list-stages` (`cz-structure`) when searching a stage other than
+the one currently configured. Pass `short_name` when you already know the alias you need
+(e.g. resolving a receiver by name) to get a one-line answer instead of the full table.
+
+**Returned per alias:**
 | Field | Description |
 |-------|-------------|
-| `obj_id` | Alias numeric ID (needed for modify/delete/link) |
-| `title` | Human-readable display title |
-| `short_name` | The `@short-name` used in `conv_id` references |
-| `description` | Optional description |
-| `obj_to_id` | Process (`conv`) ID this alias points to |
-| `obj_to_type` | Always `"conv"` for process aliases |
-| `uuid` | Alias UUID |
-| `create_time` / `change_time` | Unix timestamps |
-| `project_title`, `stage_title` | Context information |
+| Alias ID | Numeric ID (needed for modify/delete/link via the raw API — see below) |
+| Title | Human-readable display title |
+| Short name | The `@short-name` used in `conv_id` references |
+| Target conv_id | Process (`conv`) ID this alias points to |
 
 ---
 
@@ -364,7 +347,11 @@ re-pointed at a new process without invalidating URLs already handed out.
 
 ## Resolving environment values
 
-MCP alias tools resolve `stage_id`/`project_id` automatically from the workspace marker. For **direct** `/api/2/json` calls (the raw workflows above) collect the values from:
+`create-alias` resolves `stage_id`/`project_id` automatically from the target process's own
+location — no argument needed. `list-aliases` (`cz-structure`) does not: it takes
+`project_id`/`stage_id`/`company_id` explicitly, because it is meant to look up aliases in
+any stage, not only the one currently configured. For **direct** `/api/2/json` calls (the raw
+workflows above) collect the values from:
 
 | Value | Where to find it |
 |-------|------------------|

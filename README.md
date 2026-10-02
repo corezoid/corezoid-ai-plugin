@@ -29,6 +29,7 @@ The plugin bundles a Go MCP server that exposes Corezoid operations as MCP tools
 | `corezoid-access`              | "share", "give access", "create group", "create api key" | Object sharing, user groups, API keys, invites    |
 | `corezoid-alias-manager`       | "alias", "short name", "rename alias"    | Create, list, modify, delete process aliases      |
 | `corezoid-variable-manager`    | "variable", "env var", "create variable" | Create, list, modify, delete environment variables |
+| `corezoid-connector-create`    | "create a connector", "integrate with <API>", "коннектор к API" | Atomic single-endpoint connector to any HTTP API (external, internal, or Corezoid itself) |
 | `corezoid-api-connector`       | "call Corezoid API", "api/2/json", "api_secret_outer" | Processes that call the Corezoid public API       |
 | `corezoid-process-optimizer`   | "optimize", "reduce tacts", "improve"    | Merge nodes, clean data flow, add resilience      |
 | `corezoid-describe`            | "update description", "add description", "describe this process" | Set or refresh the description of a process, folder, or project |
@@ -346,9 +347,11 @@ Workspaces, projects, stages, folders, and moving objects between them.
 | `modify-project` | Update a project's title, short_name and/or description |
 | `delete-project` | Move a project to the recycle bin (Trash) |
 | `list-stages` | List stages in a workspace |
+| `list-aliases` | List aliases (short_name → target conv_id) in a project's stage; `short_name` filters to one exact match |
 | `set-stage-immutable` | Make a stage read-only (immutable) or editable; immutable stages are the only valid deploy targets; requires explicit confirm |
 | `list-folders` | List immediate children of a folder (no disk I/O) |
 | `show-folder` | Show folder metadata (title, kind, parent) |
+| `show-process` | Show a process's own metadata (title, status, owner_id/owner_login, project_id/stage_id) without exporting its scheme |
 | `create-folder` | Create a new subfolder |
 | `modify-folder` | Rename a folder or update its description |
 | `delete-folder` | Move a folder to the recycle bin |
@@ -497,6 +500,7 @@ corezoid-ai-plugin/
 │   │   ├── corezoid-describe/              # Object description skill
 │   │   ├── corezoid-alias-manager/         # Alias management skill
 │   │   ├── corezoid-variable-manager/      # Environment variable management skill
+│   │   ├── corezoid-connector-create/      # Single-endpoint API connector builder skill
 │   │   ├── corezoid-api-connector/         # Corezoid public-API caller skill
 │   │   ├── corezoid-gitcall/               # git_call custom-code skill
 │   │   ├── corezoid-gen-bot/               # Messenger bot generation skill
