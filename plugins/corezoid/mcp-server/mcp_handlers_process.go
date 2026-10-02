@@ -1882,8 +1882,16 @@ func envNoticeSuffix(envNotice string) string {
 
 // commitsConfirmedEmpty reports whether the response states that the process
 // carries no committed version. It requires commits.version to be present and
-// numerically 0; last_confirmed_version, which baselineFromServer prefers when
-// present, vetoes the answer whenever it is anything but a confirmed 0.
+// numerically 0, or commits to be an empty object; last_confirmed_version,
+// which baselineFromServer prefers when present, vetoes the answer whenever it
+// is anything but a confirmed 0.
+//
+// The empty object is how some on-prem installations answer for a conv that
+// was created but never deployed: `"commits": {}` with no version and no
+// last_confirmed_version. The same installations send `"commits": {}` for
+// deployed convs too, but always together with a non-zero
+// last_confirmed_version, which the veto above rejects. A commits object that
+// has keys but no version still does not answer the question.
 func commitsConfirmedEmpty(data map[string]interface{}) bool {
 	if lcv, present := data["last_confirmed_version"]; present {
 		n, ok := jsonNumberValue(lcv)
@@ -1897,7 +1905,7 @@ func commitsConfirmedEmpty(data map[string]interface{}) bool {
 	}
 	ver, present := commits["version"]
 	if !present {
-		return false
+		return len(commits) == 0
 	}
 	n, ok := jsonNumberValue(ver)
 	return ok && n == 0

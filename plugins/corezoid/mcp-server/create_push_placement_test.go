@@ -33,6 +33,28 @@ func TestProcessNeverDeployed_NoCommitNoNodes(t *testing.T) {
 	}
 }
 
+// On-prem installations answer for a conv that was created (create-process,
+// create-state-diagram) but never deployed with an empty commits object and no
+// last_confirmed_version. Reading that as "deployed" blocked the very first
+// push of every new conv on those installations.
+func TestProcessNeverDeployed_EmptyCommitsObjectNoNodes(t *testing.T) {
+	_, e := mockAPIServer(t, func(ops []map[string]interface{}) interface{} {
+		return map[string]interface{}{
+			"request_proc": "ok",
+			"ops": []interface{}{map[string]interface{}{
+				"proc":      "ok",
+				"obj_id":    float64(555),
+				"conv_type": "state",
+				"commits":   map[string]interface{}{},
+				"list":      []interface{}{},
+			}},
+		}
+	})
+	if !processNeverDeployed(e, 555) {
+		t.Error("an empty commits object with no nodes and no last_confirmed_version has never been deployed")
+	}
+}
+
 func TestProcessNeverDeployed_HasCommittedVersion(t *testing.T) {
 	_, e := mockAPIServer(t, func(ops []map[string]interface{}) interface{} {
 		return map[string]interface{}{
@@ -154,6 +176,25 @@ func TestProcessNeverDeployed_IncompleteResponseBlocks(t *testing.T) {
 				"commits":                map[string]interface{}{"version": float64(0)},
 				"last_confirmed_version": float64(7),
 				"list":                   []interface{}{},
+			},
+		},
+		{
+			// The on-prem shape of a deployed conv: commits is empty there
+			// too, and only last_confirmed_version tells it apart.
+			name: "empty commits with last_confirmed_version set",
+			op: map[string]interface{}{
+				"commits":                map[string]interface{}{},
+				"last_confirmed_version": float64(1790774069),
+				"list":                   []interface{}{},
+			},
+		},
+		{
+			name: "empty commits with nodes",
+			op: map[string]interface{}{
+				"commits": map[string]interface{}{},
+				"list": []interface{}{
+					map[string]interface{}{"id": "aaaaaaaaaaaaaaaaaaaaaaa1"},
+				},
 			},
 		},
 		{
