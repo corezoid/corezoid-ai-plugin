@@ -1,5 +1,11 @@
 # Changelog
 
+## [3.8.0]
+
+- Feat: `corezoid-connector-create` skill — build an atomic single-endpoint connector to any HTTP API (external, internal, or Corezoid itself), with api_timeout routing and registration docs (#185).
+- Feat: directory-readiness for the OpenAI, Anthropic, and Kiro public catalogs — root `plugin.json` in the Agent Plugins 1.0.0 format with OpenAI listing fields under `extensions["com.openai.interface"]`, `supportURL`/`privacyPolicyURL`/`termsOfServiceURL` in the Codex manifest, brand icons under `plugins/corezoid/assets/`, a README "Support & Legal" section, and `claude plugin validate --strict` passing again (the non-standard `interface` block moved out of the Claude manifest). CI validates the root manifest and includes it in the version lockstep (#187).
+- Fix(mcp): drop the legacy top-level server key from `.mcp.json` — the OpenAI workspace-marketplace importer fails the whole plugin import on the unexpected key; the `mcpServers` wrapper is what Claude Code and Codex read (#186).
+
 ## [3.7.0]
 
 - Fix(mcp-server): the project-root `CLAUDE.md` no longer gains another copy of the developer's own notes on every MCP server start. In local mode `generateLocalCLAUDEMD` wrote the whole merged root file into the stage copy (`.git-context/<stage>/CLAUDE.md`), and `copyStageCLAUDEMD` then injected that copy, notes included, in place of the mirror block while keeping the notes already in the root. One real workspace grew to 24 copies and 350 KB, all of it loaded into every session's context. The stage copy now holds only the mirror block, and `injectMirrorBlock` injects only the marker-delimited part of its source, so a stage copy written by an older version stops the growth too. Files that are already polluted are not deduplicated automatically, because the extra copies sit outside the markers where developer content lives. Remove them by hand once.
