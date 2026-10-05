@@ -130,6 +130,10 @@ Rules the tests enforce: every collapsed tool is reachable through exactly one a
 
 When adding a tool, decide first which half it belongs to: model-facing rules and frequent calls → `coreToolDefs`; one more CRUD operation on an existing domain → `collapsedToolRegistry` plus one `routerAction` line.
 
+### Hosted mode (`hosted.go`)
+
+`COREZOID_HOSTED_ADDR` turns the binary into a remote multi-tenant MCP endpoint; without it nothing in `hosted.go` runs. Credentials and scope come from each request only: `NewValidator` takes token/company/stage from the request context (`hostedScopeFrom`) and ignores the process globals, `handleToolCall` swaps the local auth gate for `hostedGate`, and `resolveAndCacheProjectID` neither reads nor writes its cache. `hostedAllowedTools` is the allowlist for both `tools/list` and calls (checked on the resolved router action); adding a tool there is a security decision — its handler must not touch the filesystem, run processes, or read local credentials.
+
 ### How skills work
 
 Each skill has a frontmatter `description` with trigger phrases — Claude Code routes to the right sub-skill automatically based on user intent. Sub-skills are also directly invocable.

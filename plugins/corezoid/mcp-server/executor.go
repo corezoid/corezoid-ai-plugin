@@ -58,6 +58,13 @@ func NewValidator(ctx context.Context, inProcessID int) *Executor {
 	}
 	apiURLv, tokenv, workspaceIDv, _, stageIDv := authSnapshot()
 	snapAPILogin, snapAPISecret := apiKeySnapshot()
+	if hostedMode {
+		// Only the request's own identity, never the process globals: one
+		// server serves many callers.
+		s := hostedScopeFrom(ctx)
+		apiURLv, tokenv, workspaceIDv, stageIDv = hostedAPIURL, s.Token, s.CompanyID, s.StageID
+		snapAPILogin, snapAPISecret = "", ""
+	}
 	v := &Executor{
 		Ctx:         ctx,
 		APILogin:    snapAPILogin,
