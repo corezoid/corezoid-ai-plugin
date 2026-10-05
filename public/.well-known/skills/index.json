@@ -29,8 +29,20 @@
       ]
     },
     {
+      "name": "corezoid-connector-create",
+      "description": "API connector builder. Use when the user wants a Corezoid process that calls ONE endpoint of ANY HTTP API — external (Stripe, OpenWeather, Google, banks, CRMs), internal (Simulator.Company, own services) or Corezoid itself — built from a text description, a documentation link, an OpenAPI/Swagger file, or a list of endpoints produced while reasoning about a task. Produces an atomic connector: input contract, validation when needed, a single API Call, Reply to Process on every outcome, unified response format, test, and Smart API registration. Activate on: \"create a connector\", \"API connector\", \"integrate with <API>\", \"connect to <API>\", \"wrap this endpoint\", \"connector from this openapi.yaml\", \"сделай коннектор\", \"коннектор к API\", \"интеграция с\", \"подключи API\", \"обёртка над API\", \"зроби конектор\", \"конектор до API\", \"інтеграція з\", \"підключи API\". NOT for processes with business logic or several calls — use /corezoid-create.",
+      "files": [
+        "https://raw.githubusercontent.com/corezoid/corezoid-ai-plugin/main/plugins/corezoid/skills/corezoid-connector-create/SKILL.md",
+        "https://raw.githubusercontent.com/corezoid/corezoid-ai-plugin/main/plugins/corezoid/skills/corezoid-connector-create/references/contract-template.md",
+        "https://raw.githubusercontent.com/corezoid/corezoid-ai-plugin/main/plugins/corezoid/skills/corezoid-connector-create/references/process-skeleton.md",
+        "https://raw.githubusercontent.com/corezoid/corezoid-ai-plugin/main/plugins/corezoid/skills/corezoid-connector-create/references/registration.md",
+        "https://raw.githubusercontent.com/corezoid/corezoid-ai-plugin/main/plugins/corezoid/skills/corezoid-connector-create/references/reply-format.md",
+        "https://raw.githubusercontent.com/corezoid/corezoid-ai-plugin/main/plugins/corezoid/skills/corezoid-connector-create/references/test-rules.md"
+      ]
+    },
+    {
       "name": "corezoid-create",
-      "description": "Corezoid process creation specialist. Use when the user wants to create a new Corezoid process from scratch, build a new automation flow, design a new BPM process, or implement a new API connector. Activate when the user says \"create a process\", \"build a new flow\", \"new process\", \"design from scratch\", \"implement a connector\", \"create an automation\", or \"add a new process\".",
+      "description": "Corezoid process creation specialist. Use when the user wants to create a new Corezoid process from scratch, build a new automation flow, or design a new business process. Activate when the user says \"create a process\", \"build a new flow\", \"new process\", \"design from scratch\", \"create an automation\", or \"add a new process\". Not for API connectors — use /corezoid-connector-create.",
       "files": [
         "https://raw.githubusercontent.com/corezoid/corezoid-ai-plugin/main/plugins/corezoid/skills/corezoid-create/SKILL.md"
       ]
@@ -58,12 +70,17 @@
     },
     {
       "name": "corezoid-edit-bot",
-      "description": "Iteratively edits an already-built messenger bot from corezoid-gen-bot — a Corezoid Communications Orchestrator serving Telegram, Viber, Apple Messages for Business and Facebook Messenger over a backend of existing Corezoid processes called with api_rpc. Runs a lean plan → confirm → apply → lint → push → smoke-test loop. `plan` writes `.corezoid-gen-bot/CHANGE.md` (scope + processes + tasks + the smoke test that proves it) and stops; `execute` reads CHANGE.md, applies it, lints and pushes each touched process, updates Localization/Attachments tasks with deep_merge, and smoke-tests every affected command through the Router and through Send Message; `deploy` promotes one stage onto another. Trigger on phrases like \"измени бота\", \"поправь бота\", \"добавь команду\", \"убери команду\", \"переименуй команду\", \"подключи ещё процесс\", \"поменяй текст бота\", \"поменяй клавиатуру\", \"добавь язык боту\", \"добавь шаг в диалог\", \"бот отвечает пустым сообщением\", \"бот отвечает дважды\", \"почему бот не отвечает\", \"edit bot\", \"modify bot\", \"add command to bot\", \"wire another process into the bot\", \"change bot copy\", \"fix the bot\", \"задеплой бота\", \"promote stage\", or when the user references PLAN.md/CHANGE.md for a bot and asks for a change. Assumes CWD is the Corezoid workspace built by corezoid-gen-bot (contains `.corezoid-gen-bot/PLAN.md`, a `*.stage.json` marker and the pulled orchestrator folder). For a Smart Form web app over the same processes use `simulator-app-generator`.",
+      "description": "Iteratively edits an already-built messenger bot from corezoid-gen-bot — a Corezoid Communications Orchestrator serving Telegram, Viber, Apple Messages for Business and Facebook Messenger over a backend of Corezoid processes called with api_rpc. Runs a lean plan → confirm → apply → lint → push → smoke-test loop — see \"Modes\" for plan/execute/deploy. Trigger on \"измени/поправь бота\", \"добавь/убери/переименуй команду\", \"подключи ещё процесс\", \"поменяй текст/клавиатуру бота\", \"добавь язык боту\", \"добавь шаг в диалог\", \"бот отвечает пустым/дважды\", \"почему бот не отвечает\", \"edit/modify bot\", \"add command to bot\", \"wire another process into the bot\", \"change bot copy\", \"fix the bot\", \"задеплой бота\", \"promote stage\", or when the user references PLAN.md/CHANGE.md for a bot. Assumes CWD is the workspace corezoid-gen-bot built (`.corezoid-gen-bot/PLAN.md`, a `*.stage.json` marker, the pulled orchestrator folder). For a Smart Form web app over the same processes use `simulator-app-generator`.",
       "files": [
         "https://raw.githubusercontent.com/corezoid/corezoid-ai-plugin/main/plugins/corezoid/skills/corezoid-edit-bot/SKILL.md",
         "https://raw.githubusercontent.com/corezoid/corezoid-ai-plugin/main/plugins/corezoid/skills/corezoid-edit-bot/references/change_kinds.md",
         "https://raw.githubusercontent.com/corezoid/corezoid-ai-plugin/main/plugins/corezoid/skills/corezoid-edit-bot/references/invariants.md",
-        "https://raw.githubusercontent.com/corezoid/corezoid-ai-plugin/main/plugins/corezoid/skills/corezoid-edit-bot/references/repair_loop.md"
+        "https://raw.githubusercontent.com/corezoid/corezoid-ai-plugin/main/plugins/corezoid/skills/corezoid-edit-bot/references/repair_loop.md",
+        "https://raw.githubusercontent.com/corezoid/corezoid-ai-plugin/main/plugins/corezoid/skills/corezoid-edit-bot/references/rules.md",
+        "https://raw.githubusercontent.com/corezoid/corezoid-ai-plugin/main/plugins/corezoid/skills/corezoid-edit-bot/references/step4_apply_change.md",
+        "https://raw.githubusercontent.com/corezoid/corezoid-ai-plugin/main/plugins/corezoid/skills/corezoid-edit-bot/references/step5_lint_push.md",
+        "https://raw.githubusercontent.com/corezoid/corezoid-ai-plugin/main/plugins/corezoid/skills/corezoid-edit-bot/references/step6_verify.md",
+        "https://raw.githubusercontent.com/corezoid/corezoid-ai-plugin/main/plugins/corezoid/skills/corezoid-edit-bot/references/step7_report.md"
       ]
     },
     {
@@ -75,11 +92,18 @@
     },
     {
       "name": "corezoid-gen-bot",
-      "description": "Generates a multi-platform messenger bot (Telegram, Viber, Apple Messages for Business, Facebook Messenger) on Corezoid from a set of EXISTING Corezoid processes plus a description of the desired bot. Use when the user has a working Corezoid backend (a folder id, a list of process ids, or already-pulled .conv.json files) and wants it reachable from a chat. Runs in phases via subcommands — `plan` pulls every process, derives its real input/output contract from its `api_rpc_reply` nodes, classifies side effects, designs a command map that uses ALL of the processes, and writes `.corezoid-gen-bot/PLAN.md`; `execute` creates a Communications Orchestrator from the Corezoid template via `create-communications-orchestrator`, pulls the generated folder, generates one bot process per command wired to the domain processes with `api_rpc`, seeds Localization and Attachments, pushes, lints and smoke-tests every command; `refresh` re-derives the contracts of an existing plan. Trigger on phrases like \"сделай бота из этих процессов\", \"бот на базе процессов корезоид\", \"сгенерируй бота\", \"telegram bot from corezoid processes\", \"bot from process ids\", \"corezoid gen bot\", \"viber bot\", \"apple messages for business bot\", \"facebook messenger bot\", \"чат-бот поверх корезоид\", \"оберни процессы в бота\", \"создай оркестратор коммуникаций\", \"communications orchestrator\", \"згенеруй бота з цих процесів\". Also trigger on subcommand phrases \"execute plan\", \"сгенерируй по плану\", \"погнали\", \"обнови план\", \"re-derive\", \"refresh plan\" when a `.corezoid-gen-bot/` directory is present. For a Smart Form web app over the same processes use `simulator-app-generator`; to change a bot that already exists use `edit-bot`.",
+      "description": "Generates a multi-platform messenger bot (Telegram, Viber, Apple Messages for Business, Facebook Messenger) on Corezoid from a set of EXISTING Corezoid processes plus a description of the desired bot. Use when the user has a working Corezoid backend (process ids, a folder id, or pulled .conv.json files) and wants it reachable from a chat. Runs in phases via subcommands plan/execute/refresh — see the \"Modes\" section. Trigger on \"сделай бота из этих процессов\", \"сгенерируй бота\", \"бот на базе процессов корезоид\", \"telegram/viber/fbmessenger bot from corezoid processes\", \"corezoid gen bot\", \"оберни процессы в бота\", \"создай оркестратор коммуникаций\", \"communications orchestrator\", \"згенеруй бота з цих процесів\", and on \"execute plan\" / \"погнали\" / \"refresh plan\" when a `.corezoid-gen-bot/` directory is present. For a Smart Form web app over the same processes use `simulator-app-generator`; to change a bot that already exists use `edit-bot`.",
       "files": [
         "https://raw.githubusercontent.com/corezoid/corezoid-ai-plugin/main/plugins/corezoid/skills/corezoid-gen-bot/SKILL.md",
         "https://raw.githubusercontent.com/corezoid/corezoid-ai-plugin/main/plugins/corezoid/skills/corezoid-gen-bot/references/command_patterns.md",
         "https://raw.githubusercontent.com/corezoid/corezoid-ai-plugin/main/plugins/corezoid/skills/corezoid-gen-bot/references/contract_extraction.md",
+        "https://raw.githubusercontent.com/corezoid/corezoid-ai-plugin/main/plugins/corezoid/skills/corezoid-gen-bot/references/phase4_build_orchestrator.md",
+        "https://raw.githubusercontent.com/corezoid/corezoid-ai-plugin/main/plugins/corezoid/skills/corezoid-gen-bot/references/phase5_generate_commands.md",
+        "https://raw.githubusercontent.com/corezoid/corezoid-ai-plugin/main/plugins/corezoid/skills/corezoid-gen-bot/references/phase6_seed_tasks.md",
+        "https://raw.githubusercontent.com/corezoid/corezoid-ai-plugin/main/plugins/corezoid/skills/corezoid-gen-bot/references/phase7_verify_repair.md",
+        "https://raw.githubusercontent.com/corezoid/corezoid-ai-plugin/main/plugins/corezoid/skills/corezoid-gen-bot/references/phase8_report.md",
+        "https://raw.githubusercontent.com/corezoid/corezoid-ai-plugin/main/plugins/corezoid/skills/corezoid-gen-bot/references/plan_md_schema.md",
+        "https://raw.githubusercontent.com/corezoid/corezoid-ai-plugin/main/plugins/corezoid/skills/corezoid-gen-bot/references/rules.md",
         "https://raw.githubusercontent.com/corezoid/corezoid-ai-plugin/main/plugins/corezoid/skills/corezoid-gen-bot/references/template_map.md"
       ]
     },

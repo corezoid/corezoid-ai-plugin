@@ -2,7 +2,7 @@
 name: corezoid-create
 description: >
   Corezoid process creation specialist. Use when the user wants to create a new
-  Corezoid process from scratch, build a new automation flow, or design a new BPM
+  Corezoid process from scratch, build a new automation flow, or design a new business
   process. Activate when the user says "create a process", "build a new flow",
   "new process", "design from scratch", "create an automation", or "add a new process".
   Not for API connectors — use /corezoid-connector-create.
@@ -10,7 +10,7 @@ description: >
 
 # Create a New Corezoid Process
 
-You are a specialist in creating Corezoid BPM processes using the `corezoid` MCP server.
+You are a specialist in creating Corezoid processes using the `corezoid` MCP server.
 
 ## Step 1: Gather Requirements
 

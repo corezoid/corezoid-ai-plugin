@@ -226,12 +226,22 @@ run_power_build() {
   # Generate POWER.md
   cat > "$OUTPUT_DIR/POWER.md" << FRONTMATTER
 ---
-name: "corezoid"
-displayName: "Corezoid"
-version: "$VERSION"
-description: "Corezoid BPM platform assistant. Exposes the Corezoid REST API as MCP tools (\`convctl\`) plus $skill_count steering files covering process creation, editing, review, validation, dashboards, state diagrams, variables, and access. Ships JSON schemas and per-node-type documentation for all 24 Corezoid node types."
-keywords: ["corezoid", "process", "bpm", "workflow", "automation", "mcp"]
-author: "Corezoid"
+name: corezoid
+displayName: Corezoid
+version: $VERSION
+description: Corezoid Actor Engine assistant. Exposes the Corezoid REST API as MCP tools (\`convctl\`) plus $skill_count skills covering process creation, editing, lifecycle operations, review, validation, dashboards, state diagrams, variables, access, layout, docs, and custom-code git_call. Ships JSON schemas and per-node-type documentation for all 24 Corezoid node types.
+author:
+  name: Corezoid
+  url: https://corezoid.com
+homepage: https://github.com/corezoid/corezoid-ai-plugin
+repository: https://github.com/corezoid/corezoid-ai-plugin
+license: MIT
+keywords:
+  - corezoid
+  - process
+  - workflow
+  - automation
+  - mcp
 ---
 
 # Corezoid Power

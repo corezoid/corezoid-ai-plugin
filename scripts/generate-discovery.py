@@ -222,7 +222,7 @@ def generate_llms_txt(skills, version):
     lines = [
         "# Corezoid AI Plugin",
         "",
-        "> Official Claude Code plugin for Corezoid BPM platform. "
+        "> Official Claude Code plugin for the Corezoid Actor Engine. "
         "Provides skills and MCP tools for creating, editing, reviewing, "
         "and managing Corezoid business processes directly from the IDE.",
         "",

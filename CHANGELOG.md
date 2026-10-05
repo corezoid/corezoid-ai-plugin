@@ -1,5 +1,10 @@
 # Changelog
 
+## [3.8.1]
+
+- Docs: finish the BPM rebrand in the copy users and agents actually see — `public/llms.txt` and its generator `scripts/generate-discovery.py`, the `corezoid` / `corezoid-create` / `corezoid-edit` / `corezoid-review` skill texts, `public/.well-known/skills/index.json`, and `CLAUDE.md`. The platform is now described as the Corezoid Actor Engine, matching the manifests. The `"BPM process"` routing trigger in `corezoid/SKILL.md` stays — users still phrase it that way.
+- Fix(kiro): `install-kiro.sh` generated a Power whose frontmatter diverged from the committed `POWER.md` — it still said "Corezoid BPM platform assistant", carried a `bpm` keyword, listed a shorter set of skill areas, and omitted `author.url`, `homepage`, `repository` and `license`. The generated frontmatter is now byte-identical to `POWER.md` apart from the interpolated version and skill count.
+
 ## [3.8.0]
 
 - Feat: `corezoid-connector-create` skill — build an atomic single-endpoint connector to any HTTP API (external, internal, or Corezoid itself), with api_timeout routing and registration docs (#185).

@@ -133,7 +133,7 @@ Arguments go **inside `args`**, never at the top level. Add `"help": true` to ge
 
 ## Platform Architecture
 
-Corezoid is an event-driven BPM platform where processes are defined as directed graphs of nodes:
+Corezoid is an event-driven Actor Engine where processes are defined as directed graphs of nodes:
 
 ```
 Workspace

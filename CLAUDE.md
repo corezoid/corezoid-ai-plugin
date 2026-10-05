@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Repository Purpose
 
-This is a Claude Code / Codex / Kiro plugin (`@corezoid/corezoid-ai-plugin`) that gives the AI the knowledge and tools to create, edit, and review [Corezoid](https://corezoid.com) BPM processes directly from the IDE. The repo ships:
+This is a Claude Code / Codex / Kiro plugin (`@corezoid/corezoid-ai-plugin`) that gives the AI the knowledge and tools to create, edit, and review [Corezoid](https://corezoid.com) processes directly from the IDE. The repo ships:
 
 - Static skills (`plugins/corezoid/skills/*/SKILL.md` + reference docs, JSON samples).
 - Plugin manifests for Claude Code, Codex, Kiro, and the agents marketplace, plus `POWER.md` for the Kiro Powers registry.

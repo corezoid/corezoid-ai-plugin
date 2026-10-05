@@ -1,6 +1,6 @@
 # Corezoid AI Plugin
 
-> Official Claude Code plugin for Corezoid BPM platform. Provides skills and MCP tools for creating, editing, reviewing, and managing Corezoid business processes directly from the IDE.
+> Official Claude Code plugin for the Corezoid Actor Engine. Provides skills and MCP tools for creating, editing, reviewing, and managing Corezoid business processes directly from the IDE.
 
 ## Skills
 
@@ -8,11 +8,12 @@
 - [corezoid-access](https://raw.githubusercontent.com/corezoid/corezoid-ai-plugin/main/plugins/corezoid/skills/corezoid-access/SKILL.md): Corezoid access-control specialist
 - [corezoid-alias-manager](https://raw.githubusercontent.com/corezoid/corezoid-ai-plugin/main/plugins/corezoid/skills/corezoid-alias-manager/SKILL.md): Manages Corezoid aliases — create, list, modify, delete, link/unlink, and use aliases in process JSON
 - [corezoid-api-connector](https://raw.githubusercontent.com/corezoid/corezoid-ai-plugin/main/plugins/corezoid/skills/corezoid-api-connector/SKILL.md): Corezoid API connector specialist
+- [corezoid-connector-create](https://raw.githubusercontent.com/corezoid/corezoid-ai-plugin/main/plugins/corezoid/skills/corezoid-connector-create/SKILL.md): API connector builder
 - [corezoid-create](https://raw.githubusercontent.com/corezoid/corezoid-ai-plugin/main/plugins/corezoid/skills/corezoid-create/SKILL.md): Corezoid process creation specialist
 - [corezoid-dashboard-manager](https://raw.githubusercontent.com/corezoid/corezoid-ai-plugin/main/plugins/corezoid/skills/corezoid-dashboard-manager/SKILL.md): Creates and manages Corezoid dashboards — adds charts (column, pie, funnel, table), binds metrics to process nodes, configures real-time mode, and sets up drill-down linking between dashboards
 - [corezoid-describe](https://raw.githubusercontent.com/corezoid/corezoid-ai-plugin/main/plugins/corezoid/skills/corezoid-describe/SKILL.md): Updates or creates the description of a Corezoid process, folder, or project without touching its logic
 - [corezoid-edit](https://raw.githubusercontent.com/corezoid/corezoid-ai-plugin/main/plugins/corezoid/skills/corezoid-edit/SKILL.md): Corezoid process editing specialist
-- [corezoid-edit-bot](https://raw.githubusercontent.com/corezoid/corezoid-ai-plugin/main/plugins/corezoid/skills/corezoid-edit-bot/SKILL.md): Iteratively edits an already-built messenger bot from corezoid-gen-bot — a Corezoid Communications Orchestrator serving Telegram, Viber, Apple Messages for Business and Facebook Messenger over a backend of existing Corezoid processes called with api_rpc
+- [corezoid-edit-bot](https://raw.githubusercontent.com/corezoid/corezoid-ai-plugin/main/plugins/corezoid/skills/corezoid-edit-bot/SKILL.md): Iteratively edits an already-built messenger bot from corezoid-gen-bot — a Corezoid Communications Orchestrator serving Telegram, Viber, Apple Messages for Business and Facebook Messenger over a backend of Corezoid processes called with api_rpc
 - [corezoid-feedback](https://raw.githubusercontent.com/corezoid/corezoid-ai-plugin/main/plugins/corezoid/skills/corezoid-feedback/SKILL.md): Collects and submits bug reports, improvement requests, and quality signals about the Corezoid plugin to the Corezoid team
 - [corezoid-gen-bot](https://raw.githubusercontent.com/corezoid/corezoid-ai-plugin/main/plugins/corezoid/skills/corezoid-gen-bot/SKILL.md): Generates a multi-platform messenger bot (Telegram, Viber, Apple Messages for Business, Facebook Messenger) on Corezoid from a set of EXISTING Corezoid processes plus a description of the desired bot
 - [corezoid-git-context](https://raw.githubusercontent.com/corezoid/corezoid-ai-plugin/main/plugins/corezoid/skills/corezoid-git-context/SKILL.md): Analyzes the current session and updates _ext/docs/*.md in the Corezoid git mirror for the active stage
@@ -75,6 +76,7 @@ The plugin bundles a Go MCP server (`convctl`) with these tools:
 - **invite-user**: Invite an external email to the workspace AND share a process/folder/stage/project with them in one call (action of `cz-access`)
 - **layout-process**: Auto-arrange a process's node coordinates into a clean, readable layout (waterfall for simple trees, layered+error-rail for meshes, aligned table/star grids for region bundles)
 - **lint-process**: Validate process structure
+- **list-aliases**: List the aliases (short_name -> target process) defined in a Corezoid project's stage (action of `cz-structure`)
 - **list-api-keys**: List API keys visible in the current workspace (action of `cz-access`)
 - **list-folders**: List the immediate children of a Corezoid folder (subfolders + processes + state diagrams) (action of `cz-structure`)
 - **list-group-objects**: List the processes (conv objects) currently shared with a group (action of `cz-access`)
@@ -111,6 +113,7 @@ The plugin bundles a Go MCP server (`convctl`) with these tools:
 - **set-stage-immutable**: Set a stage's immutable (read-only) flag (action of `cz-structure`)
 - **share-object**: Grant or revoke access to a Corezoid object (process/folder/stage/project) for a user, API key, or group (action of `cz-access`)
 - **show-folder**: Show metadata for a single Corezoid folder: title, obj_type (0 normal, 2 project, 3 stage), parent folder ID and parent type (action of `cz-structure`)
+- **show-process**: Show a Corezoid process's own metadata (title, description, status, conv_type, owner_id/owner_login, project_id, stage_id, immutable) without exporting its scheme (action of `cz-structure`)
 - **show-project**: Show a Corezoid project's metadata and the stages available to the caller (action of `cz-structure`)
 - **show-task**: Return the current state of a single task — data, obj_id (task_id), node_id and status — resolved by task_id and/or ref (action of `cz-tasks`)
 - **update-context-file**: Write or append to a file inside _ext/ of the git mirror local copy (.git-context/) (action of `cz-git-context`)

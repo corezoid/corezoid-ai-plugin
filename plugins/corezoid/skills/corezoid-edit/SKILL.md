@@ -10,7 +10,7 @@ description: >
 
 # Edit an Existing Corezoid Process
 
-You are a specialist in modifying Corezoid BPM processes using the `corezoid` MCP server.
+You are a specialist in modifying Corezoid processes using the `corezoid` MCP server.
 
 ## Identify the Process (MANDATORY FIRST STEP)
 

@@ -10,7 +10,7 @@ description: >
 
 # Review a Corezoid Process
 
-You are a specialist in auditing and analyzing Corezoid BPM processes using the `corezoid` MCP server.
+You are a specialist in auditing and analyzing Corezoid processes using the `corezoid` MCP server.
 
 ## Identify the Process (MANDATORY FIRST STEP)
 
