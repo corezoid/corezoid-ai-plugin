@@ -14,6 +14,7 @@ func TestShowProcessLifecycle_ParsesLiveMetadata(t *testing.T) {
 			"conv_type": "process", "parent_obj_id": float64(300),
 			"parent_obj_type": "folder", "project_id": float64(100),
 			"stage_id": float64(200), "immutable": true,
+			"owner_id": float64(78545), "owner_login": "andrii.chaban@corezoid.com",
 		})
 	})
 	executor.WorkspaceID = "workspace-test"
@@ -24,6 +25,9 @@ func TestShowProcessLifecycle_ParsesLiveMetadata(t *testing.T) {
 	}
 	if info.ObjID != 42 || info.Status != "paused" || info.ParentObjID != 300 || info.ProjectID != 100 || info.StageID != 200 || !info.Immutable {
 		t.Errorf("unexpected metadata: %+v", info)
+	}
+	if info.OwnerID != 78545 || info.OwnerLogin != "andrii.chaban@corezoid.com" {
+		t.Errorf("unexpected owner metadata: %+v", info)
 	}
 }
 

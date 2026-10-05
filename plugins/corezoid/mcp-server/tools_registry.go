@@ -549,7 +549,7 @@ var coreToolDefs = []mcpTool{
 // toolRegistry is what tools/list returns: the core tools plus one entry per
 // domain router. mcp_server.go and mcp_http.go marshal this slice directly.
 //
-// It is NOT the set of callable tools — the 54 definitions behind the routers
+// It is NOT the set of callable tools — the 56 definitions behind the routers
 // are callable too, by action name (and, unchanged, from the CLI and any
 // direct client). Use allToolDefs when you need every definition; use
 // toolHandlers when you need every callable name.

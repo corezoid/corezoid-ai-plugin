@@ -5,8 +5,9 @@ import (
 	"strings"
 )
 
-// ProcessLifecycleInfo is the live metadata needed by pause/resume and move.
-// The lightweight show-conv operation avoids exporting the whole scheme.
+// ProcessLifecycleInfo is the live metadata needed by pause/resume and move,
+// and by show-process. The lightweight show-conv operation avoids exporting
+// the whole scheme.
 type ProcessLifecycleInfo struct {
 	ObjID         int
 	Title         string
@@ -18,6 +19,8 @@ type ProcessLifecycleInfo struct {
 	ProjectID     int
 	StageID       int
 	Immutable     bool
+	OwnerID       int
+	OwnerLogin    string
 }
 
 // ShowProcessLifecycle returns current process metadata without downloading
@@ -50,6 +53,8 @@ func (v *Executor) ShowProcessLifecycle(processID int) (*ProcessLifecycleInfo, e
 	info.ProjectID = lifecycleMapInt(op, "project_id")
 	info.StageID = lifecycleMapInt(op, "stage_id")
 	info.Immutable, _ = op["immutable"].(bool)
+	info.OwnerID = lifecycleMapInt(op, "owner_id")
+	info.OwnerLogin, _ = op["owner_login"].(string)
 
 	if info.ObjID == 0 {
 		return nil, fmt.Errorf("show process returned no obj_id")

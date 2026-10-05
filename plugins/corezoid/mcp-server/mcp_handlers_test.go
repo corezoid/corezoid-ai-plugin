@@ -1295,6 +1295,56 @@ func TestHandleToolCall_ListStages_MissingArg(t *testing.T) {
 	_ = result
 }
 
+// ---- show-process -----------------------------------------------------------
+
+func TestHandleToolCall_ShowProcess_OK(t *testing.T) {
+	resetGlobals(t)
+	srv, _ := mockAPIServer(t, func(ops []map[string]interface{}) interface{} {
+		return lifecycleResponse(map[string]interface{}{
+			"proc": "ok", "obj_id": float64(1922026), "title": "Receiver: API GW /create_smart_api",
+			"description": "", "status": "active", "conv_type": "process",
+			"parent_obj_id": float64(600), "parent_obj_type": "folder",
+			"project_id": float64(623461), "stage_id": float64(623462), "immutable": true,
+			"owner_id": float64(78545), "owner_login": "andrii.chaban@corezoid.com",
+		})
+	})
+	setProjectAuth(t, srv.URL)
+	setVarTestAuth(t)
+
+	result, isErr := handleToolCall(context.Background(), "show-process", map[string]interface{}{
+		"process_id": float64(1922026),
+	})
+	if isErr {
+		t.Fatalf("unexpected error: %s", result)
+	}
+	for _, want := range []string{"1922026", "andrii.chaban@corezoid.com", "owner_id=78545", "project_id=623461", "stage_id=623462"} {
+		if !strings.Contains(result, want) {
+			t.Errorf("output missing %q: %s", want, result)
+		}
+	}
+}
+
+func TestHandleToolCall_ShowProcess_MissingArg(t *testing.T) {
+	resetGlobals(t)
+	result, isErr := handleToolCall(context.Background(), "show-process", map[string]interface{}{})
+	if !isErr {
+		t.Error("expected isError=true when process_id missing")
+	}
+	_ = result
+}
+
+func TestHandleToolCall_ListAliases_MissingArg(t *testing.T) {
+	resetGlobals(t)
+	result, isErr := handleToolCall(context.Background(), "list-aliases", map[string]interface{}{
+		"project_id": float64(1),
+		"stage_id":   float64(1),
+	})
+	if !isErr {
+		t.Error("expected isError=true when company_id missing")
+	}
+	_ = result
+}
+
 // ---- run-task argument validation ------------------------------------------
 
 func TestHandleToolCall_RunTask_BadFilename(t *testing.T) {
