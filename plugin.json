@@ -1,0 +1,37 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "corezoid",
+  "version": "3.7.0",
+  "description": "Corezoid BPM platform assistant. Exposes Corezoid operations as an MCP server and provides skills for creating, editing, reviewing, and deploying business processes — including generating multi-platform messenger bots over existing processes.",
+  "author": {
+    "name": "Corezoid",
+    "email": "support@corezoid.com",
+    "url": "https://corezoid.com"
+  },
+  "homepage": "https://corezoid.com",
+  "repository": "https://github.com/corezoid/corezoid-ai-plugin",
+  "license": "MIT",
+  "keywords": [
+    "corezoid",
+    "bpm",
+    "process",
+    "workflow",
+    "automation",
+    "mcp",
+    "chatbot",
+    "telegram"
+  ],
+  "extensions": {
+    "com.openai.interface": {
+      "displayName": "Corezoid",
+      "shortDescription": "Corezoid BPM processes in your IDE",
+      "longDescription": "Full access to the Corezoid BPM platform — pull and push processes, lint and validate JSON, run tasks, manage folders, and create environment variables. Specialist skills cover process creation, editing, review, and project-wide auditing. Bot skills wrap an existing process backend in a multi-platform messenger bot and keep it maintainable.",
+      "developerName": "Corezoid",
+      "category": "Productivity",
+      "websiteURL": "https://corezoid.com",
+      "supportURL": "https://github.com/corezoid/corezoid-ai-plugin/issues",
+      "privacyPolicyURL": "https://doc.corezoid.com/docs/privacy-policy",
+      "termsOfServiceURL": "https://corezoid.com/terms-and-conditions/"
+    }
+  }
+}

@@ -16,6 +16,7 @@ jobs:
 
       - name: Parse JSON manifests
         run: |
+          python3 -m json.tool plugin.json > /dev/null
           python3 -m json.tool .claude-plugin/marketplace.json > /dev/null
           python3 -m json.tool .agents/plugins/marketplace.json > /dev/null
           python3 -m json.tool plugins/corezoid/.claude-plugin/plugin.json > /dev/null
@@ -83,6 +84,8 @@ jobs:
           with open(".agents/plugins/marketplace.json") as f:
               agents_ver = json.load(f)["plugins"][0]["version"]
           power_ver = read_frontmatter_version("POWER.md")
+          with open("plugin.json") as f:
+              root_ver = json.load(f)["version"]
 
           versions = {
               "claude plugin.json": claude_ver,
@@ -91,6 +94,7 @@ jobs:
               ".claude-plugin/marketplace.json": market_ver,
               ".agents/plugins/marketplace.json": agents_ver,
               "POWER.md": power_ver,
+              "plugin.json (agent-plugins root)": root_ver,
           }
           print("Versions found:", versions)
 

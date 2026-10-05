@@ -550,6 +550,12 @@ See [docs/Troubleshooting.md](docs/Troubleshooting.md) for solutions to common p
 - [Claude Code](https://claude.ai/code)
 - [Changelog](CHANGELOG.md)
 
+## Support & Legal
+
+- **Support:** open an issue at <https://github.com/corezoid/corezoid-ai-plugin/issues> or email <support@corezoid.com>
+- **Privacy Policy:** <https://doc.corezoid.com/docs/privacy-policy>
+- **Terms of Service:** <https://corezoid.com/terms-and-conditions/>
+
 ## License
 
 [MIT](LICENSE)
