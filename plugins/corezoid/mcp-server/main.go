@@ -234,6 +234,13 @@ func main() {
 		return
 	}
 
+	// Hosted mode: remote multi-tenant endpoint. Reads no local config and
+	// logs to stderr (container logs); see hosted.go.
+	if addr := os.Getenv("COREZOID_HOSTED_ADDR"); addr != "" {
+		runHostedMode(addr)
+		return
+	}
+
 	// MCP server mode — route all log output to a file so it never leaks onto
 	// MCP stdout (which carries JSON-RPC messages).
 	// Debug level is opt-in: set COREZOID_DEBUG=1 to enable.
@@ -622,6 +629,14 @@ func fixStruct(dataBin string, inProcessID int) (string, []string) {
 // The second return value is a user-visible notice emitted when a fresh ID
 // is persisted; empty otherwise.
 func resolveAndCacheProjectID(v *Executor) (int, string) {
+	if hostedMode {
+		// The cache is one process-wide value persisted to ~/.corezoid: shared
+		// across callers it would hand one tenant another's project.
+		if v.StageID == 0 {
+			return 0, ""
+		}
+		return v.GetProjectIDByStageID(v.StageID), ""
+	}
 	authStateMu.RLock()
 	id := cachedProjectID
 	authStateMu.RUnlock()

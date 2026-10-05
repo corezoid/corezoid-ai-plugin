@@ -1,5 +1,9 @@
 # Changelog
 
+## [Unreleased]
+
+- Feat(mcp): hosted mode for a remote, multi-tenant endpoint (e.g. `https://mcp.corezoid.com/mcp`), enabled by `COREZOID_HOSTED_ADDR`; stdio and the local HTTP transport are unchanged without it. Every request authenticates itself with the caller's OAuth token (`Authorization: Bearer`, issued by `account.corezoid.com`); anonymous requests get 401 with an RFC 9728 pointer when `COREZOID_HOSTED_RESOURCE_URL` is set. Company and stage come from a `scope: {company_id, stage_id}` argument on each tool call, never from `~/.corezoid` or process globals; the project-id cache and analytics are off. Only the 48 tools that talk purely to the Corezoid API are listed or callable — tools that touch local files, git, processes or local credentials are refused even when called by name or through a router. No MCP sessions (any replica serves any request), no resources or prompts, and the API URL is fixed by `COREZOID_HOSTED_API_URL` (https only).
+
 ## [3.9.0]
 
 - Feat(brand): the platform is the "Corezoid Actor Engine" everywhere — BPM wording is gone from the seven manifests, `POWER.md`, `public/llms.txt`, `public/.well-known/skills/index.json`, the `corezoid` / `corezoid-create` / `corezoid-edit` / `corezoid-review` skill texts and `CLAUDE.md`, and the `bpm` keyword is dropped. `scripts/generate-discovery.py` carries the new wording, so regenerating the discovery files no longer reintroduces it. The `"BPM process"` routing trigger in `corezoid/SKILL.md` stays — users still phrase it that way.
