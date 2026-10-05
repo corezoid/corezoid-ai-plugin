@@ -17,6 +17,9 @@
     "longDescription": "Full access to the Corezoid BPM platform — pull and push processes, lint and validate JSON, run tasks, manage folders, and create environment variables. Specialist skills cover process creation, editing, review, and project-wide auditing. Bot skills wrap an existing process backend in a multi-platform messenger bot and keep it maintainable.",
     "developerName": "Corezoid",
     "category": "Productivity",
+    "supportURL": "https://github.com/corezoid/corezoid-ai-plugin/issues",
+    "privacyPolicyURL": "https://doc.corezoid.com/docs/privacy-policy",
+    "termsOfServiceURL": "https://corezoid.com/terms-and-conditions/",
     "capabilities": [
       "Create and deploy BPM processes as .conv.json files",
       "Pull and push processes to Corezoid workspace",
