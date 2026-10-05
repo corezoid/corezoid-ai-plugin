@@ -1,7 +1,7 @@
 {
   "name": "corezoid",
   "metadata": {
-    "description": "Official Corezoid AI plugin for Claude Code. Provides BPM process skills, MCP tools, docs, schemas, and samples for working with Corezoid processes."
+    "description": "Official Corezoid AI plugin for Claude Code. Provides process-automation skills, MCP tools, docs, schemas, and samples for working with Corezoid processes."
   },
   "owner": {
     "name": "Corezoid",
@@ -11,7 +11,7 @@
     {
       "name": "corezoid",
       "source": "./plugins/corezoid",
-      "description": "Corezoid BPM platform skills, MCP server, docs, and samples for Claude Code — including messenger bot generation over existing processes.",
+      "description": "Corezoid Actor Engine skills, MCP server, docs, and samples for Claude Code — including messenger bot generation over existing processes.",
       "version": "3.8.0",
       "author": {
         "name": "Corezoid",
@@ -20,7 +20,15 @@
       "homepage": "https://corezoid.com",
       "repository": "https://github.com/corezoid/corezoid-ai-plugin",
       "license": "MIT",
-      "keywords": ["corezoid", "process", "bpm", "workflow", "automation", "mcp", "chatbot", "telegram"],
+      "keywords": [
+        "corezoid",
+        "process",
+        "workflow",
+        "automation",
+        "mcp",
+        "chatbot",
+        "telegram"
+      ],
       "category": "Developer Tools"
     }
   ]

@@ -2,7 +2,7 @@
 name: corezoid
 displayName: Corezoid
 version: 3.8.0
-description: Corezoid BPM platform assistant. Exposes the Corezoid REST API as MCP tools (`convctl`) plus 27 skills covering process creation, editing, lifecycle operations, review, validation, dashboards, state diagrams, variables, access, layout, docs, and custom-code git_call. Ships JSON schemas and per-node-type documentation for all 24 Corezoid node types.
+description: Corezoid Actor Engine assistant. Exposes the Corezoid REST API as MCP tools (`convctl`) plus 27 skills covering process creation, editing, lifecycle operations, review, validation, dashboards, state diagrams, variables, access, layout, docs, and custom-code git_call. Ships JSON schemas and per-node-type documentation for all 24 Corezoid node types.
 author:
   name: Corezoid
   url: https://corezoid.com
@@ -12,7 +12,6 @@ license: MIT
 keywords:
   - corezoid
   - process
-  - bpm
   - workflow
   - automation
   - mcp
@@ -20,7 +19,7 @@ keywords:
 
 # Corezoid Power for AWS Kiro
 
-A Kiro Power that brings the [Corezoid](https://corezoid.com) BPM platform
+A Kiro Power that brings the [Corezoid](https://corezoid.com) Actor Engine
 into your Kiro workspace as MCP tools and skills. Create, edit, validate,
 deploy, and document Corezoid processes without leaving the IDE.
 

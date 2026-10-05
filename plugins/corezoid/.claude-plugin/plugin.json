@@ -1,7 +1,7 @@
 {
   "name": "corezoid",
   "version": "3.8.0",
-  "description": "Corezoid AI Documentation and Templates — skills and MCP server for working with Corezoid BPM processes.",
+  "description": "Corezoid AI Documentation and Templates — skills and MCP server for working with Corezoid processes.",
   "author": {
     "name": "Corezoid",
     "url": "https://corezoid.com"
@@ -9,7 +9,15 @@
   "homepage": "https://github.com/corezoid/corezoid-ai-plugin",
   "repository": "https://github.com/corezoid/corezoid-ai-plugin",
   "license": "MIT",
-  "keywords": ["corezoid", "process", "bpm", "workflow", "automation", "mcp", "chatbot", "telegram"],
+  "keywords": [
+    "corezoid",
+    "process",
+    "workflow",
+    "automation",
+    "mcp",
+    "chatbot",
+    "telegram"
+  ],
   "skills": "./skills/",
   "mcpServers": "./.mcp.json"
 }
