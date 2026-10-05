@@ -1,9 +1,12 @@
 # Changelog
 
-## [3.8.1]
+## [3.9.0]
 
-- Docs: finish the BPM rebrand in the copy users and agents actually see — `public/llms.txt` and its generator `scripts/generate-discovery.py`, the `corezoid` / `corezoid-create` / `corezoid-edit` / `corezoid-review` skill texts, `public/.well-known/skills/index.json`, and `CLAUDE.md`. The platform is now described as the Corezoid Actor Engine, matching the manifests. The `"BPM process"` routing trigger in `corezoid/SKILL.md` stays — users still phrase it that way.
-- Fix(kiro): `install-kiro.sh` generated a Power whose frontmatter diverged from the committed `POWER.md` — it still said "Corezoid BPM platform assistant", carried a `bpm` keyword, listed a shorter set of skill areas, and omitted `author.url`, `homepage`, `repository` and `license`. The generated frontmatter is now byte-identical to `POWER.md` apart from the interpolated version and skill count.
+- Feat(brand): the platform is the "Corezoid Actor Engine" everywhere — BPM wording is gone from the seven manifests, `POWER.md`, `public/llms.txt`, `public/.well-known/skills/index.json`, the `corezoid` / `corezoid-create` / `corezoid-edit` / `corezoid-review` skill texts and `CLAUDE.md`, and the `bpm` keyword is dropped. `scripts/generate-discovery.py` carries the new wording, so regenerating the discovery files no longer reintroduces it. The `"BPM process"` routing trigger in `corezoid/SKILL.md` stays — users still phrase it that way.
+- Feat(brand): the official Corezoid wordmark (wave + "from API to KPI") replaces the CZ favicon, on an opaque white 512x512 square so it stays visible on the portal's dark theme. Listing category switched from Productivity to Developer tools.
+- Fix(manifests): address the OpenAI plugin-portal validation findings — subtitle trimmed to 30 characters, every capability line to 120, `defaultPrompt` capped at three entries, `privacyPolicyURL` moved to `https://corezoid.com/privacy-policy/`, and `logo` / `composerIcon` wired into the interface block.
+- Fix(kiro): `install-kiro.sh` generated a Power whose frontmatter diverged from the committed `POWER.md` — it advertised "Corezoid BPM platform assistant", carried a `bpm` keyword, listed a shorter set of skill areas, and omitted `author.url`, `homepage`, `repository` and `license`. The generated frontmatter is now byte-identical apart from the interpolated version and skill count.
+- Docs: regenerate `public/llms.txt` and `public/.well-known/skills/index.json`, picking up drift since they were last built — the `corezoid-connector-create` skill, the `list-aliases` and `show-process` tools, new bot reference files, and shortened bot descriptions.
 
 ## [3.8.0]
 
