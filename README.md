@@ -557,7 +557,7 @@ See [docs/Troubleshooting.md](docs/Troubleshooting.md) for solutions to common p
 ## Support & Legal
 
 - **Support:** open an issue at <https://github.com/corezoid/corezoid-ai-plugin/issues> or email <support@corezoid.com>
-- **Privacy Policy:** <https://doc.corezoid.com/docs/privacy-policy>
+- **Privacy Policy:** <https://corezoid.com/privacy-policy/>
 - **Terms of Service:** <https://corezoid.com/terms-and-conditions/>
 
 ## License
