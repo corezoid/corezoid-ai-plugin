@@ -24,7 +24,7 @@
     "shortDescription": "Corezoid processes in your IDE",
     "longDescription": "Full access to the Corezoid Actor Engine — pull and push processes, lint and validate JSON, run tasks, manage folders, and create environment variables. Specialist skills cover process creation, editing, review, and project-wide auditing. Bot skills wrap an existing process backend in a multi-platform messenger bot and keep it maintainable.",
     "developerName": "Corezoid",
-    "category": "Productivity",
+    "category": "Developer tools",
     "supportURL": "https://github.com/corezoid/corezoid-ai-plugin/issues",
     "privacyPolicyURL": "https://corezoid.com/privacy-policy/",
     "termsOfServiceURL": "https://corezoid.com/terms-and-conditions/",
