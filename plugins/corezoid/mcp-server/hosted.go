@@ -57,8 +57,12 @@ const (
 // Corezoid API only, with no filesystem, git, process or local-credential
 // access on the server. Router actions are filtered against the same set.
 // Adding a tool here is a security decision — check its handler first.
+//
+// create-communications-orchestrator is deliberately absent: it takes
+// third-party messenger bot tokens as arguments and builds ~150 processes,
+// which a public connector should not collect in chat. It stays local.
 var hostedAllowedTools = map[string]struct{}{
-	"add-chart": {}, "add-to-group": {}, "create-communications-orchestrator": {},
+	"add-chart": {}, "add-to-group": {},
 	"create-dashboard": {}, "create-group": {}, "create-project": {},
 	"delete-api-key": {}, "delete-folder": {}, "delete-group": {},
 	"delete-process": {}, "delete-project": {}, "delete-task": {},
@@ -233,9 +237,6 @@ var hostedDescriptions = map[string]string{
 var hostedArgDescriptions = map[string]map[string]string{
 	"create-dashboard": {
 		"folder_id": "Optional. Folder ID where the dashboard will be created — pass a subfolder ID to nest it. Defaults to the stage in scope.stage_id.",
-	},
-	"create-communications-orchestrator": {
-		"stage_id": "Optional. Stage/folder ID to build in. Defaults to the stage in scope.stage_id.",
 	},
 }
 
