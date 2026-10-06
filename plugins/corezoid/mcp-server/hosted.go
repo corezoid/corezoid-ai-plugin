@@ -251,7 +251,38 @@ func withScopeArg(d mcpTool) mcpTool {
 	}
 	copied["properties"] = props
 	d.InputSchema = copied
+	return withTitle(d)
+}
+
+// withTitle gives d a human-readable title if it has none, on a copy of its
+// annotations (the shared registry is never mutated). Connector directories
+// require a title per tool.
+func withTitle(d mcpTool) mcpTool {
+	if d.Annotations != nil && d.Annotations.Title != "" {
+		return d
+	}
+	a := toolAnnotations{}
+	if d.Annotations != nil {
+		a = *d.Annotations
+	}
+	a.Title = humanizeToolName(d.Name)
+	d.Annotations = &a
 	return d
+}
+
+// humanizeToolName turns "pull-process" into "Pull process" and a router like
+// "cz-structure" into "Corezoid structure".
+func humanizeToolName(name string) string {
+	router := strings.HasPrefix(name, "cz-")
+	words := strings.FieldsFunc(strings.TrimPrefix(name, "cz-"), func(r rune) bool { return r == '-' || r == '_' })
+	if len(words) == 0 {
+		return name
+	}
+	title := strings.Join(words, " ")
+	if router {
+		return "Corezoid " + title
+	}
+	return strings.ToUpper(title[:1]) + title[1:]
 }
 
 // hostedConfig is read from the environment once at startup.
