@@ -250,7 +250,7 @@ func TestToolAnnotations_Representative(t *testing.T) {
 		"cz-access":      {false, true, false, true},
 		"cz-structure":   {false, true, false, true},
 		"cz-tasks":       {false, true, false, true},
-		"cz-dashboards":  {false, false, false, true},
+		"cz-dashboards":  {false, true, false, true}, // modify-chart and set-dashboard-layout overwrite
 		"cz-variables":   {false, true, false, true},
 		"cz-snapshots":   {false, true, false, true},
 		"cz-git-context": {false, false, false, true},

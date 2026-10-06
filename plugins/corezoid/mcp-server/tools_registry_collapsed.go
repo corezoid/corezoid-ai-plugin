@@ -730,7 +730,7 @@ var collapsedToolRegistry = []mcpTool{
 	{
 		Name:        "modify-task",
 		Description: "Modify an existing task's data; at least one of task_id or ref is required. WARNING: the Corezoid API does a SHALLOW (top-level) merge — if a top-level key holds a nested object (e.g. data.currencies), its whole value is replaced and sub-keys absent from your payload are silently lost. Pass deep_merge: true to fetch current task data first and merge recursively, preserving sub-keys.",
-		Annotations: toolHints(hintMutates, hintSafe, hintIdempotent, hintOpenWorld),
+		Annotations: toolHints(hintMutates, hintDestructive, hintNonIdempotent, hintOpenWorld),
 		InputSchema: map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
@@ -935,7 +935,7 @@ var collapsedToolRegistry = []mcpTool{
 	{
 		Name:        "modify-chart",
 		Description: "Modify an existing Corezoid chart. Always provide the full series array — partial updates are not supported.",
-		Annotations: toolHints(hintMutates, hintSafe, hintIdempotent, hintOpenWorld),
+		Annotations: toolHints(hintMutates, hintDestructive, hintNonIdempotent, hintOpenWorld),
 		InputSchema: map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
@@ -985,7 +985,7 @@ var collapsedToolRegistry = []mcpTool{
 	{
 		Name:        "set-dashboard-layout",
 		Description: "Save chart positions on a dashboard grid. Must be called after add-chart/modify-chart to make charts visible. Each grid entry positions one chart by its chart_id (hex string from add-chart).",
-		Annotations: toolHints(hintMutates, hintSafe, hintIdempotent, hintOpenWorld),
+		Annotations: toolHints(hintMutates, hintDestructive, hintNonIdempotent, hintOpenWorld),
 		InputSchema: map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{

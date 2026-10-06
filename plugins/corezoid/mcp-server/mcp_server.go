@@ -35,6 +35,7 @@ type mcpError struct {
 
 type mcpTool struct {
 	Name        string           `json:"name"`
+	Title       string           `json:"title,omitempty"`
 	Description string           `json:"description"`
 	InputSchema interface{}      `json:"inputSchema"`
 	Annotations *toolAnnotations `json:"annotations,omitempty"`
