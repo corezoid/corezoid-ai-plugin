@@ -74,6 +74,15 @@ var hostedAllowedTools = map[string]struct{}{
 	"remove-from-group": {}, "resume-process": {}, "set-dashboard-layout": {},
 	"set-stage-immutable": {}, "share-object": {}, "show-folder": {},
 	"show-process": {}, "show-project": {}, "show-task": {},
+	// Hosted variants that move content through the request instead of the
+	// working directory (hosted_process.go).
+	"pull-process": {}, "lint-process": {}, "create-process": {}, "run-task": {},
+}
+
+// hostedStageOptional tools address their object directly (a process id, a
+// folder id, or JSON in the request), so they need no scope.stage_id.
+var hostedStageOptional = map[string]struct{}{
+	"pull-process": {}, "lint-process": {}, "create-process": {}, "run-task": {},
 }
 
 // hostedScope is the per-request identity a hosted tool call runs with.
@@ -177,7 +186,9 @@ func hostedGate(ctx context.Context, tool string) error {
 	if s.Token == "" {
 		return errors.New("[Error] Not authenticated: the request carried no access token")
 	}
-	if _, tokenOnly := tokenOnlyTools[tool]; !tokenOnly && s.StageID == 0 {
+	_, tokenOnly := tokenOnlyTools[tool]
+	_, stageOptional := hostedStageOptional[tool]
+	if !tokenOnly && !stageOptional && s.StageID == 0 {
 		return fmt.Errorf("[Error] %s needs scope.stage_id (and scope.company_id for a company workspace). Find them with list-workspaces, list-projects and list-stages, then pass scope: {\"company_id\": \"…\", \"stage_id\": …}", tool)
 	}
 	return nil
@@ -190,6 +201,9 @@ func hostedToolRegistry() []mcpTool {
 	var defs []mcpTool
 	for _, d := range coreToolDefs {
 		if _, ok := hostedAllowedTools[d.Name]; ok {
+			if override, ok := hostedToolDefs[d.Name]; ok {
+				d = override
+			}
 			defs = append(defs, withScopeArg(d))
 		}
 	}

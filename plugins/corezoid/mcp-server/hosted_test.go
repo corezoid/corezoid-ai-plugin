@@ -174,7 +174,7 @@ func TestHostedToolListOnlyAPITools(t *testing.T) {
 	for _, d := range tools {
 		seen[d.Name] = d
 	}
-	for _, banned := range []string{"login", "logout", "pull-process", "pull-folder", "push-process", "lint-process", "layout-process", "run-task", "cz-git-context", "cz-snapshots", "send-feedback"} {
+	for _, banned := range []string{"login", "logout", "pull-folder", "push-process", "layout-process", "cz-git-context", "cz-snapshots", "send-feedback"} {
 		if _, ok := seen[banned]; ok {
 			t.Errorf("%s listed in hosted mode", banned)
 		}
@@ -217,7 +217,7 @@ func TestHostedRefusesLocalTools(t *testing.T) {
 		tool string
 		args map[string]interface{}
 	}{
-		{"pull-process", map[string]interface{}{"process_id": 1, "scope": scope}},
+		{"push-process", map[string]interface{}{"process_path": "1_x.conv.json", "scope": scope}},
 		{"login", map[string]interface{}{}},
 		{"create-folder", map[string]interface{}{"title": "x", "scope": scope}},
 		{"cz-structure", map[string]interface{}{"action": "create-folder", "args": map[string]interface{}{"title": "x"}, "scope": scope}},

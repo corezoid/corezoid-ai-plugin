@@ -374,13 +374,24 @@ func loadCompiledSchema() (*jsonschema.Schema, error) {
 // ValidateJSONSchema validates a JSON file against the combined schema.
 // Returns nil if validation passes, an error otherwise.
 func ValidateJSONSchema(filePath string, debug bool) error {
-	sch, err := loadCompiledSchema()
-	if err != nil {
-		return err
-	}
 	data, err := os.ReadFile(filePath)
 	if err != nil {
 		return fmt.Errorf("failed to read input file: %v", err)
+	}
+	if err := ValidateJSONSchemaData(data, debug); err != nil {
+		return err
+	}
+	if debug {
+		logger.Debug("JSON schema validation passed, file=%s", filePath)
+	}
+	return nil
+}
+
+// ValidateJSONSchemaData validates process JSON bytes against the combined schema.
+func ValidateJSONSchemaData(data []byte, debug bool) error {
+	sch, err := loadCompiledSchema()
+	if err != nil {
+		return err
 	}
 	instance, err := jsonschema.UnmarshalJSON(bytes.NewReader(data))
 	if err != nil {
@@ -388,9 +399,6 @@ func ValidateJSONSchema(filePath string, debug bool) error {
 	}
 	if err := sch.Validate(instance); err != nil {
 		return fmt.Errorf("JSON schema validation failed:\n%v", err)
-	}
-	if debug {
-		logger.Debug("JSON schema validation passed, file=%s", filePath)
 	}
 	return nil
 }
