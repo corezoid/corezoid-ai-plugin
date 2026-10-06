@@ -179,15 +179,16 @@ func TestHostedToolListOnlyAPITools(t *testing.T) {
 			t.Errorf("%s listed in hosted mode", banned)
 		}
 	}
-	structure, ok := seen["cz-structure"]
-	if !ok {
-		t.Fatal("cz-structure router missing")
-	}
-	enum := structure.InputSchema.(map[string]interface{})["properties"].(map[string]interface{})["action"].(map[string]interface{})["enum"].([]string)
-	for _, a := range enum {
-		if _, ok := hostedAllowedTools[a]; !ok {
-			t.Errorf("cz-structure offers %q, which is not hosted-allowed", a)
+	for _, d := range tools {
+		if strings.HasPrefix(d.Name, "cz-") {
+			t.Errorf("router %s listed in hosted mode; actions must be flat tools", d.Name)
 		}
+		if _, ok := hostedAllowedTools[d.Name]; !ok {
+			t.Errorf("%s listed but not hosted-allowed", d.Name)
+		}
+	}
+	if len(tools) != len(hostedAllowedTools) {
+		t.Errorf("hosted tools/list has %d tools, want one per allowed tool (%d)", len(tools), len(hostedAllowedTools))
 	}
 	for _, d := range tools {
 		props := d.InputSchema.(map[string]interface{})["properties"].(map[string]interface{})
@@ -396,7 +397,7 @@ func TestHostedOpenAIAppsChallenge(t *testing.T) {
 func TestHostedToolsHaveTitles(t *testing.T) {
 	enableHostedForTest(t, "https://admin.corezoid.com")
 	for _, d := range hostedToolRegistry() {
-		if d.Annotations == nil || d.Annotations.Title == "" {
+		if d.Annotations == nil || d.Annotations.Title == "" || d.Title == "" {
 			t.Errorf("%s has no title", d.Name)
 		}
 	}
@@ -406,8 +407,32 @@ func TestHostedToolsHaveTitles(t *testing.T) {
 		}
 	}
 	for _, d := range toolRegistry {
-		if d.Annotations != nil && d.Annotations.Title != "" {
+		if d.Title != "" || (d.Annotations != nil && d.Annotations.Title != "") {
 			t.Fatalf("hosted titles leaked into the shared registry (%s)", d.Name)
+		}
+	}
+}
+
+// Hosted descriptions must not send the model to the local workspace: the
+// review scanners compare each description with what the tool can do there.
+func TestHostedDescriptionsHaveNoLocalReferences(t *testing.T) {
+	enableHostedForTest(t, "https://admin.corezoid.com")
+	local := []string{".stage.json", "marker", "pull-folder", "to disk", "process_path", ".conv.json", "modify-variable", "delete-variable"}
+	for _, d := range hostedToolRegistry() {
+		schema, _ := json.Marshal(d.InputSchema)
+		for _, l := range local {
+			if strings.Contains(d.Description, l) || strings.Contains(string(schema), l) {
+				t.Errorf("%s description or schema mentions %q", d.Name, l)
+			}
+		}
+	}
+	// The overrides work on copies.
+	for _, d := range allToolDefs() {
+		if d.Name == "create-dashboard" {
+			schema, _ := json.Marshal(d.InputSchema)
+			if !strings.Contains(string(schema), ".stage.json") {
+				t.Fatal("hosted argument descriptions mutated the shared registry")
+			}
 		}
 	}
 }

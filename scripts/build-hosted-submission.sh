@@ -48,7 +48,8 @@ note = """
 This plugin talks to the hosted Corezoid MCP server. Differences from the local plugin:
 
 - **No login tool.** The connection itself is authenticated (OAuth, account.corezoid.com).
-- **Scope per call.** Tools that act inside a workspace take `scope: {company_id, stage_id}`. Find the values with `cz-structure` → `list-workspaces`, `list-projects`, `list-stages`.
+- **Scope per call.** Tools that act inside a workspace take `scope: {company_id, stage_id}`. Find the values with `list-workspaces`, `list-projects`, `list-stages`.
+- **One tool per action.** The `cz-*` router tools are not listed here: their actions (`list-stages`, `share-object`, `modify-task`, …) are separate tools, called directly with their own arguments. Where a skill below says "`cz-structure` → `list-stages`", call `list-stages`.
 - **No local files.** `pull-process` returns the process JSON and a `base` token in the tool result. Edit that JSON and deploy it with `push-process` (`content` + `base`). The result contains the deployed scheme and a new `base` for the next edit. `lint-process` takes `content`. `create-process` takes `folder_id` and returns the new process JSON.
 - **Concurrent changes.** If the process changed on the server since your `base`, the push is blocked with a report. Pull again and re-apply your edits; merging is not available here.
 - **Not available:** git mirror, local layout, snapshot management, and anything below that mentions files, `.conv.json` paths, `login`, `pull-folder` or `run.sh`. Use the hosted equivalents above.

@@ -195,32 +195,88 @@ func hostedGate(ctx context.Context, tool string) error {
 	return nil
 }
 
-// hostedToolRegistry is tools/list in hosted mode: allowed core tools as they
-// are, routers rebuilt with only their allowed actions (a router left with no
-// action is dropped), and every tool given the optional "scope" argument.
+// hostedToolRegistry is tools/list in hosted mode: every allowed operation as
+// its own flat tool, each given the optional "scope" argument and a title.
+//
+// Routers are not listed here. They exist to keep the stdio tools/list small;
+// a remote connector is reviewed tool by tool, and a router that mixes reads
+// with deletes can carry neither an honest readOnlyHint nor an honest
+// destructiveHint. Router calls still resolve (handleToolCall), so clients
+// that learned the {action, args} shape keep working.
 func hostedToolRegistry() []mcpTool {
 	var defs []mcpTool
-	for _, d := range coreToolDefs {
-		if _, ok := hostedAllowedTools[d.Name]; ok {
-			if override, ok := hostedToolDefs[d.Name]; ok {
-				d = override
-			}
-			defs = append(defs, withScopeArg(d))
+	for _, d := range allToolDefs() {
+		if _, ok := hostedAllowedTools[d.Name]; !ok {
+			continue
 		}
-	}
-	for _, r := range toolRouters {
-		kept := r
-		kept.Actions = nil
-		for _, a := range r.Actions {
-			if _, ok := hostedAllowedTools[a.Action]; ok {
-				kept.Actions = append(kept.Actions, a)
-			}
+		if override, ok := hostedToolDefs[d.Name]; ok {
+			d = override
 		}
-		if len(kept.Actions) > 0 {
-			defs = append(defs, withScopeArg(kept.toolDef()))
+		if desc, ok := hostedDescriptions[d.Name]; ok {
+			d.Description = desc
 		}
+		defs = append(defs, withScopeArg(withHostedArgDescriptions(d)))
 	}
 	return defs
+}
+
+// hostedDescriptions replaces descriptions whose stdio wording points at the
+// local workspace (stage marker files, pull-folder, writing to disk) or at
+// tools the hosted server does not offer.
+var hostedDescriptions = map[string]string{
+	"list-folders":   "List the immediate children of a Corezoid folder (subfolders, processes and state diagrams). Read-only.",
+	"list-variables": "List the environment variables (env_var) of the stage given in scope.stage_id: short_name, obj_id, data_type (raw/json), env_var_type (visible/secret), title, value and change time. Read-only; secret variables are always shown masked.",
+}
+
+// hostedArgDescriptions does the same for single arguments, keyed by tool and
+// then argument name.
+var hostedArgDescriptions = map[string]map[string]string{
+	"create-dashboard": {
+		"folder_id": "Optional. Folder ID where the dashboard will be created — pass a subfolder ID to nest it. Defaults to the stage in scope.stage_id.",
+	},
+	"create-communications-orchestrator": {
+		"stage_id": "Optional. Stage/folder ID to build in. Defaults to the stage in scope.stage_id.",
+	},
+}
+
+// withHostedArgDescriptions applies hostedArgDescriptions to a copy of d's
+// schema; the shared registry is never mutated.
+func withHostedArgDescriptions(d mcpTool) mcpTool {
+	overrides, ok := hostedArgDescriptions[d.Name]
+	if !ok {
+		return d
+	}
+	schema, ok := d.InputSchema.(map[string]interface{})
+	if !ok {
+		return d
+	}
+	props, ok := schema["properties"].(map[string]interface{})
+	if !ok {
+		return d
+	}
+	copiedProps := make(map[string]interface{}, len(props))
+	for k, v := range props {
+		copiedProps[k] = v
+	}
+	for arg, desc := range overrides {
+		p, ok := props[arg].(map[string]interface{})
+		if !ok {
+			continue
+		}
+		copiedArg := make(map[string]interface{}, len(p))
+		for k, v := range p {
+			copiedArg[k] = v
+		}
+		copiedArg["description"] = desc
+		copiedProps[arg] = copiedArg
+	}
+	copied := make(map[string]interface{}, len(schema))
+	for k, v := range schema {
+		copied[k] = v
+	}
+	copied["properties"] = copiedProps
+	d.InputSchema = copied
+	return d
 }
 
 // withScopeArg returns a copy of d whose input schema also declares "scope".
@@ -254,19 +310,24 @@ func withScopeArg(d mcpTool) mcpTool {
 	return withTitle(d)
 }
 
-// withTitle gives d a human-readable title if it has none, on a copy of its
-// annotations (the shared registry is never mutated). Connector directories
-// require a title per tool.
+// withTitle gives d a human-readable title, both top-level (spec 2025-06-18)
+// and in annotations, on a copy (the shared registry is never mutated).
+// Connector directories require a title per tool.
 func withTitle(d mcpTool) mcpTool {
-	if d.Annotations != nil && d.Annotations.Title != "" {
-		return d
+	title := d.Title
+	if title == "" && d.Annotations != nil {
+		title = d.Annotations.Title
+	}
+	if title == "" {
+		title = humanizeToolName(d.Name)
 	}
 	a := toolAnnotations{}
 	if d.Annotations != nil {
 		a = *d.Annotations
 	}
-	a.Title = humanizeToolName(d.Name)
+	a.Title = title
 	d.Annotations = &a
+	d.Title = title
 	return d
 }
 
