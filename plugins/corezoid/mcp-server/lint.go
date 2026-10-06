@@ -227,7 +227,12 @@ func lintProcess(filePath string) (*LintResult, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to read file: %v", err)
 	}
+	return lintProcessData(data)
+}
 
+// lintProcessData lints a process given as JSON bytes. The hosted server
+// lints content sent in the request; the local tools read it from a file.
+func lintProcessData(data []byte) (*LintResult, error) {
 	var proc map[string]interface{}
 	if err := json.Unmarshal(data, &proc); err != nil {
 		return nil, fmt.Errorf("failed to parse JSON: %v", err)
@@ -264,7 +269,7 @@ func lintProcess(filePath string) (*LintResult, error) {
 	result.GitCallUsages = findGitCallUsages(typed)
 	result.SelfReferenceCopies = findSelfReferenceCopies(typed, processID)
 
-	schemaErr := ValidateJSONSchema(filePath, debug)
+	schemaErr := ValidateJSONSchemaData(data, debug)
 	if schemaErr != nil {
 		result.SchemaValid = false
 		result.SchemaError = schemaErr.Error()
