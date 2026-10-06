@@ -392,3 +392,22 @@ func TestHostedOpenAIAppsChallenge(t *testing.T) {
 		t.Errorf("set: %d %q %q", code, body, ct)
 	}
 }
+
+func TestHostedToolsHaveTitles(t *testing.T) {
+	enableHostedForTest(t, "https://admin.corezoid.com")
+	for _, d := range hostedToolRegistry() {
+		if d.Annotations == nil || d.Annotations.Title == "" {
+			t.Errorf("%s has no title", d.Name)
+		}
+	}
+	for in, want := range map[string]string{"pull-process": "Pull process", "cz-structure": "Corezoid structure", "run-task": "Run task"} {
+		if got := humanizeToolName(in); got != want {
+			t.Errorf("humanizeToolName(%q) = %q, want %q", in, got, want)
+		}
+	}
+	for _, d := range toolRegistry {
+		if d.Annotations != nil && d.Annotations.Title != "" {
+			t.Fatalf("hosted titles leaked into the shared registry (%s)", d.Name)
+		}
+	}
+}
