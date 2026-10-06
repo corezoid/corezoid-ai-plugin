@@ -69,8 +69,44 @@ type conflictResult struct {
 //     whole baseline subsystem exists to prevent, so it blocks and asks for a
 //     pull (or an explicit adopt_existing waiver);
 //   - the server could not answer: fail closed, same as above.
+//
+// conflictStore is where the concurrency gate finds what the caller last saw
+// of a process: sidecar files next to a local .conv.json, or a base token sent
+// with a hosted request. The decisions themselves live in resolveConflictWith
+// and are shared by both.
+type conflictStore interface {
+	lookupBaseline(procID int) (baselineEntry, bool, error)
+	contentChangedSince(v *Executor, procID int) contentCheckResult
+	healMissingAncestor(v *Executor, procID int) string
+	mergePlan(v *Executor, procID int, localJSON string) (plan mergePlan, theirsNodes []map[string]any, theirsConv string, ok bool)
+	applyMerge(procID int, localJSON string, current baselineEntry, theirsConv string, plan mergePlan, theirsNodes []map[string]any, editorName string, editorTime int64) conflictResult
+}
+
+// fileConflictStore keeps the baseline and merge ancestor as sidecars next to
+// a local process file.
+type fileConflictStore struct{ dir, filePath string }
+
+func (f fileConflictStore) lookupBaseline(procID int) (baselineEntry, bool, error) {
+	return lookupBaseline(f.dir, procID)
+}
+func (f fileConflictStore) contentChangedSince(v *Executor, procID int) contentCheckResult {
+	return serverContentChangedSince(v, f.dir, procID)
+}
+func (f fileConflictStore) healMissingAncestor(v *Executor, procID int) string {
+	return healMissingAncestor(v, f.dir, procID)
+}
+func (f fileConflictStore) mergePlan(v *Executor, procID int, localJSON string) (mergePlan, []map[string]any, string, bool) {
+	return computeMergePlan(v, f.dir, procID, localJSON)
+}
+func (f fileConflictStore) applyMerge(procID int, localJSON string, current baselineEntry, theirsConv string, plan mergePlan, theirsNodes []map[string]any, editorName string, editorTime int64) conflictResult {
+	return applyMerge(f.dir, f.filePath, procID, localJSON, current, theirsConv, plan, theirsNodes, editorName, editorTime)
+}
+
 func resolveConflict(v *Executor, filePath string, procID int, localJSON string, overwriteServerChange, merge, adoptExisting bool) conflictResult {
-	dir := filepath.Dir(filePath)
+	return resolveConflictWith(v, fileConflictStore{dir: filepath.Dir(filePath), filePath: filePath}, procID, localJSON, overwriteServerChange, merge, adoptExisting)
+}
+
+func resolveConflictWith(v *Executor, store conflictStore, procID int, localJSON string, overwriteServerChange, merge, adoptExisting bool) conflictResult {
 	// Every reason this push proceeded with a weakened check is collected here
 	// and returned to the caller, which folds it into the tool result. A waiver
 	// the user has to go find in a server log is not an audit trail.
@@ -86,7 +122,7 @@ func resolveConflict(v *Executor, filePath string, procID int, localJSON string,
 		}
 	}
 
-	base, ok, baselineErr := lookupBaseline(dir, procID)
+	base, ok, baselineErr := store.lookupBaseline(procID)
 	if baselineErr != nil {
 		return conflictResult{action: conflictBlock, message: fmt.Sprintf(
 			"Push blocked: the concurrency baseline for process #%d is unreadable: %v. Re-pull the process to rebuild the sidecar before pushing; continuing would disable lost-update protection.", procID, baselineErr)}
@@ -128,7 +164,7 @@ func resolveConflict(v *Executor, filePath string, procID int, localJSON string,
 	// by content-diffing the recorded ancestor against the live server scheme
 	// only in the suspicious case — no extra work on the common in-sync path.
 	if !serverChanged && base.ChangeTime == current.ChangeTime && base.Source != baselineSourceDetail {
-		switch serverContentChangedSince(v, dir, procID) {
+		switch store.contentChangedSince(v, procID) {
 		case contentCheckChanged:
 			serverChanged = true
 		case contentCheckNoAncestor:
@@ -140,7 +176,7 @@ func resolveConflict(v *Executor, filePath string, procID int, localJSON string,
 			// Instead record the ancestor now, from the live server scheme: the
 			// blind spot shrinks from "permanent" to "this one push", and it is
 			// reported instead of logged.
-			notes = append(notes, healMissingAncestor(v, dir, procID))
+			notes = append(notes, store.healMissingAncestor(v, procID))
 		case contentCheckExportFailed:
 			if !overwriteServerChange {
 				return conflictResult{action: conflictBlock, message: fmt.Sprintf(
@@ -159,7 +195,7 @@ func resolveConflict(v *Executor, filePath string, procID int, localJSON string,
 
 	// Server moved. Build a 3-way plan when we have the ancestor and can export
 	// the current server scheme; without it we fall back to a delete-only impact.
-	plan, theirsNodes, theirsConv, havePlan := computeMergePlan(v, dir, procID, localJSON)
+	plan, theirsNodes, theirsConv, havePlan := store.mergePlan(v, procID, localJSON)
 
 	// Who last touched it on the server. Needed by the block report AND by the
 	// overwrite record — the plan above is computed either way, so reporting an
@@ -177,7 +213,7 @@ func resolveConflict(v *Executor, filePath string, procID int, localJSON string,
 			return conflictResult{action: conflictBlock, message: "Cannot merge: no pull ancestor recorded for this file (pre-feature or capture failed). Re-pull the process, re-apply your edits, then push.\n\n" +
 				formatConflict(procID, base, current, proc, localJSON, mergePlan{}, false, editorName, editorTime)}
 		}
-		return applyMerge(dir, filePath, procID, localJSON, current, theirsConv, plan, theirsNodes, editorName, editorTime)
+		return store.applyMerge(procID, localJSON, current, theirsConv, plan, theirsNodes, editorName, editorTime)
 	}
 
 	return conflictResult{action: conflictBlock, message: formatConflict(procID, base, current, proc, localJSON, plan, havePlan, editorName, editorTime)}

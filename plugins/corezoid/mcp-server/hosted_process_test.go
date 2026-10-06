@@ -24,7 +24,8 @@ func TestHostedProcessToolSchemas(t *testing.T) {
 		}
 		props := d.InputSchema.(map[string]interface{})["properties"].(map[string]interface{})
 		for k := range props {
-			if strings.Contains(k, "path") || k == "force" || k == "overwrite" {
+			// Paths name the server's disk; merge writes a merged file next to one.
+			if strings.Contains(k, "path") || k == "merge" {
 				t.Errorf("%s advertises local argument %q in hosted mode", name, k)
 			}
 		}
@@ -126,4 +127,57 @@ func firstSample(t *testing.T) string {
 	}
 	t.Skip("no sample process in samples/")
 	return ""
+}
+
+// Input checks run before any gate or API call.
+func TestHostedPushProcessInputs(t *testing.T) {
+	api := &fakeCorezoidAPI{}
+	enableHostedForTest(t, api.server(t).URL)
+	ts := httptest.NewServer(newHostedHandler(testHostedCfg))
+	defer ts.Close()
+	scope := map[string]interface{}{"company_id": "i1", "stage_id": 5}
+
+	cases := []struct {
+		name string
+		args map[string]interface{}
+		want string
+	}{
+		{"no content", map[string]interface{}{"scope": scope}, "content"},
+		{"no obj_id", map[string]interface{}{"content": `{"title":"x","scheme":{"nodes":[]}}`, "scope": scope}, "create-process"},
+		{"malformed base", map[string]interface{}{"content": `{"obj_id":7}`, "base": "nope", "scope": scope}, "malformed base token"},
+		{"base for another process", map[string]interface{}{"content": `{"obj_id":7}`, "base": "v1:8:1:1", "scope": scope}, "process #8"},
+		{"process_path", map[string]interface{}{"process_path": "7_x.conv.json", "content": `{"obj_id":7}`, "scope": scope}, "does not accept process_path"},
+		{"merge", map[string]interface{}{"content": `{"obj_id":7}`, "merge": true, "scope": scope}, "does not accept merge"},
+		{"no stage", map[string]interface{}{"content": `{"obj_id":7}`, "scope": map[string]interface{}{"company_id": "i1"}}, "scope.stage_id"},
+	}
+	for _, c := range cases {
+		_, _, out := hostedPost(t, ts.URL+"/mcp", "Bearer tok", callBody("push-process", c.args))
+		text, isErr := toolText(t, out)
+		if !isErr || !strings.Contains(text, c.want) {
+			t.Errorf("%s: isError=%v %q, want error mentioning %q", c.name, isErr, text, c.want)
+		}
+	}
+	if n := len(api.snapshot()); n != 0 {
+		t.Errorf("%d API calls for refused pushes", n)
+	}
+}
+
+// The hosted conflict store has no files: no baseline without a token, no
+// merge ancestor, and a merge request blocks instead of writing anything.
+func TestTokenConflictStore(t *testing.T) {
+	var s conflictStore = tokenConflictStore{}
+	if _, ok, err := s.lookupBaseline(1); ok || err != nil {
+		t.Errorf("no token: ok=%v err=%v", ok, err)
+	}
+	b := baselineEntry{ChangeTime: 5, Version: 6, Source: baselineSourceDetail}
+	s = tokenConflictStore{base: &b}
+	if got, ok, err := s.lookupBaseline(1); !ok || err != nil || got != b {
+		t.Errorf("token: %+v %v %v", got, ok, err)
+	}
+	if _, _, _, ok := s.mergePlan(nil, 1, ""); ok {
+		t.Error("hosted store offered a merge plan")
+	}
+	if r := s.applyMerge(1, "", b, "", mergePlan{}, nil, "", 0); r.action != conflictBlock {
+		t.Errorf("applyMerge on hosted store = %v, want block", r.action)
+	}
 }

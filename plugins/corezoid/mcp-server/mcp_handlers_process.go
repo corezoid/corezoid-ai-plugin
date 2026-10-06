@@ -590,6 +590,14 @@ func handlePushProcess(ctx context.Context, args map[string]interface{}) (string
 		return fmt.Sprintf("Error loading JSON file: %v", err), true
 	}
 
+	return pushProcessCore(ctx, v, procID, jsonContent, args, filePushSource{filePath: filePath})
+}
+
+// pushProcessCore runs every gate of a push — structure fix, schema, lint,
+// concurrency, snapshot, irreversibility — and deploys. src supplies what
+// differs between a local file and a hosted request; the gates do not.
+func pushProcessCore(ctx context.Context, v *Executor, procID int, jsonContent string, args map[string]interface{}, src pushSource) (string, bool) {
+
 	// Coordinate re-hydration (see coords.go): if the process exists on the
 	// server and the local file lost any node coordinate (an edit dropped x/y,
 	// fully or partially), applyLayout below would move those nodes — and, if
@@ -616,12 +624,12 @@ func handlePushProcess(ctx context.Context, args map[string]interface{}) (string
 	}
 	if jsonContent1 != jsonContent {
 		jsonContent = jsonContent1
-		if err := os.WriteFile(filePath, []byte(jsonContent), 0644); err != nil {
+		if err := src.saveFixed(jsonContent); err != nil {
 			return fmt.Sprintf("Error writing fixed JSON: %v", err), true
 		}
 	}
 
-	if err := ValidateJSONSchema(filePath, debug); err != nil {
+	if err := src.validateSchema(jsonContent); err != nil {
 		return fmt.Sprintf("JSON schema validation failed: %v", err), true
 	}
 
@@ -655,7 +663,7 @@ func handlePushProcess(ctx context.Context, args map[string]interface{}) (string
 	// the returned content, leaving "deployed successfully" as the whole record
 	// of an overridden safety check.
 	var waiverNotes []string
-	if lintRes, lintErr := lintProcess(filePath); lintErr == nil {
+	if lintRes, lintErr := src.lint(jsonContent); lintErr == nil {
 		stubMode := len(lintRes.StubModeNodes)
 		if stubMode > 0 {
 			policy := stubModeStagePolicyForPush(v, jsonContent)
@@ -710,7 +718,7 @@ func handlePushProcess(ctx context.Context, args map[string]interface{}) (string
 	// content was never reconciled. Paired with the snapshot outcome below.
 	overwroteLiveState, overwriteWaiver := false, ""
 	if objID := extractObjIDFromJSON(jsonContent); objID != 0 {
-		res := resolveConflict(v, filePath, objID, jsonContent, overwriteServerChange, merge, adoptExisting)
+		res := resolveConflictWith(v, src.conflicts(), objID, jsonContent, overwriteServerChange, merge, adoptExisting)
 		switch res.action {
 		case conflictBlock:
 			return res.message, true
@@ -778,7 +786,7 @@ func handlePushProcess(ctx context.Context, args map[string]interface{}) (string
 			snapshotNote = "Auto-snapshot skipped: this Corezoid environment does not support snapshots. The platform holds no rollback point — keep the .conv.json under version control if you need one."
 
 		case projectID != 0 && v.StageID != 0:
-			name := extractProcessNameFromPath(filePath)
+			name := src.name(jsonContent)
 			title := fmt.Sprintf("pre-push %s %s", name, time.Now().UTC().Format("2006-01-02 15:04"))
 			if snapObjID, snapVer, snapErr := v.CreateSnapshot(existingObjID, projectID, v.StageID, title); snapErr != nil {
 				logger.Warn("[snapshot] auto-snapshot failed: %v", snapErr)
@@ -892,42 +900,11 @@ func handlePushProcess(ctx context.Context, args map[string]interface{}) (string
 			"WARNING: allow_no_snapshot=true was combined with %s — this push overwrote live server state that was never compared to anything, with no rollback point. It CANNOT be undone. (%s)", overwriteWaiver, why))
 	}
 
-	if _, err := v.ProcessJSON(filePath, jsonContent); err != nil {
+	if err := src.deploy(v, jsonContent); err != nil {
 		return fmt.Sprintf("Error deploying process: %v", err), true
 	}
 
-	// In local mode: regenerate CLAUDE.md so the process index stays current.
-	regenerateLocalCLAUDEMDIfNeeded(ctx)
-
-	// Refresh the pull baseline AND the merge ancestor to the version we just
-	// committed, so the next push starts current instead of re-flagging our own
-	// change, and a later concurrent-edit conflict still has a 3-way ancestor
-	// (without this, a push→edit→push flow degrades to the delete-only report).
-	//
-	// A failure here cannot be undone (the deploy already happened) but it must
-	// not be silent: the local sidecars are what lost-update protection reads,
-	// so leaving them stale while reporting a clean deploy makes the next push
-	// either re-flag our own change as someone else's or lose the 3-way
-	// ancestor. The user has to know the local state is no longer trustworthy,
-	// so every failure is collected and reported alongside the success.
-	var staleStateNotes []string
-	if v.ProcessID != 0 {
-		dir := filepath.Dir(filePath)
-		if proc, gerr := v.GetProcessByID(v.ProcessID); gerr != nil {
-			logger.Warn("push: could not read back process %d to refresh baseline: %v", v.ProcessID, gerr)
-			staleStateNotes = append(staleStateNotes, fmt.Sprintf("the deployed version of process #%d could not be read back (%v), so the concurrency baseline still points at the pre-push version", v.ProcessID, gerr))
-		} else if berr := writeBaseline(dir, v.ProcessID, baselineFromServer(proc)); berr != nil {
-			logger.Warn("push: could not refresh baseline for %d: %v", v.ProcessID, berr)
-			staleStateNotes = append(staleStateNotes, fmt.Sprintf("the concurrency baseline could not be written (%v)", berr))
-		}
-		if theirsConv, ok := exportConv(v); !ok {
-			logger.Warn("push: could not export process %d to refresh the merge ancestor", v.ProcessID)
-			staleStateNotes = append(staleStateNotes, "the deployed scheme could not be exported, so the 3-way merge ancestor is stale")
-		} else if aerr := writeAncestorScheme(dir, v.ProcessID, theirsConv); aerr != nil {
-			logger.Warn("push: could not refresh ancestor for %d: %v", v.ProcessID, aerr)
-			staleStateNotes = append(staleStateNotes, fmt.Sprintf("the merge ancestor could not be written (%v)", aerr))
-		}
-	}
+	staleStateNotes, deployedNote := src.afterDeploy(ctx, v)
 
 	result := fmt.Sprintf("Process deployed successfully, ProcessID: %d", procID)
 	if len(staleStateNotes) > 0 {
@@ -951,6 +928,9 @@ func handlePushProcess(ctx context.Context, args map[string]interface{}) (string
 	// service reported (progress + result), not just silence on success.
 	if len(v.gitCallBuildLog) > 0 {
 		result += "\n\ngit_call build:\n" + strings.Join(v.gitCallBuildLog, "\n")
+	}
+	if deployedNote != "" {
+		result += "\n\n" + deployedNote
 	}
 	return result, false
 }
