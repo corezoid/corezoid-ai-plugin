@@ -77,6 +77,7 @@ var hostedAllowedTools = map[string]struct{}{
 	// Hosted variants that move content through the request instead of the
 	// working directory (hosted_process.go).
 	"pull-process": {}, "lint-process": {}, "create-process": {}, "run-task": {},
+	"push-process": {},
 }
 
 // hostedStageOptional tools address their object directly (a process id, a

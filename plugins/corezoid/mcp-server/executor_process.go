@@ -483,7 +483,7 @@ func (validator *Executor) ProcessJSON(filePath, jsonContent string) (newProcess
 
 	// The deploy is committed — now it is safe to sync the local file to the
 	// server's canonical node IDs.
-	if changed {
+	if changed && filePath != "" {
 		if werr := os.WriteFile(filePath, []byte(jsonContent), 0644); werr != nil {
 			err = fmt.Errorf("process deployed, but failed to update the local file with server node IDs: %v", werr)
 			return nil, err

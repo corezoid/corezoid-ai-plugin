@@ -21,6 +21,7 @@ var hostedHandlers = map[string]toolHandler{
 	"lint-process":   hostedLintProcess,
 	"create-process": hostedCreateProcess,
 	"run-task":       hostedRunTask,
+	"push-process":   hostedPushProcess,
 }
 
 // hostedMaxContentBytes caps process JSON accepted in a request. Large
@@ -66,6 +67,26 @@ var hostedToolDefs = map[string]mcpTool{
 				"process_name": map[string]interface{}{"type": "string", "description": "Name of the new process."},
 			},
 			"required": []string{"folder_id", "process_name"},
+		},
+	},
+	"push-process": {
+		Name: "push-process",
+		Description: "Validate and deploy a Corezoid process from JSON. Runs the same gates as the local push: structure fix, schema, lint (force=true overrides blocking findings, never structural ones), a concurrency check against `base`, a pre-push snapshot, and the irreversibility check. " +
+			"Pass the `base` token from pull-process / create-process: if someone changed the process on the server since, the push is blocked with a report — pull again and re-apply your edits (merging is not available on the hosted server). " +
+			"Needs scope.stage_id for the snapshot. Returns the deployed scheme with the server's node IDs and a new `base` for the next edit.",
+		Annotations: toolHints(hintMutates, hintDestructive, hintNonIdempotent, hintOpenWorld),
+		InputSchema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"content":                 map[string]interface{}{"type": "string", "description": "Process JSON to deploy. Its obj_id names the process (create it first with create-process)."},
+				"base":                    map[string]interface{}{"type": "string", "description": "Base token from pull-process / create-process / the previous push."},
+				"force":                   map[string]interface{}{"type": "boolean", "description": "Deploy despite blocking lint findings (not structural ones, not conflicts)."},
+				"overwrite_server_change": map[string]interface{}{"type": "boolean", "description": "Deploy over a server change made since `base`, dropping it. Pass only in reply to the block report."},
+				"adopt_existing":          map[string]interface{}{"type": "boolean", "description": "Deploy without a base token over a process that already has a deployed version, overwriting it blind."},
+				"allow_active_stub_mode":  map[string]interface{}{"type": "boolean", "description": "Allow active Stub Mode nodes on a stage that otherwise refuses them."},
+				"allow_no_snapshot":       map[string]interface{}{"type": "boolean", "description": "Deploy although no pre-push snapshot could be taken (mutable stages only)."},
+			},
+			"required": []string{"content"},
 		},
 	},
 	"run-task": {
@@ -239,4 +260,39 @@ func sortedKeys(m map[string]interface{}) []string {
 	}
 	sort.Strings(keys)
 	return keys
+}
+
+// hostedPushProcess deploys a process sent as JSON, through the same gates as
+// the local push (pushProcessCore) with a hosted source: no files, the base
+// token as the concurrency baseline, no merge.
+func hostedPushProcess(ctx context.Context, args map[string]interface{}) (string, bool) {
+	content, err := strArg(args, "content")
+	if err != nil || strings.TrimSpace(content) == "" {
+		return "Error: content (process JSON) is required", true
+	}
+	if len(content) > hostedMaxContentBytes {
+		return fmt.Sprintf("Error: content is larger than %d bytes", hostedMaxContentBytes), true
+	}
+	procID := extractObjIDFromJSON(content)
+	if procID <= 0 {
+		return "Error: content has no obj_id — create the process with create-process first and deploy the JSON it returns", true
+	}
+	var base *baselineEntry
+	if tok := optStrArg(args, "base"); tok != "" {
+		tokID, b, perr := parseHostedBaseToken(tok)
+		if perr != nil {
+			return "Error: " + perr.Error() + " — pass the base token exactly as pull-process returned it", true
+		}
+		if tokID != procID {
+			return fmt.Sprintf("Error: base token is for process #%d, but the content is process #%d", tokID, procID), true
+		}
+		base = &b
+	}
+	v := NewValidator(ctx, procID)
+	result, isErr := pushProcessCore(ctx, v, procID, content, args, hostedPushSource{base: base, content: content})
+	if isErr && strings.Contains(result, "merge=true") {
+		// The shared conflict report lists the local resolutions too.
+		result += "\n\nOn the hosted server merge=true is not available: pull-process again, re-apply your edits to the JSON it returns, and push that with its new base — or pass overwrite_server_change=true to drop the server change."
+	}
+	return result, isErr
 }
