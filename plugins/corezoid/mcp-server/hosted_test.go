@@ -174,7 +174,7 @@ func TestHostedToolListOnlyAPITools(t *testing.T) {
 	for _, d := range tools {
 		seen[d.Name] = d
 	}
-	for _, banned := range []string{"login", "logout", "pull-folder", "layout-process", "cz-git-context", "cz-snapshots", "send-feedback"} {
+	for _, banned := range []string{"login", "logout", "pull-folder", "layout-process", "cz-git-context", "cz-snapshots", "send-feedback", "create-communications-orchestrator"} {
 		if _, ok := seen[banned]; ok {
 			t.Errorf("%s listed in hosted mode", banned)
 		}

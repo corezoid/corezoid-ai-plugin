@@ -6,7 +6,7 @@
 #   - .mcp.json points at the hosted URL (Codex format: {"url": ...});
 #   - the Go server sources, install scripts and Kiro files are left out;
 #   - skills that only make sense locally (login, git mirror, local layout,
-#     retro/feedback, marketplace publishing) are left out;
+#     retro/feedback, marketplace publishing, bot generation) are left out;
 #   - the main skill gains a "Hosted connector" section.
 # Usage: scripts/build-hosted-submission.sh [output-dir]   (default: dist/)
 set -euo pipefail
@@ -15,7 +15,7 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 SRC="$ROOT/plugins/corezoid"
 OUT="${1:-$ROOT/dist}"
 URL="https://mcp.corezoid.com/mcp"
-EXCLUDE_SKILLS=(corezoid-init corezoid-logout corezoid-git-context corezoid-node-layout corezoid-retro corezoid-feedback marketplace-publish-validation)
+EXCLUDE_SKILLS=(corezoid-init corezoid-logout corezoid-git-context corezoid-node-layout corezoid-retro corezoid-feedback marketplace-publish-validation corezoid-gen-bot)
 
 VERSION="$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["version"])' "$SRC/.codex-plugin/plugin.json")"
 WORK="$(mktemp -d)"
@@ -52,7 +52,7 @@ This plugin talks to the hosted Corezoid MCP server. Differences from the local 
 - **One tool per action.** The `cz-*` router tools are not listed here: their actions (`list-stages`, `share-object`, `modify-task`, …) are separate tools, called directly with their own arguments. Where a skill below says "`cz-structure` → `list-stages`", call `list-stages`.
 - **No local files.** `pull-process` returns the process JSON and a `base` token in the tool result. Edit that JSON and deploy it with `push-process` (`content` + `base`). The result contains the deployed scheme and a new `base` for the next edit. `lint-process` takes `content`. `create-process` takes `folder_id` and returns the new process JSON.
 - **Concurrent changes.** If the process changed on the server since your `base`, the push is blocked with a report. Pull again and re-apply your edits; merging is not available here.
-- **Not available:** git mirror, local layout, snapshot management, and anything below that mentions files, `.conv.json` paths, `login`, `pull-folder` or `run.sh`. Use the hosted equivalents above.
+- **Not available:** the Communications Orchestrator builder (`create-communications-orchestrator`: it needs messenger bot tokens), git mirror, local layout, snapshot management, and anything below that mentions files, `.conv.json` paths, `login`, `pull-folder` or `run.sh`. Use the hosted equivalents above.
 """
 # insert after the YAML frontmatter
 if s.startswith("---"):
