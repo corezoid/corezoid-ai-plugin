@@ -260,6 +260,10 @@ type hostedConfig struct {
 	APIURL        string
 	ResourceURL   string // public URL of this server; enables RFC 9728 discovery
 	AuthServerURL string
+	// OpenAIAppsChallenge is the OpenAI plugin-directory domain-verification
+	// token, served verbatim at /.well-known/openai-apps-challenge. Public by
+	// design; empty leaves the path a 404.
+	OpenAIAppsChallenge string
 }
 
 func loadHostedConfig(addr string) (hostedConfig, error) {
@@ -268,6 +272,8 @@ func loadHostedConfig(addr string) (hostedConfig, error) {
 		APIURL:        envOrDefault("COREZOID_HOSTED_API_URL", hostedDefaultAPIURL),
 		ResourceURL:   strings.TrimSpace(os.Getenv("COREZOID_HOSTED_RESOURCE_URL")),
 		AuthServerURL: envOrDefault("COREZOID_HOSTED_AUTH_SERVER_URL", hostedDefaultAuthServerURL),
+
+		OpenAIAppsChallenge: strings.TrimSpace(os.Getenv("OPENAI_APPS_CHALLENGE")),
 	}
 	cfg.APIURL = strings.TrimRight(cfg.APIURL, "/")
 	u, err := url.Parse(cfg.APIURL)
@@ -348,6 +354,12 @@ func newHostedHandler(cfg hostedConfig) http.Handler {
 			}
 			w.Header().Set("Content-Type", "application/json")
 			_, _ = w.Write(metaDoc)
+		})
+	}
+	if tok := cfg.OpenAIAppsChallenge; tok != "" {
+		mux.HandleFunc("/.well-known/openai-apps-challenge", func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+			_, _ = w.Write([]byte(tok))
 		})
 	}
 	mux.HandleFunc(hostedHealthzPath, func(w http.ResponseWriter, _ *http.Request) {

@@ -369,3 +369,26 @@ func TestLoadHostedConfigRequiresHTTPS(t *testing.T) {
 		t.Errorf("defaults: %+v %v", cfg, err)
 	}
 }
+
+func TestHostedOpenAIAppsChallenge(t *testing.T) {
+	enableHostedForTest(t, "https://admin.corezoid.com")
+	get := func(cfg hostedConfig) (int, string, string) {
+		ts := httptest.NewServer(newHostedHandler(cfg))
+		defer ts.Close()
+		resp, err := http.Get(ts.URL + "/.well-known/openai-apps-challenge")
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		b, _ := io.ReadAll(resp.Body)
+		return resp.StatusCode, string(b), resp.Header.Get("Content-Type")
+	}
+	if code, _, _ := get(testHostedCfg); code != http.StatusNotFound {
+		t.Errorf("unset: %d, want 404", code)
+	}
+	cfg := testHostedCfg
+	cfg.OpenAIAppsChallenge = "tok-xyz"
+	if code, body, ct := get(cfg); code != http.StatusOK || body != "tok-xyz" || !strings.HasPrefix(ct, "text/plain") {
+		t.Errorf("set: %d %q %q", code, body, ct)
+	}
+}
