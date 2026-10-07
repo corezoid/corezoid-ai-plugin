@@ -182,7 +182,7 @@ var collapsedToolRegistry = []mcpTool{
 	{
 		Name:        "add-to-group",
 		Description: "Add a user (or API key user) to a group.",
-		Annotations: toolHints(hintMutates, hintSafe, hintIdempotent, hintOpenWorld),
+		Annotations: toolHints(hintMutates, hintDestructive, hintNonIdempotent, hintOpenWorld), // widens access to objects
 		InputSchema: map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
@@ -291,7 +291,7 @@ var collapsedToolRegistry = []mcpTool{
 	{
 		Name:        "invite-user",
 		Description: "Invite an external email to the workspace AND share a process/folder/stage/project with them in one call. Returns the invite URL the recipient must open.",
-		Annotations: toolHints(hintMutates, hintSafe, hintNonIdempotent, hintOpenWorld),
+		Annotations: toolHints(hintMutates, hintDestructive, hintNonIdempotent, hintOpenWorld), // widens access to objects
 		InputSchema: map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{

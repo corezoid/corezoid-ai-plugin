@@ -228,7 +228,7 @@ var coreToolDefs = []mcpTool{
 	{
 		Name:        "run-task",
 		Description: "Run a task on an already-deployed Corezoid process (without re-deploying) and wait for it to reach a final node. Never commits or deploys, so it needs only run access and works on immutable stages; if the deployed node list is unreadable the task is still sent, just reported without node names. Identify the target with EXACTLY ONE of process_path (a local .conv.json) or process_id (the numeric ID, as in show-task/list-task-history) — process_id needs no local file, so it works in hosts with no process repository; passing both is rejected as ambiguous. Polls up to wait_sec (default 30), so tasks crossing async nodes (api, api_rpc, db_call, delay) still return their final result. On timeout reports the node the task is parked at, plus TaskRef/TaskID for follow-up via list-task-history.",
-		Annotations: toolHints(hintMutates, hintSafe, hintNonIdempotent, hintOpenWorld),
+		Annotations: toolHints(hintMutates, hintDestructive, hintNonIdempotent, hintOpenWorld), // runs the process: its side effects are arbitrary
 		InputSchema: map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
