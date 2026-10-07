@@ -92,7 +92,7 @@ var hostedToolDefs = map[string]mcpTool{
 	"run-task": {
 		Name:        "run-task",
 		Description: "Create a task in a deployed Corezoid process and wait for it to reach a final node. Returns the task's final node and data.",
-		Annotations: toolHints(hintMutates, hintSafe, hintNonIdempotent, hintOpenWorld),
+		Annotations: toolHints(hintMutates, hintDestructive, hintNonIdempotent, hintOpenWorld), // runs the process: its side effects are arbitrary
 		InputSchema: map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{

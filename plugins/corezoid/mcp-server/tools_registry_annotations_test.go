@@ -15,7 +15,7 @@ var destructivePrefixes = []string{"delete-", "deploy-", "revert-"}
 
 // destructiveExact covers destructive tools whose names do not carry a
 // telling prefix.
-var destructiveExact = []string{"push-process"}
+var destructiveExact = []string{"push-process", "run-task"}
 
 // readOnlyPrefixes are name patterns whose tools MUST declare
 // readOnlyHint: true and MUST NOT declare destructiveHint: true.

@@ -228,6 +228,7 @@ func hostedToolRegistry() []mcpTool {
 // local workspace (stage marker files, pull-folder, writing to disk) or at
 // tools the hosted server does not offer.
 var hostedDescriptions = map[string]string{
+	"delete-project": "Move a Corezoid project to the recycle bin (Trash). It can be restored from the Corezoid UI; permanent destruction is only possible there.",
 	"list-folders":   "List the immediate children of a Corezoid folder (subfolders, processes and state diagrams). Read-only.",
 	"list-variables": "List the environment variables (env_var) of the stage given in scope.stage_id: short_name, obj_id, data_type (raw/json), env_var_type (visible/secret), title, value and change time. Read-only; secret variables are always shown masked.",
 }
