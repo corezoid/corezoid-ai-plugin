@@ -357,6 +357,9 @@ type hostedConfig struct {
 	// token, served verbatim at /.well-known/openai-apps-challenge. Public by
 	// design; empty leaves the path a 404.
 	OpenAIAppsChallenge string
+	// MaxConcurrentPerToken caps in-flight requests per caller token; more
+	// get 429. 0 means the default (4), negative disables the cap.
+	MaxConcurrentPerToken int
 }
 
 func loadHostedConfig(addr string) (hostedConfig, error) {
@@ -367,6 +370,13 @@ func loadHostedConfig(addr string) (hostedConfig, error) {
 		AuthServerURL: envOrDefault("COREZOID_HOSTED_AUTH_SERVER_URL", hostedDefaultAuthServerURL),
 
 		OpenAIAppsChallenge: strings.TrimSpace(os.Getenv("OPENAI_APPS_CHALLENGE")),
+	}
+	if v := strings.TrimSpace(os.Getenv("COREZOID_HOSTED_MAX_CONCURRENT_PER_TOKEN")); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil {
+			return cfg, fmt.Errorf("COREZOID_HOSTED_MAX_CONCURRENT_PER_TOKEN: %w", err)
+		}
+		cfg.MaxConcurrentPerToken = n
 	}
 	cfg.APIURL = strings.TrimRight(cfg.APIURL, "/")
 	u, err := url.Parse(cfg.APIURL)
@@ -459,6 +469,7 @@ func newHostedHandler(cfg hostedConfig) http.Handler {
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 		_, _ = w.Write([]byte("ok"))
 	})
+	limiter := newTokenLimiter(cfg.MaxConcurrentPerToken)
 	mux.HandleFunc(hostedEndpointPath, func(w http.ResponseWriter, r *http.Request) {
 		token := bearerToken(r.Header.Get("Authorization"))
 		if token == "" {
@@ -474,6 +485,15 @@ func newHostedHandler(cfg hostedConfig) http.Handler {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
+		release, ok := limiter.acquire(token)
+		if !ok {
+			w.Header().Set("Retry-After", "30")
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusTooManyRequests)
+			_ = json.NewEncoder(w).Encode(httpJSONRPCError(nil, -32000, fmt.Sprintf("too many concurrent requests for this account (limit %d); wait for a running tool call to finish and retry", limiter.max)))
+			return
+		}
+		defer release()
 		hostedHandlePost(w, r, token)
 	})
 	return mux
