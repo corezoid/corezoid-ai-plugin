@@ -789,12 +789,14 @@ func pushProcessCore(ctx context.Context, v *Executor, procID int, jsonContent s
 			name := src.name(jsonContent)
 			title := fmt.Sprintf("pre-push %s %s", name, time.Now().UTC().Format("2006-01-02 15:04"))
 			if snapObjID, snapVer, snapErr := v.CreateSnapshot(existingObjID, projectID, v.StageID, title); snapErr != nil {
-				logger.Warn("[snapshot] auto-snapshot failed: %v", snapErr)
 				switch {
 				case processNeverDeployed(v, existingObjID):
+					// Expected for create-process → push-process: the API
+					// refuses to snapshot a process with no deployed version.
 					logger.Info("[snapshot] auto-snapshot skipped: process %d has never been deployed", existingObjID)
 					snapshotNote = fmt.Sprintf("Auto-snapshot skipped: process #%d has no deployed version yet, so there is no previous state to restore.", existingObjID)
 				default:
+					logger.Warn("[snapshot] auto-snapshot failed: %v", snapErr)
 					// Resolution succeeded — we know exactly which stage this
 					// would have landed on — so the waiver is checked against
 					// that stage directly rather than re-derived from
@@ -1090,7 +1092,8 @@ func handleRunTask(ctx context.Context, args map[string]interface{}) (string, bo
 		}
 	}
 
-	logger.Info("Task response: %+v", rspTask)
+	// Task data is the user's business payload: never at Info.
+	logger.Debug("Task response: %+v", rspTask)
 	rspTaskData, _ := rspTask["data"].(map[string]interface{})
 	rspTaskDataBin, _ := json.Marshal(rspTaskData)
 	serverNodeID, _ := rspTask["node_id"].(string)
@@ -1111,7 +1114,7 @@ func handleRunTask(ctx context.Context, args map[string]interface{}) (string, bo
 	}
 
 	nodeInfo, found := lookupNode(v, serverNodeID)
-	logger.Info("Node info (found=%v): %+v", found, nodeInfo)
+	logger.Debug("Node info (found=%v): %+v", found, nodeInfo)
 	nodeType := "logic (not final)"
 	msg := fmt.Sprintf("Task is still in progress after %ds: it is parked at a non-final node (an async node keeps it there). "+
 		"Re-check later with cz-tasks {\"action\":\"show-task\"} (a single read-only lookup by ref or task_id) or its list-task-history action, "+
