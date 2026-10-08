@@ -361,6 +361,10 @@ type hostedConfig struct {
 	// MaxConcurrentPerToken caps in-flight requests per caller token; more
 	// get 429. 0 means the default (4), negative disables the cap.
 	MaxConcurrentPerToken int
+	// AccessLog writes one line per /mcp request (method, tool, status,
+	// duration, caller hash, User-Agent; no token, arguments or results).
+	// On unless COREZOID_HOSTED_ACCESS_LOG is "off".
+	AccessLog bool
 }
 
 func loadHostedConfig(addr string) (hostedConfig, error) {
@@ -371,6 +375,7 @@ func loadHostedConfig(addr string) (hostedConfig, error) {
 		AuthServerURL: envOrDefault("COREZOID_HOSTED_AUTH_SERVER_URL", hostedDefaultAuthServerURL),
 
 		OpenAIAppsChallenge: strings.TrimSpace(os.Getenv("OPENAI_APPS_CHALLENGE")),
+		AccessLog:           !strings.EqualFold(strings.TrimSpace(os.Getenv("COREZOID_HOSTED_ACCESS_LOG")), "off"),
 	}
 	if v := strings.TrimSpace(os.Getenv("COREZOID_HOSTED_MAX_CONCURRENT_PER_TOKEN")); v != "" {
 		n, err := strconv.Atoi(v)
@@ -473,7 +478,12 @@ func newHostedHandler(cfg hostedConfig) http.Handler {
 	limiter := newTokenLimiter(cfg.MaxConcurrentPerToken)
 	mux.HandleFunc(hostedEndpointPath, func(w http.ResponseWriter, r *http.Request) {
 		token := bearerToken(r.Header.Get("Authorization"))
+		access := &hostedAccess{Status: http.StatusOK}
+		if cfg.AccessLog {
+			defer logHostedAccess(r, token, access, time.Now())
+		}
 		if token == "" {
+			access.Status = http.StatusUnauthorized
 			if metaURL != "" {
 				w.Header().Set("WWW-Authenticate", `Bearer resource_metadata="`+metaURL+`"`)
 			}
@@ -482,12 +492,14 @@ func newHostedHandler(cfg hostedConfig) http.Handler {
 		}
 		if r.Method != http.MethodPost {
 			// Stateless: no server-initiated stream and no session to delete.
+			access.Status = http.StatusMethodNotAllowed
 			w.Header().Set("Allow", http.MethodPost)
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
 		release, ok := limiter.acquire(token)
 		if !ok {
+			access.Status = http.StatusTooManyRequests
 			w.Header().Set("Retry-After", "30")
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusTooManyRequests)
@@ -495,12 +507,12 @@ func newHostedHandler(cfg hostedConfig) http.Handler {
 			return
 		}
 		defer release()
-		hostedHandlePost(w, r, token)
+		hostedHandlePost(w, r, token, access)
 	})
 	return mux
 }
 
-func hostedHandlePost(w http.ResponseWriter, r *http.Request, token string) {
+func hostedHandlePost(w http.ResponseWriter, r *http.Request, token string, access *hostedAccess) {
 	r.Body = http.MaxBytesReader(w, r.Body, httpMaxBodyBytes)
 	var req mcpRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -512,8 +524,18 @@ func hostedHandlePost(w http.ResponseWriter, r *http.Request, token string) {
 		writeHTTPJSONRPC(w, httpJSONRPCError(nil, -32700, "parse error"))
 		return
 	}
+	access.Method = req.Method
+	if req.Method == "tools/call" {
+		var p struct {
+			Name string `json:"name"`
+		}
+		_ = json.Unmarshal(req.Params, &p)
+		access.Tool = hostedClip(p.Name, 64)
+	}
 	resp := hostedDispatch(r.Context(), req, token)
+	access.IsError = toolCallIsError(resp)
 	if resp == nil {
+		access.Status = http.StatusAccepted
 		w.WriteHeader(http.StatusAccepted)
 		return
 	}
