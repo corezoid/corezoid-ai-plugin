@@ -122,7 +122,7 @@ Do not scan with `list-node-tasks`: it pages one node at `limit`/`offset`, so on
 
 ### MCP server does not start
 
-1. Confirm Go ≥ 1.26.6 is installed: `go version`
+1. Confirm Go ≥ 1.27.2 is installed: `go version`
 2. Check that the `mcp-server` source compiles: `cd plugins/corezoid/mcp-server && go build ./...`
 3. Look at the debug log: `cat ~/.corezoid/mcp.log`
 
@@ -130,9 +130,9 @@ Do not scan with `list-node-tasks`: it pages one node at `limit`/`offset`, so on
 
 ### Go toolchain auto-download hangs or fails
 
-The `go.mod` specifies `go 1.26.6`. If your local Go installation is older, the Go toolchain manager will attempt to download `go1.26.6` from `proxy.golang.org` automatically. This can fail in air-gapped environments or stall on slow networks.
+The `go.mod` specifies `go 1.27.2`. If your local Go installation is older, the Go toolchain manager will attempt to download `go1.27.2` from `proxy.golang.org` automatically. This can fail in air-gapped environments or stall on slow networks.
 
-**Fix:** Install Go 1.26.6+ directly from [go.dev/dl](https://go.dev/dl/) and make sure `go version` reports `go1.26.6` or later.
+**Fix:** Install Go 1.27.2+ directly from [go.dev/dl](https://go.dev/dl/) and make sure `go version` reports `go1.27.2` or later.
 
 To suppress automatic toolchain downloads entirely, set:
 
@@ -140,7 +140,7 @@ To suppress automatic toolchain downloads entirely, set:
 export GOTOOLCHAIN=local
 ```
 
-With `GOTOOLCHAIN=local`, Go will use whatever version is installed and refuse to auto-download a newer one. The MCP server requires Go 1.26.6 or later (earlier 1.26.x and 1.25.x releases have unpatched vulnerabilities in `crypto/tls` and `net/url` — see [GO-2026-6090](https://pkg.go.dev/vuln/GO-2026-6090) and [GO-2026-6218](https://pkg.go.dev/vuln/GO-2026-6218)).
+With `GOTOOLCHAIN=local`, Go will use whatever version is installed and refuse to auto-download a newer one. The MCP server requires Go 1.27.2 or later (earlier 1.26.x and 1.25.x releases have unpatched vulnerabilities in `crypto/tls` and `net/url` — see [GO-2026-6090](https://pkg.go.dev/vuln/GO-2026-6090) and [GO-2026-6218](https://pkg.go.dev/vuln/GO-2026-6218)).
 
 ---
 
