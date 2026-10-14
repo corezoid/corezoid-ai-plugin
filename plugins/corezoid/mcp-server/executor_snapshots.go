@@ -3,13 +3,41 @@ package main
 import "fmt"
 
 // Snapshot describes one snapshot entry returned by list-snapshots.
+//
+// user_id/user_name name the account that owns the credential; for a JWT
+// request that is the owner, not the token that signed it (issue #178). The
+// actor_* fields identify the signing credential itself and are filled only
+// when the server returns them.
 type Snapshot struct {
 	ObjID      int    `json:"obj_id"`
 	Version    int    `json:"version"`
 	UserID     int    `json:"user_id"`
 	UserName   string `json:"user_name"`
+	ActorID    string `json:"actor_id,omitempty"`
+	ActorType  string `json:"actor_type,omitempty"`
+	ActorTitle string `json:"actor_title,omitempty"`
 	CreateTime int64  `json:"create_time"`
 	Title      string `json:"title"`
+}
+
+// Author is the best label for whoever made the snapshot: the signing
+// credential when the server reports it, else the owner account.
+func (s Snapshot) Author() string {
+	if s.ActorTitle != "" {
+		return s.ActorTitle
+	}
+	return s.UserName
+}
+
+// idString renders an id the server may send as a number or a string.
+func idString(v any) string {
+	switch x := v.(type) {
+	case float64:
+		return fmt.Sprintf("%d", int64(x))
+	case string:
+		return x
+	}
+	return ""
 }
 
 // CreateSnapshot creates a snapshot of the process at its current server state.
@@ -80,6 +108,9 @@ func (v *Executor) ListSnapshots(convID, projectID, stageID int) ([]Snapshot, er
 		if str, ok := m["user_name"].(string); ok {
 			s.UserName = str
 		}
+		s.ActorID = idString(m["actor_id"])
+		s.ActorType, _ = m["actor_type"].(string)
+		s.ActorTitle, _ = m["actor_title"].(string)
 		if f, ok := m["create_time"].(float64); ok {
 			s.CreateTime = int64(f)
 		}

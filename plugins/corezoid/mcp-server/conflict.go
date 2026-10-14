@@ -624,7 +624,7 @@ func serverEditor(v *Executor, procID int, proc map[string]any) (name string, wh
 	return "", 0
 }
 
-// latestSnapshotAuthor returns the user_name and time of the newest snapshot.
+// latestSnapshotAuthor returns the author and time of the newest snapshot.
 func latestSnapshotAuthor(snaps []Snapshot) (string, int64) {
 	var best Snapshot
 	for _, s := range snaps {
@@ -632,7 +632,7 @@ func latestSnapshotAuthor(snaps []Snapshot) (string, int64) {
 			best = s
 		}
 	}
-	return best.UserName, best.CreateTime
+	return best.Author(), best.CreateTime
 }
 
 // latestCommitter returns the author name and unix time of the most recent
@@ -667,11 +667,20 @@ func latestCommitter(proc map[string]any) (name string, when int64) {
 
 // commitName pulls an author label out of a commit entry, trying the field
 // names Corezoid has used across responses before falling back to the id.
+// The signing credential (actor_*) wins over the owner account (user_*), so
+// a change made through an API key or token is not folded into its owner.
 func commitName(m map[string]any) string {
-	for _, k := range []string{"nick", "user_name", "login", "name"} {
+	for _, k := range []string{"actor_title", "nick", "user_name", "login", "name"} {
 		if s, _ := m[k].(string); s != "" {
 			return s
 		}
+	}
+	if id := idString(m["actor_id"]); id != "" {
+		kind, _ := m["actor_type"].(string)
+		if kind == "" {
+			kind = "actor"
+		}
+		return kind + " " + id
 	}
 	if uid, ok := m["user_id"].(float64); ok {
 		return fmt.Sprintf("user %d", int(uid))

@@ -287,6 +287,31 @@ func TestCommitName_FieldFallbacks(t *testing.T) {
 	}
 }
 
+func TestCommitName_PrefersSigningCredential(t *testing.T) {
+	m := map[string]any{"actor_title": "ci-bot key", "user_name": "Owner", "user_id": float64(1)}
+	if got := commitName(m); got != "ci-bot key" {
+		t.Fatalf("actor_title must win over the owner, got %q", got)
+	}
+	m = map[string]any{"actor_id": float64(42), "actor_type": "api_key", "user_id": float64(1)}
+	if got := commitName(m); got != "api_key 42" {
+		t.Fatalf("actor_id must win over user_id, got %q", got)
+	}
+	m = map[string]any{"actor_id": "tok-abc", "user_id": float64(1)}
+	if got := commitName(m); got != "actor tok-abc" {
+		t.Fatalf("string actor_id without type: got %q", got)
+	}
+}
+
+func TestLatestSnapshotAuthor_PrefersActorTitle(t *testing.T) {
+	snaps := []Snapshot{
+		{UserName: "Owner", ActorTitle: "ci-bot key", CreateTime: 300},
+		{UserName: "Owner", CreateTime: 100},
+	}
+	if name, _ := latestSnapshotAuthor(snaps); name != "ci-bot key" {
+		t.Fatalf("expected the signing credential, got %q", name)
+	}
+}
+
 func TestLatestSnapshotAuthor_PicksNewest(t *testing.T) {
 	snaps := []Snapshot{
 		{UserName: "Old", CreateTime: 100},
