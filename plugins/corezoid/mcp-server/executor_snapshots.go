@@ -23,10 +23,25 @@ type Snapshot struct {
 // Author is the best label for whoever made the snapshot: the signing
 // credential when the server reports it, else the owner account.
 func (s Snapshot) Author() string {
-	if s.ActorTitle != "" {
-		return s.ActorTitle
+	if a := actorLabel(s.ActorTitle, s.ActorType, s.ActorID); a != "" {
+		return a
 	}
 	return s.UserName
+}
+
+// actorLabel names the signing credential: its title, else "<type> <id>".
+// Empty when the server reported no actor at all.
+func actorLabel(title, kind, id string) string {
+	if title != "" {
+		return title
+	}
+	if id == "" {
+		return ""
+	}
+	if kind == "" {
+		kind = "actor"
+	}
+	return kind + " " + id
 }
 
 // idString renders an id the server may send as a number or a string.

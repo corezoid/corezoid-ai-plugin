@@ -296,6 +296,10 @@ func TestCommitName_PrefersSigningCredential(t *testing.T) {
 	if got := commitName(m); got != "api_key 42" {
 		t.Fatalf("actor_id must win over user_id, got %q", got)
 	}
+	m = map[string]any{"actor_id": float64(42), "actor_type": "token", "user_name": "Owner"}
+	if got := commitName(m); got != "token 42" {
+		t.Fatalf("actor_id must win over the owner's user_name, got %q", got)
+	}
 	m = map[string]any{"actor_id": "tok-abc", "user_id": float64(1)}
 	if got := commitName(m); got != "actor tok-abc" {
 		t.Fatalf("string actor_id without type: got %q", got)
@@ -309,6 +313,10 @@ func TestLatestSnapshotAuthor_PrefersActorTitle(t *testing.T) {
 	}
 	if name, _ := latestSnapshotAuthor(snaps); name != "ci-bot key" {
 		t.Fatalf("expected the signing credential, got %q", name)
+	}
+	snaps = []Snapshot{{UserName: "Owner", ActorID: "7", ActorType: "api_key", CreateTime: 1}}
+	if name, _ := latestSnapshotAuthor(snaps); name != "api_key 7" {
+		t.Fatalf("actor id without title must win over the owner, got %q", name)
 	}
 }
 

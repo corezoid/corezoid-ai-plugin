@@ -670,17 +670,15 @@ func latestCommitter(proc map[string]any) (name string, when int64) {
 // The signing credential (actor_*) wins over the owner account (user_*), so
 // a change made through an API key or token is not folded into its owner.
 func commitName(m map[string]any) string {
-	for _, k := range []string{"actor_title", "nick", "user_name", "login", "name"} {
+	title, _ := m["actor_title"].(string)
+	kind, _ := m["actor_type"].(string)
+	if a := actorLabel(title, kind, idString(m["actor_id"])); a != "" {
+		return a
+	}
+	for _, k := range []string{"nick", "user_name", "login", "name"} {
 		if s, _ := m[k].(string); s != "" {
 			return s
 		}
-	}
-	if id := idString(m["actor_id"]); id != "" {
-		kind, _ := m["actor_type"].(string)
-		if kind == "" {
-			kind = "actor"
-		}
-		return kind + " " + id
 	}
 	if uid, ok := m["user_id"].(float64); ok {
 		return fmt.Sprintf("user %d", int(uid))
