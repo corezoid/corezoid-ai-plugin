@@ -140,7 +140,7 @@ func resolveConflictWith(v *Executor, store conflictStore, procID int, localJSON
 			return proceed()
 		default:
 			return conflictResult{action: conflictBlock, message: fmt.Sprintf(
-				"Push blocked: process #%d already has a deployed version on the server, but this file has no pull baseline — so lost-update detection cannot run and pushing would overwrite that version blind. Run pull-process for #%d first (that records the baseline and lets a real conflict be reported), or re-run with adopt_existing=true to overwrite the server version deliberately. adopt_existing is separate from overwrite_server_change on purpose: that one resolves a conflict you have been shown, this one declares you have no idea what is on the server.", procID, procID)}
+				"Push blocked: process #%d already has a deployed version on the server, but this file has no pull baseline — so lost-update detection cannot run and pushing would overwrite that version blind. Run pull-process for #%d first to record the baseline and let a real conflict be reported — but pull-process REPLACES this local file with the server version, so copy it aside first and re-apply your edits after the pull, or they are lost. Or re-run with adopt_existing=true to overwrite the server version deliberately. adopt_existing is separate from overwrite_server_change on purpose: that one resolves a conflict you have been shown, this one declares you have no idea what is on the server.", procID, procID)}
 		}
 	}
 

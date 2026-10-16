@@ -765,6 +765,16 @@ func pushProcessCore(ctx context.Context, v *Executor, procID int, jsonContent s
 	// the same push, and does not pay a second `show stage` round trip.
 	var waiverPolicy *stubModeStagePolicy
 	existingObjID := extractObjIDFromJSON(jsonContent)
+	// The second way to know there is no previous version: create-process
+	// recorded this conv's baseline and the server has not moved since. Asked
+	// only on paths that are about to block, and at most once per push.
+	freshKnown, fresh := false, false
+	untouchedFromCreate := func() bool {
+		if !freshKnown {
+			fresh, freshKnown = untouchedSinceCreate(v, src.conflicts(), existingObjID), true
+		}
+		return fresh
+	}
 	if existingObjID != 0 {
 		projectID, envNotice := resolveAndCacheProjectID(v)
 		snapshotProjectID = projectID
@@ -795,6 +805,11 @@ func pushProcessCore(ctx context.Context, v *Executor, procID int, jsonContent s
 					// refuses to snapshot a process with no deployed version.
 					logger.Info("[snapshot] auto-snapshot skipped: process %d has never been deployed", existingObjID)
 					snapshotNote = fmt.Sprintf("Auto-snapshot skipped: process #%d has no deployed version yet, so there is no previous state to restore.", existingObjID)
+				case untouchedFromCreate():
+					// Same situation, recognised from the create-time baseline
+					// when the server's answer does not prove it on its own.
+					logger.Info("[snapshot] auto-snapshot skipped: process %d unchanged since create-process", existingObjID)
+					snapshotNote = fmt.Sprintf("Auto-snapshot skipped: process #%d has not changed on the server since create-process made it, so it has no previous version to restore.", existingObjID)
 				default:
 					logger.Warn("[snapshot] auto-snapshot failed: %v", snapErr)
 					// Resolution succeeded — we know exactly which stage this
@@ -808,7 +823,7 @@ func pushProcessCore(ctx context.Context, v *Executor, procID int, jsonContent s
 						snapshotNote = fmt.Sprintf("Warning: auto-snapshot could not be taken for process #%d — the CreateSnapshot API call failed (%v) — and allow_no_snapshot=true was passed. NO ROLLBACK POINT EXISTS for the version this push overwrites (%s).", existingObjID, snapErr, why)
 					} else {
 						return fmt.Sprintf(
-							"Push blocked: the pre-push snapshot of process #%d failed (%v). Without a snapshot the previous server version cannot be restored after this push. %s\n\nRetry once the Corezoid API is reachable, or re-run with allow_no_snapshot=true to accept an irreversible push once you accept the risk. allow_no_snapshot is separate from force on purpose: force overrides a *known* conflict, this waives the ability to undo.",
+							"Push blocked: the pre-push snapshot of process #%d failed (%v). The process already holds a version on the server (it is neither empty nor unchanged since create-process), and without a snapshot that version cannot be restored after this push. %s\n\nIf the error above is transient, retry the push; otherwise re-run with allow_no_snapshot=true to accept an irreversible push once you accept the risk. allow_no_snapshot is separate from force on purpose: force overrides a *known* conflict, this waives the ability to undo.",
 							existingObjID, snapErr, why), true
 					}
 				}
@@ -818,7 +833,7 @@ func pushProcessCore(ctx context.Context, v *Executor, procID int, jsonContent s
 				snapshotTaken = true
 			}
 
-		case processNeverDeployed(v, existingObjID):
+		case processNeverDeployed(v, existingObjID) || untouchedFromCreate():
 			// Nothing deployed yet, so there is no previous state a snapshot
 			// could preserve. This is the create-process → push-process flow.
 			snapshotNote = fmt.Sprintf("Auto-snapshot skipped: process #%d has no deployed version yet, so there is no previous state to restore.", existingObjID)
@@ -1310,6 +1325,15 @@ func createConv(ctx context.Context, args map[string]interface{}, convType strin
 		return fmt.Sprintf("Error writing file: %v", err), true
 	}
 
+	// The server content is known exactly at this point — it is the skeleton
+	// just written — so record it the way pull-process would. Without a baseline
+	// the first push found nothing to compare against and, whenever the server's
+	// answer for the new conv did not positively prove it empty, refused it as a
+	// blind overwrite; without the Created tag the pre-push snapshot of a conv
+	// with no versions failed and blocked it too. Both pushed users into waiver
+	// flags for their own empty process.
+	baselineWarning := recordCreatedBaseline(v, folderPath, processID, string(data))
+
 	label := "Process"
 	if convType == "state" {
 		label = "State diagram"
@@ -1319,7 +1343,34 @@ func createConv(ctx context.Context, args map[string]interface{}, convType strin
 	if markerWarning != "" {
 		result += "\nWarning: " + markerWarning
 	}
+	if baselineWarning != "" {
+		result += "\nWarning: " + baselineWarning
+	}
 	return result, false
+}
+
+// recordCreatedBaseline writes the concurrency baseline and merge ancestor for
+// a conv create-process has just made. It returns a warning for the tool result
+// on failure — the create itself succeeded, but the first push then falls back
+// to the never-deployed checks instead of the recorded baseline.
+func recordCreatedBaseline(v *Executor, dir string, processID int, convJSON string) string {
+	proc, err := v.GetProcessByID(processID)
+	if err != nil {
+		logger.Warn("create: could not read back process %d to record its baseline: %v", processID, err)
+		return fmt.Sprintf("the concurrency baseline for #%d could not be recorded (%v); if the first push is blocked for a missing baseline, that is why — not a concurrent edit", processID, err)
+	}
+	base := baselineFromServer(proc)
+	base.Created = true
+	if err := writeBaseline(dir, processID, base); err != nil {
+		logger.Warn("create: could not write baseline for %d: %v", processID, err)
+		return fmt.Sprintf("the concurrency baseline for #%d could not be written (%v); if the first push is blocked for a missing baseline, that is why — not a concurrent edit", processID, err)
+	}
+	if err := writeAncestorScheme(dir, processID, convJSON); err != nil {
+		// The baseline alone is enough for the first push; the ancestor only
+		// matters for a later 3-way merge, so this stays a log line.
+		logger.Warn("create: could not write merge ancestor for %d: %v", processID, err)
+	}
+	return ""
 }
 
 // mirroredPlacement describes where a Corezoid folder is mirrored on disk:
