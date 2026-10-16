@@ -7,6 +7,34 @@ import (
 	"strings"
 )
 
+// companyIDArg resolves the workspace for the cz-structure actions: an explicit
+// company_id wins, then workspace_id (the name login and list-workspaces use),
+// then the workspace selected at login (v.WorkspaceID — the request scope in
+// hosted mode). An empty company_id also falls back to the login workspace;
+// it is sent as "" (a personal workspace) only when no workspace is selected.
+func companyIDArg(v *Executor, args map[string]interface{}) (string, error) {
+	for _, key := range []string{"company_id", "workspace_id"} {
+		raw, ok := args[key]
+		if !ok || raw == nil {
+			continue
+		}
+		s, ok := raw.(string)
+		if !ok {
+			return "", fmt.Errorf("argument %s must be a string, got %T", key, raw)
+		}
+		if s = strings.TrimSpace(s); s != "" {
+			return s, nil
+		}
+	}
+	if v.WorkspaceID != "" {
+		return v.WorkspaceID, nil
+	}
+	if _, ok := args["company_id"]; ok {
+		return "", nil
+	}
+	return "", fmt.Errorf("missing required argument: company_id (no workspace is selected at login — call list-workspaces and pass its company_id, or \"\" for a personal workspace)")
+}
+
 // handleListWorkspaces prints the workspaces the authenticated user can see.
 // Used during login when account_url is set on the current Folder but
 // workspace_id hasn't been picked yet.
@@ -57,12 +85,12 @@ func handleListWorkspaces(ctx context.Context, _ map[string]interface{}) (string
 
 // handleListProjects prints the projects in a given workspace.
 func handleListProjects(ctx context.Context, args map[string]interface{}) (string, bool) {
-	companyID, err := strArg(args, "company_id")
+	v := NewValidator(ctx, 0)
+	companyID, err := companyIDArg(v, args)
 	if err != nil {
 		return "Error: " + err.Error(), true
 	}
 
-	v := NewValidator(ctx, 0)
 	ops := []map[string]any{
 		{
 			"type":       "list",
@@ -125,12 +153,12 @@ func handleListStages(ctx context.Context, args map[string]interface{}) (string,
 	if err != nil {
 		return "Error: " + err.Error(), true
 	}
-	companyID, err := strArg(args, "company_id")
+	v := NewValidator(ctx, 0)
+	companyID, err := companyIDArg(v, args)
 	if err != nil {
 		return "Error: " + err.Error(), true
 	}
 
-	v := NewValidator(ctx, 0)
 	ops := []map[string]any{
 		{
 			"type":       "list",
@@ -197,13 +225,13 @@ func handleListAliases(ctx context.Context, args map[string]interface{}) (string
 	if err != nil {
 		return "Error: " + err.Error(), true
 	}
-	companyID, err := strArg(args, "company_id")
+	v := NewValidator(ctx, 0)
+	companyID, err := companyIDArg(v, args)
 	if err != nil {
 		return "Error: " + err.Error(), true
 	}
 	shortNameFilter := optStrArg(args, "short_name")
 
-	v := NewValidator(ctx, 0)
 	ops := []map[string]any{
 		{
 			"type":       "list",
@@ -284,7 +312,8 @@ func handleListAliases(ctx context.Context, args map[string]interface{}) (string
 // handleCreateProject creates a new project in a workspace. Optional `stages`
 // arg is a JSON array of {"title":"...","immutable":bool}.
 func handleCreateProject(ctx context.Context, args map[string]interface{}) (string, bool) {
-	companyID, err := strArg(args, "company_id")
+	v := NewValidator(ctx, 0)
+	companyID, err := companyIDArg(v, args)
 	if err != nil {
 		return "Error: " + err.Error(), true
 	}
@@ -315,7 +344,6 @@ func handleCreateProject(ctx context.Context, args map[string]interface{}) (stri
 		op["stages"] = stages
 	}
 
-	v := NewValidator(ctx, 0)
 	resp, err := v.req("create_project", []map[string]any{op})
 	if err != nil {
 		return fmt.Sprintf("Error: %v", err), true
@@ -352,7 +380,8 @@ func handleCreateProject(ctx context.Context, args map[string]interface{}) (stri
 // handleModifyProject renames a project and/or updates its short_name and
 // description. At least one of title/short_name/description must be supplied.
 func handleModifyProject(ctx context.Context, args map[string]interface{}) (string, bool) {
-	companyID, err := strArg(args, "company_id")
+	v := NewValidator(ctx, 0)
+	companyID, err := companyIDArg(v, args)
 	if err != nil {
 		return "Error: " + err.Error(), true
 	}
@@ -383,7 +412,6 @@ func handleModifyProject(ctx context.Context, args map[string]interface{}) (stri
 		op["description"] = description
 	}
 
-	v := NewValidator(ctx, 0)
 	resp, err := v.req("modify_project", []map[string]any{op})
 	if err != nil {
 		return fmt.Sprintf("Error: %v", err), true
@@ -408,7 +436,8 @@ func handleModifyProject(ctx context.Context, args map[string]interface{}) (stri
 // handleDeleteProject moves a project to the recycle bin (Trash). The server
 // preserves the project — restore-project (not yet exposed) brings it back.
 func handleDeleteProject(ctx context.Context, args map[string]interface{}) (string, bool) {
-	companyID, err := strArg(args, "company_id")
+	v := NewValidator(ctx, 0)
+	companyID, err := companyIDArg(v, args)
 	if err != nil {
 		return "Error: " + err.Error(), true
 	}
@@ -423,7 +452,6 @@ func handleDeleteProject(ctx context.Context, args map[string]interface{}) (stri
 		"obj_id":     projectID,
 		"company_id": companyID,
 	}
-	v := NewValidator(ctx, 0)
 	resp, err := v.req("del_project", []map[string]any{op})
 	if err != nil {
 		return fmt.Sprintf("Error: %v", err), true
@@ -437,7 +465,8 @@ func handleDeleteProject(ctx context.Context, args map[string]interface{}) (stri
 // handleShowProject returns a project's stages and short_name plus the parent
 // folder ID. Use list-stages for a richer per-stage view.
 func handleShowProject(ctx context.Context, args map[string]interface{}) (string, bool) {
-	companyID, err := strArg(args, "company_id")
+	v := NewValidator(ctx, 0)
+	companyID, err := companyIDArg(v, args)
 	if err != nil {
 		return "Error: " + err.Error(), true
 	}
@@ -452,7 +481,6 @@ func handleShowProject(ctx context.Context, args map[string]interface{}) (string
 		"obj_id":     projectID,
 		"company_id": companyID,
 	}
-	v := NewValidator(ctx, 0)
 	resp, err := v.req("show_project", []map[string]any{op})
 	if err != nil {
 		return fmt.Sprintf("Error: %v", err), true
