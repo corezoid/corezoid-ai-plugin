@@ -264,11 +264,8 @@ func handleSetStageImmutable(ctx context.Context, args map[string]interface{}) (
 	if err != nil {
 		return "Error: " + err.Error(), true
 	}
-	companyID, err := strArg(args, "company_id")
-	if err != nil {
-		return "Error: " + err.Error(), true
-	}
-	_ = companyID // company scoping comes from the executor's WorkspaceID
+	// company_id is accepted but not needed: company scoping comes from the
+	// executor's WorkspaceID.
 	immutable, berr := requiredBoolArg(args, "immutable")
 	if berr != "" {
 		return berr + " true = read-only, false = editable.", true

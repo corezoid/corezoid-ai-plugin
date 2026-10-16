@@ -338,10 +338,13 @@ var collapsedToolRegistry = []mcpTool{
 			"properties": map[string]interface{}{
 				"company_id": map[string]interface{}{
 					"type":        "string",
-					"description": "Workspace (company) ID whose projects to list",
+					"description": "Workspace (company) ID whose projects to list. Defaults to the workspace selected at login; workspace_id is accepted as an alias.",
+				},
+				"workspace_id": map[string]interface{}{
+					"type":        "string",
+					"description": "Alias for company_id (the name login and list-workspaces use).",
 				},
 			},
-			"required": []string{"company_id"},
 		},
 	},
 	{
@@ -353,14 +356,18 @@ var collapsedToolRegistry = []mcpTool{
 			"properties": map[string]interface{}{
 				"company_id": map[string]interface{}{
 					"type":        "string",
-					"description": "Workspace (company) ID the project belongs to",
+					"description": "Workspace (company) ID the project belongs to. Defaults to the workspace selected at login; workspace_id is accepted as an alias.",
+				},
+				"workspace_id": map[string]interface{}{
+					"type":        "string",
+					"description": "Alias for company_id (the name login and list-workspaces use).",
 				},
 				"project_id": map[string]interface{}{
 					"type":        "integer",
 					"description": "Project ID (obj_id) to show",
 				},
 			},
-			"required": []string{"company_id", "project_id"},
+			"required": []string{"project_id"},
 		},
 	},
 	{
@@ -372,7 +379,11 @@ var collapsedToolRegistry = []mcpTool{
 			"properties": map[string]interface{}{
 				"company_id": map[string]interface{}{
 					"type":        "string",
-					"description": "Workspace (company) ID where the project will be created",
+					"description": "Workspace (company) ID where the project will be created. Defaults to the workspace selected at login; workspace_id is accepted as an alias.",
+				},
+				"workspace_id": map[string]interface{}{
+					"type":        "string",
+					"description": "Alias for company_id (the name login and list-workspaces use).",
 				},
 				"title": map[string]interface{}{
 					"type":        "string",
@@ -391,7 +402,7 @@ var collapsedToolRegistry = []mcpTool{
 					"description": `Optional JSON array of stages to create with the project: [{"title":"production","immutable":true},{"title":"develop","immutable":false}]`,
 				},
 			},
-			"required": []string{"company_id", "title"},
+			"required": []string{"title"},
 		},
 	},
 	{
@@ -403,7 +414,11 @@ var collapsedToolRegistry = []mcpTool{
 			"properties": map[string]interface{}{
 				"company_id": map[string]interface{}{
 					"type":        "string",
-					"description": "Workspace (company) ID the project belongs to",
+					"description": "Workspace (company) ID the project belongs to. Defaults to the workspace selected at login; workspace_id is accepted as an alias.",
+				},
+				"workspace_id": map[string]interface{}{
+					"type":        "string",
+					"description": "Alias for company_id (the name login and list-workspaces use).",
 				},
 				"project_id": map[string]interface{}{
 					"type":        "integer",
@@ -422,7 +437,7 @@ var collapsedToolRegistry = []mcpTool{
 					"description": "New project description",
 				},
 			},
-			"required": []string{"company_id", "project_id"},
+			"required": []string{"project_id"},
 		},
 	},
 	{
@@ -434,14 +449,18 @@ var collapsedToolRegistry = []mcpTool{
 			"properties": map[string]interface{}{
 				"company_id": map[string]interface{}{
 					"type":        "string",
-					"description": "Workspace (company) ID the project belongs to",
+					"description": "Workspace (company) ID the project belongs to. Defaults to the workspace selected at login; workspace_id is accepted as an alias.",
+				},
+				"workspace_id": map[string]interface{}{
+					"type":        "string",
+					"description": "Alias for company_id (the name login and list-workspaces use).",
 				},
 				"project_id": map[string]interface{}{
 					"type":        "integer",
 					"description": "Project ID (obj_id) to delete",
 				},
 			},
-			"required": []string{"company_id", "project_id"},
+			"required": []string{"project_id"},
 		},
 	},
 	{
@@ -457,10 +476,14 @@ var collapsedToolRegistry = []mcpTool{
 				},
 				"company_id": map[string]interface{}{
 					"type":        "string",
-					"description": "Workspace (company) ID the project belongs to",
+					"description": "Workspace (company) ID the project belongs to. Defaults to the workspace selected at login; workspace_id is accepted as an alias.",
+				},
+				"workspace_id": map[string]interface{}{
+					"type":        "string",
+					"description": "Alias for company_id (the name login and list-workspaces use).",
 				},
 			},
-			"required": []string{"project_id", "company_id"},
+			"required": []string{"project_id"},
 		},
 	},
 	{
@@ -480,14 +503,18 @@ var collapsedToolRegistry = []mcpTool{
 				},
 				"company_id": map[string]interface{}{
 					"type":        "string",
-					"description": "Workspace (company) ID the project belongs to",
+					"description": "Workspace (company) ID the project belongs to. Defaults to the workspace selected at login; workspace_id is accepted as an alias.",
+				},
+				"workspace_id": map[string]interface{}{
+					"type":        "string",
+					"description": "Alias for company_id (the name login and list-workspaces use).",
 				},
 				"short_name": map[string]interface{}{
 					"type":        "string",
 					"description": "Optional: return only the alias with this exact short_name",
 				},
 			},
-			"required": []string{"project_id", "stage_id", "company_id"},
+			"required": []string{"project_id", "stage_id"},
 		},
 	},
 	{
@@ -511,9 +538,9 @@ var collapsedToolRegistry = []mcpTool{
 				},
 				"company_id": map[string]interface{}{
 					"type":        "string",
-					"description": "Workspace (company) ID the project belongs to.",
+					"description": "Optional: the stage is resolved in the workspace selected at login.",
 				},
-				"immutable": map[string]interface{}{
+				"immutable":map[string]interface{}{
 					"type":        "boolean",
 					"description": "true = make read-only (a valid deploy target); false = make editable again.",
 				},
@@ -522,7 +549,7 @@ var collapsedToolRegistry = []mcpTool{
 					"description": "Required: must equal \"<stage_id>:<immutable>\" (e.g. \"684082:true\"). Guards against accidental read-only changes.",
 				},
 			},
-			"required": []string{"stage_id", "project_id", "company_id", "immutable"},
+			"required": []string{"stage_id", "project_id", "immutable"},
 		},
 	},
 	{

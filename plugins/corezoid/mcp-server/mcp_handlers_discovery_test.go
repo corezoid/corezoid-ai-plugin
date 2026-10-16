@@ -254,6 +254,84 @@ func TestHandleToolCall_ShowProject_OK(t *testing.T) {
 	}
 }
 
+// ---- company_id defaulting --------------------------------------------------
+
+// The structure actions must not demand company_id once login has selected a
+// workspace: omitted or empty, it falls back to that workspace, and the
+// workspace_id synonym (the name login and list-workspaces use) is accepted.
+func TestHandleToolCall_Structure_CompanyIDDefaultsToLoginWorkspace(t *testing.T) {
+	cases := []struct {
+		name string
+		tool string
+		args map[string]interface{}
+		want string
+	}{
+		{"list-projects omitted", "list-projects", map[string]interface{}{}, "i260836082"},
+		{"list-stages omitted", "list-stages", map[string]interface{}{"project_id": float64(1)}, "i260836082"},
+		{"show-project empty", "show-project", map[string]interface{}{"project_id": float64(1), "company_id": ""}, "i260836082"},
+		{"list-aliases omitted", "list-aliases", map[string]interface{}{"project_id": float64(1), "stage_id": float64(2)}, "i260836082"},
+		{"show-project workspace_id", "show-project", map[string]interface{}{"project_id": float64(1), "workspace_id": "i999"}, "i999"},
+		{"company_id wins", "list-projects", map[string]interface{}{"company_id": "i111", "workspace_id": "i999"}, "i111"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			resetGlobals(t)
+			var captured []map[string]interface{}
+			srv, _ := mockAPIServer(t, func(ops []map[string]interface{}) interface{} {
+				captured = ops
+				return map[string]interface{}{
+					"request_proc": "ok",
+					"ops":          []interface{}{map[string]interface{}{"proc": "ok", "obj": "project", "list": []interface{}{}}},
+				}
+			})
+			setProjectAuth(t, srv.URL)
+
+			result, isErr := handleToolCall(context.Background(), tc.tool, tc.args)
+			if isErr {
+				t.Fatalf("unexpected error: %s", result)
+			}
+			if len(captured) != 1 {
+				t.Fatalf("expected 1 captured op, got %d", len(captured))
+			}
+			if got := captured[0]["company_id"]; got != tc.want {
+				t.Errorf("op company_id = %v, want %s", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestHandleToolCall_Structure_CompanyIDMissingWithoutLoginWorkspace(t *testing.T) {
+	resetGlobals(t)
+	srv, _ := mockAPIServer(t, func(ops []map[string]interface{}) interface{} {
+		t.Errorf("no request expected, got %v", ops)
+		return nil
+	})
+	setProjectAuth(t, srv.URL)
+	workspaceID = ""
+	result, isErr := handleToolCall(context.Background(), "list-projects", map[string]interface{}{})
+	if !isErr || !strings.Contains(result, "company_id") || !strings.Contains(result, "list-workspaces") {
+		t.Errorf("expected a company_id error pointing at list-workspaces, got isErr=%v %q", isErr, result)
+	}
+}
+
+func TestStructureSchemas_CompanyIDNotRequired(t *testing.T) {
+	for _, tool := range collapsedToolRegistry {
+		switch tool.Name {
+		case "list-projects", "show-project", "create-project", "modify-project",
+			"delete-project", "list-stages", "list-aliases", "set-stage-immutable":
+		default:
+			continue
+		}
+		schema, _ := tool.InputSchema.(map[string]interface{})
+		req, _ := schema["required"].([]string)
+		for _, r := range req {
+			if r == "company_id" {
+				t.Errorf("%s: company_id must not be required — it defaults to the login workspace", tool.Name)
+			}
+		}
+	}
+}
+
 // ---- list-aliases -----------------------------------------------------------
 
 func TestHandleToolCall_ListAliases_OK(t *testing.T) {
