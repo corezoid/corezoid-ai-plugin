@@ -63,6 +63,12 @@ type baselineEntry struct {
 	Version    int64  `json:"version"`             // last_confirmed_version (fallback: commits.version)
 	PulledAt   int64  `json:"pulled_at,omitempty"` // when this baseline was recorded (unix, for diagnostics)
 	Source     string `json:"source,omitempty"`    // "detail" (GetProcessByID) or "list" (ListFolder). Empty = legacy sidecar written before the source tag existed; treated as unknown.
+	// Created marks a baseline recorded by create-process right after the conv
+	// was created. While the server has not moved past it, the process holds
+	// nothing but the empty skeleton create made, so there is no previous version
+	// a pre-push snapshot could preserve (see untouchedSinceCreate). Any later
+	// pull or push rewrites the entry without it.
+	Created bool `json:"created,omitempty"`
 }
 
 // baseline source tags — see serverMovedSince for why they matter.
@@ -362,6 +368,28 @@ func recordPulledBaselines(root string, snapshot map[int]baselineEntry) int {
 		return nil
 	})
 	return n
+}
+
+// untouchedSinceCreate reports whether the process still sits exactly where
+// create-process left it: its baseline was recorded at creation and the live
+// server version has not moved since. Such a process has no deployed version —
+// only the empty skeleton this tool created — so CreateSnapshot rejecting it is
+// expected and blocking the push over it protects nothing. Fail-closed like
+// processNeverDeployed: no create-time baseline, an unreadable sidecar or a
+// failed lookup all answer false.
+func untouchedSinceCreate(v *Executor, store conflictStore, procID int) bool {
+	if v == nil || store == nil || procID == 0 {
+		return false
+	}
+	base, ok, err := store.lookupBaseline(procID)
+	if err != nil || !ok || !base.Created {
+		return false
+	}
+	proc, err := v.GetProcessByID(procID)
+	if err != nil || proc == nil {
+		return false
+	}
+	return !serverMovedSince(base, baselineFromServer(proc))
 }
 
 // serverMovedSince reports whether the server's current version has advanced
