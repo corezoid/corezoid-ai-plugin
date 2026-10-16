@@ -73,7 +73,7 @@ var hostedToolDefs = map[string]mcpTool{
 		Name: "push-process",
 		Description: "Validate and deploy a Corezoid process from JSON. Runs the same gates as the local push: structure fix, schema, lint (force=true overrides blocking findings, never structural ones), a concurrency check against `base`, a pre-push snapshot, and the irreversibility check. " +
 			"Pass the `base` token from pull-process / create-process: if someone changed the process on the server since, the push is blocked with a report — pull again and re-apply your edits (merging is not available on the hosted server). " +
-			"Needs scope.stage_id for the snapshot. Returns the deployed scheme with the server's node IDs and a new `base` for the next edit.",
+			"Needs scope.stage_id — the stage the process lives in (a different one is refused). Returns the deployed scheme with the server's node IDs and a new `base` for the next edit.",
 		Annotations: toolHints(hintMutates, hintDestructive, hintNonIdempotent, hintOpenWorld),
 		InputSchema: map[string]interface{}{
 			"type": "object",
@@ -289,10 +289,31 @@ func hostedPushProcess(ctx context.Context, args map[string]interface{}) (string
 		base = &b
 	}
 	v := NewValidator(ctx, procID)
+	// The snapshot and its waiver policy are judged on v.StageID, which here is
+	// the caller's scope.stage_id. Pin it to the stage the process really lives
+	// in: a dev stage in scope must not let allow_no_snapshot overwrite a
+	// process on a production stage without a rollback point.
+	if msg := hostedCheckPushStage(v, procID); msg != "" {
+		return msg, true
+	}
 	result, isErr := pushProcessCore(ctx, v, procID, content, args, hostedPushSource{base: base, content: content})
 	if isErr && strings.Contains(result, "merge=true") {
 		// The shared conflict report lists the local resolutions too.
 		result += "\n\nOn the hosted server merge=true is not available: pull-process again, re-apply your edits to the JSON it returns, and push that with its new base — or pass overwrite_server_change=true to drop the server change."
 	}
 	return result, isErr
+}
+
+// hostedCheckPushStage refuses a push whose scope.stage_id is not the stage
+// the process lives in on the server. Fail-closed: a process whose location
+// cannot be read is not pushed.
+func hostedCheckPushStage(v *Executor, procID int) string {
+	info, err := v.ShowProcessLifecycle(procID)
+	if err != nil {
+		return fmt.Sprintf("Error: could not read where process #%d lives (%v), so the pre-push snapshot cannot be checked against its stage. Retry, or check the process id and scope.company_id", procID, err)
+	}
+	if info.StageID != v.StageID {
+		return fmt.Sprintf("Error: process #%d lives in stage %d, but scope.stage_id is %d. Pass scope.stage_id=%d to push it", procID, info.StageID, v.StageID, info.StageID)
+	}
+	return ""
 }

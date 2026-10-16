@@ -2,9 +2,12 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
+	"net/http"
 	"net/http/httptest"
 	"os"
 	"strings"
+	"sync"
 	"testing"
 )
 
@@ -179,5 +182,50 @@ func TestTokenConflictStore(t *testing.T) {
 	}
 	if r := s.applyMerge(1, "", b, "", mergePlan{}, nil, "", 0); r.action != conflictBlock {
 		t.Errorf("applyMerge on hosted store = %v, want block", r.action)
+	}
+}
+
+// A push is judged against the stage the process lives in, never the one the
+// caller names: otherwise a dev stage in scope lets allow_no_snapshot through
+// for a process on a production stage.
+func TestHostedPushProcessStageMismatch(t *testing.T) {
+	var mu sync.Mutex
+	var ops []string
+	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var payload struct {
+			Ops []map[string]interface{} `json:"ops"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&payload)
+		out := []map[string]interface{}{{"proc": "ok"}}
+		if len(payload.Ops) > 0 {
+			mu.Lock()
+			ops = append(ops, fmt.Sprintf("%v %v", payload.Ops[0]["type"], payload.Ops[0]["obj"]))
+			mu.Unlock()
+			if payload.Ops[0]["type"] == "show" && payload.Ops[0]["obj"] == "conv" {
+				out[0] = map[string]interface{}{"proc": "ok", "obj_id": 7, "status": "active", "stage_id": 9, "project_id": 3}
+			}
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{"request_proc": "ok", "ops": out})
+	}))
+	defer api.Close()
+	enableHostedForTest(t, api.URL)
+	ts := httptest.NewServer(newHostedHandler(testHostedCfg))
+	defer ts.Close()
+
+	args := map[string]interface{}{
+		"content":           `{"obj_id":7,"title":"x","scheme":{"nodes":[]}}`,
+		"allow_no_snapshot": true,
+		"scope":             map[string]interface{}{"company_id": "i1", "stage_id": 5},
+	}
+	_, _, out := hostedPost(t, ts.URL+"/mcp", "Bearer tok", callBody("push-process", args))
+	text, isErr := toolText(t, out)
+	if !isErr || !strings.Contains(text, "lives in stage 9") || !strings.Contains(text, "scope.stage_id=9") {
+		t.Fatalf("push with a foreign stage in scope: isError=%v %q", isErr, text)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if len(ops) != 1 || ops[0] != "show conv" {
+		t.Errorf("API calls before the refusal = %v, want only show conv", ops)
 	}
 }

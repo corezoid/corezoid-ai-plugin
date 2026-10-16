@@ -22,6 +22,9 @@ WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
 PKG="$WORK/corezoid"
 mkdir -p "$PKG" "$OUT"
+# Absolute: the zip below runs from inside $PKG, so a relative $OUT would land
+# in the temp dir and be removed with it.
+OUT="$(cd "$OUT" && pwd)"
 
 cp -R "$SRC/.codex-plugin" "$SRC/assets" "$SRC/docs" "$SRC/skills" "$PKG/"
 [ -d "$SRC/samples" ] && cp -R "$SRC/samples" "$PKG/"
