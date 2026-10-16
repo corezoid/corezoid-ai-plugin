@@ -24,6 +24,7 @@ package main
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -365,6 +366,11 @@ type hostedConfig struct {
 	// duration, caller hash, User-Agent; no token, arguments or results).
 	// On unless COREZOID_HOSTED_ACCESS_LOG is "off".
 	AccessLog bool
+	// TokenAudiences, when set (COREZOID_HOSTED_TOKEN_AUDIENCE, comma-separated),
+	// admits only JWT access tokens whose aud claim names one of them: a token
+	// the issuer minted for another client is refused instead of being passed
+	// through (MCP authorization, RFC 8707). Empty keeps the check off.
+	TokenAudiences []string
 }
 
 func loadHostedConfig(addr string) (hostedConfig, error) {
@@ -376,6 +382,11 @@ func loadHostedConfig(addr string) (hostedConfig, error) {
 
 		OpenAIAppsChallenge: strings.TrimSpace(os.Getenv("OPENAI_APPS_CHALLENGE")),
 		AccessLog:           !strings.EqualFold(strings.TrimSpace(os.Getenv("COREZOID_HOSTED_ACCESS_LOG")), "off"),
+	}
+	for _, a := range strings.Split(os.Getenv("COREZOID_HOSTED_TOKEN_AUDIENCE"), ",") {
+		if a = strings.TrimSpace(a); a != "" {
+			cfg.TokenAudiences = append(cfg.TokenAudiences, a)
+		}
 	}
 	if v := strings.TrimSpace(os.Getenv("COREZOID_HOSTED_MAX_CONCURRENT_PER_TOKEN")); v != "" {
 		n, err := strconv.Atoi(v)
@@ -417,7 +428,12 @@ func runHostedMode(addr string) {
 		Addr:              cfg.Addr,
 		Handler:           newHostedHandler(cfg),
 		ReadHeaderTimeout: 10 * time.Second,
-		IdleTimeout:       120 * time.Second,
+		// The whole request including its body, as for the local HTTP
+		// transport: a client trickling a body cannot hold a connection open
+		// indefinitely. It covers reading only — a long tool call is bounded
+		// by httpToolCallTimeout, not by this.
+		ReadTimeout: 90 * time.Second,
+		IdleTimeout: 120 * time.Second,
 	}
 	fmt.Fprintf(os.Stderr, "[corezoid-mcp] hosted mode %s on %s%s api=%s oauth-resource=%q tools=%d\n",
 		buildIdentity(), cfg.Addr, hostedEndpointPath, cfg.APIURL, cfg.ResourceURL, len(hostedToolRegistry()))
@@ -488,6 +504,16 @@ func newHostedHandler(cfg hostedConfig) http.Handler {
 				w.Header().Set("WWW-Authenticate", `Bearer resource_metadata="`+metaURL+`"`)
 			}
 			http.Error(w, "authorization required", http.StatusUnauthorized)
+			return
+		}
+		if len(cfg.TokenAudiences) > 0 && !tokenHasAudience(token, cfg.TokenAudiences) {
+			access.Status = http.StatusUnauthorized
+			challenge := `Bearer error="invalid_token", error_description="token not issued for this resource"`
+			if metaURL != "" {
+				challenge += `, resource_metadata="` + metaURL + `"`
+			}
+			w.Header().Set("WWW-Authenticate", challenge)
+			http.Error(w, "token not issued for this resource", http.StatusUnauthorized)
 			return
 		}
 		if r.Method != http.MethodPost {
@@ -595,4 +621,40 @@ func hostedInitializeResult() map[string]interface{} {
 		"capabilities":    map[string]interface{}{"tools": map[string]interface{}{}},
 		"serverInfo":      map[string]interface{}{"name": "convctl-mcp", "version": serverVersion()},
 	}
+}
+
+// tokenHasAudience reports whether token is a JWT whose aud claim (a string or
+// an array of strings) names one of want. The signature is not checked here:
+// the Corezoid API verifies it on every call the token makes, so a forged aud
+// fails there. An opaque or unparsable token has no audience and is refused.
+func tokenHasAudience(token string, want []string) bool {
+	parts := strings.Split(token, ".")
+	if len(parts) != 3 {
+		return false
+	}
+	payload, err := base64.RawURLEncoding.DecodeString(parts[1])
+	if err != nil {
+		return false
+	}
+	var claims struct {
+		Aud json.RawMessage `json:"aud"`
+	}
+	if err := json.Unmarshal(payload, &claims); err != nil || len(claims.Aud) == 0 {
+		return false
+	}
+	var auds []string
+	var one string
+	if json.Unmarshal(claims.Aud, &one) == nil {
+		auds = []string{one}
+	} else if json.Unmarshal(claims.Aud, &auds) != nil {
+		return false
+	}
+	for _, a := range auds {
+		for _, w := range want {
+			if a == w {
+				return true
+			}
+		}
+	}
+	return false
 }

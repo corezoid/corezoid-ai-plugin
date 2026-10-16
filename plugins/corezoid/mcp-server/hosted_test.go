@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"encoding/base64"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -434,5 +435,73 @@ func TestHostedDescriptionsHaveNoLocalReferences(t *testing.T) {
 				t.Fatal("hosted argument descriptions mutated the shared registry")
 			}
 		}
+	}
+}
+
+func testJWT(claims string) string {
+	enc := base64.RawURLEncoding.EncodeToString
+	return enc([]byte(`{"alg":"RS256"}`)) + "." + enc([]byte(claims)) + ".sig"
+}
+
+func TestTokenHasAudience(t *testing.T) {
+	want := []string{"https://mcp.corezoid.com"}
+	cases := []struct {
+		token string
+		ok    bool
+	}{
+		{testJWT(`{"aud":"https://mcp.corezoid.com"}`), true},
+		{testJWT(`{"aud":["other","https://mcp.corezoid.com"]}`), true},
+		{testJWT(`{"aud":"other-client"}`), false},
+		{testJWT(`{"aud":["other"]}`), false},
+		{testJWT(`{"sub":"u1"}`), false},
+		{testJWT(`{"aud":42}`), false},
+		{"opaque-token", false},
+		{"a.!!!.c", false},
+	}
+	for _, c := range cases {
+		if got := tokenHasAudience(c.token, want); got != c.ok {
+			t.Errorf("tokenHasAudience(%q) = %v, want %v", c.token, got, c.ok)
+		}
+	}
+}
+
+// With an audience configured, a token minted for another client is refused
+// before any tool runs; without one, nothing changes.
+func TestHostedTokenAudienceGate(t *testing.T) {
+	api := &fakeCorezoidAPI{}
+	enableHostedForTest(t, api.server(t).URL)
+	list := `{"jsonrpc":"2.0","id":1,"method":"tools/list"}`
+
+	cfg := testHostedCfg
+	cfg.TokenAudiences = []string{"https://mcp.corezoid.com"}
+	ts := httptest.NewServer(newHostedHandler(cfg))
+	defer ts.Close()
+
+	status, hdr, _ := hostedPost(t, ts.URL+"/mcp", "Bearer "+testJWT(`{"aud":"other-client"}`), list)
+	if status != http.StatusUnauthorized || !strings.Contains(hdr.Get("WWW-Authenticate"), `error="invalid_token"`) {
+		t.Errorf("foreign audience: status %d, WWW-Authenticate %q", status, hdr.Get("WWW-Authenticate"))
+	}
+	if status, _, _ := hostedPost(t, ts.URL+"/mcp", "Bearer opaque", list); status != http.StatusUnauthorized {
+		t.Errorf("opaque token with audience check on: status %d", status)
+	}
+	if status, _, out := hostedPost(t, ts.URL+"/mcp", "Bearer "+testJWT(`{"aud":["https://mcp.corezoid.com"]}`), list); status != http.StatusOK || out["result"] == nil {
+		t.Errorf("own audience: status %d", status)
+	}
+
+	off := httptest.NewServer(newHostedHandler(testHostedCfg))
+	defer off.Close()
+	if status, _, _ := hostedPost(t, off.URL+"/mcp", "Bearer opaque", list); status != http.StatusOK {
+		t.Errorf("audience check off: opaque token got status %d", status)
+	}
+}
+
+func TestLoadHostedConfigTokenAudience(t *testing.T) {
+	t.Setenv("COREZOID_HOSTED_TOKEN_AUDIENCE", " https://mcp.corezoid.com , ,b ")
+	cfg, err := loadHostedConfig(":0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(cfg.TokenAudiences, "|") != "https://mcp.corezoid.com|b" {
+		t.Errorf("TokenAudiences = %q", cfg.TokenAudiences)
 	}
 }

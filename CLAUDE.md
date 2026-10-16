@@ -132,7 +132,7 @@ When adding a tool, decide first which half it belongs to: model-facing rules an
 
 ### Hosted mode (`hosted.go`)
 
-`COREZOID_HOSTED_ADDR` turns the binary into a remote multi-tenant MCP endpoint; without it nothing in `hosted.go` runs. Credentials and scope come from each request only: `NewValidator` takes token/company/stage from the request context (`hostedScopeFrom`) and ignores the process globals, `handleToolCall` swaps the local auth gate for `hostedGate`, and `resolveAndCacheProjectID` neither reads nor writes its cache. `hostedAllowedTools` is the allowlist for both `tools/list` and calls (checked on the resolved router action); adding a tool there is a security decision — its handler must not touch the filesystem, run processes, or read local credentials.
+`COREZOID_HOSTED_ADDR` turns the binary into a remote multi-tenant MCP endpoint; without it nothing in `hosted.go` runs. Credentials and scope come from each request only: `NewValidator` takes token/company/stage from the request context (`hostedScopeFrom`) and ignores the process globals, `handleToolCall` swaps the local auth gate for `hostedGate`, and `resolveAndCacheProjectID` neither reads nor writes its cache. `hostedAllowedTools` is the allowlist for both `tools/list` and calls (checked on the resolved router action); adding a tool there is a security decision — its handler must not touch the filesystem, run processes, or read local credentials. `COREZOID_HOSTED_TOKEN_AUDIENCE` (optional) admits only JWTs whose `aud` names this server.
 
 ### How skills work
 

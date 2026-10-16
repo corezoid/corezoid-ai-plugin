@@ -15,7 +15,11 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 SRC="$ROOT/plugins/corezoid"
 OUT="${1:-$ROOT/dist}"
 URL="https://mcp.corezoid.com/mcp"
-EXCLUDE_SKILLS=(corezoid-init corezoid-logout corezoid-git-context corezoid-node-layout corezoid-retro corezoid-feedback marketplace-publish-validation corezoid-gen-bot)
+# Also left out: skills whose core tools the hosted server does not offer —
+# variables (create/modify/delete-variable), aliases (create-alias), state
+# diagrams (create-state-diagram) and the bot editor (orchestrator, snapshots).
+EXCLUDE_SKILLS=(corezoid-init corezoid-logout corezoid-git-context corezoid-node-layout corezoid-retro corezoid-feedback marketplace-publish-validation corezoid-gen-bot
+  corezoid-edit-bot corezoid-variable-manager corezoid-alias-manager corezoid-state-diagram-create)
 
 VERSION="$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["version"])' "$SRC/.codex-plugin/plugin.json")"
 WORK="$(mktemp -d)"
@@ -56,6 +60,8 @@ This plugin talks to the hosted Corezoid MCP server. Differences from the local 
 - **No local files.** `pull-process` returns the process JSON and a `base` token in the tool result. Edit that JSON and deploy it with `push-process` (`content` + `base`). The result contains the deployed scheme and a new `base` for the next edit. `lint-process` takes `content`. `create-process` takes `folder_id` and returns the new process JSON.
 - **Concurrent changes.** If the process changed on the server since your `base`, the push is blocked with a report. Pull again and re-apply your edits; merging is not available here.
 - **Not available:** the Communications Orchestrator builder (`create-communications-orchestrator`: it needs messenger bot tokens), git mirror, local layout, snapshot management, and anything below that mentions files, `.conv.json` paths, `login`, `pull-folder` or `run.sh`. Use the hosted equivalents above.
+- **Not offered as tools here:** `create-folder`, `create-alias`, `create-state-diagram`, `create-variable` / `modify-variable` / `delete-variable`, `create-api-key`, `clean-process`, `layout-process`, `create-snapshot` / `list-snapshots` / `get-snapshot` / `delete-snapshot`. Where a skill below calls one of them, tell the user it needs the Corezoid UI or the local plugin, and continue without it — variables are read with `list-variables`, aliases with `list-aliases`.
+- **Skills not in this connector:** `corezoid-variable-manager`, `corezoid-alias-manager`, `corezoid-state-diagram-create`, `corezoid-gen-bot`, `corezoid-edit-bot` and the local-only setup, git, layout, retro and feedback skills. If the routing below points at one of them, say it is available in the local plugin.
 """
 # insert after the YAML frontmatter
 if s.startswith("---"):
