@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [3.10.0]
 
 - Fix(mcp): Go raised to 1.26.9 (`go.mod`, `docs/Troubleshooting.md`) — go1.26.6 carries nine reachable standard-library vulnerabilities in `net/http`, `net/textproto` and `crypto/tls` (GO-2026-6603 … GO-2026-6617), which matter now that hosted mode serves HTTP to the internet. `govulncheck` in CI is green again. Release binaries are built with it; only the `go run` fallback needs the newer toolchain.
 - Feat(hosted): optional token-audience check — with `COREZOID_HOSTED_TOKEN_AUDIENCE` set (comma-separated), only JWT access tokens whose `aud` names one of the values are admitted; others get 401 `invalid_token` instead of being passed through to the Corezoid API. Unset, behaviour is unchanged.
