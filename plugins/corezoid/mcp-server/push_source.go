@@ -17,6 +17,10 @@ type pushSource interface {
 	saveFixed(content string) error
 	validateSchema(content string) error
 	lint(content string) (*LintResult, error)
+	// baselineLint lints the version the caller last pulled, so the lint gate
+	// can tell findings this push introduces from ones it inherited. nil when
+	// no pulled copy is available.
+	baselineLint(procID int) *LintResult
 	// conflicts is where the concurrency gate reads what the caller last saw.
 	conflicts() conflictStore
 	// name labels the pre-push snapshot.
@@ -36,6 +40,9 @@ func (f filePushSource) saveFixed(content string) error {
 }
 func (f filePushSource) validateSchema(string) error      { return ValidateJSONSchema(f.filePath, debug) }
 func (f filePushSource) lint(string) (*LintResult, error) { return lintProcess(f.filePath) }
+func (f filePushSource) baselineLint(procID int) *LintResult {
+	return lintAncestor(filepath.Dir(f.filePath), procID)
+}
 func (f filePushSource) conflicts() conflictStore {
 	return fileConflictStore{dir: filepath.Dir(f.filePath), filePath: f.filePath}
 }
@@ -96,7 +103,11 @@ func (h hostedPushSource) validateSchema(content string) error {
 func (h hostedPushSource) lint(content string) (*LintResult, error) {
 	return lintProcessData([]byte(content))
 }
-func (h hostedPushSource) conflicts() conflictStore { return tokenConflictStore{base: h.base} }
+
+// baselineLint is nil: the hosted server keeps no pulled copy, so every
+// finding is judged as if new.
+func (h hostedPushSource) baselineLint(int) *LintResult { return nil }
+func (h hostedPushSource) conflicts() conflictStore     { return tokenConflictStore{base: h.base} }
 func (h hostedPushSource) name(content string) string {
 	if t := extractTitleFromJSON(content); t != "" {
 		return t

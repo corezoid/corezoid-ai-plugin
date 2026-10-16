@@ -678,14 +678,25 @@ func pushProcessCore(ctx context.Context, v *Executor, procID int, jsonContent s
 				fmt.Fprintf(os.Stderr, "[lint] %d active Stub Mode node(s) are warning-only for this push (%s)\n", stubMode, policy.reason)
 			}
 		}
-		structural, overridable, advisory := categorizeLintForPush(lintRes)
+		structural, _, advisory := categorizeLintForPush(lintRes)
 		if structural > 0 {
 			return fmt.Sprintf("Push blocked: lint found %d structural issue(s) — the resulting graph is invalid and the server rejects it. force=true does NOT bypass these; the graph itself must be fixed (broken links, old-format nodes, self-referencing api_copy/api_rpc).\n\n%s",
 				structural, FormatLintResult(lintRes)), true
 		}
+		// Only what this push introduced blocks; findings the pulled version
+		// already had are reported and deploy (see lint_push_baseline.go).
+		introduced, inheritedRes := splitInheritedLint(lintRes, src.baselineLint(procID))
+		_, overridable, _ := categorizeLintForPush(introduced)
+		_, inherited, _ := categorizeLintForPush(inheritedRes)
 		if overridable > 0 && !force {
-			return fmt.Sprintf("Push blocked: lint found %d issue(s) that would break the deploy or its callers. Fix them, or re-run with force=true to override.\n\n%s",
-				overridable, FormatLintResult(lintRes)), true
+			// The report lists only the blocking findings: a dump of every
+			// advisory and inherited warning buries the ones to fix.
+			var omitted string
+			if advisory > 0 {
+				omitted = fmt.Sprintf(" %d advisory finding(s) never block and are not listed.", advisory)
+			}
+			return fmt.Sprintf("Push blocked: lint found %d issue(s) introduced by this push that would break the deploy or its callers. Fix them, or re-run with force=true to override.%s%s\n\n%s",
+				overridable, inheritedLintNote(inherited, true), omitted, FormatLintResult(introduced)), true
 		}
 		if overridable > 0 && force {
 			waiverNotes = append(waiverNotes, fmt.Sprintf(
@@ -698,10 +709,13 @@ func pushProcessCore(ctx context.Context, v *Executor, procID int, jsonContent s
 		// The push proceeds. Surface any findings so the promise "advisory
 		// findings are shown but do not block" is actually kept — otherwise
 		// advisory-only issues would deploy silently and never be seen.
-		if overridable+advisory+stubMode > 0 {
+		if overridable+inherited+advisory+stubMode > 0 {
 			lintNote = FormatLintResult(lintRes)
 			if lintNoteHeader == "" {
 				lintNoteHeader = "Lint (non-blocking, deployed anyway):"
+			}
+			if note := inheritedLintNote(inherited, false); note != "" {
+				lintNoteHeader = strings.TrimSuffix(lintNoteHeader, ":") + "." + note
 			}
 		}
 	}
