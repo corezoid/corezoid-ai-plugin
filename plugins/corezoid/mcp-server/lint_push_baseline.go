@@ -13,9 +13,14 @@ import (
 // match the pulled copy are reported, not blocked on, and force is left for
 // what the edit itself introduces.
 //
-// Only the overridable bucket is diffed. Structural findings still block
-// whatever their age — the server rejects the graph either way — and advisory
-// findings never block to begin with.
+// Only the caller-contract findings of the overridable bucket are diffed
+// (unreplied terminals, rpc reply mismatches): the server accepts those, so a
+// version that had them really did deploy. Missing default go and short timers
+// are rejected by the server on every deploy, and literal reply values hang
+// its commit — "the pulled version had it too" does not make the next deploy
+// succeed, it only trades a clear block for a server failure past the
+// concurrency gate. Those block whatever their age, like structural findings.
+// Advisory findings never block to begin with.
 
 // lintAncestor lints the scheme recorded at pull time (the merge ancestor).
 // nil when none was recorded or it does not parse: every finding then counts
@@ -37,25 +42,23 @@ func lintAncestor(dir string, procID int) *LintResult {
 
 // splitInheritedLint returns copies of cur's overridable findings split into
 // those this push introduced and those base already had. A nil base inherits
-// nothing. Both results carry cur's header fields, so FormatLintResult prints
-// them as a normal report.
+// nothing, and the kinds the server rejects are always introduced. Both
+// results carry cur's header fields, so FormatLintResult prints them as a
+// normal report.
 func splitInheritedLint(cur, base *LintResult) (introduced, inherited *LintResult) {
 	introduced, inherited = overridableHeader(cur), overridableHeader(cur)
 	if base == nil {
 		base = &LintResult{}
 	}
-	introduced.MissingDefaultGo, inherited.MissingDefaultGo = splitByKey(cur.MissingDefaultGo, base.MissingDefaultGo,
-		func(f MissingDefaultGo) string { return f.ID })
-	introduced.ShortTimers, inherited.ShortTimers = splitByKey(cur.ShortTimers, base.ShortTimers,
-		func(f ShortTimer) string { return f.ID })
+	introduced.MissingDefaultGo = cur.MissingDefaultGo
+	introduced.ShortTimers = cur.ShortTimers
+	introduced.LiteralReplyValues = cur.LiteralReplyValues
 	// A reply node that gains another untyped key is a new problem even though
 	// the node was already flagged, so the keys are part of the identity.
 	introduced.RpcReplyMismatches, inherited.RpcReplyMismatches = splitByKey(cur.RpcReplyMismatches, base.RpcReplyMismatches,
 		func(f RpcReplyMismatch) string {
 			return f.NodeID + "|" + f.DataField + "|" + strings.Join(f.UntypedKeys, ",") + "|" + strings.Join(f.UnusedTypes, ",")
 		})
-	introduced.LiteralReplyValues, inherited.LiteralReplyValues = splitByKey(cur.LiteralReplyValues, base.LiteralReplyValues,
-		func(f LiteralReplyValue) string { return f.ID + "|" + strings.Join(f.Fields, ",") })
 	introduced.UnrepliedTerminals, inherited.UnrepliedTerminals = splitByKey(cur.UnrepliedTerminals, base.UnrepliedTerminals,
 		func(f UnrepliedTerminal) string { return f.ID })
 	return introduced, inherited
