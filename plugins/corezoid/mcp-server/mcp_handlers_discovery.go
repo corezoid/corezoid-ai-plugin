@@ -10,8 +10,8 @@ import (
 // companyIDArg resolves the workspace for the cz-structure actions: an explicit
 // company_id wins, then workspace_id (the name login and list-workspaces use),
 // then the workspace selected at login (v.WorkspaceID — the request scope in
-// hosted mode). An explicit empty company_id is kept as-is: it means a
-// personal workspace.
+// hosted mode). An empty company_id also falls back to the login workspace;
+// it is sent as "" (a personal workspace) only when no workspace is selected.
 func companyIDArg(v *Executor, args map[string]interface{}) (string, error) {
 	for _, key := range []string{"company_id", "workspace_id"} {
 		raw, ok := args[key]

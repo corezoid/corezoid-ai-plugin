@@ -540,7 +540,7 @@ var collapsedToolRegistry = []mcpTool{
 					"type":        "string",
 					"description": "Optional: the stage is resolved in the workspace selected at login.",
 				},
-				"immutable":map[string]interface{}{
+				"immutable": map[string]interface{}{
 					"type":        "boolean",
 					"description": "true = make read-only (a valid deploy target); false = make editable again.",
 				},
