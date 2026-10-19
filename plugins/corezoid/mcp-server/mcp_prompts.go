@@ -20,8 +20,10 @@ type mcpPromptMessage struct {
 }
 
 type mcpGetPromptResult struct {
-	Description string             `json:"description,omitempty"`
-	Messages    []mcpPromptMessage `json:"messages"`
+	ResultType  string                 `json:"resultType,omitempty"`
+	Description string                 `json:"description,omitempty"`
+	Messages    []mcpPromptMessage     `json:"messages"`
+	Meta        map[string]interface{} `json:"_meta,omitempty"`
 }
 
 var builtinPrompts = []mcpPrompt{

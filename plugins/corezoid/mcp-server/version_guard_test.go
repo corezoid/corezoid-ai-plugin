@@ -26,6 +26,12 @@ var allowedVersionDecls = map[string]string{
 	// The MCP wire-format version we negotiate. Legitimately hardcoded: it
 	// tracks the MCP specification, not the plugin release cadence.
 	"mcpProtocolVersion": "MCP wire protocol version, independent of the plugin version",
+	// The stateless MCP revision served to requests carrying _meta — same
+	// reasoning as mcpProtocolVersion.
+	"mcpModernProtocolVersion": "MCP wire protocol version, independent of the plugin version",
+	// The _meta key name "io.modelcontextprotocol/protocolVersion" — a fixed
+	// identifier from the MCP spec, not a version value.
+	"metaKeyProtocolVersion": "MCP _meta key name, not a version value",
 }
 
 // TestNoHardcodedVersionDeclarations fails when a new package-level constant or

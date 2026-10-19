@@ -45,8 +45,13 @@ type Folder struct {
 	GitStagePath string    `json:"git_stage_path,omitempty"`
 	AccessToken  string    `json:"access_token"`
 	ExpiresAt    time.Time `json:"expires_at,omitempty"`
-	APILogin     string    `json:"api_login"`
-	APISecret    string    `json:"api_secret"`
+	// Issuer is the authorization server that issued AccessToken. A token is
+	// only used against the account it came from: once AccountURL points at
+	// another issuer the token is ignored (see syncGlobalsFromFolder). Empty
+	// for credentials saved before issuer binding existed.
+	Issuer    string `json:"issuer,omitempty"`
+	APILogin  string `json:"api_login"`
+	APISecret string `json:"api_secret"`
 }
 
 // Config is the whole ~/.corezoid/config.json.
@@ -420,6 +425,10 @@ func syncGlobalsFromFolder(f *Folder) {
 	// old loadCredentials/isCredentialsExpired pair had the same policy, so
 	// preserving it prevents callers from unknowingly using a stale token.
 	if apiToken != "" && !f.ExpiresAt.IsZero() && time.Now().After(f.ExpiresAt) {
+		apiToken = ""
+	}
+	// A token bound to another issuer must never be sent to this account.
+	if apiToken != "" && f.Issuer != "" && f.AccountURL != "" && !sameIssuer(f.Issuer, f.AccountURL) {
 		apiToken = ""
 	}
 	accountURL = f.AccountURL

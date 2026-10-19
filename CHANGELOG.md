@@ -1,5 +1,17 @@
 # Changelog
 
+## [Unreleased]
+
+- Feat(mcp): MCP 2026-07-28 (AIC-170). The server is stateless and dual-era: a request carrying `_meta["io.modelcontextprotocol/protocolVersion"]` is served per 2026-07-28 with no handshake, reading client capabilities, identity and log level from that request's `_meta`; a request without it is served as 2025-03-26, so clients that still open with `initialize` keep working. `initialize` is never required.
+- Feat(mcp): every result carries `resultType` and `_meta["io.modelcontextprotocol/serverInfo"]`; `tools/list`, `prompts/list`, `resources/list`, `resources/read` and `server/discover` carry `ttlMs` and `cacheScope`. `tools/list` order is the fixed registry order (now pinned by a test). An unsupported protocol version gets `UnsupportedProtocolVersionError` (-32022, `data.supported`/`data.requested`); a resource that does not exist is -32602.
+- Feat(mcp): `server/discover` returns the 2026-07-28 `DiscoverResult` (`supportedVersions: ["2026-07-28","2025-03-26"]`) instead of the earlier legacy-only probe answer.
+- Feat(mcp): elicitation for 2026-07-28 clients uses Multi Round-Trip Requests — `login` returns `resultType: "input_required"` with `inputRequests` and an opaque single-use `requestState`, and resumes on the retry with `inputResponses`. Only offered when the request declares the `elicitation` capability; legacy stdio clients keep the server-initiated `elicitation/create`.
+- Feat(mcp): `subscriptions/listen` replaces `resources/subscribe` and the GET SSE stream: acknowledged with the honoured filter, notifications tagged with `io.modelcontextprotocol/subscriptionId`, cancelled with `notifications/cancelled` (stdio) or by closing the stream (HTTP, SSE with keep-alive comments and `X-Accel-Buffering: no`).
+- Breaking(mcp, HTTP): `Mcp-Session-Id` and per-connection state are gone — no session is minted, required or 404ed; `GET` and `DELETE /mcp` are 405; `Last-Event-ID` is ignored. A 2026-07-28 request must send `MCP-Protocol-Version` matching its `_meta` (and `Mcp-Method`/`Mcp-Name` must match when sent), else 400 `HeaderMismatch` (-32020); version and `_meta` errors are 400, unknown methods 404.
+- Breaking(mcp): `ping` and `logging/setLevel` are removed (-32601); `notifications/roots/list_changed` is ignored. The server sends no `notifications/message`.
+- Feat(oauth): `login` reads RFC 8414 authorization server metadata (falling back to `/oauth2/authorize` and `/oauth2/token`), rejects metadata whose `issuer` is not the account URL, and checks the redirect's `iss` (RFC 9207) — required when the server advertises it. Saved credentials record their `issuer` and are not used once `account_url` points at another issuer. Dynamic Client Registration is never used; `COREZOID_OAUTH_CLIENT_ID` may be a Client ID Metadata Document URL.
+- Feat(hosted): the same per-request `_meta`, `resultType`, header checks and `server/discover` (tools-only capabilities); `ping` removed. Hosted mode never returns `input_required` and serves no subscriptions.
+
 ## [3.10.0]
 
 - Fix(mcp): Go raised to 1.26.9 (`go.mod`, `docs/Troubleshooting.md`) — go1.26.6 carries nine reachable standard-library vulnerabilities in `net/http`, `net/textproto` and `crypto/tls` (GO-2026-6603 … GO-2026-6617), which matter now that hosted mode serves HTTP to the internet. `govulncheck` in CI is green again. Release binaries are built with it; only the `go run` fallback needs the newer toolchain.

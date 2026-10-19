@@ -4,10 +4,12 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/subtle"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"strings"
@@ -80,97 +82,6 @@ func authWrap(next http.HandlerFunc) http.HandlerFunc {
 	}
 }
 
-// httpSessionIDContextKey holds the Mcp-Session-Id string for the current
-// request, attached in httpHandlePost so httpDispatch can resolve it into a
-// per-session client identity without needing the *http.Request itself.
-const httpSessionIDContextKey contextKey = "mcpHTTPSessionID"
-
-// httpClientIdentity is one HTTP session's declared client name/version,
-// plus when it was last confirmed active (for idle eviction).
-type httpClientIdentity struct {
-	Name     string
-	Version  string
-	LastSeen time.Time
-}
-
-const httpSessionIdleTimeout = 1 * time.Hour
-const httpSessionSweepInterval = 10 * time.Minute
-
-// httpSessionsMu guards httpSessions. The Streamable HTTP transport can serve
-// multiple concurrent MCP clients against one server process — unlike stdio,
-// where one process is definitionally one client — so client identity has to
-// be tracked per session (keyed by the Mcp-Session-Id minted at initialize)
-// rather than as a process-global, or whichever client's handshake ran most
-// recently would silently overwrite every other connected client's identity.
-var httpSessionsMu sync.Mutex
-var httpSessions = map[string]httpClientIdentity{}
-
-// registerHTTPSession stores/refreshes the client identity for a session,
-// called once from httpDispatch's initialize case.
-func registerHTTPSession(sessionID, name, version string) {
-	if sessionID == "" {
-		return
-	}
-	httpSessionsMu.Lock()
-	defer httpSessionsMu.Unlock()
-	httpSessions[sessionID] = httpClientIdentity{Name: name, Version: version, LastSeen: time.Now()}
-}
-
-// httpSessionIdentity returns the stored identity for a session and refreshes
-// its LastSeen timestamp, so an actively-used session is never evicted by
-// sweepIdleHTTPSessions regardless of how long ago it last called initialize.
-func httpSessionIdentity(sessionID string) (identity httpClientIdentity, ok bool) {
-	if sessionID == "" {
-		return httpClientIdentity{}, false
-	}
-	httpSessionsMu.Lock()
-	defer httpSessionsMu.Unlock()
-	id, found := httpSessions[sessionID]
-	if !found {
-		return httpClientIdentity{}, false
-	}
-	id.LastSeen = time.Now()
-	httpSessions[sessionID] = id
-	return id, true
-}
-
-// endHTTPSession removes a session's tracked identity. Called when the
-// client sends DELETE /mcp per the Streamable HTTP session-termination flow.
-func endHTTPSession(sessionID string) {
-	if sessionID == "" {
-		return
-	}
-	httpSessionsMu.Lock()
-	defer httpSessionsMu.Unlock()
-	delete(httpSessions, sessionID)
-}
-
-// sweepIdleHTTPSessions periodically evicts sessions that haven't been seen
-// in httpSessionIdleTimeout, so a client that vanishes without sending DELETE
-// (crash, dropped connection, a client that doesn't implement session
-// termination) doesn't leak memory in httpSessions forever. Started once
-// from runHTTPServer.
-func sweepIdleHTTPSessions() {
-	ticker := time.NewTicker(httpSessionSweepInterval)
-	defer ticker.Stop()
-	for range ticker.C {
-		pruneIdleHTTPSessions(time.Now().Add(-httpSessionIdleTimeout))
-	}
-}
-
-// pruneIdleHTTPSessions removes every session last seen before cutoff. Split
-// out from sweepIdleHTTPSessions so the eviction logic is directly testable
-// without waiting on the real ticker interval.
-func pruneIdleHTTPSessions(cutoff time.Time) {
-	httpSessionsMu.Lock()
-	defer httpSessionsMu.Unlock()
-	for id, ci := range httpSessions {
-		if ci.LastSeen.Before(cutoff) {
-			delete(httpSessions, id)
-		}
-	}
-}
-
 // runHTTPServer starts the Streamable-HTTP MCP transport on addr.
 // Activate by setting COREZOID_HTTP_PORT (e.g. "8080"); the transport is
 // local-only and binds to 127.0.0.1. Credentials come from saved OAuth
@@ -178,7 +89,6 @@ func pruneIdleHTTPSessions(cutoff time.Time) {
 // over HTTP.
 func runHTTPServer(addr string) error {
 	initHTTPAuthToken()
-	go sweepIdleHTTPSessions()
 
 	// Refresh in-memory auth state from ~/.corezoid/config.json — startup
 	// already called loadConfig, but another process may have written to the
@@ -211,10 +121,9 @@ func runHTTPServer(addr string) error {
 	//   ReadTimeout       — entire request incl. body; 90s covers uploading
 	//                        a 32 MiB body over slow WiFi (~10 Mbps).
 	//   IdleTimeout       — keep-alive idle window between requests.
-	//   WriteTimeout      — intentionally left at 0. The SSE endpoint
-	//                        (httpHandleSSE) holds the connection open
-	//                        indefinitely for the endpoint event and any
-	//                        future server-initiated messages; a server-wide
+	//   WriteTimeout      — intentionally left at 0. A subscriptions/listen
+	//                        response is an SSE stream held open for as long
+	//                        as the client listens; a server-wide
 	//                        WriteTimeout would cut it off. Per-tool-call
 	//                        duration is already bounded by httpToolCallTimeout
 	//                        via a context deadline in httpDispatch.
@@ -248,8 +157,8 @@ func corsWrap(next http.HandlerFunc) http.HandlerFunc {
 				}
 			}
 		}
-		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS")
-		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Mcp-Session-Id, Accept, Authorization")
+		w.Header().Set("Access-Control-Allow-Methods", "POST, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Accept, Authorization, MCP-Protocol-Version, Mcp-Method, Mcp-Name")
 		if r.Method == http.MethodOptions {
 			w.WriteHeader(http.StatusNoContent)
 			return
@@ -258,20 +167,21 @@ func corsWrap(next http.HandlerFunc) http.HandlerFunc {
 	}
 }
 
+// httpMCPEndpoint serves the Streamable HTTP transport. Only POST is served:
+// MCP 2026-07-28 has no standalone GET stream (subscriptions/listen replaces
+// it) and no session to DELETE, so both get 405.
 func httpMCPEndpoint(w http.ResponseWriter, r *http.Request) {
-	switch r.Method {
-	case http.MethodPost:
-		httpHandlePost(w, r)
-	case http.MethodGet:
-		httpHandleSSE(w, r)
-	case http.MethodDelete:
-		endHTTPSession(r.Header.Get("Mcp-Session-Id"))
-		w.WriteHeader(http.StatusNoContent)
-	default:
+	if r.Method != http.MethodPost {
+		w.Header().Set("Allow", "POST")
 		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
+		return
 	}
+	httpHandlePost(w, r)
 }
 
+// httpHandlePost serves one JSON-RPC message. The server is stateless: no
+// Mcp-Session-Id is minted, echoed or required (one a legacy client still
+// sends is ignored), and Last-Event-ID is ignored — nothing is resumable.
 func httpHandlePost(w http.ResponseWriter, r *http.Request) {
 	// Cap the body before we ever try to decode it, so a hostile client
 	// can't stream gigabytes and OOM the process. MaxBytesReader records
@@ -289,68 +199,186 @@ func httpHandlePost(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// A new logical session begins at every initialize; the server mints the
-	// ID and the client is expected to echo it back on every later request
-	// for this session (per the Streamable HTTP transport spec). Otherwise
-	// use whatever the client already sent — an empty string here just means
-	// httpDispatch's session lookups below will all miss, falling back to
-	// the process-global client identity.
-	sessionID := r.Header.Get("Mcp-Session-Id")
-	if req.Method == "initialize" {
-		sessionID = generateUUIDv4()
-		w.Header().Set("Mcp-Session-Id", sessionID)
-	} else if sessionID != "" && req.Method != "server/discover" && !strings.HasPrefix(req.Method, "notifications/") {
-		// The client is asserting an existing session (evicted by idle
-		// eviction, orphaned by a server restart, or simply invented) that we
-		// don't recognize. Per the Streamable HTTP spec this must be a 404,
-		// not a silent degrade — a compliant client treats 404 as a signal to
-		// discard the stale ID and call initialize again on its own, instead
-		// of quietly getting worse analytics attribution forever. A request
-		// with NO session header at all is a different case (a client that
-		// never implemented the session protocol) and is intentionally left
-		// alone here — it still falls back to the global client identity via
-		// clientIdentityFor, same as before this check existed. Notifications
-		// are exempt: they get no JSON-RPC response to signal recovery on,
-		// and 202-with-empty-body is already the correct reply either way.
-		// server/discover is exempt too: it's a stateless capability probe that
-		// must answer even to a client holding a stale ID, since its whole
-		// purpose is telling that client which protocol era to speak.
-		if _, found := httpSessionIdentity(sessionID); !found {
-			w.WriteHeader(http.StatusNotFound)
-			return
-		}
+	if strings.HasPrefix(req.Method, "notifications/") {
+		// Accepted, no body. Cancellation over HTTP is closing the stream.
+		w.WriteHeader(http.StatusAccepted)
+		return
 	}
 
-	ctx := r.Context()
-	if sessionID != "" {
-		ctx = context.WithValue(ctx, httpSessionIDContextKey, sessionID)
+	meta, metaErr := parseRequestMeta(req.Params)
+	if metaErr == nil {
+		metaErr = checkHTTPHeaders(r.Header, req, meta)
+	}
+	if metaErr != nil {
+		writeHTTPJSONRPCStatus(w, http.StatusBadRequest, rpcResult(req.ID, nil, metaErr))
+		return
 	}
 
-	resp := httpDispatch(ctx, req)
+	if req.Method == "subscriptions/listen" && meta.Modern {
+		httpServeSubscription(w, r, req)
+		return
+	}
+
+	resp := httpDispatch(r.Context(), req)
 	if resp == nil {
-		// Notification — accepted, no body.
 		w.WriteHeader(http.StatusAccepted)
 		return
 	}
 	writeHTTPJSONRPC(w, resp)
 }
 
-// httpHandleSSE opens a server-sent-event stream per the Streamable HTTP spec.
-// In this implementation the stream only carries the required endpoint event;
-// server-initiated messages (elicitation) are not supported over HTTP.
-func httpHandleSSE(w http.ResponseWriter, r *http.Request) {
+// checkHTTPHeaders validates the 2026-07-28 routing headers against the body.
+// A legacy request (no _meta protocol version) is not checked, so 2025-03-26
+// clients keep working; but a request whose header claims the modern version
+// must carry the matching _meta. Mcp-Method and Mcp-Name are checked when
+// present.
+func checkHTTPHeaders(h http.Header, req mcpRequest, meta requestMeta) *mcpError {
+	hv := h.Get("MCP-Protocol-Version")
+	if !meta.Modern {
+		if isModernProtocolVersion(hv) {
+			return headerMismatch("MCP-Protocol-Version header is " + hv + " but params._meta carries no " + metaKeyProtocolVersion)
+		}
+		return nil
+	}
+	if hv == "" {
+		return headerMismatch("missing required MCP-Protocol-Version header")
+	}
+	if hv != meta.ProtocolVersion {
+		return headerMismatch(fmt.Sprintf("MCP-Protocol-Version header %q does not match params._meta %q", hv, meta.ProtocolVersion))
+	}
+	if m := h.Get("Mcp-Method"); m != "" && m != req.Method {
+		return headerMismatch(fmt.Sprintf("Mcp-Method header %q does not match method %q", m, req.Method))
+	}
+	if raw := h.Get("Mcp-Name"); raw != "" {
+		name, ok := decodeMcpNameHeader(raw)
+		if !ok {
+			return headerMismatch("Mcp-Name header is not valid")
+		}
+		if want := requestTargetName(req); want != "" && name != want {
+			return headerMismatch(fmt.Sprintf("Mcp-Name header %q does not match %q", name, want))
+		}
+	}
+	return nil
+}
+
+func headerMismatch(msg string) *mcpError {
+	return &mcpError{Code: errCodeHeaderMismatch, Message: "Header mismatch: " + msg}
+}
+
+// decodeMcpNameHeader undoes the =?base64?…?= encoding a client uses for a
+// name that is not plain ASCII.
+func decodeMcpNameHeader(v string) (string, bool) {
+	const pre, suf = "=?base64?", "?="
+	if !strings.HasPrefix(v, pre) || !strings.HasSuffix(v, suf) {
+		return v, true
+	}
+	b, err := base64.StdEncoding.DecodeString(v[len(pre) : len(v)-len(suf)])
+	if err != nil {
+		return "", false
+	}
+	return string(b), true
+}
+
+// requestTargetName is what Mcp-Name names for a request: the tool or prompt
+// name, or the resource URI.
+func requestTargetName(req mcpRequest) string {
+	var p struct {
+		Name string `json:"name"`
+		URI  string `json:"uri"`
+	}
+	_ = json.Unmarshal(req.Params, &p)
+	switch req.Method {
+	case "tools/call", "prompts/get":
+		return p.Name
+	case "resources/read":
+		return p.URI
+	}
+	return ""
+}
+
+// httpStatusFor maps a JSON-RPC error to the HTTP status the Streamable HTTP
+// transport prescribes; everything else is 200. A malformed _meta (-32602 from
+// parseRequestMeta) is a 400 too, but -32602 from a method handler (e.g. an
+// unknown resource) is an ordinary JSON-RPC error, so that case is written
+// with an explicit status by the caller rather than mapped here.
+func httpStatusFor(e *mcpError) int {
+	if e == nil {
+		return http.StatusOK
+	}
+	switch e.Code {
+	case errCodeUnsupportedProtocolVersion, errCodeHeaderMismatch:
+		return http.StatusBadRequest
+	case -32601:
+		return http.StatusNotFound
+	}
+	return http.StatusOK
+}
+
+// httpSubscriptionKeepAlive is how often an idle subscription stream gets an
+// SSE comment, so proxies don't time it out. A var so tests can shorten it.
+var httpSubscriptionKeepAlive = 25 * time.Second
+
+// httpServeSubscription answers subscriptions/listen with an SSE stream that
+// stays open until the client closes it — which is how an HTTP client cancels
+// a subscription.
+func httpServeSubscription(w http.ResponseWriter, r *http.Request, req mcpRequest) {
+	filter, ferr := parseSubscriptionFilter(req.Params)
+	if ferr != nil {
+		writeHTTPJSONRPC(w, rpcResult(req.ID, nil, ferr))
+		return
+	}
 	flusher, ok := w.(http.Flusher)
 	if !ok {
-		http.Error(w, "streaming not supported", http.StatusInternalServerError)
+		writeHTTPJSONRPC(w, httpJSONRPCError(req.ID, -32603, "streaming not supported"))
 		return
 	}
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
-	w.Header().Set("Connection", "keep-alive")
+	w.Header().Set("X-Accel-Buffering", "no")
 	w.WriteHeader(http.StatusOK)
-	fmt.Fprintf(w, "event: endpoint\ndata: /mcp\n\n")
 	flusher.Flush()
-	<-r.Context().Done()
+
+	var mu sync.Mutex
+	write := func(chunk string) error {
+		mu.Lock()
+		defer mu.Unlock()
+		if _, err := io.WriteString(w, chunk); err != nil {
+			return err
+		}
+		flusher.Flush()
+		return nil
+	}
+	ctx, cancel := context.WithCancel(r.Context())
+	// The keep-alive goroutine must be gone before this handler returns:
+	// net/http finalises the response writer then, and a late write races it.
+	keepAliveDone := make(chan struct{})
+	defer func() {
+		cancel()
+		<-keepAliveDone
+	}()
+	go func() {
+		defer close(keepAliveDone)
+		t := time.NewTicker(httpSubscriptionKeepAlive)
+		defer t.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-t.C:
+				if write(": keep-alive\n\n") != nil {
+					cancel()
+					return
+				}
+			}
+		}
+	}()
+	_ = runSubscription(ctx, req.ID, filter, func(msg interface{}) error {
+		data, err := json.Marshal(msg)
+		if err != nil {
+			return err
+		}
+		return write("event: message\ndata: " + string(data) + "\n\n")
+	})
 }
 
 // httpDispatch routes an MCP JSON-RPC request and returns the response object.
@@ -361,134 +389,48 @@ func httpHandleSSE(w http.ResponseWriter, r *http.Request) {
 // past httpToolCallTimeout. If the client disconnects the underlying r.Context
 // fires first and propagates cancellation downstream the same way.
 func httpDispatch(reqCtx context.Context, req mcpRequest) interface{} {
-	switch req.Method {
-	case "initialize":
-		// Read client identity for analytics attribution. Elicitation support
-		// is intentionally ignored here — the comment on httpHandleSSE explains
-		// why server-initiated elicitation isn't wired up over HTTP.
-		//
-		// parseInitializeParams also updates the process-global clientName/
-		// clientVersion (shared with stdio). In HTTP mode that global is no
-		// longer authoritative — registerHTTPSession below is — but it's kept
-		// as clientIdentityFor's fallback for a request that arrives without
-		// a recognized session, and for the initialize log line right below.
-		_, name, version := parseInitializeParams(req.Params)
-		if sid, ok := reqCtx.Value(httpSessionIDContextKey).(string); ok {
-			registerHTTPSession(sid, name, version)
-		}
-		logger.Info("initialize: clientName=%q clientVersion=%q", name, version)
-		return mcpResponse{
-			JSONRPC: "2.0",
-			ID:      req.ID,
-			Result:  buildInitializeResult(),
-		}
-
-	case "server/discover":
-		// MCP 2026-07-28 era-detection probe. Deliberately stateless: it neither
-		// reads nor registers a session, because a modern client probes before
-		// it has one (see the exemption in httpHandlePost).
-		return mcpResponse{
-			JSONRPC: "2.0",
-			ID:      req.ID,
-			Result:  buildDiscoverResult(),
-		}
-
-	case "notifications/initialized", "notifications/cancelled":
+	if strings.HasPrefix(req.Method, "notifications/") {
 		return nil
-
-	case "tools/list":
-		return mcpResponse{
-			JSONRPC: "2.0",
-			ID:      req.ID,
-			Result:  map[string]interface{}{"tools": toolRegistry},
+	}
+	if req.Method == "initialize" {
+		// Legacy handshake, optional. Only logged: the client identity a
+		// modern request needs travels in its own _meta, and elicitation over
+		// HTTP is MRTR-only, so nothing here is stored per connection.
+		var p struct {
+			ClientInfo struct {
+				Name    string `json:"name"`
+				Version string `json:"version"`
+			} `json:"clientInfo"`
 		}
+		_ = json.Unmarshal(req.Params, &p)
+		logger.Info("initialize: clientName=%q clientVersion=%q", p.ClientInfo.Name, p.ClientInfo.Version)
+		return rpcResult(req.ID, buildInitializeResult(), nil)
+	}
 
+	meta, metaErr := parseRequestMeta(req.Params)
+	if metaErr != nil {
+		return rpcResult(req.ID, nil, metaErr)
+	}
+	if result, rpcErr, ok := serveCommonMethod(req); ok {
+		return rpcResult(req.ID, result, rpcErr)
+	}
+
+	switch req.Method {
 	case "tools/call":
-		var params struct {
-			Name      string                 `json:"name"`
-			Arguments map[string]interface{} `json:"arguments"`
-		}
+		var params toolCallParams
 		if err := json.Unmarshal(req.Params, &params); err != nil {
 			return httpJSONRPCError(req.ID, -32602, "invalid params: "+err.Error())
 		}
 		callCtx, cancel := context.WithTimeout(reqCtx, httpToolCallTimeout)
 		defer cancel()
-		sid, hasSID := reqCtx.Value(httpSessionIDContextKey).(string)
-		identity, foundSession := httpSessionIdentity(sid)
-		if foundSession {
-			callCtx = context.WithValue(callCtx, clientIdentityContextKey, clientIdentity{Name: identity.Name, Version: identity.Version})
-		} else {
-			// No (or unrecognized) Mcp-Session-Id — falls back to the
-			// process-global client identity in clientIdentityFor, same as
-			// before this fix. Logged so the degrade path is diagnosable.
-			logger.Debug("tools/call: no session identity for sessionID=%q (hasSID=%v) — falling back to global client identity", sid, hasSID)
-		}
-		result, isErr := handleToolCall(callCtx, params.Name, params.Arguments)
-		return mcpResponse{
-			JSONRPC: "2.0",
-			ID:      req.ID,
-			Result: mcpToolResult{
-				Content: []mcpContent{{Type: "text", Text: result}},
-				IsError: isErr,
-			},
-		}
-
-	case "resources/list":
-		resources, err := listResources()
-		if err != nil {
-			return httpJSONRPCError(req.ID, -32603, err.Error())
-		}
-		return mcpResponse{
-			JSONRPC: "2.0",
-			ID:      req.ID,
-			Result:  map[string]interface{}{"resources": resources},
-		}
-
-	case "resources/read":
-		var params struct {
-			URI string `json:"uri"`
-		}
-		if err := json.Unmarshal(req.Params, &params); err != nil {
-			return httpJSONRPCError(req.ID, -32602, "invalid params: "+err.Error())
-		}
-		content, err := readResource(params.URI)
-		if err != nil {
-			return httpJSONRPCError(req.ID, -32603, err.Error())
-		}
-		return mcpResponse{
-			JSONRPC: "2.0",
-			ID:      req.ID,
-			Result:  map[string]interface{}{"contents": []interface{}{content}},
-		}
-
-	case "prompts/list":
-		return mcpResponse{
-			JSONRPC: "2.0",
-			ID:      req.ID,
-			Result:  map[string]interface{}{"prompts": builtinPrompts},
-		}
-
-	case "prompts/get":
-		var params struct {
-			Name      string            `json:"name"`
-			Arguments map[string]string `json:"arguments"`
-		}
-		if err := json.Unmarshal(req.Params, &params); err != nil {
-			return httpJSONRPCError(req.ID, -32602, "invalid params: "+err.Error())
-		}
-		result, err := getPrompt(params.Name, params.Arguments)
-		if err != nil {
-			return httpJSONRPCError(req.ID, -32603, err.Error())
-		}
-		return mcpResponse{
-			JSONRPC: "2.0",
-			ID:      req.ID,
-			Result:  result,
-		}
-
-	default:
-		return httpJSONRPCError(req.ID, -32601, "method not found: "+req.Method)
+		// No legacy elicitor: server-initiated requests were never wired up
+		// over HTTP. A modern client that declares elicitation gets MRTR.
+		result, rpcErr := runToolCall(callCtx, params, meta, nil, true)
+		return rpcResult(req.ID, result, rpcErr)
 	}
+	// Includes ping and logging/setLevel (removed in 2026-07-28), and
+	// subscriptions/listen from a legacy client.
+	return rpcResult(req.ID, nil, methodNotFound(req.Method))
 }
 
 func httpJSONRPCError(id interface{}, code int, msg string) mcpResponse {
@@ -500,7 +442,15 @@ func httpJSONRPCError(id interface{}, code int, msg string) mcpResponse {
 }
 
 func writeHTTPJSONRPC(w http.ResponseWriter, v interface{}) {
+	status := http.StatusOK
+	if resp, ok := v.(mcpResponse); ok {
+		status = httpStatusFor(resp.Error)
+	}
+	writeHTTPJSONRPCStatus(w, status, v)
+}
+
+func writeHTTPJSONRPCStatus(w http.ResponseWriter, status int, v interface{}) {
 	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
+	w.WriteHeader(status)
 	json.NewEncoder(w).Encode(v) //nolint:errcheck
 }

@@ -187,9 +187,10 @@ func TestMCPProtocol_InitializeVersionFromLdflags(t *testing.T) {
 	}
 }
 
-// TestMCPProtocol_ServerDiscover covers the MCP 2026-07-28 era-detection probe
-// over stdio. server/discover is sent *before* initialize on purpose: a modern
-// client probes with no handshake, so answering must not depend on one.
+// TestMCPProtocol_ServerDiscover covers server/discover over stdio, sent with
+// no handshake. It used to pin a legacy-only answer byte-identical to
+// initialize; AIC-170 made the server serve MCP 2026-07-28, so it now pins
+// the DiscoverResult shape (see assertDiscoverResult).
 func TestMCPProtocol_ServerDiscover(t *testing.T) {
 	bin := buildTestBinary(t)
 	sess := newMCPSession(t, bin)
@@ -204,50 +205,7 @@ func TestMCPProtocol_ServerDiscover(t *testing.T) {
 	if resp["error"] != nil {
 		t.Fatalf("server/discover returned error: %s", resp["error"])
 	}
-	var discover map[string]json.RawMessage
-	if err := json.Unmarshal(resp["result"], &discover); err != nil {
-		t.Fatalf("discover result parse: %v", err)
-	}
-
-	if got := string(discover["protocolVersion"]); got != `"2025-03-26"` {
-		t.Errorf("protocolVersion = %s, want \"2025-03-26\"", got)
-	}
-	if got := string(discover["supportedProtocolVersions"]); got != `["2025-03-26"]` {
-		t.Errorf("supportedProtocolVersions = %s, want [\"2025-03-26\"]", got)
-	}
-	if discover["capabilities"] == nil {
-		t.Error("expected capabilities in server/discover result")
-	}
-	if discover["serverInfo"] == nil {
-		t.Error("expected serverInfo in server/discover result")
-	}
-
-	// capabilities and serverInfo must be byte-identical to initialize's, so a
-	// modern client that early-exits on discover sees exactly what a legacy
-	// client would have negotiated.
-	sess.send(map[string]interface{}{
-		"jsonrpc": "2.0",
-		"id":      2,
-		"method":  "initialize",
-		"params":  map[string]interface{}{"protocolVersion": "2025-03-26", "capabilities": map[string]interface{}{}, "clientInfo": map[string]interface{}{"name": "test", "version": "0"}},
-	})
-	initResp := sess.recv()
-	if initResp["error"] != nil {
-		t.Fatalf("initialize returned error: %s", initResp["error"])
-	}
-	var initResult map[string]json.RawMessage
-	if err := json.Unmarshal(initResp["result"], &initResult); err != nil {
-		t.Fatalf("initialize result parse: %v", err)
-	}
-	for _, field := range []string{"protocolVersion", "capabilities", "serverInfo"} {
-		if string(discover[field]) != string(initResult[field]) {
-			t.Errorf("%s differs: discover=%s initialize=%s", field, discover[field], initResult[field])
-		}
-	}
-	// initialize must stay legacy — no version list leaking into it.
-	if _, ok := initResult["supportedProtocolVersions"]; ok {
-		t.Error("initialize result must not contain supportedProtocolVersions")
-	}
+	assertDiscoverResult(t, resp["result"])
 }
 
 func TestMCPProtocol_ToolsList(t *testing.T) {

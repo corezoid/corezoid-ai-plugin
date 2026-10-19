@@ -170,8 +170,8 @@ They are saved to the current Folder in the same `~/.corezoid/config.json`.
 | Environment variable       | Required | Description                                       |
 |----------------------------|----------|---------------------------------------------------|
 | `COREZOID_WORK_DIR`        | No       | Absolute path used to pick which entry in `folders[]` applies. Set automatically by Claude Code / Codex / Kiro from the user's cwd. Only meaningful if the host cannot preserve cwd across MCP subprocess spawn. |
-| `COREZOID_OAUTH_CLIENT_ID` | No       | OAuth2 client ID — on-prem deployments with a custom authorization server should set this to their own client ID; cloud (account.corezoid.com) users do not need it |
-| `COREZOID_HTTP_PORT`       | No       | Activate the Streamable HTTP transport on this port (e.g. `8080`). When set the server listens for MCP over HTTP instead of stdio — intended for hosted marketplace deployments. The browser OAuth login flow is not available in HTTP mode, so credentials must come from `~/.corezoid/config.json` or from the environment fallback below. |
+| `COREZOID_OAUTH_CLIENT_ID` | No       | OAuth2 client ID — on-prem deployments with a custom authorization server should set this to their own client ID, or to an `https://` Client ID Metadata Document URL; cloud (account.corezoid.com) users do not need it. Dynamic Client Registration is never used. |
+| `COREZOID_HTTP_PORT`       | No       | Activate the Streamable HTTP transport on this port (e.g. `8080`). When set the server listens for MCP over HTTP instead of stdio — intended for hosted marketplace deployments. The transport is stateless (MCP 2026-07-28): POST only, no `Mcp-Session-Id`, `subscriptions/listen` answered as an SSE stream. The browser OAuth login flow is not available in HTTP mode, so credentials must come from `~/.corezoid/config.json` or from the environment fallback below. |
 | `COREZOID_HTTP_TOKEN`      | No       | Bearer token required on every request when the HTTP transport is active. Unset does **not** disable authentication: the server mints a random token at startup and prints it to stderr for you to copy into your client config. Set this to keep the same token across restarts. |
 | `COREZOID_HTTP_ALLOWED_ORIGINS` | No  | Comma-separated `Origin` allowlist for the HTTP transport |
 | `COREZOID_AUTOLAYOUT`      | No       | Set to `off` to disable auto-placement of new `(0,0)` nodes on `push-process` (default: preserve) |
@@ -542,7 +542,7 @@ See [docs/Troubleshooting.md](docs/Troubleshooting.md) for solutions to common p
 
 | Component         | Supported versions            | Notes |
 |-------------------|-------------------------------|-------|
-| Claude Code       | ≥ 1.x                         | MCP protocol 2025-03-26 |
+| Claude Code       | ≥ 1.x                         | MCP protocol 2026-07-28 (stateless, per-request `_meta`); 2025-03-26 clients still served |
 | Codex             | current stable                | Same MCP server, same skills |
 | macOS             | 13 Ventura and later          | Tested on arm64 and amd64 |
 | Linux             | Ubuntu 22.04+, Debian 12+     | amd64 tested in CI |

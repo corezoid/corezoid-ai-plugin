@@ -9,7 +9,6 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
-	"time"
 )
 
 // MCP JSON-RPC types
@@ -29,8 +28,9 @@ type mcpResponse struct {
 }
 
 type mcpError struct {
-	Code    int    `json:"code"`
-	Message string `json:"message"`
+	Code    int         `json:"code"`
+	Message string      `json:"message"`
+	Data    interface{} `json:"data,omitempty"`
 }
 
 type mcpTool struct {
@@ -63,9 +63,13 @@ type mcpContent struct {
 	Text string `json:"text"`
 }
 
+// mcpToolResult is a complete tools/call result. Build it with newToolResult
+// so resultType and the serverInfo _meta are never missing.
 type mcpToolResult struct {
-	Content []mcpContent `json:"content"`
-	IsError bool         `json:"isError,omitempty"`
+	ResultType string                 `json:"resultType"`
+	Content    []mcpContent           `json:"content"`
+	IsError    bool                   `json:"isError,omitempty"`
+	Meta       map[string]interface{} `json:"_meta,omitempty"`
 }
 
 // serverVersion is the version reported in MCP initialize responses and in
@@ -88,14 +92,19 @@ var oauthClientID string
 var serverWriter *bufio.Writer
 var serverWriteMu sync.Mutex
 
-// pendingReqs maps elicitation request IDs to response channels.
+// pendingReqs maps elicitation request IDs to response channels. Only legacy
+// stdio clients ever get a server-initiated request (see stdioElicitor).
 var pendingReqs sync.Map
 
 // reqCounter generates unique IDs for server-initiated requests.
 var reqCounter int64
 
+func nextReqCounter() int64 { return atomic.AddInt64(&reqCounter, 1) }
+
 // clientStateMu guards clientSupportsElicitation, clientName, and
-// clientVersion. They're written once per connection during the initialize
+// clientVersion — the legacy (2025-03-26) client state. A modern request
+// carries the same facts in its own _meta and never reads these. They're
+// written once per connection during the initialize
 // handshake but read afterwards from concurrent tool-call goroutines in HTTP
 // mode (net/http dispatches each request on its own goroutine, same reason
 // authStateMu exists for the auth-state globals above). Read paths take
@@ -136,22 +145,19 @@ func clientIdentitySnapshot() (name, version string) {
 // collide with keys another package might use.
 type contextKey string
 
-// clientIdentity is a transport-neutral client name/version pair. HTTP mode
-// converts its session-store entry (mcp_http.go's httpClientIdentity, which
-// also carries bookkeeping like LastSeen that has no meaning here) into this
-// shape before attaching it to a request context.
+// clientIdentity is a transport-neutral client name/version pair.
 type clientIdentity struct {
 	Name    string
 	Version string
 }
 
-// clientIdentityContextKey holds a resolved per-session clientIdentity,
-// attached to the context for a tools/call request in HTTP mode once the
-// caller's session has been resolved (see httpDispatch's tools/call case).
+// clientIdentityContextKey holds the per-request clientIdentity taken from
+// _meta.io.modelcontextprotocol/clientInfo (see runToolCall).
 const clientIdentityContextKey contextKey = "mcpClientIdentity"
 
 // clientIdentityFor resolves the calling client's identity for the given
-// request context. HTTP mode can serve multiple concurrent MCP clients
+// request context: the request's own _meta clientInfo when it carried one
+// (runToolCall attaches it). HTTP mode can serve multiple concurrent MCP clients
 // against one server process — net/http dispatches each request on its own
 // goroutine — so a single process-global clientName/clientVersion (as used
 // by clientIdentitySnapshot) would let whichever client initialized most
@@ -198,22 +204,21 @@ func parseInitializeParams(raw json.RawMessage) (supportsElicitation bool, name,
 const mcpProtocolVersion = "2025-03-26"
 
 // mcpSupportedProtocolVersions lists every protocol revision this server can
-// serve, newest first. It is reported by `server/discover` so a modern
-// (MCP 2026-07-28) client can pick a compatible version without probing, and it
-// is the same list a future UnsupportedProtocolVersionError would carry in
-// `data.supported` — keep the two in sync.
+// serve, newest first. It is reported by `server/discover` and carried in
+// UnsupportedProtocolVersionError's data.supported.
 //
 // Returns a fresh slice per call so a caller mutating the result can't corrupt
 // what the next caller sees.
 func mcpSupportedProtocolVersions() []string {
-	return []string{mcpProtocolVersion}
+	return []string{mcpModernProtocolVersion, mcpProtocolVersion}
 }
 
-// buildInitializeResult returns the `initialize` result payload. Shared by the
-// stdio (runMCPServer) and HTTP (httpDispatch) dispatchers so the advertised
-// capabilities and serverInfo can never drift between transports.
+// buildInitializeResult returns the legacy `initialize` result payload. Shared
+// by the stdio (runMCPServer) and HTTP (httpDispatch) dispatchers so the
+// advertised capabilities and serverInfo can never drift between transports.
+// initialize is optional: nothing a modern request needs depends on it.
 func buildInitializeResult() map[string]interface{} {
-	return map[string]interface{}{
+	return completeResult(map[string]interface{}{
 		"protocolVersion": mcpProtocolVersion,
 		"capabilities": map[string]interface{}{
 			"tools":     map[string]interface{}{},
@@ -221,24 +226,10 @@ func buildInitializeResult() map[string]interface{} {
 			"prompts":   map[string]interface{}{},
 		},
 		"serverInfo": map[string]interface{}{
-			"name":    "convctl-mcp",
+			"name":    mcpServerName,
 			"version": serverVersion(),
 		},
-	}
-}
-
-// buildDiscoverResult returns the `server/discover` result: byte-identical to
-// buildInitializeResult plus the supportedProtocolVersions list.
-//
-// This server is legacy-only — `server/discover` exists purely so a modern
-// client's era-detection probe gets a definitive answer (a valid result naming
-// only 2025-03-26) instead of an ambiguous "method not found". No modern
-// per-request semantics are implemented, and capabilities.extensions is
-// deliberately absent: an empty extensions map would signal nothing.
-func buildDiscoverResult() map[string]interface{} {
-	result := buildInitializeResult()
-	result["supportedProtocolVersions"] = mcpSupportedProtocolVersions()
-	return result
+	})
 }
 
 // activeCancels maps in-progress tools/call request IDs to their cancel functions.
@@ -254,52 +245,6 @@ func serverSend(msg interface{}) {
 	defer serverWriteMu.Unlock()
 	fmt.Fprintf(serverWriter, "%s\n", data)
 	serverWriter.Flush()
-}
-
-// elicitValues sends an MCP elicitation/create request to the client and waits
-// for the user's response. Returns the filled content map, action string
-// ("accept", "deny", or "cancel"), and any transport error.
-func elicitValues(message string, schema map[string]interface{}) (content map[string]interface{}, action string, err error) {
-	id := fmt.Sprintf("elicit-%d", atomic.AddInt64(&reqCounter, 1))
-	ch := make(chan []byte, 1)
-	pendingReqs.Store(id, ch)
-	defer pendingReqs.Delete(id)
-
-	serverSend(map[string]interface{}{
-		"jsonrpc": "2.0",
-		"id":      id,
-		"method":  "elicitation/create",
-		"params": map[string]interface{}{
-			"message":         message,
-			"requestedSchema": schema,
-		},
-	})
-
-	select {
-	case raw := <-ch:
-		var resp struct {
-			Result *struct {
-				Action  string                 `json:"action"`
-				Content map[string]interface{} `json:"content"`
-			} `json:"result"`
-			Error *struct {
-				Code    int    `json:"code"`
-				Message string `json:"message"`
-			} `json:"error"`
-		}
-		if jsonErr := json.Unmarshal(raw, &resp); jsonErr != nil {
-			return nil, "", fmt.Errorf("failed to parse elicitation response: %w", jsonErr)
-		}
-		if resp.Error != nil {
-			return nil, "", fmt.Errorf("elicitation not supported or failed: %s", resp.Error.Message)
-		}
-		if resp.Result == nil {
-			return nil, "", fmt.Errorf("empty elicitation response")
-		}
-		return resp.Result.Content, resp.Result.Action, nil
-	case <-time.After(10 * time.Minute):
-		return nil, "", fmt.Errorf("elicitation timed out")
-	}
 }
 
 // runMCPServer starts an MCP server over stdin/stdout using newline-delimited JSON-RPC 2.0.
@@ -371,142 +316,95 @@ func runMCPServer() {
 			continue
 		}
 
-		switch req.Method {
-		case "initialize":
-			// Read client capabilities and identity (elicitation support, name/version).
+		if strings.HasPrefix(req.Method, "notifications/") {
+			// notifications/initialized and notifications/roots/list_changed
+			// are accepted and ignored; only cancellation means anything here.
+			if req.Method == "notifications/cancelled" {
+				var cancelParams struct {
+					RequestID interface{} `json:"requestId"`
+				}
+				if err := json.Unmarshal(req.Params, &cancelParams); err == nil && cancelParams.RequestID != nil {
+					if cancel, ok := activeCancels.LoadAndDelete(cancelParams.RequestID); ok {
+						cancel.(context.CancelFunc)()
+					}
+				}
+			}
+			continue
+		}
+
+		if req.Method == "initialize" {
+			// Legacy handshake: read client capabilities and identity.
 			supportsElicitation, name, version := parseInitializeParams(req.Params)
 			logger.Info("initialize: clientSupportsElicitation=%v clientName=%q clientVersion=%q", supportsElicitation, name, version)
+			serverSend(rpcResult(req.ID, buildInitializeResult(), nil))
+			continue
+		}
 
-			serverSend(mcpResponse{
-				JSONRPC: "2.0",
-				ID:      req.ID,
-				Result:  buildInitializeResult(),
-			})
+		meta, metaErr := parseRequestMeta(req.Params)
+		if metaErr != nil {
+			serverSend(rpcResult(req.ID, nil, metaErr))
+			continue
+		}
 
-		case "server/discover":
-			// MCP 2026-07-28 era-detection probe. Answered without requiring a
-			// prior initialize — a modern client sends this before any handshake.
-			serverSend(mcpResponse{
-				JSONRPC: "2.0",
-				ID:      req.ID,
-				Result:  buildDiscoverResult(),
-			})
+		if result, rpcErr, ok := serveCommonMethod(req); ok {
+			serverSend(rpcResult(req.ID, result, rpcErr))
+			continue
+		}
 
-		case "notifications/initialized":
-			// no response needed for notifications
-
-		case "tools/list":
-			serverSend(mcpResponse{
-				JSONRPC: "2.0",
-				ID:      req.ID,
-				Result: map[string]interface{}{
-					"tools": toolRegistry,
-				},
-			})
-
+		switch req.Method {
 		case "tools/call":
-			var params struct {
-				Name      string                 `json:"name"`
-				Arguments map[string]interface{} `json:"arguments"`
-			}
+			var params toolCallParams
 			if err := json.Unmarshal(req.Params, &params); err != nil {
 				sendError(req.ID, -32602, "invalid params: "+err.Error())
 				continue
 			}
+			// Server-initiated elicitation is only for a legacy client that
+			// declared it in initialize; a modern client gets MRTR instead.
+			var legacy elicitor
+			if !meta.Modern && clientElicitationSupported() {
+				legacy = stdioElicitor{}
+			}
 
 			// Run in a goroutine so the scanner loop can continue reading —
-			// this is required to route elicitation responses back to the handler.
-			// The ctx is now actually consumed: handleToolCall threads it down
-			// into Executor.req → http.NewRequestWithContext, so a client-side
-			// notifications/cancelled aborts the in-flight HTTP call instead
-			// of just orphaning the goroutine.
+			// this is required to route legacy elicitation responses back to
+			// the handler, and lets notifications/cancelled abort the call
+			// (handleToolCall threads ctx down into the HTTP requests).
 			ctx, cancel := context.WithCancel(context.Background())
 			activeCancels.Store(req.ID, cancel)
-			go func(reqID interface{}, name string, args map[string]interface{}, ctx context.Context) {
+			go func(reqID interface{}, ctx context.Context) {
 				defer activeCancels.Delete(reqID)
 				defer cancel()
-				result, isErr := handleToolCall(ctx, name, args)
-				serverSend(mcpResponse{
-					JSONRPC: "2.0",
-					ID:      reqID,
-					Result: mcpToolResult{
-						Content: []mcpContent{{Type: "text", Text: result}},
-						IsError: isErr,
-					},
-				})
-			}(req.ID, params.Name, params.Arguments, ctx)
-
-		case "notifications/cancelled":
-			var cancelParams struct {
-				RequestID interface{} `json:"requestId"`
-			}
-			if err := json.Unmarshal(req.Params, &cancelParams); err == nil && cancelParams.RequestID != nil {
-				if cancel, ok := activeCancels.LoadAndDelete(cancelParams.RequestID); ok {
-					cancel.(context.CancelFunc)()
+				result, rpcErr := runToolCall(ctx, params, meta, legacy, true)
+				if ctx.Err() != nil {
+					return // cancelled: no response is sent
 				}
-			}
-			// notifications require no response
+				serverSend(rpcResult(reqID, result, rpcErr))
+			}(req.ID, ctx)
 
-		case "resources/list":
-			resources, err := listResources()
-			if err != nil {
-				sendError(req.ID, -32603, err.Error())
+		case "subscriptions/listen":
+			if !meta.Modern {
+				sendError(req.ID, -32601, "method not found: "+req.Method)
 				continue
 			}
-			serverSend(mcpResponse{
-				JSONRPC: "2.0",
-				ID:      req.ID,
-				Result:  map[string]interface{}{"resources": resources},
-			})
-
-		case "resources/read":
-			var rParams struct {
-				URI string `json:"uri"`
-			}
-			if err := json.Unmarshal(req.Params, &rParams); err != nil {
-				sendError(req.ID, -32602, "invalid params: "+err.Error())
+			filter, ferr := parseSubscriptionFilter(req.Params)
+			if ferr != nil {
+				serverSend(rpcResult(req.ID, nil, ferr))
 				continue
 			}
-			content, err := readResource(rParams.URI)
-			if err != nil {
-				sendError(req.ID, -32603, err.Error())
-				continue
-			}
-			serverSend(mcpResponse{
-				JSONRPC: "2.0",
-				ID:      req.ID,
-				Result:  map[string]interface{}{"contents": []interface{}{content}},
-			})
-
-		case "prompts/list":
-			serverSend(mcpResponse{
-				JSONRPC: "2.0",
-				ID:      req.ID,
-				Result:  map[string]interface{}{"prompts": builtinPrompts},
-			})
-
-		case "prompts/get":
-			var pParams struct {
-				Name      string            `json:"name"`
-				Arguments map[string]string `json:"arguments"`
-			}
-			if err := json.Unmarshal(req.Params, &pParams); err != nil {
-				sendError(req.ID, -32602, "invalid params: "+err.Error())
-				continue
-			}
-			prompt, err := getPrompt(pParams.Name, pParams.Arguments)
-			if err != nil {
-				sendError(req.ID, -32603, err.Error())
-				continue
-			}
-			serverSend(mcpResponse{
-				JSONRPC: "2.0",
-				ID:      req.ID,
-				Result:  prompt,
-			})
+			ctx, cancel := context.WithCancel(context.Background())
+			activeCancels.Store(req.ID, cancel)
+			go func(subID interface{}) {
+				defer activeCancels.Delete(subID)
+				defer cancel()
+				_ = runSubscription(ctx, subID, filter, func(msg interface{}) error {
+					serverSend(msg)
+					return nil
+				})
+			}(req.ID)
 
 		default:
-			sendError(req.ID, -32601, "method not found: "+req.Method)
+			// Includes ping and logging/setLevel, which MCP 2026-07-28 removed.
+			serverSend(rpcResult(req.ID, nil, methodNotFound(req.Method)))
 		}
 	}
 }
