@@ -227,7 +227,7 @@ var coreToolDefs = []mcpTool{
 	},
 	{
 		Name:        "run-task",
-		Description: "Run a task on an already-deployed Corezoid process (without re-deploying) and wait for it to reach a final node. Never commits or deploys, so it needs only run access and works on immutable stages; if the deployed node list is unreadable the task is still sent, just reported without node names. Identify the target with EXACTLY ONE of process_path (a local .conv.json) or process_id (the numeric ID, as in show-task/list-task-history) — process_id needs no local file, so it works in hosts with no process repository; passing both is rejected as ambiguous. Polls up to wait_sec (default 30), so tasks crossing async nodes (api, api_rpc, db_call, delay) still return their final result. On timeout reports the node the task is parked at, plus TaskRef/TaskID for follow-up via list-task-history.",
+		Description: "Run a task on an already-deployed Corezoid process (without re-deploying) and wait for it to reach a final node. Never commits or deploys, so it needs only run access and works on immutable stages; if the deployed node list is unreadable the task is still sent, just reported without node names. Identify the target with EXACTLY ONE of process_path (a local .conv.json) or process_id (the numeric ID, as in show-task/list-task-history) — process_id needs no local file, so it works in hosts with no process repository; passing both is rejected as ambiguous. Polls up to wait_sec (default 30), so tasks crossing async nodes (api, api_rpc, db_call, delay) still return their final result. On timeout returns success with Status: in progress and the node the task is parked at (expected for state diagrams, storage processes and delay/timer/waiting nodes — not a failure), plus TaskRef/TaskID for follow-up via list-task-history. wait_sec 0 creates the task without waiting.",
 		Annotations: toolHints(hintMutates, hintDestructive, hintNonIdempotent, hintOpenWorld), // runs the process: its side effects are arbitrary
 		InputSchema: map[string]interface{}{
 			"type": "object",
@@ -250,7 +250,7 @@ var coreToolDefs = []mcpTool{
 				},
 				"wait_sec": map[string]interface{}{
 					"type":        "integer",
-					"description": "How long to wait (seconds) for the task to reach a final node before reporting it as in progress. Default 30, max 600. Raise it for processes with slow external calls or delay nodes.",
+					"description": "How long to wait (seconds) for the task to reach a final node before reporting it as in progress. Default 30, max 600. Raise it for processes with slow external calls or delay nodes. 0 = fire-and-forget: create the task and return its ref without waiting (state diagrams, long async flows).",
 				},
 			},
 			"required": []string{"data"},

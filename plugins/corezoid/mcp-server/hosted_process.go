@@ -99,7 +99,7 @@ var hostedToolDefs = map[string]mcpTool{
 				"process_id": map[string]interface{}{"type": "integer", "description": "Corezoid process (conv) ID."},
 				"data":       map[string]interface{}{"type": "string", "description": "Task input as a JSON object string, e.g. {\"amount\": 21}."},
 				"ref":        map[string]interface{}{"type": "string", "description": "Optional task ref (lookup key)."},
-				"wait_sec":   map[string]interface{}{"type": "integer", "description": "How long to wait for a final node, seconds (default 30, max 600)."},
+				"wait_sec":   map[string]interface{}{"type": "integer", "description": "How long to wait for a final node, seconds (default 30, max 600). 0 creates the task without waiting. A task still on a non-final node at the deadline is reported as in progress, not as an error."},
 			},
 			"required": []string{"process_id", "data"},
 		},

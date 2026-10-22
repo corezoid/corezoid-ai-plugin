@@ -1024,6 +1024,10 @@ func handleRunTask(ctx context.Context, args map[string]interface{}) (string, bo
 		}
 		waitSec = n
 	}
+	// wait_sec 0 is fire-and-forget: create the task and return without
+	// polling — the shape state diagrams and long batch flows need, where the
+	// task is meant to stay on a waiting node.
+	noWait := waitSec <= 0
 	if waitSec < 1 {
 		waitSec = 1
 	}
@@ -1046,6 +1050,18 @@ func handleRunTask(ctx context.Context, args map[string]interface{}) (string, bo
 	if err := json.Unmarshal([]byte(dataStr), &taskData); err != nil {
 		return fmt.Sprintf("Error parsing task data: %v", err), true
 	}
+	ref := optStrArg(args, "ref")
+	if ref == "" {
+		ref = fmt.Sprintf("%d_%d", time.Now().Unix(), rand.Intn(1000000))
+	}
+	if noWait {
+		if err := v.createTask(ref, taskData); err != nil {
+			return fmt.Sprintf("Error creating task: %v", err), true
+		}
+		return fmt.Sprintf("Task created (wait_sec 0: not waiting for a final node). "+
+			"Follow it with cz-tasks {\"action\":\"show-task\"} (pass the ref) or its list-task-history action.\n"+
+			"Status: created\nProcessID: %d\nTaskRef: %s", v.ProcessID, ref), false
+	}
 	// Node metadata is only needed to name the node the task settles on. A
 	// caller with run-only rights can be denied both read paths, and refusing
 	// to create the task in that case is the regression this tool used to have
@@ -1060,10 +1076,6 @@ func handleRunTask(ctx context.Context, args map[string]interface{}) (string, bo
 		}
 	}
 
-	ref := optStrArg(args, "ref")
-	if ref == "" {
-		ref = fmt.Sprintf("%d_%d", time.Now().Unix(), rand.Intn(1000000))
-	}
 	if err := v.createTask(ref, taskData); err != nil {
 		return fmt.Sprintf("Error creating task: %v", err), true
 	}
@@ -1144,26 +1156,33 @@ func handleRunTask(ctx context.Context, args map[string]interface{}) (string, bo
 
 	nodeInfo, found := lookupNode(v, serverNodeID)
 	logger.Debug("Node info (found=%v): %+v", found, nodeInfo)
+	// A task still on a non-final node at the deadline is not a failure: the
+	// task was created and is progressing, and on a state diagram, storage
+	// process or delay/timer/waiting node it is meant to stay there. Only an
+	// error-icon final node is reported as an error.
 	nodeType := "logic (not final)"
-	msg := fmt.Sprintf("Task is still in progress after %ds: it is parked at a non-final node (an async node keeps it there). "+
+	status := "in progress"
+	msg := fmt.Sprintf("Task created and in progress: after %ds it is at a non-final node. "+
+		"This is the expected outcome for state diagrams, storage processes and delay/timer/waiting nodes; it is not an error. "+
 		"Re-check later with cz-tasks {\"action\":\"show-task\"} (a single read-only lookup by ref or task_id) or its list-task-history action, "+
-		"or re-run with a larger wait_sec", waitSec)
-	isErr := true
+		"re-run with a larger wait_sec if a final result was expected, or pass wait_sec 0 to skip waiting", waitSec)
+	isErr := false
 	if nodeInfo.Type == 1 {
 		nodeType = "start"
 	} else if nodeInfo.Type == 2 {
-		isErr = false
+		status = "completed"
 		nodeType = "end (Success)"
 		msg = "Task completed"
 		if nodeInfo.Icon == "error" {
 			isErr = true
+			status = "failed"
 			nodeType = "error node"
 			msg = "Task failed: stopped at error node"
 		}
 	}
 
-	summary := fmt.Sprintf("%s\nNodeID: %s\nNodeName: %s\nNodeType: %s\nProcessID: %d\nTaskRef: %s\nTaskID: %s\nData: %s",
-		msg, serverNodeID, nodeInfo.Name, nodeType, v.ProcessID, ref, taskID, string(rspTaskDataBin))
+	summary := fmt.Sprintf("%s\nStatus: %s\nNodeID: %s\nNodeName: %s\nNodeType: %s\nProcessID: %d\nTaskRef: %s\nTaskID: %s\nData: %s",
+		msg, status, serverNodeID, nodeInfo.Name, nodeType, v.ProcessID, ref, taskID, string(rspTaskDataBin))
 	return summary, isErr
 }
 

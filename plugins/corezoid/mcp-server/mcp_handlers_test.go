@@ -1651,6 +1651,94 @@ func TestHandleRunTask_ProcessIDWithoutLocalFile(t *testing.T) {
 	}
 }
 
+// runTaskParkedServer serves a deployed process whose task stays on a delay
+// node, recording each operation it receives.
+func runTaskParkedServer(t *testing.T, operations *[]string) string {
+	t.Helper()
+	srv, _ := mockAPIServer(t, func(ops []map[string]interface{}) interface{} {
+		obj, _ := ops[0]["obj"].(string)
+		typ, _ := ops[0]["type"].(string)
+		*operations = append(*operations, obj+":"+typ)
+		switch obj + ":" + typ {
+		case "conv:list":
+			return map[string]interface{}{
+				"request_proc": "ok",
+				"ops": []interface{}{map[string]interface{}{
+					"proc": "ok",
+					"list": []interface{}{map[string]interface{}{
+						"scheme": map[string]interface{}{"nodes": []interface{}{
+							map[string]interface{}{"id": "server-delay", "title": "Wait", "obj_type": float64(0)},
+							map[string]interface{}{"id": "server-final", "title": "Final", "obj_type": float64(2), "extra": `{"icon":""}`},
+						}},
+					}},
+				}},
+			}
+		case "task:create":
+			return map[string]interface{}{"request_proc": "ok", "ops": []interface{}{map[string]interface{}{"proc": "ok"}}}
+		case "task:show":
+			return map[string]interface{}{
+				"request_proc": "ok",
+				"ops": []interface{}{map[string]interface{}{
+					"proc": "ok", "obj_id": "task-1", "node_id": "server-delay", "data": map[string]interface{}{},
+				}},
+			}
+		default:
+			return map[string]interface{}{"request_proc": "error", "description": "unexpected operation"}
+		}
+	})
+	return srv.URL
+}
+
+// A task that is still on a non-final node when wait_sec runs out (a delay,
+// timer, waiting or state node) was created and is progressing: run-task must
+// report it as in progress, not as a failed call (#216).
+func TestHandleRunTask_ParkedTaskIsNotAnError(t *testing.T) {
+	resetGlobals(t)
+	var operations []string
+	setProjectAuth(t, runTaskParkedServer(t, &operations))
+	t.Chdir(t.TempDir())
+
+	originalFirstPoll := runTaskFirstPollAfter
+	originalPollEvery := runTaskPollEvery
+	runTaskFirstPollAfter = time.Millisecond
+	runTaskPollEvery = 50 * time.Millisecond
+	t.Cleanup(func() {
+		runTaskFirstPollAfter = originalFirstPoll
+		runTaskPollEvery = originalPollEvery
+	})
+
+	result, isErr := handleRunTask(context.Background(), map[string]interface{}{
+		"process_id": float64(123), "data": `{}`, "ref": "parked", "wait_sec": 1,
+	})
+	if isErr {
+		t.Fatalf("task parked on a non-final node must not be reported as an error: %s", result)
+	}
+	for _, want := range []string{"Status: in progress", "NodeName: Wait", "TaskRef: parked", "TaskID: task-1"} {
+		if !strings.Contains(result, want) {
+			t.Errorf("result missing %q: %s", want, result)
+		}
+	}
+}
+
+// wait_sec 0 is fire-and-forget: the task is created and run-task returns
+// without reading node metadata or polling show_task.
+func TestHandleRunTask_WaitSecZeroDoesNotPoll(t *testing.T) {
+	resetGlobals(t)
+	var operations []string
+	setProjectAuth(t, runTaskParkedServer(t, &operations))
+	t.Chdir(t.TempDir())
+
+	result, isErr := handleRunTask(context.Background(), map[string]interface{}{
+		"process_id": float64(123), "data": `{}`, "ref": "fire", "wait_sec": 0,
+	})
+	if isErr || !strings.Contains(result, "Status: created") || !strings.Contains(result, "TaskRef: fire") {
+		t.Fatalf("fire-and-forget run failed: %s", result)
+	}
+	if got := strings.Join(operations, ","); got != "task:create" {
+		t.Fatalf("wait_sec 0 must only create the task, got operations: %s", got)
+	}
+}
+
 // Calling run-task with neither process_path nor process_id — and no local
 // .conv.json to auto-discover — must fail with a message naming both
 // accepted alternatives, not a generic "file not found".
