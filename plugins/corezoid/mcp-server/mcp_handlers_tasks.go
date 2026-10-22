@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 )
 
 // errTaskNotFound is returned by showTask when the API answers with an empty
@@ -118,8 +119,197 @@ func handleListTaskHistory(ctx context.Context, args map[string]interface{}) (st
 	return string(data), false
 }
 
+// defaultTaskValueLen caps every string value inside the task data that
+// list-node-tasks returns, so one oversized field (a base64 file, a raw API
+// response) cannot blow up the page.
+const defaultTaskValueLen = 200
+
+// nodeTaskView is the parsed shaping arguments of list-node-tasks.
+//
+// The raw list returns every task's full data payload, so a page of ten tasks
+// could be 60 KB when the caller only wanted a status or one field. The
+// default view therefore drops data entirely and keeps the task metadata;
+// fields brings back only the named data paths, and full restores the payload.
+type nodeTaskView struct {
+	full     bool
+	fields   []string
+	filter   map[string]interface{}
+	maxValue int // 0 = no truncation
+}
+
+func parseNodeTaskView(args map[string]interface{}) (nodeTaskView, error) {
+	view := nodeTaskView{maxValue: defaultTaskValueLen}
+	switch mode := optStrArg(args, "mode"); mode {
+	case "", "compact":
+	case "full":
+		view.full = true
+	default:
+		return view, fmt.Errorf(`argument mode must be "compact" or "full", got %q`, mode)
+	}
+	if raw, ok := args["fields"]; ok && raw != nil {
+		list, ok := raw.([]interface{})
+		if !ok {
+			return view, fmt.Errorf("argument fields must be an array of strings, got %T", raw)
+		}
+		for _, f := range list {
+			s, ok := f.(string)
+			if !ok || s == "" {
+				return view, fmt.Errorf("argument fields must contain only non-empty strings, got %#v", f)
+			}
+			view.fields = append(view.fields, s)
+		}
+	}
+	if raw, ok := args["filter"]; ok && raw != nil {
+		m, ok := raw.(map[string]interface{})
+		if !ok {
+			return view, fmt.Errorf("argument filter must be an object mapping data paths to values, got %T", raw)
+		}
+		view.filter = m
+	}
+	if _, ok := args["max_value_length"]; ok {
+		n, err := intArg(args, "max_value_length")
+		if err != nil {
+			return view, err
+		}
+		if n < 0 {
+			return view, fmt.Errorf("argument max_value_length must be >= 0, got %d", n)
+		}
+		view.maxValue = n
+	}
+	return view, nil
+}
+
+// dataPath looks up a dot-separated path ("customer.id") inside task data.
+func dataPath(data map[string]interface{}, path string) (interface{}, bool) {
+	var cur interface{} = data
+	for _, key := range strings.Split(path, ".") {
+		m, ok := cur.(map[string]interface{})
+		if !ok {
+			return nil, false
+		}
+		if cur, ok = m[key]; !ok {
+			return nil, false
+		}
+	}
+	return cur, true
+}
+
+// filterMatches reports whether every filter path is present in data and
+// equal to the expected value. Numbers are compared by value so 42 matches
+// 42.0; any other type must be equal by its JSON encoding.
+func filterMatches(data map[string]interface{}, filter map[string]interface{}) bool {
+	for path, want := range filter {
+		got, ok := dataPath(data, path)
+		if !ok {
+			return false
+		}
+		gotJSON, _ := json.Marshal(got)
+		wantJSON, _ := json.Marshal(want)
+		if string(gotJSON) != string(wantJSON) {
+			return false
+		}
+	}
+	return true
+}
+
+// truncateValues returns a copy of v with every string longer than max runes
+// cut down and marked, recursing into objects and arrays.
+func truncateValues(v interface{}, max int) interface{} {
+	if max <= 0 {
+		return v
+	}
+	switch val := v.(type) {
+	case string:
+		r := []rune(val)
+		if len(r) <= max {
+			return val
+		}
+		return fmt.Sprintf("%s…[truncated, %d chars total]", string(r[:max]), len(r))
+	case map[string]interface{}:
+		out := make(map[string]interface{}, len(val))
+		for k, x := range val {
+			out[k] = truncateValues(x, max)
+		}
+		return out
+	case []interface{}:
+		out := make([]interface{}, len(val))
+		for i, x := range val {
+			out[i] = truncateValues(x, max)
+		}
+		return out
+	}
+	return v
+}
+
+// shapeTask applies the view to one task entry of the list. Every key other
+// than data is metadata (obj_id, ref, status, create_time, …) and is kept.
+func (view nodeTaskView) shapeTask(task map[string]interface{}) map[string]interface{} {
+	data, _ := task["data"].(map[string]interface{})
+	out := make(map[string]interface{}, len(task)+1)
+	for k, v := range task {
+		if k != "data" {
+			out[k] = v
+		}
+	}
+	switch {
+	case len(view.fields) > 0:
+		picked := make(map[string]interface{}, len(view.fields))
+		for _, f := range view.fields {
+			if v, ok := dataPath(data, f); ok {
+				picked[f] = v
+			}
+		}
+		out["data"] = truncateValues(picked, view.maxValue)
+	case view.full:
+		out["data"] = truncateValues(task["data"], view.maxValue)
+	default:
+		raw, _ := json.Marshal(task["data"])
+		out["data_keys"] = len(data)
+		out["data_bytes"] = len(raw)
+	}
+	return out
+}
+
+// shapeNodeTasks rewrites the list of every op in a list-node-tasks response
+// in place, applying the filter and the view. Each op gains "returned" and,
+// when a filter is set, "scanned" so the caller can tell how much of the page
+// the filter dropped.
+func (view nodeTaskView) shapeNodeTasks(resp map[string]interface{}) {
+	ops, _ := resp["ops"].([]interface{})
+	for _, o := range ops {
+		op, ok := o.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		list, ok := op["list"].([]interface{})
+		if !ok {
+			continue
+		}
+		shaped := make([]interface{}, 0, len(list))
+		for _, t := range list {
+			task, ok := t.(map[string]interface{})
+			if !ok {
+				continue
+			}
+			if view.filter != nil {
+				data, _ := task["data"].(map[string]interface{})
+				if !filterMatches(data, view.filter) {
+					continue
+				}
+			}
+			shaped = append(shaped, view.shapeTask(task))
+		}
+		op["list"] = shaped
+		op["returned"] = len(shaped)
+		if view.filter != nil {
+			op["scanned"] = len(list)
+		}
+	}
+}
+
 // handleListNodeTasks lists tasks currently sitting at a particular node.
-// limit/offset are optional and default to 50/0.
+// limit/offset are optional and default to 50/0. The output is compact by
+// default (metadata only) — see nodeTaskView.
 func handleListNodeTasks(ctx context.Context, args map[string]interface{}) (string, bool) {
 	processID, err := intArg(args, "process_id")
 	if err != nil {
@@ -141,6 +331,10 @@ func handleListNodeTasks(ctx context.Context, args map[string]interface{}) (stri
 			offset = n
 		}
 	}
+	view, err := parseNodeTaskView(args)
+	if err != nil {
+		return "Error: " + err.Error(), true
+	}
 
 	validator := NewValidator(ctx, processID)
 	ops := []map[string]any{
@@ -158,6 +352,7 @@ func handleListNodeTasks(ctx context.Context, args map[string]interface{}) (stri
 	if err != nil {
 		return fmt.Sprintf("Error: %v", err), true
 	}
+	view.shapeNodeTasks(resp)
 	data, _ := json.MarshalIndent(resp, "", "  ")
 	return string(data), false
 }

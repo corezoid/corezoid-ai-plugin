@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -1194,6 +1195,128 @@ func TestHandleToolCall_ListNodeTasks_MissingArg(t *testing.T) {
 		t.Error("expected isError=true when process_id missing")
 	}
 	_ = result
+}
+
+// nodeTasksServer answers list_node_tasks with n tasks, each carrying a ~6 KB
+// data payload — the shape that made a limit-10 page cost ~60 KB.
+func nodeTasksServer(t *testing.T, n int) {
+	t.Helper()
+	big := strings.Repeat("x", 6000)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		list := make([]interface{}, n)
+		for i := range list {
+			list[i] = map[string]interface{}{
+				"obj_id":      fmt.Sprintf("task-%d", i),
+				"ref":         fmt.Sprintf("ref-%d", i),
+				"status":      "processed",
+				"create_time": 1700000000 + i,
+				"data": map[string]interface{}{
+					"order_id": fmt.Sprintf("A-%d", i),
+					"amount":   float64(i * 10),
+					"customer": map[string]interface{}{"id": float64(i)},
+					"blob":     big,
+				},
+			}
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{ //nolint:errcheck
+			"request_proc": "ok",
+			"ops":          []interface{}{map[string]interface{}{"proc": "ok", "list": list}},
+		})
+	}))
+	t.Cleanup(srv.Close)
+	origAccount := accountURL
+	accountURL = srv.URL
+	t.Cleanup(func() { accountURL = origAccount })
+	apiURL = srv.URL
+	apiToken = "test-token"
+	workspaceID = "1"
+	stageID = 1
+}
+
+func listNodeTasksOp(t *testing.T, args map[string]interface{}) (map[string]interface{}, string) {
+	t.Helper()
+	args["process_id"] = float64(123)
+	args["node_id"] = "aaaaaaaaaaaaaaaaaaaaaaaa"
+	result, isErr := handleToolCall(context.Background(), "list-node-tasks", args)
+	if isErr {
+		t.Fatalf("list-node-tasks failed: %s", result)
+	}
+	var resp map[string]interface{}
+	if err := json.Unmarshal([]byte(result), &resp); err != nil {
+		t.Fatalf("output is not JSON: %v\n%s", err, result)
+	}
+	return resp["ops"].([]interface{})[0].(map[string]interface{}), result
+}
+
+func TestHandleToolCall_ListNodeTasks_CompactByDefault(t *testing.T) {
+	resetGlobals(t)
+	nodeTasksServer(t, 10)
+
+	op, result := listNodeTasksOp(t, map[string]interface{}{"limit": float64(10)})
+	if len(result) > 5000 {
+		t.Errorf("default output is %d bytes for 10 tasks; want compact (< 5000)", len(result))
+	}
+	list := op["list"].([]interface{})
+	if len(list) != 10 {
+		t.Fatalf("got %d tasks, want 10", len(list))
+	}
+	task := list[0].(map[string]interface{})
+	if _, ok := task["data"]; ok {
+		t.Error("compact task must not carry data")
+	}
+	for _, k := range []string{"obj_id", "ref", "status", "create_time", "data_keys", "data_bytes"} {
+		if _, ok := task[k]; !ok {
+			t.Errorf("compact task missing %q", k)
+		}
+	}
+}
+
+func TestHandleToolCall_ListNodeTasks_FieldsAndFilter(t *testing.T) {
+	resetGlobals(t)
+	nodeTasksServer(t, 10)
+
+	op, _ := listNodeTasksOp(t, map[string]interface{}{
+		"fields": []interface{}{"order_id", "customer.id"},
+		"filter": map[string]interface{}{"amount": float64(30)},
+	})
+	list := op["list"].([]interface{})
+	if len(list) != 1 || op["scanned"] != float64(10) || op["returned"] != float64(1) {
+		t.Fatalf("filter: got %d tasks (scanned=%v returned=%v), want 1 of 10", len(list), op["scanned"], op["returned"])
+	}
+	data := list[0].(map[string]interface{})["data"].(map[string]interface{})
+	if data["order_id"] != "A-3" || data["customer.id"] != float64(3) || len(data) != 2 {
+		t.Errorf("fields: got data %v, want only order_id=A-3 and customer.id=3", data)
+	}
+}
+
+func TestHandleToolCall_ListNodeTasks_FullTruncates(t *testing.T) {
+	resetGlobals(t)
+	nodeTasksServer(t, 1)
+
+	op, _ := listNodeTasksOp(t, map[string]interface{}{"mode": "full"})
+	data := op["list"].([]interface{})[0].(map[string]interface{})["data"].(map[string]interface{})
+	blob := data["blob"].(string)
+	if len(blob) > 300 || !strings.Contains(blob, "truncated, 6000 chars total") {
+		t.Errorf("full mode should truncate long strings by default, got %d bytes", len(blob))
+	}
+
+	op, _ = listNodeTasksOp(t, map[string]interface{}{"mode": "full", "max_value_length": float64(0)})
+	data = op["list"].([]interface{})[0].(map[string]interface{})["data"].(map[string]interface{})
+	if len(data["blob"].(string)) != 6000 {
+		t.Errorf("max_value_length=0 should disable truncation")
+	}
+}
+
+func TestHandleToolCall_ListNodeTasks_BadMode(t *testing.T) {
+	resetGlobals(t)
+	nodeTasksServer(t, 1)
+	result, isErr := handleToolCall(context.Background(), "list-node-tasks", map[string]interface{}{
+		"process_id": float64(123), "node_id": "aaaaaaaaaaaaaaaaaaaaaaaa", "mode": "everything",
+	})
+	if !isErr || !strings.Contains(result, "mode") {
+		t.Errorf("expected mode validation error, got %q", result)
+	}
 }
 
 // ---- add-chart / modify-chart / get-chart ----------------------------------
