@@ -182,8 +182,12 @@ For each file that needs updating:
    creates it — the directory structure is created automatically.
 
 2. After **all** files are written, call the `git-push-context` action once with a
-   meaningful commit message, e.g.:
-   `"docs: update _ext/docs/ after session — {brief summary of what changed}"`
+   meaningful commit message in `commit_message`, e.g.:
+
+   ```
+   cz-git-context {"action": "git-push-context",
+                   "args": {"commit_message": "docs: update _ext/docs/ after session — {brief summary of what changed}"}}
+   ```
 
    One push for the whole session, not one push per file.
 

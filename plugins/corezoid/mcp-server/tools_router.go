@@ -150,7 +150,7 @@ var toolRouters = []toolRouter{
 			{"git-pull-context", "clone or pull the mirror into .git-context/"},
 			{"read-context-file", "read a file from .git-context/"},
 			{"update-context-file", "write or append a file inside _ext/"},
-			{"git-push-context", "commit and push local _ext/ changes"},
+			{"git-push-context", "commit and push local _ext/ changes; args: {commit_message}"},
 		},
 	},
 }
