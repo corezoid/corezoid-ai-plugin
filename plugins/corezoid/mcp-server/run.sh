@@ -14,6 +14,13 @@ if [ -x "$SCRIPT_DIR/convctl" ]; then
 fi
 
 OS=$(uname -s | tr '[:upper:]' '[:lower:]')
+EXT=""
+# Git Bash / MSYS2 / Cygwin report e.g. "MINGW64_NT-10.0-22631". Without this
+# mapping Windows always fell through to `go run .`, whose cold compile
+# regularly overran the MCP client's 30-second startup timeout.
+case "$OS" in
+  mingw*|msys*|cygwin*) OS="windows"; EXT=".exe" ;;
+esac
 ARCH=$(uname -m)
 case "$ARCH" in
   x86_64)        ARCH="amd64" ;;
@@ -23,12 +30,13 @@ esac
 VERSION=$(grep '"version"' "$SCRIPT_DIR/../.claude-plugin/plugin.json" 2>/dev/null \
   | sed 's/.*"version": *"\([^"]*\)".*/\1/' | head -1)
 
-# download <url> <dest>
+# download <url> <dest> — bounded so a stalled network can't hold the MCP
+# client past its startup timeout; on failure we fall back to building from source.
 download() {
   if command -v curl >/dev/null 2>&1; then
-    curl -fsSL "$1" -o "$2" 2>/dev/null
+    curl -fsSL --connect-timeout 5 --max-time 20 "$1" -o "$2" 2>/dev/null
   elif command -v wget >/dev/null 2>&1; then
-    wget -q "$1" -O "$2" 2>/dev/null
+    wget -q --timeout=10 --tries=1 "$1" -O "$2" 2>/dev/null
   else
     return 1
   fi
@@ -43,11 +51,12 @@ sha256() {
   fi
 }
 
-if [ -n "$VERSION" ] && { [ "$OS" = "darwin" ] || [ "$OS" = "linux" ]; } && \
+if [ -n "$VERSION" ] && { [ "$OS" = "darwin" ] || [ "$OS" = "linux" ] || [ "$OS" = "windows" ]; } && \
    { [ "$ARCH" = "amd64" ] || [ "$ARCH" = "arm64" ]; }; then
 
+  ASSET="convctl-${OS}-${ARCH}${EXT}"
   CACHE_DIR="$HOME/.cache/corezoid-mcp/$VERSION"
-  CACHE_BIN="$CACHE_DIR/convctl-${OS}-${ARCH}"
+  CACHE_BIN="$CACHE_DIR/$ASSET"
   BASE_URL="https://github.com/corezoid/corezoid-ai-plugin/releases/download/v${VERSION}"
 
   if [ ! -x "$CACHE_BIN" ]; then
@@ -55,10 +64,10 @@ if [ -n "$VERSION" ] && { [ "$OS" = "darwin" ] || [ "$OS" = "linux" ]; } && \
     TMP_BIN="${CACHE_BIN}.tmp"
     TMP_SUMS="${CACHE_DIR}/checksums.txt.tmp"
 
-    if download "${BASE_URL}/convctl-${OS}-${ARCH}" "$TMP_BIN" && \
+    if download "${BASE_URL}/${ASSET}" "$TMP_BIN" && \
        download "${BASE_URL}/checksums.txt" "$TMP_SUMS"; then
 
-      EXPECTED=$(grep "convctl-${OS}-${ARCH}$" "$TMP_SUMS" | awk '{print $1}')
+      EXPECTED=$(grep "${ASSET}\$" "$TMP_SUMS" | awk '{print $1}')
       ACTUAL=$(sha256 "$TMP_BIN")
 
       if [ -n "$EXPECTED" ] && [ -n "$ACTUAL" ] && [ "$ACTUAL" = "$EXPECTED" ]; then
