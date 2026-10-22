@@ -487,6 +487,65 @@ func dualEndpointServer(t *testing.T, changeTime float64, version float64, schem
 	return &Executor{Ctx: context.Background(), APIUrl: srv.URL, Token: "test-token", NodeIDMap: make(map[string]NodeInfo)}
 }
 
+// change_time advances on server commits that leave the scheme untouched. When
+// the live scheme still equals the pulled ancestor, nothing can be lost, so the
+// push must not be reported as a conflict (issue #219).
+func TestConflict_MovedServerWithIdenticalContentProceeds(t *testing.T) {
+	dir := t.TempDir()
+	fp := filepath.Join(dir, "1_x.conv.json")
+	pulled := `{"obj_id":1,"title":"P","change_time":100,"scheme":{"nodes":[
+	 {"id":"aaaaaaaaaaaaaaaaaaaaaaaa","obj_type":1,"title":"Start"},
+	 {"id":"bbbbbbbbbbbbbbbbbbbbbbbb","obj_type":0,"title":"A"}]}}`
+	// Same content as pulled; only server metadata (change_time) moved.
+	server := strings.Replace(pulled, `"change_time":100`, `"change_time":300`, 1)
+	local := `{"obj_id":1,"title":"P","scheme":{"nodes":[
+	 {"id":"aaaaaaaaaaaaaaaaaaaaaaaa","obj_type":1,"title":"Start"},
+	 {"id":"bbbbbbbbbbbbbbbbbbbbbbbb","obj_type":0,"title":"A"},
+	 {"id":"cccccccccccccccccccccccc","obj_type":0,"title":"C-local-edit"}]}}`
+	if err := writeAncestorScheme(dir, 1, pulled); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeBaseline(dir, 1, baselineEntry{ChangeTime: 100, Version: 10, Source: baselineSourceDetail}); err != nil {
+		t.Fatal(err)
+	}
+	e := dualEndpointServer(t, 300, 10, server)
+
+	res := resolveConflict(e, fp, 1, local, false, false, false)
+	if res.action != conflictProceed {
+		t.Fatalf("a server with no content change since pull must not block, got action=%v msg=%q", res.action, res.message)
+	}
+	if res.overwroteLiveState || res.waiver != "" {
+		t.Fatalf("nothing was overwritten, so no waiver may be recorded, got %+v", res)
+	}
+	if !strings.Contains(res.message, "identical to what you pulled") {
+		t.Fatalf("the moved version must still be reported, got %q", res.message)
+	}
+}
+
+// The negative case: change_time moved AND the scheme differs from the
+// ancestor — a real concurrent edit still blocks.
+func TestConflict_MovedServerWithChangedContentBlocks(t *testing.T) {
+	dir := t.TempDir()
+	fp := filepath.Join(dir, "1_x.conv.json")
+	pulled := `{"obj_id":1,"scheme":{"nodes":[
+	 {"id":"aaaaaaaaaaaaaaaaaaaaaaaa","obj_type":1,"title":"Start"}]}}`
+	server := `{"obj_id":1,"scheme":{"nodes":[
+	 {"id":"aaaaaaaaaaaaaaaaaaaaaaaa","obj_type":1,"title":"Start"},
+	 {"id":"dddddddddddddddddddddddd","obj_type":0,"title":"D-server-added"}]}}`
+	if err := writeAncestorScheme(dir, 1, pulled); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeBaseline(dir, 1, baselineEntry{ChangeTime: 100, Version: 10, Source: baselineSourceDetail}); err != nil {
+		t.Fatal(err)
+	}
+	e := dualEndpointServer(t, 300, 30, server)
+
+	blocked, msg := blockedResult(resolveConflict(e, fp, 1, pulled, false, false, false))
+	if !blocked || !strings.Contains(msg, "D-server-added") {
+		t.Fatalf("a real server change must still block and be itemised, got blocked=%v msg=%q", blocked, msg)
+	}
+}
+
 // TestConflict_EqualTimestamp_ListSource_ContentDiffers locks in the safety
 // commit that closes the pull-folder equal-timestamp blind spot: a list-sourced
 // baseline whose change_time matches the current server's but whose ancestor
