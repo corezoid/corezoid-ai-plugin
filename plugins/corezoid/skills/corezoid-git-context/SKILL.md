@@ -66,23 +66,31 @@ stop and report: "Could not sync git context: {error}. Skipping update."
 
 ---
 
-## Step 2 — Read current state of all 5 files
+## Step 2 — Read the context files that exist
 
-Using `STAGE_PATH` = value of `git_stage_path` from the current Folder in `~/.corezoid/config.json`:
+The `git-pull-context` result from Step 1 ends with two lines:
 
-Call `read-context-file` for each path below. A "not found" result is normal
-— treat missing files as empty (no current content).
+```
+Stage path: projects/123_Foo/stages/456_Dev
+Context docs (projects/123_Foo/stages/456_Dev/_ext/docs/): context.md, decisions.md — read only these; …
+```
 
-| File | Path |
-|------|------|
-| context.md | `{STAGE_PATH}/_ext/docs/context.md` |
-| invariants.md | `{STAGE_PATH}/_ext/docs/invariants.md` |
-| decisions.md | `{STAGE_PATH}/_ext/docs/decisions.md` |
-| dependencies.md | `{STAGE_PATH}/_ext/docs/dependencies.md` |
-| issues.md | `{STAGE_PATH}/_ext/docs/issues.md` |
+Use the `Stage path` value as `STAGE_PATH`, and the `Context docs` line as
+the list of files that exist. **Do not probe the standard file set with
+`read-context-file`** — a file not in that list does not exist, and reading it
+only returns a "not found" error.
 
-Read **all 5 at once** before analysing — you need the full picture to avoid
-duplication and to detect which existing entries need updating.
+- **Files listed** → call `read-context-file` for each listed file
+  (`{STAGE_PATH}/_ext/docs/{file}`), all in one parallel batch, before
+  analysing — you need the full picture to avoid duplication and to detect
+  which existing entries need updating. Treat every unlisted standard file as
+  empty.
+- **`none yet`** → first use of this stage: read nothing. All five files start
+  empty; Step 3 decides which ones to create, and Step 5 creates them with
+  `update-context-file` (`mode: replace`). Say so in Step 4 (`new file`).
+
+The standard files are `context.md`, `invariants.md`, `decisions.md`,
+`dependencies.md`, `issues.md`, all under `{STAGE_PATH}/_ext/docs/`.
 
 ---
 
@@ -197,7 +205,7 @@ For each file that needs updating:
 
 | Situation | Action |
 |-----------|--------|
-| `read-context-file` returns "not found" | Treat as empty file, continue |
+| `read-context-file` returns "not found" | Treat as empty file, continue — and don't read further unlisted files |
 | `update-context-file` returns error | Log warning, skip that file, continue with others |
 | `git-push-context` returns error | Log warning, report to user: "Changes written locally but push failed: {error}. Run git-push-context manually when git is available." |
 | No files needed updating | "Session analysed — no context updates needed." |
