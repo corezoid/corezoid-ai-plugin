@@ -75,3 +75,17 @@ func TestSchemaRequiredList_BothShapes(t *testing.T) {
 		t.Errorf("nil: got %v", got)
 	}
 }
+
+// git-push-context accepts "message" as an alias for "commit_message" — models
+// reach for git's name first, and rejecting it cost every push a retry (#218).
+func TestGitPushContext_MessageAlias(t *testing.T) {
+	if msg := unknownArgsError("git-push-context", map[string]interface{}{"message": "docs: x"}); msg != "" {
+		t.Errorf("message must be accepted for git-push-context, got: %s", msg)
+	}
+	if got := gitPushCommitMessage(map[string]interface{}{"message": "docs: x"}); got != "docs: x" {
+		t.Errorf("message alias: got %q", got)
+	}
+	if got := gitPushCommitMessage(map[string]interface{}{"commit_message": "a", "message": "b"}); got != "a" {
+		t.Errorf("commit_message must win over message: got %q", got)
+	}
+}

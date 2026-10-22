@@ -1306,6 +1306,10 @@ var collapsedToolRegistry = []mcpTool{
 					"type":        "string",
 					"description": "Optional git commit message. Defaults to 'docs: update _ext/ after task session <timestamp>'.",
 				},
+				"message": map[string]interface{}{
+					"type":        "string",
+					"description": "Alias for commit_message (the name git uses).",
+				},
 			},
 		},
 	},

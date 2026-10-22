@@ -196,11 +196,21 @@ func handleGitPullContext(ctx context.Context, args map[string]interface{}) (str
 	return msg, false
 }
 
+// gitPushCommitMessage returns the commit message of a git-push-context call.
+// "message" is accepted as an alias for "commit_message": it is the name
+// models expect from git, and rejecting it cost every push a failed call.
+// commit_message wins when both are given.
+func gitPushCommitMessage(args map[string]interface{}) string {
+	if s, _ := args["commit_message"].(string); s != "" {
+		return s
+	}
+	s, _ := args["message"].(string)
+	return s
+}
+
 // handleGitPushContext is the MCP tool handler for "git-push-context".
 func handleGitPushContext(ctx context.Context, args map[string]interface{}) (string, bool) {
-	commitMsg, _ := args["commit_message"].(string)
-
-	msg, err := gitPushContext(ctx, commitMsg)
+	msg, err := gitPushContext(ctx, gitPushCommitMessage(args))
 	if err != nil {
 		return fmt.Sprintf("Error: %v", err), true
 	}
