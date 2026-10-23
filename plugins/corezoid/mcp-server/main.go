@@ -258,30 +258,17 @@ func main() {
 	logger.IsDebug = os.Getenv("COREZOID_DEBUG") != ""
 
 	// Flush any buffered analytics events before exit. Covers both a normal
-	// return (stdio EOF, HTTP server closed cleanly) after runGuarded, and the
+	// return (stdio EOF, HTTP server closed cleanly) via defer, and the
 	// client killing the process with SIGINT/SIGTERM, which by default
 	// terminates immediately without running deferred calls.
+	defer stopAnalytics()
 	installShutdownFlush()
 
-	// Any startup failure must leave a reason on stderr: the MCP client only
-	// reports "connection closed", and the log file above may not exist.
-	code := runGuarded(os.Stderr, logPath, func() error { return runMCPMode(logPath) })
-	stopAnalytics()
-	if code != 0 {
-		os.Exit(code)
-	}
-}
-
-// runMCPMode is the MCP server-mode body of main: load config, then serve
-// over HTTP (COREZOID_HTTP_PORT) or stdio until the client disconnects.
-func runMCPMode(logPath string) error {
 	cwd, _ := os.Getwd()
 	logger.Debug("Starting corezoid-mcp server, cwd=%s", cwd)
 
 	loadConfig()
 	logger.Debug("Loaded configuration: apiURL=%s workspaceID=%s apigwURL=%s hasToken=%v", apiURL, workspaceID, apigwURL, apiToken != "")
-
-	startupSelfCheck(os.Stderr, logPath)
 
 	if apiToken == "" && (apiLogin == "" || apiSecret == "") {
 		fmt.Fprintln(os.Stderr, "[corezoid-mcp] NOTICE: No credentials found for this working directory.")
@@ -298,14 +285,16 @@ func runMCPMode(logPath string) error {
 		initAnalytics()
 		addr := "127.0.0.1:" + port
 		if err := runHTTPServer(addr); err != nil {
-			return fmt.Errorf("HTTP server on %s: %w", addr, err)
+			fmt.Fprintf(os.Stderr, "[corezoid-mcp] HTTP server error: %v\n", err)
+			stopAnalytics()
+			os.Exit(1)
 		}
-		return nil
+		return
 	}
 
 	analyticsTransport = "stdio"
 	initAnalytics()
-	return runMCPServer()
+	runMCPServer()
 }
 
 var (

@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"os"
 	"strings"
 	"sync"
@@ -304,19 +303,12 @@ func elicitValues(message string, schema map[string]interface{}) (content map[st
 }
 
 // runMCPServer starts an MCP server over stdin/stdout using newline-delimited JSON-RPC 2.0.
-func runMCPServer() error {
-	return serveMCP(os.Stdin, os.Stdout)
-}
-
-// serveMCP runs the JSON-RPC loop until in reaches EOF. A clean EOF (the
-// client closing the pipe) returns nil; a read failure returns the error so
-// the caller can report why the server stopped instead of exiting silently.
-func serveMCP(in io.Reader, out io.Writer) error {
+func runMCPServer() {
 	oauthClientID = oauthDefaultClientID
 	if v := os.Getenv("COREZOID_OAUTH_CLIENT_ID"); v != "" {
 		oauthClientID = v
 	}
-	serverWriter = bufio.NewWriter(out)
+	serverWriter = bufio.NewWriter(os.Stdout)
 
 	// Refresh in-memory auth state from ~/.corezoid/config.json in case another
 	// process wrote credentials since startup's loadConfig. Startup is
@@ -336,7 +328,7 @@ func serveMCP(in io.Reader, out io.Writer) error {
 		}
 	}
 
-	scanner := bufio.NewScanner(in)
+	scanner := bufio.NewScanner(os.Stdin)
 	scanner.Buffer(make([]byte, 10*1024*1024), 10*1024*1024)
 
 	sendError := func(id interface{}, code int, msg string) {
@@ -517,9 +509,4 @@ func serveMCP(in io.Reader, out io.Writer) error {
 			sendError(req.ID, -32601, "method not found: "+req.Method)
 		}
 	}
-	if err := scanner.Err(); err != nil {
-		return fmt.Errorf("reading MCP messages from stdin: %w", err)
-	}
-	logger.Info("stdin closed by client, shutting down")
-	return nil
 }
