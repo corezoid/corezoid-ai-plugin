@@ -637,6 +637,31 @@ func TestHandleToolCall_PullFolder_MissingArg(t *testing.T) {
 	_ = result
 }
 
+// After login the model calls pull-folder with no arguments to re-pull the
+// selected stage (issue #212); the schema must not reject that call and the
+// handler must resolve it to the stage, while an explicit 0 still means the
+// workspace root.
+func TestPullFolder_FolderIDDefaultsToSelectedStage(t *testing.T) {
+	resetGlobals(t)
+	if toolRequiresArg("pull-folder", "folder_id") {
+		t.Error("pull-folder schema must not require folder_id")
+	}
+	_, err := pullFolderID(map[string]interface{}{})
+	if err == nil || !strings.Contains(err.Error(), "folder_id=0") || !strings.Contains(err.Error(), "stage_id") {
+		t.Errorf("no stage selected: error should name both options (stage_id, folder_id=0), got: %v", err)
+	}
+	stageID = 4242
+	if got, err := pullFolderID(map[string]interface{}{}); err != nil || got != 4242 {
+		t.Errorf("omitted folder_id: got (%d, %v), want (4242, nil)", got, err)
+	}
+	if got, err := pullFolderID(map[string]interface{}{"folder_id": float64(0)}); err != nil || got != 0 {
+		t.Errorf("explicit folder_id=0: got (%d, %v), want (0, nil)", got, err)
+	}
+	if got, err := pullFolderID(map[string]interface{}{"folder_id": float64(7)}); err != nil || got != 7 {
+		t.Errorf("explicit folder_id=7: got (%d, %v), want (7, nil)", got, err)
+	}
+}
+
 // ---- create-folder ---------------------------------------------------------
 
 func TestHandleToolCall_CreateFolder_MissingArg(t *testing.T) {

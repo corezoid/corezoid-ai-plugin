@@ -316,12 +316,28 @@ func handlePullProcess(ctx context.Context, args map[string]interface{}) (string
 	return result, false
 }
 
+// pullFolderID returns the folder to pull: the explicit folder_id, or the
+// stage selected at login when folder_id is omitted. Right after login the
+// natural next call is a bare pull-folder to re-pull the current stage; making
+// folder_id required cost that call a failed first attempt in most sessions.
+// With no stage selected the omission is ambiguous (a stage, or 0 for the
+// workspace root), so it is refused with both options named.
+func pullFolderID(args map[string]interface{}) (int, error) {
+	if _, ok := args["folder_id"]; ok {
+		return intArg(args, "folder_id")
+	}
+	if _, _, _, _, sid := authSnapshot(); sid != 0 {
+		return sid, nil
+	}
+	return 0, fmt.Errorf("folder_id is required: no stage is selected for this workspace. Pass the stage_id returned by login (or from list-stages) to pull a stage, or folder_id=0 to pull the workspace root (\"No Project\" mode)")
+}
+
 // handlePullFolder recursively downloads a folder (stage) and all its
 // processes/subfolders into the current working directory.
 // Before downloading processes, it attempts to sync the git mirror context
 // into .git-context/ (non-blocking — a git failure does not abort the pull).
 func handlePullFolder(ctx context.Context, args map[string]interface{}) (string, bool) {
-	folderID, err := intArg(args, "folder_id")
+	folderID, err := pullFolderID(args)
 	if err != nil {
 		return "Error: " + err.Error(), true
 	}

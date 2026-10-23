@@ -80,7 +80,7 @@ When `login` returns "Setup complete", proceed to **Step 2**.
 
 ## Step 2 — Pull the project
 
-After `login` returns "Setup complete", call MCP tool **`pull-folder`** with no arguments — the MCP server resolves the stage automatically from the on-disk marker file. You do **not** need to know or pass `stage_id`.
+After `login` returns "Setup complete", call MCP tool **`pull-folder`** with no arguments — the MCP server pulls the stage selected during `login`. You do **not** need to know or pass `stage_id`. If the workspace has no stage selected ("No Project" mode), pass `folder_id=0` to pull the workspace root.
 
 Do not proceed until the tool returns successfully.
 
