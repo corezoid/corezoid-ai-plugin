@@ -1,6 +1,6 @@
 ---
 name: release
-description: Project release helper for corezoid-ai-plugin. Prepares a new tagged release end-to-end. Use whenever the user says "release", "релиз", "новый релиз", "сделай релиз", "выпусти версию", "bump version", "обновить версию", "tag a release", "/release", or anything that implies cutting a new version of this plugin. Walks through six explicit phases — compare `main` with the latest tag, ask which new version to publish, draft a CHANGELOG.md entry, sync that version across all six release files, show the full proposed change set for confirmation, then commit and tag — see "The six phases" below for what each does. Always use this skill instead of running release steps manually — it keeps the six release files in lock-step, formats the changelog consistently, and prevents partial releases.
+description: Project release helper for corezoid-ai-plugin. Prepares a new tagged release end-to-end. Use whenever the user says "release", "релиз", "новый релиз", "сделай релиз", "выпусти версию", "bump version", "обновить версию", "tag a release", "/release", or anything that implies cutting a new version of this plugin. Walks through six explicit phases — compare `main` with the latest tag, ask which new version to publish, draft a CHANGELOG.md entry, sync that version across all seven release files, show the full proposed change set for confirmation, then commit and tag — see "The six phases" below for what each does. Always use this skill instead of running release steps manually — it keeps the seven release files in lock-step, formats the changelog consistently, and prevents partial releases.
 ---
 
 # Release skill
@@ -9,7 +9,7 @@ This skill prepares a new tagged release of `corezoid-ai-plugin`. It runs throug
 
 ## Why a dedicated skill
 
-A release of this plugin touches six separate manifest files (Claude, Codex, Kiro plugin manifests; two marketplace manifests; and `POWER.md` frontmatter) plus the changelog. Forgetting any one of them ships a broken or inconsistent release: marketplace listings disagree about the version, Codex/Kiro install the wrong build, or `POWER.md` — which is attached to the GitHub Release artifact set — advertises a stale version. The single source of release truth for this repo is `RELEASE_CHECKLIST.md` — this skill executes that checklist programmatically so nothing is missed.
+A release of this plugin touches seven separate manifest files (Claude, Codex, Kiro plugin manifests; the agent-plugins root `plugin.json`; two marketplace manifests; and `POWER.md` frontmatter) plus the changelog. Forgetting any one of them ships a broken or inconsistent release: marketplace listings disagree about the version, Codex/Kiro install the wrong build, or `POWER.md` — which is attached to the GitHub Release artifact set — advertises a stale version. The single source of release truth for this repo is `RELEASE_CHECKLIST.md` — this skill executes that checklist programmatically so nothing is missed.
 
 ## The six phases
 
@@ -76,9 +76,9 @@ Rules:
 
 Show the drafted entry to the user before writing it to disk. They will often want to reword a bullet or merge two of them — that's expected.
 
-### Phase 4 — Sync the version across all six release files
+### Phase 4 — Sync the version across all seven release files
 
-Goal: the new version appears in exactly six places, all in agreement.
+Goal: the new version appears in exactly seven places, all in agreement.
 
 The files and the field to update:
 
@@ -87,6 +87,7 @@ The files and the field to update:
 | `plugins/corezoid/.claude-plugin/plugin.json` | top-level `"version"` |
 | `plugins/corezoid/.codex-plugin/plugin.json` | top-level `"version"` |
 | `plugins/corezoid/.kiro-plugin/plugin.json` | top-level `"version"` |
+| `plugin.json` (repo root, agent-plugins manifest) | top-level `"version"` |
 | `.claude-plugin/marketplace.json` | `plugins[0].version` |
 | `.agents/plugins/marketplace.json` | `plugins[0].version` |
 | `POWER.md` | YAML frontmatter `version:` |
@@ -100,12 +101,13 @@ grep -nE '"version"|^version:' \
   plugins/corezoid/.claude-plugin/plugin.json \
   plugins/corezoid/.codex-plugin/plugin.json \
   plugins/corezoid/.kiro-plugin/plugin.json \
+  plugin.json \
   .claude-plugin/marketplace.json \
   .agents/plugins/marketplace.json \
   POWER.md
 ```
 
-All six lines must show the new version. If any one disagrees, fix it before moving on — never proceed to commit with mismatched manifests. CI's `Version sync across manifests` step and the release workflow's `guard` job both enforce this; a stale file will fail the release before any binary is built.
+All seven lines must show the new version. If any one disagrees, fix it before moving on — never proceed to commit with mismatched manifests. CI's `Version sync across manifests` step and the release workflow's `guard` job both enforce this; a stale file will fail the release before any binary is built. That step in `.github/workflows/ci.yml` is the authoritative list: if it names a file this table lacks, bump that file too and add it here. v3.11.0 was first tagged with the root `plugin.json` still on the old version because this table listed six files.
 
 Then validate that the JSON still parses:
 
@@ -115,6 +117,7 @@ python3 -m json.tool .agents/plugins/marketplace.json >/dev/null
 python3 -m json.tool plugins/corezoid/.claude-plugin/plugin.json >/dev/null
 python3 -m json.tool plugins/corezoid/.codex-plugin/plugin.json >/dev/null
 python3 -m json.tool plugins/corezoid/.kiro-plugin/plugin.json >/dev/null
+python3 -m json.tool plugin.json >/dev/null
 ```
 
 ### Phase 5 — Confirm with the user
@@ -141,6 +144,7 @@ git add CHANGELOG.md \
         plugins/corezoid/.claude-plugin/plugin.json \
         plugins/corezoid/.codex-plugin/plugin.json \
         plugins/corezoid/.kiro-plugin/plugin.json \
+        plugin.json \
         .claude-plugin/marketplace.json \
         .agents/plugins/marketplace.json \
         POWER.md
@@ -182,9 +186,9 @@ This deliberate pause is a safety net — pushing the tag triggers `release.yml`
 - **Wrong branch.** Releases typically come from `main`. If the current branch is something else (e.g. `develop`), surface this in Phase 5 so the user can decide whether to merge first or release from where they are.
 - **Tag already exists.** Before Phase 6, run `git tag -l vX.Y.Z`. If it returns the tag, stop — the version is already taken. Ask the user to pick a different one and loop back to Phase 2.
 - **Unrelated untracked files.** The repo often has work-in-progress files (`comparison.html`, `plan.html`, sample `.conv.json` files, IDE config). These must not enter the release commit unless the user explicitly says they should.
-- **Manifest drift in the diff.** If Phase 1 shows a manifest file already changed by a previous (incomplete) attempt, treat that as suspect — re-read all four manifests before Phase 4 and reconcile from a known state, don't blindly bump on top of a half-finished bump.
+- **Manifest drift in the diff.** If Phase 1 shows a manifest file already changed by a previous (incomplete) attempt, treat that as suspect — re-read all seven release files before Phase 4 and reconcile from a known state, don't blindly bump on top of a half-finished bump.
 - **CHANGELOG.md already has an entry for the chosen version.** That means a previous release attempt was partially completed. Show the existing entry to the user and ask whether to extend it, replace it, or pick a different version.
 
 ## When the user wants a one-shot, no-questions release
 
-If the user explicitly says something like "just release a patch, no questions" or "автоматический релиз патча", you can fold Phase 2 (pick patch bump) and Phase 5 (confirmation) into a single approval at the end, but never skip showing the proposed changelog entry and the proposed version. The six-file sync is non-negotiable regardless of speed mode.
+If the user explicitly says something like "just release a patch, no questions" or "автоматический релиз патча", you can fold Phase 2 (pick patch bump) and Phase 5 (confirmation) into a single approval at the end, but never skip showing the proposed changelog entry and the proposed version. The seven-file sync is non-negotiable regardless of speed mode.

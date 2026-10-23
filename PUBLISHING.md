@@ -12,6 +12,7 @@ python3 -m json.tool .agents/plugins/marketplace.json >/dev/null
 python3 -m json.tool plugins/corezoid/.claude-plugin/plugin.json >/dev/null
 python3 -m json.tool plugins/corezoid/.codex-plugin/plugin.json >/dev/null
 python3 -m json.tool plugins/corezoid/.kiro-plugin/plugin.json >/dev/null
+python3 -m json.tool plugin.json >/dev/null
 python3 -m json.tool plugins/corezoid/.mcp.json >/dev/null
 python3 -m json.tool plugins/corezoid/.mcp.kiro.json >/dev/null
 ```
@@ -23,12 +24,13 @@ grep -E '"version"|^version:' \
   plugins/corezoid/.claude-plugin/plugin.json \
   plugins/corezoid/.codex-plugin/plugin.json \
   plugins/corezoid/.kiro-plugin/plugin.json \
+  plugin.json \
   .claude-plugin/marketplace.json \
   .agents/plugins/marketplace.json \
   POWER.md
 ```
 
-All six should show the same version number.
+All seven should show the same version number.
 
 ## 2. Test in Claude Code
 
@@ -71,10 +73,11 @@ The script is idempotent and supports re-runs to refresh the workspace overlay.
 
 ## 4. Update Files
 
-1. Bump the version in **six** files (every host manifest plus the Power manifest):
+1. Bump the version in **seven** files (every host manifest, the agent-plugins root manifest and the Power manifest):
    - `plugins/corezoid/.claude-plugin/plugin.json`
    - `plugins/corezoid/.codex-plugin/plugin.json`
    - `plugins/corezoid/.kiro-plugin/plugin.json`
+   - `plugin.json` (repo root, agent-plugins manifest)
    - `.claude-plugin/marketplace.json` (the `plugins[0].version` field)
    - `.agents/plugins/marketplace.json` (the `plugins[0].version` field)
    - `POWER.md` (frontmatter `version:` field)

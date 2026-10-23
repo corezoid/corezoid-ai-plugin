@@ -7,6 +7,7 @@ Use this before tagging a public release.
 - [ ] `plugins/corezoid/.claude-plugin/plugin.json` version is updated.
 - [ ] `plugins/corezoid/.codex-plugin/plugin.json` version matches Claude manifest.
 - [ ] `plugins/corezoid/.kiro-plugin/plugin.json` version matches Claude manifest.
+- [ ] Root `plugin.json` (agent-plugins manifest) version matches Claude manifest.
 - [ ] `.claude-plugin/marketplace.json` `plugins[0].version` matches all plugin manifests.
 - [ ] `.agents/plugins/marketplace.json` `plugins[0].version` matches all plugin manifests.
 - [ ] `POWER.md` YAML frontmatter `version:` matches all plugin manifests.
@@ -38,19 +39,21 @@ python3 -m json.tool .agents/plugins/marketplace.json >/dev/null
 python3 -m json.tool plugins/corezoid/.claude-plugin/plugin.json >/dev/null
 python3 -m json.tool plugins/corezoid/.codex-plugin/plugin.json >/dev/null
 python3 -m json.tool plugins/corezoid/.kiro-plugin/plugin.json >/dev/null
+python3 -m json.tool plugin.json >/dev/null
 python3 -m json.tool plugins/corezoid/.mcp.json >/dev/null
 python3 -m json.tool plugins/corezoid/.mcp.kiro.json >/dev/null
 ```
 
 ## Version sync
 
-All six release files should show the same version:
+All seven release files should show the same version (the authoritative list is the `Version sync across manifests` step in `.github/workflows/ci.yml`):
 
 ```bash
 grep -nE '"version"|^version:' \
   plugins/corezoid/.claude-plugin/plugin.json \
   plugins/corezoid/.codex-plugin/plugin.json \
   plugins/corezoid/.kiro-plugin/plugin.json \
+  plugin.json \
   .claude-plugin/marketplace.json \
   .agents/plugins/marketplace.json \
   POWER.md

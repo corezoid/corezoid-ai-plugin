@@ -23,13 +23,15 @@ claude plugin install @corezoid/corezoid-ai-plugin
 
 ## convctl MCP server (bundled in this plugin)
 
-The MCP server is bundled as Go source at `plugins/corezoid/mcp-server/`. All operations are exposed as MCP tools — no separate installation required, only Go must be available. The server starts automatically via `.mcp.json`.
+The MCP server is bundled as Go source at `plugins/corezoid/mcp-server/`. All operations are exposed as MCP tools — no separate installation required. The server starts automatically via `.mcp.json`, which runs `mcp-server/run.sh`.
 
 To test the MCP server without Claude:
 
 ```bash
 cd plugins/corezoid/mcp-server && npx @modelcontextprotocol/inspector go run . mcp-server
 ```
+
+`run.sh` does **not** run the source next to it by default. It starts, in order: a locally built `mcp-server/convctl` (gitignored); else the release binary for the version in `plugins/corezoid/.claude-plugin/plugin.json`, downloaded from GitHub Releases and cached in `~/.cache/corezoid-mcp/<version>/`; else `go run .` when that download fails. Between releases that version is the previous one, so a plugin session on `main` talks to the last released server, not to your changes. To exercise the source through the plugin, either build the binary (`go build -o convctl .` here — delete it afterwards, or it keeps shadowing the release binary) or start the client with `COREZOID_MCP_DEV=1`, which makes `run.sh` always `go run .`. Both need Go at the `go.mod` version, and a cold `go run` can overrun the client's 30-second startup timeout.
 
 ### MCP server: build, test, lint
 
@@ -53,7 +55,7 @@ go test -run TestLayoutGolden -update ./...
 CI (`.github/workflows/ci.yml`) also runs:
 
 - JSON validation for the Claude, Codex, Kiro, and two marketplace manifests + `.mcp.json` and `.mcp.kiro.json`.
-- Version sync across all six release files: `plugins/corezoid/.claude-plugin/plugin.json`, `plugins/corezoid/.codex-plugin/plugin.json`, `plugins/corezoid/.kiro-plugin/plugin.json`, `.claude-plugin/marketplace.json`, `.agents/plugins/marketplace.json`, and `POWER.md`.
+- Version sync across all seven release files: `plugins/corezoid/.claude-plugin/plugin.json`, `plugins/corezoid/.codex-plugin/plugin.json`, `plugins/corezoid/.kiro-plugin/plugin.json`, the root `plugin.json` (agent-plugins manifest), `.claude-plugin/marketplace.json`, `.agents/plugins/marketplace.json`, and `POWER.md`.
 - License consistency (must be MIT) across the Claude, Codex, and two marketplace manifests.
 - Markdown link check.
 - Skills-list sync (`scripts/check-skills-sync.py`): the skill directories under `plugins/corezoid/skills/` must match the lists in `CLAUDE.md`, `README.md`, and `POWER.md`.
