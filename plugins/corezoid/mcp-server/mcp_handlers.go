@@ -236,7 +236,10 @@ func handleToolCall(ctx context.Context, name string, args map[string]interface{
 	// process somewhere else entirely. The rejection flows through the same
 	// result/analytics path as any other tool error so it is visible in
 	// telemetry.
-	if msg := argsCheck(name, args); msg != "" {
+	args, aliasErr := applyArgAliases(name, args)
+	if aliasErr != "" {
+		result, isError = aliasErr, true
+	} else if msg := argsCheck(name, args); msg != "" {
 		result, isError = msg, true
 	} else {
 		result, isError = h(ctx, args)

@@ -30,6 +30,34 @@ func TestHandleToolCall_UnknownArgumentRejected(t *testing.T) {
 	}
 }
 
+func TestApplyArgAliases_ConvID(t *testing.T) {
+	in := map[string]interface{}{"conv_id": float64(5), "node_id": "n"}
+	out, msg := applyArgAliases("list-node-tasks", in)
+	if msg != "" || out["process_id"] != float64(5) || out["conv_id"] != nil {
+		t.Errorf("conv_id must become process_id, got %v (%s)", out, msg)
+	}
+	if _, still := in["conv_id"]; !still {
+		t.Error("caller's args must not be mutated")
+	}
+	if msg := unknownArgsError("list-node-tasks", out); msg != "" {
+		t.Errorf("aliased args must pass validation, got: %s", msg)
+	}
+
+	if _, msg := applyArgAliases("show-task", map[string]interface{}{"conv_id": 5, "process_id": 6}); !strings.Contains(msg, "different values") {
+		t.Errorf("conflicting conv_id/process_id must be rejected, got %q", msg)
+	}
+	out, msg = applyArgAliases("show-task", map[string]interface{}{"conv_id": float64(5), "process_id": float64(5)})
+	if msg != "" || out["process_id"] != float64(5) || out["conv_id"] != nil {
+		t.Errorf("matching conv_id/process_id must collapse to process_id, got %v (%s)", out, msg)
+	}
+
+	// A tool that declares no process_id keeps rejecting conv_id as unknown.
+	out, _ = applyArgAliases("login", map[string]interface{}{"conv_id": 5})
+	if out["conv_id"] == nil {
+		t.Error("alias must not apply to tools without process_id")
+	}
+}
+
 func TestUnknownArgsError_KnownArgsPass(t *testing.T) {
 	if msg := unknownArgsError("create-process", map[string]interface{}{
 		"process_name": "x", "folder_path": ".", "folder_id": 42,

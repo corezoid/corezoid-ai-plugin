@@ -115,6 +115,49 @@ func toolRequiresArg(tool, arg string) bool {
 // a tool whose schema requires nothing.
 const placeholderArg = "random_string"
 
+// argAliases maps an argument name a model reaches for by habit to the name
+// the tool schemas use. conv_id is what the Corezoid API and exported
+// .conv.json files call a process id; models passed it to cz-tasks actions,
+// got an unknown-argument error and spent a retry on the rename.
+var argAliases = map[string]string{
+	"conv_id": "process_id",
+}
+
+// applyArgAliases rewrites aliased argument names to their canonical form for
+// tools that declare the canonical name and not the alias. It returns the
+// (possibly copied) args, or a non-empty error message when both names are
+// given with different values — picking one would act on the wrong process.
+func applyArgAliases(tool string, args map[string]interface{}) (map[string]interface{}, string) {
+	toolAllowedArgsOnce.Do(buildToolAllowedArgs)
+	allowed, ok := toolAllowedArgs[tool]
+	if !ok {
+		return args, ""
+	}
+	copied := false
+	for alias, canonical := range argAliases {
+		v, has := args[alias]
+		if !has || allowed[alias] || !allowed[canonical] {
+			continue
+		}
+		if existing, both := args[canonical]; both && fmt.Sprint(existing) != fmt.Sprint(v) {
+			return args, fmt.Sprintf("Error: %s and %s are the same argument of %s and were given different values (%v vs %v); pass only %s",
+				alias, canonical, tool, v, existing, canonical)
+		}
+		if !copied {
+			c := make(map[string]interface{}, len(args))
+			for k, val := range args {
+				c[k] = val
+			}
+			args, copied = c, true
+		}
+		if _, both := args[canonical]; !both {
+			args[canonical] = v
+		}
+		delete(args, alias)
+	}
+	return args, ""
+}
+
 // unknownArgsError returns a non-empty error message when args contains keys
 // the tool's InputSchema does not declare. Unknown arguments used to be
 // silently ignored; that let calls fall back to defaults and act on the wrong
