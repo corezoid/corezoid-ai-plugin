@@ -111,6 +111,10 @@ func toolRequiresArg(tool, arg string) bool {
 	return toolRequiredArgs[tool][arg]
 }
 
+// placeholderArg is the dummy argument some MCP clients insert into a call to
+// a tool whose schema requires nothing.
+const placeholderArg = "random_string"
+
 // unknownArgsError returns a non-empty error message when args contains keys
 // the tool's InputSchema does not declare. Unknown arguments used to be
 // silently ignored; that let calls fall back to defaults and act on the wrong
@@ -124,6 +128,12 @@ func unknownArgsError(tool string, args map[string]interface{}) string {
 	}
 	var unknown []string
 	for k := range args {
+		// Some clients fill a call to a tool with nothing required (login) with a
+		// dummy argument instead of sending {}. Rejecting it bought nothing — no
+		// handler reads it — and cost every such call a failed first attempt.
+		if k == placeholderArg && len(toolRequiredArgs[tool]) == 0 {
+			continue
+		}
 		if !allowed[k] {
 			unknown = append(unknown, k)
 		}
