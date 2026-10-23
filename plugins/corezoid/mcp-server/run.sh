@@ -30,13 +30,21 @@ esac
 VERSION=$(grep '"version"' "$SCRIPT_DIR/../.claude-plugin/plugin.json" 2>/dev/null \
   | sed 's/.*"version": *"\([^"]*\)".*/\1/' | head -1)
 
-# download <url> <dest> — bounded so a stalled network can't hold the MCP
-# client past its startup timeout; on failure we fall back to building from source.
+# download <url> <dest> <max-seconds> — bounded so a stalled network can't hold
+# the MCP client past its 30-second startup timeout; on failure we fall back to
+# building from source. Both downloads together get at most 20 s, leaving the
+# rest of the budget for the binary to start and answer initialize.
 download() {
   if command -v curl >/dev/null 2>&1; then
-    curl -fsSL --connect-timeout 5 --max-time 20 "$1" -o "$2" 2>/dev/null
+    curl -fsSL --connect-timeout 5 --max-time "$3" "$1" -o "$2" 2>/dev/null
   elif command -v wget >/dev/null 2>&1; then
-    wget -q --timeout=10 --tries=1 "$1" -O "$2" 2>/dev/null
+    # wget's --timeout bounds each stall, not the whole transfer; timeout(1)
+    # caps the total where it exists.
+    if command -v timeout >/dev/null 2>&1; then
+      timeout "$3" wget -q --timeout=5 --tries=1 "$1" -O "$2" 2>/dev/null
+    else
+      wget -q --timeout=5 --tries=1 "$1" -O "$2" 2>/dev/null
+    fi
   else
     return 1
   fi
@@ -64,8 +72,10 @@ if [ -n "$VERSION" ] && { [ "$OS" = "darwin" ] || [ "$OS" = "linux" ] || [ "$OS"
     TMP_BIN="${CACHE_BIN}.tmp"
     TMP_SUMS="${CACHE_DIR}/checksums.txt.tmp"
 
-    if download "${BASE_URL}/${ASSET}" "$TMP_BIN" && \
-       download "${BASE_URL}/checksums.txt" "$TMP_SUMS"; then
+    # checksums.txt first: it is tiny, so a dead or stalled network costs its
+    # 5 s cap rather than the binary's 15 s before we fall back.
+    if download "${BASE_URL}/checksums.txt" "$TMP_SUMS" 5 && \
+       download "${BASE_URL}/${ASSET}" "$TMP_BIN" 15; then
 
       EXPECTED=$(grep "${ASSET}\$" "$TMP_SUMS" | awk '{print $1}')
       ACTUAL=$(sha256 "$TMP_BIN")

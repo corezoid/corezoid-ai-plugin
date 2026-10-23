@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -137,9 +138,12 @@ func TestRunSh_LinuxUsesPrebuiltBinary(t *testing.T) {
 	}
 }
 
-// A stalled release download must not hold startup open indefinitely: curl
-// gets a hard deadline well inside the client's 30-second budget.
+// A stalled release download must not hold startup open indefinitely: the
+// downloads together get a hard deadline well inside the client's 30-second
+// budget. 20 s per file (40 s in all) passed a per-call check and still
+// overran it (#210).
 func TestRunSh_DownloadIsTimeBounded(t *testing.T) {
+	const budget = 20
 	f := newRunShFixture(t, "Linux", "x86_64")
 	f.publish(t, "convctl-linux-amd64")
 	f.run(t)
@@ -147,10 +151,34 @@ func TestRunSh_DownloadIsTimeBounded(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, line := range strings.Split(strings.TrimSpace(string(log)), "\n") {
-		if !strings.Contains(line, "--max-time") || !strings.Contains(line, "--connect-timeout") {
-			t.Errorf("curl invoked without a timeout: %s", line)
+	lines := strings.Split(strings.TrimSpace(string(log)), "\n")
+	total := 0
+	for _, line := range lines {
+		if !strings.Contains(line, "--connect-timeout") {
+			t.Errorf("curl invoked without a connect timeout: %s", line)
 		}
+		fields := strings.Fields(line)
+		limit := -1
+		for i, a := range fields {
+			if a == "--max-time" && i+1 < len(fields) {
+				if n, err := strconv.Atoi(fields[i+1]); err == nil {
+					limit = n
+				}
+			}
+		}
+		if limit <= 0 {
+			t.Errorf("curl invoked without a numeric --max-time: %s", line)
+			continue
+		}
+		total += limit
+	}
+	if total > budget {
+		t.Errorf("downloads may take %d s in all, want <= %d s:\n%s", total, budget, log)
+	}
+	// The small checksums file goes first, so a dead network fails on its
+	// short cap instead of the binary's.
+	if len(lines) == 0 || !strings.Contains(lines[0], "checksums.txt") {
+		t.Errorf("first download should be checksums.txt, got:\n%s", log)
 	}
 }
 
