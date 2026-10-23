@@ -810,7 +810,7 @@ var collapsedToolRegistry = []mcpTool{
 	},
 	{
 		Name:        "list-node-tasks",
-		Description: "Return tasks currently sitting in a specific node of a process. This is a paged scan of one node, not a lookup — to find one task by ref or task_id use show-task instead. Output is compact by default: per task only metadata (obj_id, ref, status, timestamps, …) plus data_bytes, and per page data_keys — the top-level data keys of the returned tasks, to use in fields and filter. Use compact for overviews, counts and 'did it reach this node' checks. Pass fields to read specific data paths, filter to keep only tasks whose data matches, and mode=full only when you need whole payloads.",
+		Description: "Return tasks currently sitting in a specific node of a process. This is a paged scan of one node, not a lookup — to find one task by ref or task_id use show-task instead. Output is compact by default: per task only metadata (obj_id, ref, status, timestamps, …) plus data_bytes, and per page data_keys — the top-level data keys of the returned tasks, to use in fields and filter. Use compact for overviews, counts and 'did it reach this node' checks. Pass fields to read specific data paths (returned per task under fields, keyed by path), filter to keep only tasks whose data matches, and mode=full only when you need whole payloads.",
 		Annotations: toolHints(hintReadOnly, hintSafe, hintIdempotent, hintOpenWorld),
 		InputSchema: map[string]interface{}{
 			"type": "object",
@@ -839,7 +839,7 @@ var collapsedToolRegistry = []mcpTool{
 				"fields": map[string]interface{}{
 					"type":        "array",
 					"items":       map[string]interface{}{"type": "string"},
-					"description": "Data paths to return per task, dot-separated for nested keys (e.g. [\"status\", \"customer.id\"]). Overrides mode: only these paths are included in data.",
+					"description": "Data paths to return per task, dot-separated for nested keys (e.g. [\"status\", \"customer.id\"]). Returned under fields, keyed by the path as given ({\"customer.id\": 3}) — not the shape of the task's data, so never send it to modify-task as-is: to change a nested value send the nested object ({\"customer\": {\"id\": 4}}) with deep_merge: true. Overrides mode: data is left out.",
 				},
 				"filter": map[string]interface{}{
 					"type":        "object",

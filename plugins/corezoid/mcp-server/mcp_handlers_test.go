@@ -1473,9 +1473,15 @@ func TestHandleToolCall_ListNodeTasks_FieldsAndFilter(t *testing.T) {
 	if len(list) != 1 || op["scanned"] != float64(10) || op["returned"] != float64(1) {
 		t.Fatalf("filter: got %d tasks (scanned=%v returned=%v), want 1 of 10", len(list), op["scanned"], op["returned"])
 	}
-	data := list[0].(map[string]interface{})["data"].(map[string]interface{})
-	if data["order_id"] != "A-3" || data["customer.id"] != float64(3) || len(data) != 2 {
-		t.Errorf("fields: got data %v, want only order_id=A-3 and customer.id=3", data)
+	task := list[0].(map[string]interface{})
+	fields := task["fields"].(map[string]interface{})
+	if fields["order_id"] != "A-3" || fields["customer.id"] != float64(3) || len(fields) != 2 {
+		t.Errorf("fields: got %v, want only order_id=A-3 and customer.id=3", fields)
+	}
+	// {"customer.id": 3} is not the task's data shape; under data it reads as
+	// a payload modify-task would write back as a literal "customer.id" key.
+	if _, ok := task["data"]; ok {
+		t.Errorf("fields output must not be under data, got data %v", task["data"])
 	}
 	if _, ok := op["data_keys"]; ok {
 		t.Error("data_keys belongs to compact output only")
@@ -1514,12 +1520,12 @@ func TestHandleToolCall_ListNodeTasks_TruncationIsOptIn(t *testing.T) {
 	resetGlobals(t)
 	nodeTasksServer(t, 1)
 
-	for _, args := range []map[string]interface{}{
-		{"mode": "full"},
-		{"fields": []interface{}{"blob"}},
+	for key, args := range map[string]map[string]interface{}{
+		"data":   {"mode": "full"},
+		"fields": {"fields": []interface{}{"blob"}},
 	} {
 		op, _ := listNodeTasksOp(t, args)
-		data := op["list"].([]interface{})[0].(map[string]interface{})["data"].(map[string]interface{})
+		data := op["list"].([]interface{})[0].(map[string]interface{})[key].(map[string]interface{})
 		if n := len(data["blob"].(string)); n != 6000 {
 			t.Errorf("%v: blob is %d bytes, want the whole 6000 without max_value_length", args, n)
 		}

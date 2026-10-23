@@ -141,6 +141,11 @@ func handleListTaskHistory(ctx context.Context, args map[string]interface{}) (st
 // default view therefore drops data entirely and keeps the task metadata;
 // fields brings back only the named data paths, and full restores the payload.
 //
+// fields come back under their own key, keyed by the path as given
+// ({"customer.id": 3}), never under data: that map is not the shape of the
+// task's data, and modify-task writes keys verbatim, so sent back as a payload
+// it would add a literal "customer.id" key and leave customer.id unchanged.
+//
 // Truncation is opt-in (maxValue). Whatever fields or full return is what a
 // caller edits and sends back through modify-task, so a value cut by default
 // would be written into the task as its new, shortened content.
@@ -303,7 +308,7 @@ func (view nodeTaskView) shapeTask(task map[string]interface{}) map[string]inter
 				picked[f] = v
 			}
 		}
-		out["data"] = truncateValues(picked, view.maxValue)
+		out["fields"] = truncateValues(picked, view.maxValue)
 	case view.full:
 		out["data"] = truncateValues(task["data"], view.maxValue)
 	default:

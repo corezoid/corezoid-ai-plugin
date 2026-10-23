@@ -89,7 +89,7 @@ Arguments go **inside `args`**, never at the top level. Add `"help": true` to ge
 | `show-task` | Look up one task by `ref` and/or `task_id` — returns its current `data`, `node_id` and status. Read-only; use it instead of paging `list-node-tasks` |
 | `modify-task` | Change a task's data; deep_merge=true merges instead of replacing |
 | `delete-task` | Delete a task from a process (destructive) |
-| `list-node-tasks` | Tasks currently parked in a node — compact (metadata only) by default; pass `fields` for specific data paths, `filter` to match data within the page, `mode: "full"` for whole payloads |
+| `list-node-tasks` | Tasks currently parked in a node — compact (metadata only) by default; pass `fields` for specific data paths (returned under `fields`, keyed by path — not a `modify-task` payload), `filter` to match data within the page, `mode: "full"` for whole payloads |
 | `list-task-history` | The node path a task has taken |
 | `get-node-stat` | In/out counts for a node over a time range |
 
