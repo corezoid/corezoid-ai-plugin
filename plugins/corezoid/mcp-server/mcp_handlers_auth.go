@@ -179,8 +179,8 @@ func handleLogin(ctx context.Context, args map[string]interface{}) (string, bool
 	// Step 1: ensure Account API URL.
 	if snapAccountURL == "" {
 		var resolved string
-		if clientElicitationSupported() {
-			content, action, err := elicitValues(
+		if clientCanElicit(ctx) {
+			content, action, err := elicitValues(ctx,
 				"Enter your Account API URL to get started:",
 				map[string]interface{}{
 					"type": "object",
@@ -220,6 +220,11 @@ func handleLogin(ctx context.Context, args map[string]interface{}) (string, bool
 	// browser flow).
 	var tokenExpiry time.Time
 	if snapToken == "" && !(snapAPILogin != "" && snapAPISecret != "") {
+		if ctx.Err() != nil {
+			// The call was cancelled or its input request expired: do not
+			// open a browser for a client that is no longer listening.
+			return fmt.Sprintf("Login aborted: %v. Call login again.", ctx.Err()), true
+		}
 		res, err := oauthPKCEFlow(snapAccountURL, oauthClientID)
 		if err != nil {
 			return fmt.Sprintf("Authentication failed: %v", err), true
@@ -227,6 +232,7 @@ func handleLogin(ctx context.Context, args map[string]interface{}) (string, bool
 		buf.stage(func(f *Folder) {
 			f.AccessToken = res.AccessToken
 			f.ExpiresAt = res.ExpiresAt
+			f.Issuer = res.Issuer
 		})
 		snapToken = res.AccessToken
 		tokenExpiry = res.ExpiresAt
@@ -263,7 +269,7 @@ func handleLogin(ctx context.Context, args map[string]interface{}) (string, bool
 
 	// Step 3: workspace selection.
 	if snapWorkspaceID == "" {
-		if clientElicitationSupported() {
+		if clientCanElicit(ctx) {
 			workspaces, fetchErr := fetchWorkspaceList(ctx)
 			if fetchErr != nil {
 				logger.Warn("login: fetchWorkspaceList failed: %v — falling back to text input", fetchErr)
@@ -296,7 +302,7 @@ func handleLogin(ctx context.Context, args map[string]interface{}) (string, bool
 				}
 			}
 
-			content, action, err := elicitValues(
+			content, action, err := elicitValues(ctx,
 				"Select your Corezoid workspace:",
 				map[string]interface{}{
 					"type":       "object",
@@ -347,7 +353,7 @@ func handleLogin(ctx context.Context, args map[string]interface{}) (string, bool
 	var noProjectSelected bool
 	const noProjectLabel = "No Project"
 	if snapStageID == 0 {
-		if clientElicitationSupported() {
+		if clientCanElicit(ctx) {
 			var selectedProjectID int64
 
 			// Step 4: fetch project list and elicit selection.
@@ -370,7 +376,7 @@ func handleLogin(ctx context.Context, args map[string]interface{}) (string, bool
 				// Always offer "No Project" as the last option so the user can
 				// work at workspace root when a Corezoid project isn't required.
 				enumVals = append(enumVals, noProjectLabel)
-				content, action, err := elicitValues(
+				content, action, err := elicitValues(ctx,
 					"Select your Corezoid project:",
 					map[string]interface{}{
 						"type": "object",
@@ -417,7 +423,7 @@ func handleLogin(ctx context.Context, args map[string]interface{}) (string, bool
 						enumVals[i] = label
 						stageIDByLabel[label] = s.stageID
 					}
-					content, action, err := elicitValues(
+					content, action, err := elicitValues(ctx,
 						"Select your Corezoid stage (root folder for this project):",
 						map[string]interface{}{
 							"type": "object",
@@ -446,7 +452,7 @@ func handleLogin(ctx context.Context, args map[string]interface{}) (string, bool
 			// Skipped when the user chose "No Project" — they have opted out of
 			// a stage entirely and pull-folder will operate at workspace root.
 			if !noProjectSelected && snapStageID == 0 {
-				content, action, err := elicitValues(
+				content, action, err := elicitValues(ctx,
 					"Enter your Stage ID (root folder ID for this project):",
 					map[string]interface{}{
 						"type": "object",
@@ -597,10 +603,10 @@ func handleLogin(ctx context.Context, args map[string]interface{}) (string, bool
 	}
 
 	// One-time opt-in: ask for email to include in telemetry.
-	if clientElicitationSupported() {
+	if clientCanElicit(ctx) {
 		prefs := loadUserPreferences()
 		if !prefs.TelemetryEmailAsked {
-			content, action, err := elicitValues(
+			content, action, err := elicitValues(ctx,
 				"Would you like to share your email with the Corezoid team? It helps them contact you if issues arise. This is optional — press Cancel to skip.",
 				map[string]interface{}{
 					"type": "object",

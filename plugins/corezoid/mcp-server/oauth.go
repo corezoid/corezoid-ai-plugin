@@ -24,9 +24,12 @@ const (
 )
 
 // PKCEResult holds the token returned after a successful OAuth2 PKCE flow.
+// Issuer is the authorization server that issued the token; the saved
+// credentials are bound to it.
 type PKCEResult struct {
 	AccessToken string
 	ExpiresAt   time.Time
+	Issuer      string
 }
 
 func generateVerifier() (string, error) {
@@ -70,9 +73,18 @@ func openBrowser(u string) {
 
 // oauthPKCEFlow runs the OAuth2 PKCE authorization flow against the given account URL.
 // It opens the user's browser, starts a local callback server, and exchanges the
-// authorization code for an access token.
+// authorization code for an access token. Endpoints come from the server's
+// RFC 8414 metadata when it publishes any, and the redirect's iss parameter is
+// checked against the issuer (RFC 9207).
 func oauthPKCEFlow(accountURL, clientID string) (*PKCEResult, error) {
 	accountURL = strings.TrimRight(accountURL, "/")
+	md, err := discoverOAuthMetadata(accountURL)
+	if err != nil {
+		return nil, err
+	}
+	if isClientIDMetadataDocumentURL(clientID) && !md.ClientIDMetadataDocumentSupported {
+		logger.Warn("oauth: client_id %q is a Client ID Metadata Document URL, but %s does not advertise client_id_metadata_document_supported", clientID, md.Issuer)
+	}
 	verifier, err := generateVerifier()
 	if err != nil {
 		return nil, fmt.Errorf("failed to generate PKCE verifier: %w", err)
@@ -105,8 +117,8 @@ func oauthPKCEFlow(accountURL, clientID string) (*PKCEResult, error) {
 		// tokens pinned to a dead session's expiry (exp < now on arrival).
 		"prompt": {"login"},
 	}
-	authorizeURL := accountURL + "/oauth2/authorize"
-	tokenURL := accountURL + "/oauth2/token"
+	authorizeURL := md.AuthorizationEndpoint
+	tokenURL := md.TokenEndpoint
 	authURL := authorizeURL + "?" + params.Encode()
 
 	codeCh := make(chan string, 1)
@@ -128,6 +140,15 @@ func oauthPKCEFlow(accountURL, clientID string) (*PKCEResult, error) {
 				"State parameter mismatch.",
 				"You may close this window.")))
 			errCh <- fmt.Errorf("OAuth state mismatch: possible CSRF")
+			return
+		}
+		if issErr := checkAuthorizationResponseIssuer(md, q.Get("iss")); issErr != nil {
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+			_, _ = w.Write([]byte(oauthPageHTML("Authentication Failed", "error",
+				"Authentication failed",
+				"The response did not come from the expected authorization server.",
+				"You may close this window.")))
+			errCh <- fmt.Errorf("OAuth issuer check failed: %w", issErr)
 			return
 		}
 		if errCode := q.Get("error"); errCode != "" {
@@ -239,6 +260,7 @@ func oauthPKCEFlow(accountURL, clientID string) (*PKCEResult, error) {
 	return &PKCEResult{
 		AccessToken: accessToken,
 		ExpiresAt:   expiry,
+		Issuer:      md.Issuer,
 	}, nil
 }
 

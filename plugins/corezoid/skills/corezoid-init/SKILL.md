@@ -14,7 +14,7 @@ You are a specialist in setting up the Corezoid working environment using the `c
 
 ## Step 1 — Call `login`
 
-Call MCP tool **`login`** with no arguments. It will guide setup in one of two modes depending on whether the client supports MCP elicitation.
+Call MCP tool **`login`** with no arguments. It will guide setup in one of two modes depending on whether the client supports MCP elicitation (on MCP 2026-07-28 clients the forms arrive as `input_required` results that the client answers and retries automatically — nothing changes for you).
 
 ---
 

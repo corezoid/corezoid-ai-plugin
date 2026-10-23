@@ -139,50 +139,50 @@ func TestHTTPDispatch_Initialize(t *testing.T) {
 	}
 }
 
-// TestHTTPDispatch_ServerDiscover covers the MCP 2026-07-28 era-detection probe
-// over HTTP: a valid result naming only the legacy protocol version, with
-// capabilities and serverInfo identical to initialize's.
+// TestHTTPDispatch_ServerDiscover covers server/discover over HTTP. It used to
+// pin a legacy-only answer (protocolVersion, supportedProtocolVersions ==
+// ["2025-03-26"], fields byte-identical to initialize); AIC-170 made the
+// server serve MCP 2026-07-28, so it now pins the DiscoverResult shape.
 func TestHTTPDispatch_ServerDiscover(t *testing.T) {
 	out := dispatchJSON(t, "server/discover", nil)
 	if out["error"] != nil {
 		t.Fatalf("unexpected error: %s", out["error"])
 	}
+	assertDiscoverResult(t, out["result"])
+}
+
+// assertDiscoverResult checks a 2026-07-28 DiscoverResult.
+func assertDiscoverResult(t *testing.T, raw json.RawMessage) {
+	t.Helper()
 	var discover map[string]json.RawMessage
-	if err := json.Unmarshal(out["result"], &discover); err != nil {
+	if err := json.Unmarshal(raw, &discover); err != nil {
 		t.Fatalf("discover result parse: %v", err)
 	}
-
-	if got := string(discover["protocolVersion"]); got != `"2025-03-26"` {
-		t.Errorf("protocolVersion = %s, want \"2025-03-26\"", got)
+	if got := string(discover["resultType"]); got != `"complete"` {
+		t.Errorf("resultType = %s, want \"complete\"", got)
 	}
-	if got := string(discover["supportedProtocolVersions"]); got != `["2025-03-26"]` {
-		t.Errorf("supportedProtocolVersions = %s, want [\"2025-03-26\"]", got)
+	if got, want := string(discover["supportedVersions"]), `["2026-07-28","2025-03-26"]`; got != want {
+		t.Errorf("supportedVersions = %s, want %s", got, want)
 	}
 	if discover["capabilities"] == nil {
 		t.Error("expected capabilities in server/discover result")
 	}
-	if discover["serverInfo"] == nil {
-		t.Error("expected serverInfo in server/discover result")
+	if discover["ttlMs"] == nil || discover["cacheScope"] == nil {
+		t.Error("expected ttlMs and cacheScope in server/discover result")
 	}
-
-	initOut := dispatchJSON(t, "initialize", map[string]interface{}{
-		"protocolVersion": "2025-03-26",
-		"capabilities":    map[string]interface{}{},
-	})
-	if initOut["error"] != nil {
-		t.Fatalf("unexpected initialize error: %s", initOut["error"])
+	var meta map[string]struct {
+		Name    string `json:"name"`
+		Version string `json:"version"`
 	}
-	var initResult map[string]json.RawMessage
-	if err := json.Unmarshal(initOut["result"], &initResult); err != nil {
-		t.Fatalf("initialize result parse: %v", err)
+	if err := json.Unmarshal(discover["_meta"], &meta); err != nil {
+		t.Fatalf("_meta parse: %v", err)
 	}
-	for _, field := range []string{"protocolVersion", "capabilities", "serverInfo"} {
-		if string(discover[field]) != string(initResult[field]) {
-			t.Errorf("%s differs: discover=%s initialize=%s", field, discover[field], initResult[field])
-		}
+	si := meta[metaKeyServerInfo]
+	if si.Name != mcpServerName || si.Version != serverVersion() {
+		t.Errorf("_meta serverInfo = %+v, want %s/%s", si, mcpServerName, serverVersion())
 	}
-	if _, ok := initResult["supportedProtocolVersions"]; ok {
-		t.Error("initialize result must not contain supportedProtocolVersions")
+	if _, ok := discover["protocolVersion"]; ok {
+		t.Error("DiscoverResult must not carry the legacy protocolVersion field")
 	}
 }
 
@@ -192,7 +192,9 @@ func TestHTTPDispatch_ToolsList(t *testing.T) {
 		t.Fatalf("unexpected error: %s", out["error"])
 	}
 	var result struct {
-		Tools []struct{ Name string `json:"name"` } `json:"tools"`
+		Tools []struct {
+			Name string `json:"name"`
+		} `json:"tools"`
 	}
 	json.Unmarshal(out["result"], &result) //nolint:errcheck
 	if len(result.Tools) == 0 {
@@ -206,7 +208,9 @@ func TestHTTPDispatch_PromptsList(t *testing.T) {
 		t.Fatalf("unexpected error: %s", out["error"])
 	}
 	var result struct {
-		Prompts []struct{ Name string `json:"name"` } `json:"prompts"`
+		Prompts []struct {
+			Name string `json:"name"`
+		} `json:"prompts"`
 	}
 	json.Unmarshal(out["result"], &result) //nolint:errcheck
 	if len(result.Prompts) == 0 {
@@ -237,7 +241,7 @@ func TestHTTPDispatch_PromptsGet_Unknown(t *testing.T) {
 func TestHTTPDispatch_ResourcesList(t *testing.T) {
 	dir := t.TempDir()
 	orig, _ := os.Getwd()
-	os.Chdir(dir) //nolint:errcheck
+	os.Chdir(dir)                        //nolint:errcheck
 	t.Cleanup(func() { os.Chdir(orig) }) //nolint:errcheck
 
 	out := dispatchJSON(t, "resources/list", nil)
@@ -305,12 +309,17 @@ func TestHTTPDispatch_ToolsCall_InvalidParams(t *testing.T) {
 
 // ---- httpMCPEndpoint (method routing) ---------------------------------------
 
-func TestHTTPMCPEndpoint_Delete(t *testing.T) {
-	req := httptest.NewRequest(http.MethodDelete, "/mcp", nil)
-	w := httptest.NewRecorder()
-	httpMCPEndpoint(w, req)
-	if w.Code != http.StatusNoContent {
-		t.Errorf("expected 204 for DELETE, got %d", w.Code)
+// DELETE used to end an Mcp-Session-Id session (204). Sessions were removed
+// in AIC-170, so DELETE — like GET, whose standalone SSE stream
+// subscriptions/listen replaced — is now 405.
+func TestHTTPMCPEndpoint_DeleteAndGet_405(t *testing.T) {
+	for _, m := range []string{http.MethodDelete, http.MethodGet} {
+		req := httptest.NewRequest(m, "/mcp", nil)
+		w := httptest.NewRecorder()
+		httpMCPEndpoint(w, req)
+		if w.Code != http.StatusMethodNotAllowed {
+			t.Errorf("%s: expected 405, got %d", m, w.Code)
+		}
 	}
 }
 
@@ -337,11 +346,11 @@ func TestHTTPMCPEndpoint_Post_Notification_Returns202(t *testing.T) {
 func TestHTTPDispatch_ResourcesRead_OK(t *testing.T) {
 	dir := t.TempDir()
 	orig, _ := os.Getwd()
-	os.Chdir(dir) //nolint:errcheck
+	os.Chdir(dir)                        //nolint:errcheck
 	t.Cleanup(func() { os.Chdir(orig) }) //nolint:errcheck
 
 	procDir := filepath.Join(dir, ".processes")
-	os.MkdirAll(procDir, 0755)                                                               //nolint:errcheck
+	os.MkdirAll(procDir, 0755)                                                            //nolint:errcheck
 	os.WriteFile(filepath.Join(procDir, "1_test.conv.json"), []byte(`{"ok":true}`), 0644) //nolint:errcheck
 
 	out := dispatchJSON(t, "resources/read", map[string]interface{}{
@@ -355,8 +364,8 @@ func TestHTTPDispatch_ResourcesRead_OK(t *testing.T) {
 func TestHTTPDispatch_ResourcesRead_NotFound(t *testing.T) {
 	dir := t.TempDir()
 	orig, _ := os.Getwd()
-	os.Chdir(dir) //nolint:errcheck
-	t.Cleanup(func() { os.Chdir(orig) }) //nolint:errcheck
+	os.Chdir(dir)                                       //nolint:errcheck
+	t.Cleanup(func() { os.Chdir(orig) })                //nolint:errcheck
 	os.MkdirAll(filepath.Join(dir, ".processes"), 0755) //nolint:errcheck
 
 	out := dispatchJSON(t, "resources/read", map[string]interface{}{

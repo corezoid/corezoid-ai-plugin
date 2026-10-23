@@ -558,33 +558,60 @@ func hostedHandlePost(w http.ResponseWriter, r *http.Request, token string, acce
 		_ = json.Unmarshal(req.Params, &p)
 		access.Tool = hostedClip(p.Name, 64)
 	}
-	resp := hostedDispatch(r.Context(), req, token)
+	var resp interface{}
+	if strings.HasPrefix(req.Method, "notifications/") {
+		resp = nil
+	} else if meta, metaErr := parseRequestMeta(req.Params); metaErr != nil || checkHTTPHeaders(r.Header, req, meta) != nil {
+		if metaErr == nil {
+			metaErr = checkHTTPHeaders(r.Header, req, meta)
+		}
+		access.Status = http.StatusBadRequest
+		writeHTTPJSONRPCStatus(w, http.StatusBadRequest, rpcResult(req.ID, nil, metaErr))
+		return
+	} else {
+		resp = hostedDispatch(r.Context(), req, token)
+	}
 	access.IsError = toolCallIsError(resp)
 	if resp == nil {
 		access.Status = http.StatusAccepted
 		w.WriteHeader(http.StatusAccepted)
 		return
 	}
+	if rr, ok := resp.(mcpResponse); ok {
+		access.Status = httpStatusFor(rr.Error)
+	}
 	writeHTTPJSONRPC(w, resp)
 }
 
 // hostedDispatch answers one JSON-RPC message. No session is minted or
 // required: every message stands on its own.
+//
+// Hosted mode never returns an InputRequiredResult (the MRTR state handle
+// lives in one replica's memory, and the only tool that elicits — login — is
+// not hosted) and serves no subscriptions/listen: nothing it lists can change
+// while it runs.
 func hostedDispatch(ctx context.Context, req mcpRequest, token string) interface{} {
+	if strings.HasPrefix(req.Method, "notifications/") {
+		return nil
+	}
+	meta, metaErr := parseRequestMeta(req.Params)
+	if metaErr != nil {
+		return rpcResult(req.ID, nil, metaErr)
+	}
 	switch req.Method {
 	case "initialize":
-		return mcpResponse{JSONRPC: "2.0", ID: req.ID, Result: hostedInitializeResult()}
-	case "ping":
-		return mcpResponse{JSONRPC: "2.0", ID: req.ID, Result: map[string]interface{}{}}
+		return rpcResult(req.ID, hostedInitializeResult(), nil)
+	case "server/discover":
+		return rpcResult(req.ID, discoverResult(hostedServerCapabilities()), nil)
 	case "tools/list":
-		return mcpResponse{JSONRPC: "2.0", ID: req.ID, Result: map[string]interface{}{"tools": hostedToolRegistry()}}
+		return rpcResult(req.ID, cacheableResult(map[string]interface{}{"tools": hostedToolRegistry()}, staticListTTLMs, cacheScopePub), nil)
 	case "tools/call":
-		var params struct {
-			Name      string                 `json:"name"`
-			Arguments map[string]interface{} `json:"arguments"`
-		}
+		var params toolCallParams
 		if err := json.Unmarshal(req.Params, &params); err != nil {
 			return httpJSONRPCError(req.ID, -32602, "invalid params")
+		}
+		if params.RequestState != "" {
+			return httpJSONRPCError(req.ID, -32602, "invalid params: requestState was not issued by this server")
 		}
 		if params.Arguments == nil {
 			params.Arguments = map[string]interface{}{}
@@ -595,32 +622,34 @@ func hostedDispatch(ctx context.Context, req mcpRequest, token string) interface
 		}
 		callCtx, cancel := context.WithTimeout(withHostedScope(ctx, hostedScope{Token: token, CompanyID: companyID, StageID: stageID}), httpToolCallTimeout)
 		defer cancel()
-		result, isErr := handleToolCall(callCtx, params.Name, params.Arguments)
-		return hostedToolResult(req.ID, result, isErr)
+		result, rpcErr := runToolCall(callCtx, params, meta, nil, false)
+		return rpcResult(req.ID, result, rpcErr)
 	default:
-		if req.ID == nil || strings.HasPrefix(req.Method, "notifications/") {
+		// Includes ping, removed in 2026-07-28.
+		if req.ID == nil {
 			return nil
 		}
-		return httpJSONRPCError(req.ID, -32601, "method not found: "+req.Method)
+		return rpcResult(req.ID, nil, methodNotFound(req.Method))
 	}
 }
 
 func hostedToolResult(id interface{}, text string, isErr bool) mcpResponse {
-	return mcpResponse{
-		JSONRPC: "2.0",
-		ID:      id,
-		Result:  mcpToolResult{Content: []mcpContent{{Type: "text", Text: text}}, IsError: isErr},
-	}
+	return mcpResponse{JSONRPC: "2.0", ID: id, Result: newToolResult(text, isErr)}
 }
 
-// hostedInitializeResult advertises tools only: resources and prompts point
+// hostedServerCapabilities advertises tools only: resources and prompts point
 // at local workspace files and workflows that do not exist on the server.
+func hostedServerCapabilities() map[string]interface{} {
+	return map[string]interface{}{"tools": map[string]interface{}{}}
+}
+
+// hostedInitializeResult answers a legacy client's optional initialize.
 func hostedInitializeResult() map[string]interface{} {
-	return map[string]interface{}{
+	return completeResult(map[string]interface{}{
 		"protocolVersion": mcpProtocolVersion,
-		"capabilities":    map[string]interface{}{"tools": map[string]interface{}{}},
-		"serverInfo":      map[string]interface{}{"name": "convctl-mcp", "version": serverVersion()},
-	}
+		"capabilities":    hostedServerCapabilities(),
+		"serverInfo":      map[string]interface{}{"name": mcpServerName, "version": serverVersion()},
+	})
 }
 
 // tokenHasAudience reports whether token is a JWT whose aud claim (a string or
