@@ -1250,7 +1250,7 @@ var collapsedToolRegistry = []mcpTool{
 	// git mirror
 	{
 		Name:        "git-pull-context",
-		Description: "Clone or pull the Corezoid git mirror for the current workspace into .git-context/. Requires git_url, api_login, and api_secret to be set in the current Folder in ~/.corezoid/config.json. Silently skipped if not configured.",
+		Description: "Clone or pull the Corezoid git mirror for the current workspace into .git-context/. Requires git_url, api_login, and api_secret to be set in the current Folder in ~/.corezoid/config.json. Silently skipped if not configured. The result lists the stage path and which _ext/docs/*.md files exist.",
 		Annotations: toolHints(hintMutates, hintSafe, hintIdempotent, hintOpenWorld),
 		InputSchema: map[string]interface{}{
 			"type":       "object",

@@ -192,8 +192,29 @@ func handleGitPullContext(ctx context.Context, args map[string]interface{}) (str
 	}
 	if stagePath != "" {
 		msg += fmt.Sprintf("\nStage path: %s", stagePath)
+		msg += "\n" + describeStageDocs(gitContextDir(), stagePath)
 	}
 	return msg, false
+}
+
+// describeStageDocs reports which _ext/docs/ files exist in the stage, so the
+// caller reads only those instead of probing the standard set one by one —
+// on a new stage every probe failed with "file not found".
+func describeStageDocs(contextDir, stagePath string) string {
+	docsRel := stagePath + "/_ext/docs"
+	entries, err := os.ReadDir(filepath.Join(contextDir, filepath.FromSlash(docsRel)))
+	var files []string
+	if err == nil {
+		for _, e := range entries {
+			if !e.IsDir() && strings.HasSuffix(e.Name(), ".md") {
+				files = append(files, e.Name())
+			}
+		}
+	}
+	if len(files) == 0 {
+		return fmt.Sprintf("Context docs (%s/): none yet — first use, nothing to read; create files with update-context-file when there is content to record.", docsRel)
+	}
+	return fmt.Sprintf("Context docs (%s/): %s — read only these; any file not listed does not exist yet.",docsRel, strings.Join(files, ", "))
 }
 
 // gitPushCommitMessage returns the commit message of a git-push-context call.
