@@ -114,7 +114,7 @@ Use `show-task(process_id=..., ref="...")`. It is a single read-only lookup and 
 
 Do not scan with `list-node-tasks`: it pages one node at `limit`/`offset`, so on a node holding ~100k tasks finding one `ref` costs thousands of calls. And do not reach for `modify-task` with `deep_merge: true` to peek at the data — it writes the task back and needs modify rights, so it fails on immutable stages and for read-only callers.
 
-`list-task-history` needs the `task_id`, which `show-task` returns as `obj_id`.
+`list-task-history` accepts the same `ref` (or `task_id`) and resolves the `task_id` itself.
 
 ---
 
