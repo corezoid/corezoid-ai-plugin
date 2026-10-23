@@ -156,6 +156,7 @@ func resolveConflictWith(v *Executor, store conflictStore, procID int, localJSON
 
 	current := baselineFromServer(proc)
 	serverChanged := serverMovedSince(base, current)
+	contentDiffers := false // already proven by the equal-timestamp check below
 	// Equal-timestamp fallback: for list-sourced (pull-folder) or legacy
 	// (pre-Source-tag) baselines, serverMovedSince intentionally skips the
 	// sub-second version tiebreak because the two Version fields don't share
@@ -166,7 +167,7 @@ func resolveConflictWith(v *Executor, store conflictStore, procID int, localJSON
 	if !serverChanged && base.ChangeTime == current.ChangeTime && base.Source != baselineSourceDetail {
 		switch store.contentChangedSince(v, procID) {
 		case contentCheckChanged:
-			serverChanged = true
+			serverChanged, contentDiffers = true, true
 		case contentCheckNoAncestor:
 			// Legacy sidecars predate the ancestor snapshot, so the content diff
 			// has nothing to diff against. Blocking here is NOT an option: the
@@ -191,6 +192,20 @@ func resolveConflictWith(v *Executor, store conflictStore, procID int, localJSON
 	}
 	if !serverChanged {
 		return proceed() // in sync
+	}
+
+	// change_time also advances on commits that leave the scheme alone (a
+	// metadata or status touch, a re-save with identical content), so a moved
+	// version identity is a hint, not proof. When the live scheme still equals
+	// the ancestor recorded at pull, the server holds nothing this push could
+	// overwrite: blocking would only send the caller round a re-pull/merge loop
+	// or, worse, teach it to reach for overwrite_server_change. Every other
+	// outcome — a real diff, no ancestor, a failed export — keeps the block.
+	if !contentDiffers && store.contentChangedSince(v, procID) == contentCheckUnchanged {
+		notes = append(notes, fmt.Sprintf(
+			"Note: process #%d's server version moved since your pull (change_time %d → %d, version %d → %d), but its scheme and process fields are identical to what you pulled, so there is nothing this push could overwrite.",
+			procID, base.ChangeTime, current.ChangeTime, base.Version, current.Version))
+		return proceed()
 	}
 
 	// Server moved. Build a 3-way plan when we have the ancestor and can export
