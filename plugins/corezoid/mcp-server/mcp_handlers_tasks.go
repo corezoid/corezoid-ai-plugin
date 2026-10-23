@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sort"
+	"strconv"
 	"strings"
 )
 
@@ -132,17 +134,16 @@ func handleListTaskHistory(ctx context.Context, args map[string]interface{}) (st
 	return string(data), false
 }
 
-// defaultTaskValueLen caps every string value inside the task data that
-// list-node-tasks returns, so one oversized field (a base64 file, a raw API
-// response) cannot blow up the page.
-const defaultTaskValueLen = 200
-
 // nodeTaskView is the parsed shaping arguments of list-node-tasks.
 //
 // The raw list returns every task's full data payload, so a page of ten tasks
 // could be 60 KB when the caller only wanted a status or one field. The
 // default view therefore drops data entirely and keeps the task metadata;
 // fields brings back only the named data paths, and full restores the payload.
+//
+// Truncation is opt-in (maxValue). Whatever fields or full return is what a
+// caller edits and sends back through modify-task, so a value cut by default
+// would be written into the task as its new, shortened content.
 type nodeTaskView struct {
 	full     bool
 	fields   []string
@@ -151,7 +152,7 @@ type nodeTaskView struct {
 }
 
 func parseNodeTaskView(args map[string]interface{}) (nodeTaskView, error) {
-	view := nodeTaskView{maxValue: defaultTaskValueLen}
+	var view nodeTaskView
 	switch mode := optStrArg(args, "mode"); mode {
 	case "", "compact":
 	case "full":
@@ -207,14 +208,39 @@ func dataPath(data map[string]interface{}, path string) (interface{}, bool) {
 	return cur, true
 }
 
+// scalarText is the text form of a JSON string, number or boolean. A set_param
+// value is a string unless its type is set, while callers pass ids as numbers,
+// so a filter that compared types would report {"chat_id": 42} as absent from
+// a task holding "42".
+func scalarText(v interface{}) (string, bool) {
+	switch val := v.(type) {
+	case string:
+		return val, true
+	case float64:
+		return strconv.FormatFloat(val, 'f', -1, 64), true
+	case bool:
+		return strconv.FormatBool(val), true
+	}
+	return "", false
+}
+
 // filterMatches reports whether every filter path is present in data and
-// equal to the expected value. Numbers are compared by value so 42 matches
-// 42.0; any other type must be equal by its JSON encoding.
+// equal to the expected value. Scalars are compared by their text form, so 42
+// matches both 42.0 and "42"; objects, arrays and null must be equal by their
+// JSON encoding.
 func filterMatches(data map[string]interface{}, filter map[string]interface{}) bool {
 	for path, want := range filter {
 		got, ok := dataPath(data, path)
 		if !ok {
 			return false
+		}
+		if g, ok := scalarText(got); ok {
+			if w, ok := scalarText(want); ok {
+				if g != w {
+					return false
+				}
+				continue
+			}
 		}
 		gotJSON, _ := json.Marshal(got)
 		wantJSON, _ := json.Marshal(want)
@@ -254,6 +280,11 @@ func truncateValues(v interface{}, max int) interface{} {
 	return v
 }
 
+// compact reports whether the view returns no data at all, only metadata.
+func (view nodeTaskView) compact() bool {
+	return !view.full && len(view.fields) == 0
+}
+
 // shapeTask applies the view to one task entry of the list. Every key other
 // than data is metadata (obj_id, ref, status, create_time, …) and is kept.
 func (view nodeTaskView) shapeTask(task map[string]interface{}) map[string]interface{} {
@@ -277,7 +308,6 @@ func (view nodeTaskView) shapeTask(task map[string]interface{}) map[string]inter
 		out["data"] = truncateValues(task["data"], view.maxValue)
 	default:
 		raw, _ := json.Marshal(task["data"])
-		out["data_keys"] = len(data)
 		out["data_bytes"] = len(raw)
 	}
 	return out
@@ -287,6 +317,12 @@ func (view nodeTaskView) shapeTask(task map[string]interface{}) map[string]inter
 // in place, applying the filter and the view. Each op gains "returned" and,
 // when a filter is set, "scanned" so the caller can tell how much of the page
 // the filter dropped.
+//
+// A compact op also gains "data_keys": the top-level data keys of the returned
+// tasks, sorted. Without the names a caller cannot write fields or filter and
+// would fall back to mode=full just to learn them. It is one list for the page
+// rather than one per task because tasks parked in one node mostly share their
+// keys, and a bot task can carry dozens of them.
 func (view nodeTaskView) shapeNodeTasks(resp map[string]interface{}) {
 	ops, _ := resp["ops"].([]interface{})
 	for _, o := range ops {
@@ -299,16 +335,18 @@ func (view nodeTaskView) shapeNodeTasks(resp map[string]interface{}) {
 			continue
 		}
 		shaped := make([]interface{}, 0, len(list))
+		keySet := map[string]struct{}{}
 		for _, t := range list {
 			task, ok := t.(map[string]interface{})
 			if !ok {
 				continue
 			}
-			if view.filter != nil {
-				data, _ := task["data"].(map[string]interface{})
-				if !filterMatches(data, view.filter) {
-					continue
-				}
+			data, _ := task["data"].(map[string]interface{})
+			if view.filter != nil && !filterMatches(data, view.filter) {
+				continue
+			}
+			for k := range data {
+				keySet[k] = struct{}{}
 			}
 			shaped = append(shaped, view.shapeTask(task))
 		}
@@ -316,6 +354,14 @@ func (view nodeTaskView) shapeNodeTasks(resp map[string]interface{}) {
 		op["returned"] = len(shaped)
 		if view.filter != nil {
 			op["scanned"] = len(list)
+		}
+		if view.compact() {
+			keys := make([]string, 0, len(keySet))
+			for k := range keySet {
+				keys = append(keys, k)
+			}
+			sort.Strings(keys)
+			op["data_keys"] = keys
 		}
 	}
 }

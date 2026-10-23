@@ -810,7 +810,7 @@ var collapsedToolRegistry = []mcpTool{
 	},
 	{
 		Name:        "list-node-tasks",
-		Description: "Return tasks currently sitting in a specific node of a process. This is a paged scan of one node, not a lookup — to find one task by ref or task_id use show-task instead. Output is compact by default: per task only metadata (obj_id, ref, status, timestamps, …) plus data_keys/data_bytes — use it for overviews, counts and 'did it reach this node' checks. Pass fields to read specific data paths, filter to keep only tasks whose data matches, and mode=full only when you need whole payloads.",
+		Description: "Return tasks currently sitting in a specific node of a process. This is a paged scan of one node, not a lookup — to find one task by ref or task_id use show-task instead. Output is compact by default: per task only metadata (obj_id, ref, status, timestamps, …) plus data_bytes, and per page data_keys — the top-level data keys of the returned tasks, to use in fields and filter. Use compact for overviews, counts and 'did it reach this node' checks. Pass fields to read specific data paths, filter to keep only tasks whose data matches, and mode=full only when you need whole payloads.",
 		Annotations: toolHints(hintReadOnly, hintSafe, hintIdempotent, hintOpenWorld),
 		InputSchema: map[string]interface{}{
 			"type": "object",
@@ -834,7 +834,7 @@ var collapsedToolRegistry = []mcpTool{
 				"mode": map[string]interface{}{
 					"type":        "string",
 					"enum":        []string{"compact", "full"},
-					"description": "compact (default): task metadata without data. full: include each task's whole data payload (long strings still truncated by max_value_length).",
+					"description": "compact (default): task metadata without data, plus the page's data_keys. full: include each task's whole data payload.",
 				},
 				"fields": map[string]interface{}{
 					"type":        "array",
@@ -843,11 +843,11 @@ var collapsedToolRegistry = []mcpTool{
 				},
 				"filter": map[string]interface{}{
 					"type":        "object",
-					"description": "Keep only tasks whose data equals these values, keyed by dot-separated path (e.g. {\"order_id\": \"A-17\"}). Applied to the fetched page only — returned/scanned counts show the effect; page with offset to search further.",
+					"description": "Keep only tasks whose data equals these values, keyed by dot-separated path (e.g. {\"order_id\": \"A-17\"}). Strings, numbers and booleans compare by text, so 42 matches \"42\". Applied to the fetched page only — returned/scanned counts show the effect; page with offset to search further.",
 				},
 				"max_value_length": map[string]interface{}{
 					"type":        "integer",
-					"description": "Truncate string values in returned data to this many characters (default 200, 0 = no truncation).",
+					"description": "Truncate string values in returned data to this many characters (default 0 = no truncation). A truncated value is not the task's data — never send it back through modify-task; read the task with show-task first.",
 				},
 			},
 			"required": []string{"process_id", "node_id"},

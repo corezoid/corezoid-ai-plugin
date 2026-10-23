@@ -1394,6 +1394,8 @@ func nodeTasksServer(t *testing.T, n int) {
 				"data": map[string]interface{}{
 					"order_id": fmt.Sprintf("A-%d", i),
 					"amount":   float64(i * 10),
+					// An untyped set_param stores numbers as strings.
+					"chat_id":  fmt.Sprintf("%d", 1000+i),
 					"customer": map[string]interface{}{"id": float64(i)},
 					"blob":     big,
 				},
@@ -1446,10 +1448,16 @@ func TestHandleToolCall_ListNodeTasks_CompactByDefault(t *testing.T) {
 	if _, ok := task["data"]; ok {
 		t.Error("compact task must not carry data")
 	}
-	for _, k := range []string{"obj_id", "ref", "status", "create_time", "data_keys", "data_bytes"} {
+	for _, k := range []string{"obj_id", "ref", "status", "create_time", "data_bytes"} {
 		if _, ok := task[k]; !ok {
 			t.Errorf("compact task missing %q", k)
 		}
+	}
+	// The key names are what fields and filter need; without them the caller
+	// has to fetch mode=full just to learn them.
+	keys, _ := json.Marshal(op["data_keys"])
+	if string(keys) != `["amount","blob","chat_id","customer","order_id"]` {
+		t.Errorf("op data_keys = %s, want the sorted top-level data keys", keys)
 	}
 }
 
@@ -1469,23 +1477,59 @@ func TestHandleToolCall_ListNodeTasks_FieldsAndFilter(t *testing.T) {
 	if data["order_id"] != "A-3" || data["customer.id"] != float64(3) || len(data) != 2 {
 		t.Errorf("fields: got data %v, want only order_id=A-3 and customer.id=3", data)
 	}
+	if _, ok := op["data_keys"]; ok {
+		t.Error("data_keys belongs to compact output only")
+	}
 }
 
-func TestHandleToolCall_ListNodeTasks_FullTruncates(t *testing.T) {
+// A filter must not miss a task because the caller typed the value as a
+// number and the task holds it as a string, or the other way round: the
+// caller would read returned=0 as "the task is not in this node".
+func TestHandleToolCall_ListNodeTasks_FilterIgnoresScalarType(t *testing.T) {
+	resetGlobals(t)
+	nodeTasksServer(t, 10)
+
+	for _, filter := range []map[string]interface{}{
+		{"chat_id": float64(1003)},
+		{"amount": "30"},
+		{"chat_id": "1003", "customer.id": float64(3)},
+	} {
+		op, _ := listNodeTasksOp(t, map[string]interface{}{"filter": filter})
+		list := op["list"].([]interface{})
+		if len(list) != 1 || list[0].(map[string]interface{})["ref"] != "ref-3" {
+			t.Errorf("filter %v: got %d tasks, want only ref-3", filter, len(list))
+		}
+	}
+
+	op, _ := listNodeTasksOp(t, map[string]interface{}{"filter": map[string]interface{}{"chat_id": float64(1003.5)}})
+	if n := len(op["list"].([]interface{})); n != 0 {
+		t.Errorf("filter chat_id=1003.5 matched %d tasks, want 0", n)
+	}
+}
+
+// mode=full and fields return values a caller edits and sends back through
+// modify-task, so they must be the task's real data unless truncation was
+// asked for: a value cut by default would be written back shortened.
+func TestHandleToolCall_ListNodeTasks_TruncationIsOptIn(t *testing.T) {
 	resetGlobals(t)
 	nodeTasksServer(t, 1)
 
-	op, _ := listNodeTasksOp(t, map[string]interface{}{"mode": "full"})
+	for _, args := range []map[string]interface{}{
+		{"mode": "full"},
+		{"fields": []interface{}{"blob"}},
+	} {
+		op, _ := listNodeTasksOp(t, args)
+		data := op["list"].([]interface{})[0].(map[string]interface{})["data"].(map[string]interface{})
+		if n := len(data["blob"].(string)); n != 6000 {
+			t.Errorf("%v: blob is %d bytes, want the whole 6000 without max_value_length", args, n)
+		}
+	}
+
+	op, _ := listNodeTasksOp(t, map[string]interface{}{"mode": "full", "max_value_length": float64(200)})
 	data := op["list"].([]interface{})[0].(map[string]interface{})["data"].(map[string]interface{})
 	blob := data["blob"].(string)
 	if len(blob) > 300 || !strings.Contains(blob, "truncated, 6000 chars total") {
-		t.Errorf("full mode should truncate long strings by default, got %d bytes", len(blob))
-	}
-
-	op, _ = listNodeTasksOp(t, map[string]interface{}{"mode": "full", "max_value_length": float64(0)})
-	data = op["list"].([]interface{})[0].(map[string]interface{})["data"].(map[string]interface{})
-	if len(data["blob"].(string)) != 6000 {
-		t.Errorf("max_value_length=0 should disable truncation")
+		t.Errorf("max_value_length=200 should truncate and mark the value, got %d bytes", len(blob))
 	}
 }
 
