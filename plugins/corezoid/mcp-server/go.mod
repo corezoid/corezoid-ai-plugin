@@ -1,6 +1,6 @@
 module convctl
 
-go 1.26.9
+go 1.26.10
 
 require (
 	github.com/gofrs/flock v0.13.1
