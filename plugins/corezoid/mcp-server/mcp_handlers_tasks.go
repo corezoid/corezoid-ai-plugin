@@ -456,19 +456,25 @@ func handleModifyTask(ctx context.Context, args map[string]interface{}) (string,
 	if err != nil {
 		return "Error: " + err.Error(), true
 	}
-	dataStr, err := strArg(args, "data")
-	if err != nil {
-		return "Error: " + err.Error(), true
+	// Task data is structured, so callers naturally send it as an object;
+	// accept that as well as the original JSON-string form.
+	var taskData map[string]interface{}
+	switch d := args["data"].(type) {
+	case map[string]interface{}:
+		taskData = d
+	case string:
+		if err := json.Unmarshal([]byte(d), &taskData); err != nil {
+			return fmt.Sprintf("Error parsing data JSON: %v", err), true
+		}
+	case nil:
+		return "Error: missing required argument: data", true
+	default:
+		return fmt.Sprintf("Error: argument data must be a JSON object or a JSON object string, got %T", d), true
 	}
 	taskID, _ := args["task_id"].(string)
 	ref, _ := args["ref"].(string)
 	if taskID == "" && ref == "" {
 		return "Error: at least one of task_id or ref must be provided", true
-	}
-
-	var taskData map[string]interface{}
-	if err := json.Unmarshal([]byte(dataStr), &taskData); err != nil {
-		return fmt.Sprintf("Error parsing data JSON: %v", err), true
 	}
 
 	// deep_merge decides whether this is a merge or a wholesale replace, so it

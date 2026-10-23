@@ -99,7 +99,7 @@ var toolRouters = []toolRouter{
 			"Pick an action, pass its arguments in args. To CREATE a task use run-task.",
 		Actions: []routerAction{
 			{"show-task", "current state of one task (data, node_id, status) by task_id and/or ref"},
-			{"modify-task", "change a task's data; deep_merge=true merges instead of replacing"},
+			{"modify-task", "change a task's data (object or JSON string); deep_merge=true merges instead of replacing"},
 			{"delete-task", "delete a task from a process (destructive)"},
 			{"list-node-tasks", "tasks currently parked in a node"},
 			{"list-task-history", "the node path a task has taken, by task_id and/or ref"},

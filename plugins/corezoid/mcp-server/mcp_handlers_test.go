@@ -1130,6 +1130,52 @@ func TestHandleToolCall_ModifyTask_BadDataJSON(t *testing.T) {
 	_ = result
 }
 
+// Task data is structured, so models pass it through the cz-tasks router as an
+// object; that used to fail with "must be a string" and cost a retry with the
+// same data serialized. Both forms must reach the API as the same object.
+func TestHandleToolCall_ModifyTask_DataObjectOrString(t *testing.T) {
+	for name, data := range map[string]interface{}{
+		"object": map[string]interface{}{"status": "paid", "amount": float64(21)},
+		"string": `{"status":"paid","amount":21}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			resetGlobals(t)
+			seen := mockShowTaskServer(t, map[string]interface{}{"proc": "ok", "obj_id": "task-555"})
+
+			result, isErr := handleToolCall(context.Background(), "cz-tasks", map[string]interface{}{
+				"action": "modify-task",
+				"args":   map[string]interface{}{"process_id": float64(123), "ref": "REF_1", "data": data},
+			})
+			if isErr {
+				t.Fatalf("expected success, got error: %q", result)
+			}
+			if len(*seen) != 1 {
+				t.Fatalf("expected a single modify op, got %v", *seen)
+			}
+			got, _ := (*seen)[0]["data"].(map[string]interface{})
+			if got["status"] != "paid" || got["amount"] != float64(21) || len(got) != 2 {
+				t.Errorf("modify op data = %v, want {status:paid amount:21}", (*seen)[0]["data"])
+			}
+		})
+	}
+}
+
+func TestHandleToolCall_ModifyTask_DataWrongType(t *testing.T) {
+	resetGlobals(t)
+	seen := mockShowTaskServer(t, map[string]interface{}{"proc": "ok"})
+	result, isErr := handleToolCall(context.Background(), "modify-task", map[string]interface{}{
+		"process_id": float64(123),
+		"task_id":    "abc",
+		"data":       []interface{}{"a"},
+	})
+	if !isErr || !strings.Contains(result, "data") {
+		t.Errorf("expected an error naming data for an array, got %q", result)
+	}
+	if len(*seen) != 0 {
+		t.Errorf("no request may be sent for unreadable data, got %v", *seen)
+	}
+}
+
 // ---- deepMerge unit tests ---------------------------------------------------
 
 func TestDeepMerge_ShallowScalar(t *testing.T) {
