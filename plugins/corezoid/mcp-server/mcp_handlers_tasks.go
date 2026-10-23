@@ -92,17 +92,30 @@ func handleShowTask(ctx context.Context, args map[string]interface{}) (string, b
 
 // handleListTaskHistory dumps the raw transition history for a given task.
 // The response is forwarded verbatim so callers can inspect every step.
+// The history op only keys on obj_id, so a bare ref is first resolved through
+// the read-only show-task lookup — the same addressing show-task accepts.
 func handleListTaskHistory(ctx context.Context, args map[string]interface{}) (string, bool) {
 	processID, err := intArg(args, "process_id")
 	if err != nil {
 		return "Error: " + err.Error(), true
 	}
-	taskID, err := strArg(args, "task_id")
-	if err != nil {
-		return "Error: " + err.Error(), true
+	taskID, _ := args["task_id"].(string)
+	ref, _ := args["ref"].(string)
+	if taskID == "" && ref == "" {
+		return "Error: at least one of task_id or ref must be provided", true
 	}
 
 	v := NewValidator(ctx, processID)
+	if taskID == "" {
+		snap, err := showTask(v, processID, "", ref)
+		if err != nil {
+			return fmt.Sprintf("Error resolving task by ref: %v", err), true
+		}
+		if snap.ObjID == "" {
+			return "Error resolving task by ref: show-task returned no obj_id", true
+		}
+		taskID = snap.ObjID
+	}
 	ops := []map[string]any{
 		{
 			"type":    "list",

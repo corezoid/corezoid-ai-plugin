@@ -1188,6 +1188,98 @@ func TestHandleToolCall_ListTaskHistory_MissingArg(t *testing.T) {
 	_ = result
 }
 
+func TestHandleToolCall_ListTaskHistory_MissingRefAndTaskID(t *testing.T) {
+	resetGlobals(t)
+	mockTaskHistoryServer(t)
+	result, isErr := handleToolCall(context.Background(), "list-task-history", map[string]interface{}{
+		"process_id": float64(123),
+	})
+	if !isErr || !strings.Contains(result, "task_id or ref") {
+		t.Errorf("expected an error naming both identifiers, got isErr=%v %q", isErr, result)
+	}
+}
+
+// mockTaskHistoryServer answers show-task ops with a fixed obj_id and
+// task_history ops with a one-step history, recording every op it was sent.
+func mockTaskHistoryServer(t *testing.T) *[]map[string]interface{} {
+	t.Helper()
+	var seen []map[string]interface{}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Ops []map[string]interface{} `json:"ops"`
+		}
+		json.NewDecoder(r.Body).Decode(&body) //nolint:errcheck
+		seen = append(seen, body.Ops...)
+		reply := map[string]interface{}{"proc": "ok", "obj_id": "task-555", "node_id": "a1b2c3d4e5f60718293a4b5c"}
+		if len(body.Ops) > 0 && body.Ops[0]["obj"] == "task_history" {
+			reply = map[string]interface{}{"proc": "ok", "list": []interface{}{
+				map[string]interface{}{"node_id": "a1b2c3d4e5f60718293a4b5c", "node_prev_id": "history-step"},
+			}}
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{ //nolint:errcheck
+			"request_proc": "ok",
+			"ops":          []interface{}{reply},
+		})
+	}))
+	t.Cleanup(srv.Close)
+
+	origAccount := accountURL
+	accountURL = srv.URL
+	t.Cleanup(func() { accountURL = origAccount })
+
+	apiURL = srv.URL
+	apiToken = "test-token"
+	workspaceID = "1"
+	stageID = 10605
+	return &seen
+}
+
+// The history action must accept the same ref show-task does: called through
+// the cz-tasks router with a ref, it resolves the task_id via show and then
+// asks for the history of that task_id.
+func TestHandleToolCall_ListTaskHistory_ByRefViaRouter(t *testing.T) {
+	resetGlobals(t)
+	seen := mockTaskHistoryServer(t)
+
+	result, isErr := handleToolCall(context.Background(), "cz-tasks", map[string]interface{}{
+		"action": "list-task-history",
+		"args":   map[string]interface{}{"process_id": float64(123), "ref": "REF_98765"},
+	})
+	if isErr {
+		t.Fatalf("expected success, got error: %q", result)
+	}
+	if !strings.Contains(result, "history-step") {
+		t.Errorf("expected the history in the result, got %s", result)
+	}
+	if len(*seen) != 2 {
+		t.Fatalf("expected a show op then a history op, got %d ops: %v", len(*seen), *seen)
+	}
+	show, hist := (*seen)[0], (*seen)[1]
+	if show["obj"] != "task" || show["ref"] != "REF_98765" {
+		t.Errorf("first op must resolve the ref via show-task, got %v", show)
+	}
+	if hist["obj"] != "task_history" || hist["obj_id"] != "task-555" {
+		t.Errorf("history op must use the resolved task_id, got %v", hist)
+	}
+}
+
+// With task_id given, no resolve round-trip is made.
+func TestHandleToolCall_ListTaskHistory_ByTaskIDSkipsLookup(t *testing.T) {
+	resetGlobals(t)
+	seen := mockTaskHistoryServer(t)
+
+	result, isErr := handleToolCall(context.Background(), "list-task-history", map[string]interface{}{
+		"process_id": float64(123), "task_id": "task-777", "ref": "REF_98765",
+	})
+	if isErr {
+		t.Fatalf("expected success, got error: %q", result)
+	}
+	if len(*seen) != 1 || (*seen)[0]["obj"] != "task_history" || (*seen)[0]["obj_id"] != "task-777" {
+		t.Errorf("expected a single history op for task-777, got %v", *seen)
+	}
+}
+
 func TestHandleToolCall_ListNodeTasks_MissingArg(t *testing.T) {
 	resetGlobals(t)
 	result, isErr := handleToolCall(context.Background(), "list-node-tasks", map[string]interface{}{})

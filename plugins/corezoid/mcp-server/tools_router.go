@@ -102,7 +102,7 @@ var toolRouters = []toolRouter{
 			{"modify-task", "change a task's data; deep_merge=true merges instead of replacing"},
 			{"delete-task", "delete a task from a process (destructive)"},
 			{"list-node-tasks", "tasks currently parked in a node"},
-			{"list-task-history", "the node path a task has taken"},
+			{"list-task-history", "the node path a task has taken, by task_id and/or ref"},
 			{"get-node-stat", "in/out counts for a node over a time range"},
 		},
 	},

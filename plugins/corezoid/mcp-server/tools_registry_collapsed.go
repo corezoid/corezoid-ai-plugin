@@ -855,7 +855,7 @@ var collapsedToolRegistry = []mcpTool{
 	},
 	{
 		Name:        "list-task-history",
-		Description: "Return the execution history (node path) for a task. Shows each node transition with node_id, node_prev_id, create_time_ms. NOTE: the Corezoid API does not record data snapshots — the data field is always null in history entries. To inspect the current data payload, use show-task (read-only); it also resolves the task_id this tool requires from a ref.",
+		Description: "Return the execution history (node path) for a task. Shows each node transition with node_id, node_prev_id, create_time_ms. NOTE: the Corezoid API does not record data snapshots — the data field is always null in history entries. To inspect the current data payload, use show-task (read-only). Address the task by task_id and/or ref, as with show-task; when both are given task_id wins.",
 		Annotations: toolHints(hintReadOnly, hintSafe, hintIdempotent, hintOpenWorld),
 		InputSchema: map[string]interface{}{
 			"type": "object",
@@ -866,10 +866,20 @@ var collapsedToolRegistry = []mcpTool{
 				},
 				"task_id": map[string]interface{}{
 					"type":        "string",
+					"minLength":   1,
 					"description": "Task ID (obj_id) to retrieve history for",
 				},
+				"ref": map[string]interface{}{
+					"type":        "string",
+					"minLength":   1,
+					"description": "Task reference string; resolved to the task_id internally",
+				},
 			},
-			"required": []string{"process_id", "task_id"},
+			"required": []string{"process_id"},
+			"anyOf": []map[string]interface{}{
+				{"required": []string{"task_id"}},
+				{"required": []string{"ref"}},
+			},
 		},
 	},
 	{
