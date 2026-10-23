@@ -76,6 +76,23 @@ func TestSchemaRequiredList_BothShapes(t *testing.T) {
 	}
 }
 
+// Some clients fill a call to a tool with no required arguments with a dummy
+// "random_string" argument; rejecting it cost every init a failed login (#229).
+func TestUnknownArgsError_PlaceholderIgnoredWithoutRequiredArgs(t *testing.T) {
+	if msg := unknownArgsError("login", map[string]interface{}{"random_string": "x"}); msg != "" {
+		t.Errorf("random_string placeholder must be accepted for login, got: %s", msg)
+	}
+	// A tool with required arguments still rejects it: there the placeholder
+	// stands in for an argument the call is actually missing.
+	if msg := unknownArgsError("create-process", map[string]interface{}{"process_name": "x", "random_string": "x"}); msg == "" {
+		t.Error("random_string must still be rejected for a tool with required arguments")
+	}
+	// Any other invented name is still an error.
+	if msg := unknownArgsError("login", map[string]interface{}{"service": "corezoid"}); msg == "" {
+		t.Error("unknown arguments other than the placeholder must still be rejected for login")
+	}
+}
+
 // git-push-context accepts "message" as an alias for "commit_message" — models
 // reach for git's name first, and rejecting it cost every push a retry (#218).
 func TestGitPushContext_MessageAlias(t *testing.T) {

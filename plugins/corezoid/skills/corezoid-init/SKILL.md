@@ -14,7 +14,7 @@ You are a specialist in setting up the Corezoid working environment using the `c
 
 ## Step 1 — Call `login`
 
-Call MCP tool **`login`** with no arguments. It will guide setup in one of two modes depending on whether the client supports MCP elicitation.
+Call MCP tool **`login`** with no arguments — an empty argument object `{}`. All its parameters are optional; do not invent a placeholder argument. It will guide setup in one of two modes depending on whether the client supports MCP elicitation.
 
 ---
 

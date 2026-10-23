@@ -421,7 +421,7 @@ var coreToolDefs = []mcpTool{
 	},
 	{
 		Name:        "login",
-		Description: "Authenticate with Corezoid. Supports two auth methods: (1) OAuth2 browser flow — opens a browser window and saves the token so it persists across sessions; (2) API key — provide api_login and api_secret to skip the browser flow. All credentials are saved per-folder to ~/.corezoid/config.json (file mode 0600, keyed by the working directory). Optionally accepts account_url, workspace_id, and stage_id to skip interactive prompts.",
+		Description: "Authenticate with Corezoid. Supports two auth methods: (1) OAuth2 browser flow — opens a browser window and saves the token so it persists across sessions; (2) API key — provide api_login and api_secret to skip the browser flow. All credentials are saved per-folder to ~/.corezoid/config.json (file mode 0600, keyed by the working directory). Optionally accepts account_url, workspace_id, and stage_id to skip interactive prompts. Every parameter is optional: for a normal setup call it with no arguments ({}).",
 		Annotations: toolHints(hintMutates, hintSafe, hintNonIdempotent, hintOpenWorld),
 		InputSchema: map[string]interface{}{
 			"type": "object",
