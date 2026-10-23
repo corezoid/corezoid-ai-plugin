@@ -161,7 +161,7 @@ func loadConfig() {
 // runCLI executes a single MCP tool from the command line and exits.
 // Usage: <binary> <tool-name> [key=value ...]
 // For pull-folder: folder_id defaults to the current Folder's stage_id in
-// ~/.corezoid/config.json; path defaults to cwd.
+// ~/.corezoid/config.json (the handler applies it); path defaults to cwd.
 // example export COREZOID_WORK_DIR="$PWD"; cd "/Users/mac/work/sources/corezoid-ai-doc/plugins/corezoid/mcp-server" && go run . pull-process process_id=1832359 && cd $COREZOID_WORK_DIR
 func runCLI(toolName string, rawArgs []string) {
 	args := make(map[string]interface{}, len(rawArgs))
@@ -180,7 +180,8 @@ func runCLI(toolName string, rawArgs []string) {
 		os.Exit(1)
 	}
 	// Apply env-based defaults so folder tools work with zero arguments —
-	// but only where the schema REQUIRES folder_id (pull-folder & friends).
+	// but only where the schema REQUIRES folder_id. pull-folder declares it
+	// optional and falls back to the selected stage itself.
 	// Injecting it blindly into every call passed a junk argument to tools
 	// like login, and would silently redirect create-process away from its
 	// documented directory-based target resolution.

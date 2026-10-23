@@ -108,17 +108,16 @@ var coreToolDefs = []mcpTool{
 	},
 	{
 		Name:        "pull-folder",
-		Description: "Recursively export all processes from a Corezoid folder/stage to a local directory. Pass folder_id=0 for \"No Project\" mode (workspace-root pull): downloads every top-level folder / process / dashboard in the workspace.",
+		Description: "Recursively export all processes from a Corezoid folder/stage to a local directory. Pass folder_id=0 for \"No Project\" mode (workspace-root pull): downloads every top-level folder / process / dashboard in the workspace. Omit folder_id to re-pull the stage selected at login.",
 		Annotations: toolHints(hintReadOnly, hintSafe, hintIdempotent, hintOpenWorld),
 		InputSchema: map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
 				"folder_id": map[string]interface{}{
 					"type":        "integer",
-					"description": "Corezoid folder(stage) ID to export. Use 0 to pull the entire workspace root (\"No Project\" mode).",
+					"description": "Corezoid folder(stage) ID to export. Omit to pull the stage selected at login (an error if none is selected). Use 0 to pull the entire workspace root (\"No Project\" mode).",
 				},
 			},
-			"required": []string{"folder_id"},
 		},
 	},
 	{
