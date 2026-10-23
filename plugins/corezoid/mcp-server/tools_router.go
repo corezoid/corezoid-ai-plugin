@@ -96,6 +96,7 @@ var toolRouters = []toolRouter{
 	{
 		Name: "cz-tasks",
 		Description: "Inspect and edit tasks already inside a deployed process: read one, edit its data, delete it, list what sits in a node, replay its path, read node statistics. " +
+			"Every action identifies the process by process_id (the API's conv_id; conv_id is accepted as an alias). " +
 			"Pick an action, pass its arguments in args. To CREATE a task use run-task.",
 		Actions: []routerAction{
 			{"show-task", "current state of one task (data, node_id, status) by task_id and/or ref"},

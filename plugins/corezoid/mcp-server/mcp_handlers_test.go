@@ -1224,6 +1224,24 @@ func TestHandleToolCall_ListTaskHistory_MissingRefAndTaskID(t *testing.T) {
 	}
 }
 
+// conv_id is the Corezoid API's name for a process id; cz-tasks actions accept
+// it as an alias of process_id instead of rejecting it as unknown.
+func TestHandleToolCall_ListTaskHistory_ConvIDAliasViaRouter(t *testing.T) {
+	resetGlobals(t)
+	seen := mockTaskHistoryServer(t)
+
+	result, isErr := handleToolCall(context.Background(), "cz-tasks", map[string]interface{}{
+		"action": "list-task-history",
+		"args":   map[string]interface{}{"conv_id": float64(123), "task_id": "task-777"},
+	})
+	if isErr {
+		t.Fatalf("conv_id must be accepted as process_id, got error: %q", result)
+	}
+	if len(*seen) != 1 || fmt.Sprint((*seen)[0]["conv_id"]) != "123" {
+		t.Errorf("history op must target conv 123, got %v", *seen)
+	}
+}
+
 // mockTaskHistoryServer answers show-task ops with a fixed obj_id and
 // task_history ops with a one-step history, recording every op it was sent.
 func mockTaskHistoryServer(t *testing.T) *[]map[string]interface{} {
