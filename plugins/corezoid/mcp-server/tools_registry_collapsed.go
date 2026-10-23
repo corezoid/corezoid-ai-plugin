@@ -766,8 +766,8 @@ var collapsedToolRegistry = []mcpTool{
 					"description": "Corezoid process (conv) ID",
 				},
 				"data": map[string]interface{}{
-					"type":        "string",
-					"description": "JSON string with fields to merge into the task. Each top-level key overwrites the full existing value at that key (shallow merge). Use deep_merge: true to recursively preserve existing sub-keys inside nested objects.",
+					"type":        []string{"object", "string"},
+					"description": "Fields to merge into the task, as a JSON object (e.g. {\"status\": \"paid\"}) or the same object serialized to a JSON string. Each top-level key overwrites the full existing value at that key (shallow merge). Use deep_merge: true to recursively preserve existing sub-keys inside nested objects.",
 				},
 				"task_id": map[string]interface{}{
 					"type":        "string",
