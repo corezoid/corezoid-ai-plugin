@@ -1876,9 +1876,10 @@ func TestHandleRunTask_ProcessIDWithoutLocalFile(t *testing.T) {
 	}
 }
 
-// runTaskParkedServer serves a deployed process whose task stays on a delay
-// node, recording each operation it receives.
-func runTaskParkedServer(t *testing.T, operations *[]string) string {
+// runTaskParkedServer serves a deployed process with one node of each kind
+// run-task tells apart, keeps the task on taskNodeID, and records each
+// operation it receives.
+func runTaskParkedServer(t *testing.T, operations *[]string, taskNodeID string) string {
 	t.Helper()
 	srv, _ := mockAPIServer(t, func(ops []map[string]interface{}) interface{} {
 		obj, _ := ops[0]["obj"].(string)
@@ -1892,8 +1893,22 @@ func runTaskParkedServer(t *testing.T, operations *[]string) string {
 					"proc": "ok",
 					"list": []interface{}{map[string]interface{}{
 						"scheme": map[string]interface{}{"nodes": []interface{}{
-							map[string]interface{}{"id": "server-delay", "title": "Wait", "obj_type": float64(0)},
+							map[string]interface{}{"id": "server-delay", "title": "Wait", "obj_type": float64(0),
+								"condition": map[string]interface{}{"logics": []interface{}{}, "semaphors": []interface{}{
+									map[string]interface{}{"type": "time", "value": float64(60), "dimension": "sec", "to_node_id": "server-final"},
+								}}},
+							map[string]interface{}{"id": "server-state", "title": "Active users", "obj_type": float64(0),
+								"condition": map[string]interface{}{"logics": []interface{}{
+									map[string]interface{}{"type": "api_callback", "obj_id_path": "data.id"},
+									map[string]interface{}{"type": "go", "to_node_id": "server-final"},
+								}}},
+							map[string]interface{}{"id": "server-call", "title": "Call billing", "obj_type": float64(0),
+								"condition": map[string]interface{}{"logics": []interface{}{
+									map[string]interface{}{"type": "api_rpc", "conv_id": float64(456), "err_node_id": "server-error"},
+									map[string]interface{}{"type": "go", "to_node_id": "server-final"},
+								}}},
 							map[string]interface{}{"id": "server-final", "title": "Final", "obj_type": float64(2), "extra": `{"icon":""}`},
+							map[string]interface{}{"id": "server-error", "title": "Failed", "obj_type": float64(2), "extra": `{"icon":"error"}`},
 						}},
 					}},
 				}},
@@ -1904,7 +1919,7 @@ func runTaskParkedServer(t *testing.T, operations *[]string) string {
 			return map[string]interface{}{
 				"request_proc": "ok",
 				"ops": []interface{}{map[string]interface{}{
-					"proc": "ok", "obj_id": "task-1", "node_id": "server-delay", "data": map[string]interface{}{},
+					"proc": "ok", "obj_id": "task-1", "node_id": taskNodeID, "data": map[string]interface{}{},
 				}},
 			}
 		default:
@@ -1914,15 +1929,12 @@ func runTaskParkedServer(t *testing.T, operations *[]string) string {
 	return srv.URL
 }
 
-// A task that is still on a non-final node when wait_sec runs out (a delay,
-// timer, waiting or state node) was created and is progressing: run-task must
-// report it as in progress, not as a failed call (#216).
-func TestHandleRunTask_ParkedTaskIsNotAnError(t *testing.T) {
-	resetGlobals(t)
-	var operations []string
-	setProjectAuth(t, runTaskParkedServer(t, &operations))
-	t.Chdir(t.TempDir())
-
+// run-task must report a task still on a non-final node at the deadline as in
+// progress, not as a failed call (#216) — but only a node that holds tasks by
+// design may be called the expected outcome. A task stuck on a Call a Process
+// step is a real problem the summary has to name, and an error-icon final node
+// is still the one outcome reported as an error.
+func TestHandleRunTask_ReportsByNodeKind(t *testing.T) {
 	originalFirstPoll := runTaskFirstPollAfter
 	originalPollEvery := runTaskPollEvery
 	runTaskFirstPollAfter = time.Millisecond
@@ -1932,16 +1944,50 @@ func TestHandleRunTask_ParkedTaskIsNotAnError(t *testing.T) {
 		runTaskPollEvery = originalPollEvery
 	})
 
-	result, isErr := handleRunTask(context.Background(), map[string]interface{}{
-		"process_id": float64(123), "data": `{}`, "ref": "parked", "wait_sec": 1,
-	})
-	if isErr {
-		t.Fatalf("task parked on a non-final node must not be reported as an error: %s", result)
+	cases := []struct {
+		name, node string
+		wantErr    bool
+		want       []string
+		notWant    []string
+	}{
+		{name: "delay node", node: "server-delay",
+			want:    []string{"Status: in progress", "NodeName: Wait", "NodeType: waiting", "not an error", "TaskRef: parked", "TaskID: task-1"},
+			notWant: []string{"slow or stuck"}},
+		{name: "state node", node: "server-state",
+			want:    []string{"Status: in progress", "NodeName: Active users", "NodeType: waiting", "not an error"},
+			notWant: []string{"slow or stuck"}},
+		{name: "call process step", node: "server-call",
+			want:    []string{"Status: in progress", "NodeName: Call billing", "NodeType: logic (not final)", "slow or stuck"},
+			notWant: []string{"not an error", "expected outcome"}},
+		{name: "success final node", node: "server-final",
+			want: []string{"Task completed", "Status: completed", "NodeName: Final"}},
+		{name: "error final node", node: "server-error", wantErr: true,
+			want: []string{"Task failed: stopped at error node", "Status: failed", "NodeName: Failed"}},
 	}
-	for _, want := range []string{"Status: in progress", "NodeName: Wait", "TaskRef: parked", "TaskID: task-1"} {
-		if !strings.Contains(result, want) {
-			t.Errorf("result missing %q: %s", want, result)
-		}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			resetGlobals(t)
+			var operations []string
+			setProjectAuth(t, runTaskParkedServer(t, &operations, tc.node))
+			t.Chdir(t.TempDir())
+
+			result, isErr := handleRunTask(context.Background(), map[string]interface{}{
+				"process_id": float64(123), "data": `{}`, "ref": "parked", "wait_sec": 1,
+			})
+			if isErr != tc.wantErr {
+				t.Fatalf("isErr = %v, want %v: %s", isErr, tc.wantErr, result)
+			}
+			for _, want := range tc.want {
+				if !strings.Contains(result, want) {
+					t.Errorf("result missing %q: %s", want, result)
+				}
+			}
+			for _, bad := range tc.notWant {
+				if strings.Contains(result, bad) {
+					t.Errorf("result must not contain %q: %s", bad, result)
+				}
+			}
+		})
 	}
 }
 
@@ -1950,7 +1996,7 @@ func TestHandleRunTask_ParkedTaskIsNotAnError(t *testing.T) {
 func TestHandleRunTask_WaitSecZeroDoesNotPoll(t *testing.T) {
 	resetGlobals(t)
 	var operations []string
-	setProjectAuth(t, runTaskParkedServer(t, &operations))
+	setProjectAuth(t, runTaskParkedServer(t, &operations, "server-delay"))
 	t.Chdir(t.TempDir())
 
 	result, isErr := handleRunTask(context.Background(), map[string]interface{}{

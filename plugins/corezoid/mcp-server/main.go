@@ -477,6 +477,9 @@ type NodeInfo struct {
 	ServerID string `json:"server_id"`
 	Name     string `json:"name"`
 	Icon     string `json:"icon"`
+	// HoldsTasks marks a deployed node that keeps a task by design (state,
+	// callback, delay or storage node). Set only by loadRuntimeNodeMap.
+	HoldsTasks bool `json:"-"`
 }
 
 // LoadBinFromFile loads a JSON file and returns its content as a string

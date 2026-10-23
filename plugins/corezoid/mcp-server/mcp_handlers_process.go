@@ -1172,20 +1172,20 @@ func handleRunTask(ctx context.Context, args map[string]interface{}) (string, bo
 
 	nodeInfo, found := lookupNode(v, serverNodeID)
 	logger.Debug("Node info (found=%v): %+v", found, nodeInfo)
-	// A task still on a non-final node at the deadline is not a failure: the
-	// task was created and is progressing, and on a state diagram, storage
-	// process or delay/timer/waiting node it is meant to stay there. Only an
-	// error-icon final node is reported as an error.
+	// A task still on a non-final node at the deadline is not a failed call:
+	// the task was created and is live, so an isError would only invite a
+	// re-run that starts a second task. Only an error-icon final node is
+	// reported as an error. The wording still separates a node that holds
+	// tasks by design (state, callback, delay, storage) from a step that should
+	// have finished: a task parked on a reply-less api_rpc or a hung api call
+	// is a real problem, not "the expected outcome".
 	nodeType := "logic (not final)"
 	status := "in progress"
-	msg := fmt.Sprintf("Task created and in progress: after %ds it is at a non-final node. "+
-		"This is the expected outcome for state diagrams, storage processes and delay/timer/waiting nodes; it is not an error. "+
-		"Re-check later with cz-tasks {\"action\":\"show-task\"} (a single read-only lookup by ref or task_id) or its list-task-history action, "+
-		"re-run with a larger wait_sec if a final result was expected, or pass wait_sec 0 to skip waiting", waitSec)
+	recheck := "Re-check later with cz-tasks {\"action\":\"show-task\"} (a single read-only lookup by ref or task_id) or its list-task-history action"
 	isErr := false
-	if nodeInfo.Type == 1 {
-		nodeType = "start"
-	} else if nodeInfo.Type == 2 {
+	var msg string
+	switch {
+	case nodeInfo.Type == 2:
 		status = "completed"
 		nodeType = "end (Success)"
 		msg = "Task completed"
@@ -1195,6 +1195,17 @@ func handleRunTask(ctx context.Context, args map[string]interface{}) (string, bo
 			nodeType = "error node"
 			msg = "Task failed: stopped at error node"
 		}
+	case nodeInfo.HoldsTasks:
+		nodeType = "waiting (holds tasks by design)"
+		msg = fmt.Sprintf("Task created and waiting: after %ds it is on a node that holds tasks by design (a state, callback, delay or storage node). "+
+			"This is the expected outcome, not an error. %s, or pass wait_sec 0 to skip waiting", waitSec, recheck)
+	default:
+		if nodeInfo.Type == 1 {
+			nodeType = "start"
+		}
+		msg = fmt.Sprintf("Task created but not finished: after %ds it is still on a non-final node that does not hold tasks by design, "+
+			"so that step is slow or stuck (for example a called process that is paused or never replies, or an external API that does not answer). "+
+			"Inspect that node. %s; a re-run with a larger wait_sec starts a second task", waitSec, recheck)
 	}
 
 	summary := fmt.Sprintf("%s\nStatus: %s\nNodeID: %s\nNodeName: %s\nNodeType: %s\nProcessID: %d\nTaskRef: %s\nTaskID: %s\nData: %s",
@@ -1268,12 +1279,34 @@ func loadRuntimeNodeMap(v *Executor) error {
 		}
 		v.NodeIDMap[id] = NodeInfo{
 			Type: objType, ObjType: objType, ServerID: id, Name: title, Icon: icon,
+			HoldsTasks: nodeHoldsTasks(node),
 		}
 	}
 	if len(v.NodeIDMap) == 0 {
 		return fmt.Errorf("process %d returned no valid deployed nodes", v.ProcessID)
 	}
 	return nil
+}
+
+// nodeHoldsTasks reports whether a node keeps a task by design instead of
+// working on it and moving on: a state or Waiting for Callback node
+// (api_callback), a delay node (delay logic, or no logics and only a time
+// semaphore) or a storage node with no logics. run-task uses it to tell a task
+// that is meant to sit on a node from one stuck on a step that should finish.
+func nodeHoldsTasks(node map[string]interface{}) bool {
+	condition, _ := node["condition"].(map[string]interface{})
+	logics, _ := condition["logics"].([]interface{})
+	if len(logics) == 0 {
+		return true
+	}
+	for _, raw := range logics {
+		logic, _ := raw.(map[string]interface{})
+		switch logic["type"] {
+		case "api_callback", "delay":
+			return true
+		}
+	}
+	return false
 }
 
 // lookupNode resolves a server node ID against the validator's NodeIDMap,
