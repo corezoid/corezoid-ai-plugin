@@ -414,6 +414,36 @@ func TestHostedToolsHaveTitles(t *testing.T) {
 	}
 }
 
+// Hosted mode lists router actions as flat tools, so their schemas reach the
+// client as input_schema — the same rule TestToolsList_NoTopLevelSchemaCombinators
+// pins for stdio. show-task shipped with a top-level anyOf here in 3.10.0.
+func TestHostedToolsHaveNoTopLevelSchemaCombinators(t *testing.T) {
+	enableHostedForTest(t, "https://admin.corezoid.com")
+	for _, d := range hostedToolRegistry() {
+		raw, err := json.Marshal(d.InputSchema)
+		if err != nil {
+			t.Fatalf("marshal %s InputSchema: %v", d.Name, err)
+		}
+		var schema map[string]any
+		if err := json.Unmarshal(raw, &schema); err != nil {
+			t.Fatalf("%s InputSchema is not a JSON object: %v", d.Name, err)
+		}
+		for _, kw := range []string{"oneOf", "anyOf", "allOf"} {
+			if _, bad := schema[kw]; bad {
+				t.Errorf("%s: top-level %s in the hosted tools/list", d.Name, kw)
+			}
+		}
+	}
+	// Stripped on a copy: stdio help text still names the task_id/ref sets.
+	for _, d := range allToolDefs() {
+		if d.Name == "show-task" {
+			if _, ok := d.InputSchema.(map[string]interface{})["anyOf"]; !ok {
+				t.Fatal("hosted schema stripping mutated the shared registry")
+			}
+		}
+	}
+}
+
 // Hosted descriptions must not send the model to the local workspace: the
 // review scanners compare each description with what the tool can do there.
 func TestHostedDescriptionsHaveNoLocalReferences(t *testing.T) {

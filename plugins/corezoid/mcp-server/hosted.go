@@ -220,9 +220,32 @@ func hostedToolRegistry() []mcpTool {
 		if desc, ok := hostedDescriptions[d.Name]; ok {
 			d.Description = desc
 		}
-		defs = append(defs, withScopeArg(withHostedArgDescriptions(d)))
+		defs = append(defs, withScopeArg(withoutSchemaCombinators(withHostedArgDescriptions(d))))
 	}
 	return defs
+}
+
+// withoutSchemaCombinators returns a copy of d whose input schema has no
+// top-level oneOf, anyOf or allOf. On stdio a router-fronted schema is only
+// help text, so show-task and list-task-history keep their task_id/ref anyOf
+// there; listed here as flat tools it becomes an input_schema, and the
+// Anthropic API rejects every request of a session over one such tool. The
+// rule stays in each description and is enforced by the handler.
+func withoutSchemaCombinators(d mcpTool) mcpTool {
+	schema, ok := d.InputSchema.(map[string]interface{})
+	if !ok {
+		return d
+	}
+	copied := make(map[string]interface{}, len(schema))
+	for k, v := range schema {
+		switch k {
+		case "oneOf", "anyOf", "allOf":
+			continue
+		}
+		copied[k] = v
+	}
+	d.InputSchema = copied
+	return d
 }
 
 // hostedDescriptions replaces descriptions whose stdio wording points at the

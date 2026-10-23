@@ -27,8 +27,9 @@ func TestToolRegistryNoDuplicates(t *testing.T) {
 // rejects the entire request over one such tool — every message in the
 // session fails, not just calls to it. A full JSON Schema compiler accepts
 // these keywords, which is how run-task shipped with one in 3.4.0–3.7.0.
-// Router-fronted definitions are exempt: their schema is only served as help
-// text, never as an input_schema.
+// Router-fronted definitions are exempt here: on stdio their schema is only
+// served as help text. Hosted mode lists them as flat tools and strips the
+// combinators (TestHostedToolsHaveNoTopLevelSchemaCombinators).
 func TestToolsList_NoTopLevelSchemaCombinators(t *testing.T) {
 	for _, tool := range toolRegistry {
 		raw, err := json.Marshal(tool.InputSchema)
