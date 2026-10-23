@@ -2,6 +2,11 @@ name: CI
 
 on:
   workflow_call:
+  # PRs opened, pushed and merged by our own workers use GITHUB_TOKEN, and
+  # GitHub starts no pull_request or push run for events made with it. The
+  # issue worker dispatches this workflow on the PR branch instead, and the
+  # PR reviewer dispatches it on main after an auto-merge. Do not remove.
+  workflow_dispatch:
   push:
     branches: [main]
   pull_request:

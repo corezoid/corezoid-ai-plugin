@@ -35,6 +35,15 @@ name: Claude – PR reviewer (second line)
 #     at the end of its run. Also the manual escape hatch for maintainers
 #     to (re-)run the review on any PR, including forks.
 #
+# CI gate: main has no branch protection, so `gh pr merge --auto` merges at
+# once instead of waiting for checks. The Decide step therefore waits for
+# every check in CI_REQUIRED_CHECKS to pass on the reviewed commit, merges
+# that exact commit (--match-head-commit), and escalates on a failed check
+# or a timeout. Worker PRs get those checks from the ci.yml run the issue
+# worker dispatches on the branch; GitHub starts none for a GITHUB_TOKEN PR.
+# After an auto-merge, post-merge-ci dispatches ci.yml on main, since the
+# merge push made with GITHUB_TOKEN starts no push run either.
+#
 # Required secrets: ANTHROPIC_API_KEY
 # Required repo setting: Settings → General → Pull Requests → "Allow
 #   auto-merge" must be enabled. Without it `gh pr merge --auto` fails
@@ -53,6 +62,12 @@ on:
 env:
   AUTO_MERGE_MAX_SCORE: '7'
   HUMAN_REVIEWER: 'salimovartem'
+  # Job names from ci.yml that must pass on the reviewed commit before an
+  # auto-merge. Renaming a job there without updating this list makes every
+  # auto-merge escalate (fail-closed). "Dependency review" is left out: it
+  # runs only on pull_request, which worker PRs never get.
+  CI_REQUIRED_CHECKS: 'Validate JSON manifests,Docs link check,MCP server build & test,Go vulnerability scan'
+  CI_WAIT_MINUTES: '20'
 
 jobs:
   review:
@@ -64,6 +79,9 @@ jobs:
       contents: write        # needed for gh pr merge --auto in the Decide step
       pull-requests: write   # gh pr comment, gh pr edit
       issues: write          # gh pr edit --add-assignee
+      checks: read           # CI gate in the Decide step
+    outputs:
+      merged: ${{ steps.decide.outputs.merged }}
     steps:
       - name: Resolve and validate PR number
         id: pr
@@ -358,9 +376,10 @@ jobs:
               (must use `{{env_var[@name]}}`).
             - For Go changes: this is a STATIC review only — do NOT try
               to run `go build`, `go vet`, or `go test`. Those checks
-              run in the required `ci.yml` pipeline on the unprivileged
-              `pull_request` trigger. Read the code and reason about
-              correctness; rely on the CI gate for build/test proof.
+              run in the `ci.yml` pipeline, and the workflow merges only
+              after they pass on the commit you are reviewing. Read the
+              code and reason about correctness; rely on the CI gate for
+              build/test proof.
 
             ## Static-review constraint (security)
             This job runs with elevated permissions on potentially
@@ -495,11 +514,13 @@ jobs:
             --allowedTools "Bash(ls:*),Bash(wc:*),Read,Write,Glob,Grep"
 
       - name: Decide — merge or escalate
+        id: decide
         if: steps.prref.outputs.skip != 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PR_NUMBER: ${{ steps.pr.outputs.number }}
           IS_FORK: ${{ steps.prref.outputs.is_fork }}
+          HEAD_SHA: ${{ steps.prref.outputs.sha }}
         run: |
           set -euo pipefail
           findings="$(cat .review/findings.md 2>/dev/null || true)"
@@ -588,9 +609,65 @@ jobs:
             exit 0
           fi
 
-          # --- Case 3: no critical, small change — auto-merge ------------
+          # --- CI gate: the reviewed commit must pass ci.yml --------------
+          # Nothing else holds the merge back: main is unprotected, so
+          # `gh pr merge --auto` merges at once. Wait for every required
+          # check on HEAD_SHA (the commit reviewed above); only check runs
+          # from GitHub Actions count, so another app cannot post a passing
+          # check under the same name. A re-run replaces the earlier result.
+          ci="pending"
+          ci_detail=""
+          deadline=$(( $(date +%s) + CI_WAIT_MINUTES * 60 ))
+          while :; do
+            # A failed API call reads as "nothing yet" and is retried.
+            check_runs=$(gh api "repos/${GITHUB_REPOSITORY}/commits/${HEAD_SHA}/check-runs?per_page=100" \
+              --jq '[.check_runs[] | select(.app.slug == "github-actions")]') || check_runs='[]'
+            ci="success"
+            ci_detail=""
+            while IFS= read -r name; do
+              [ -n "$name" ] || continue
+              latest=$(jq -c --arg n "$name" \
+                '[.[] | select(.name == $n)] | sort_by(.started_at) | last' <<< "$check_runs")
+              if [ "$latest" = "null" ]; then
+                ci="pending"; ci_detail="$name has not started"
+              elif [ "$(jq -r '.status' <<< "$latest")" != "completed" ]; then
+                ci="pending"; ci_detail="$name is still running"
+              elif [ "$(jq -r '.conclusion' <<< "$latest")" != "success" ]; then
+                ci="failure"
+                ci_detail="$name: $(jq -r '.conclusion' <<< "$latest") ($(jq -r '.html_url' <<< "$latest"))"
+                break
+              fi
+            done <<< "$(tr ',' '\n' <<< "$CI_REQUIRED_CHECKS")"
+            [ "$ci" = "pending" ] || break
+            [ "$(date +%s)" -lt "$deadline" ] || break
+            sleep 30
+          done
+          echo "CI on $HEAD_SHA: $ci ${ci_detail}"
+
+          if [ "$ci" != "success" ]; then
+            echo "CI did not pass on the reviewed commit — escalating"
+            {
+              if [ "$severity" = "warning" ]; then
+                cat .review/findings.md
+                printf '\n---\n'
+              fi
+              if [ "$ci" = "failure" ]; then
+                printf 'Second-line review found no blockers, but CI failed on the reviewed commit %s: %s\n\n' "$HEAD_SHA" "$ci_detail"
+              else
+                printf 'Second-line review found no blockers, but CI did not finish on the reviewed commit %s within %s minutes (%s).\n\n' \
+                  "$HEAD_SHA" "$CI_WAIT_MINUTES" "$ci_detail"
+              fi
+              printf '**Change magnitude:** %s/10\n\n%s\n\n' "$score" "$reasons"
+              printf 'Not merged — assigned to @%s.\n' "$HUMAN_REVIEWER"
+            } > .review/comment.md
+            gh pr comment "$PR_NUMBER" --body-file .review/comment.md
+            gh pr edit "$PR_NUMBER" --add-assignee "$HUMAN_REVIEWER"
+            exit 0
+          fi
+
+          # --- Case 3: no critical, small change, CI green — auto-merge ---
           # If we have warnings, post them along with the auto-merge note.
-          echo "No blockers, score $score <= $AUTO_MERGE_MAX_SCORE — auto-merging"
+          echo "No blockers, score $score <= $AUTO_MERGE_MAX_SCORE, CI green — auto-merging"
           {
             if [ "$severity" = "warning" ]; then
               cat .review/findings.md
@@ -603,12 +680,35 @@ jobs:
               "$score" "$AUTO_MERGE_MAX_SCORE" "$reasons"
           } > .review/comment.md
           gh pr comment "$PR_NUMBER" --body-file .review/comment.md
-          # --auto waits for required status checks (branch protection).
-          # If it fails (auto-merge disabled in repo settings, protection
-          # blocks the token, etc.) we escalate rather than bypass CI.
-          if ! gh pr merge "$PR_NUMBER" --squash --auto --delete-branch; then
+          # --match-head-commit refuses the merge if the branch moved past
+          # the commit that was reviewed and passed CI. --auto waits for
+          # required checks only where branch protection defines them; on
+          # an unprotected main it merges at once, which the gate above
+          # makes safe. On failure (auto-merge disabled in repo settings,
+          # the branch moved, etc.) escalate rather than bypass the gate.
+          if ! gh pr merge "$PR_NUMBER" --squash --auto --delete-branch --match-head-commit "$HEAD_SHA"; then
             echo "::warning::gh pr merge --auto failed — escalating to @$HUMAN_REVIEWER"
             gh pr comment "$PR_NUMBER" --body \
-              "Auto-merge could not be enabled (auto-merge disabled in repo settings, or branch protection blocked the token). Assigned to @$HUMAN_REVIEWER for manual merge."
+              "Auto-merge could not be enabled (auto-merge disabled in repo settings, the branch moved past the reviewed commit $HEAD_SHA, or branch protection blocked the token). Assigned to @$HUMAN_REVIEWER for manual merge."
             gh pr edit "$PR_NUMBER" --add-assignee "$HUMAN_REVIEWER"
+            exit 0
           fi
+          if [ "$(gh pr view "$PR_NUMBER" --json state --jq '.state')" = "MERGED" ]; then
+            echo "merged=true" >> "$GITHUB_OUTPUT"
+          fi
+
+  # The squash merge above is pushed with GITHUB_TOKEN, which starts no push
+  # run on main, so main would carry an untested combination of this PR and
+  # whatever landed since its branch was cut. Kept in its own job so the
+  # review job, which runs a model over PR content, never holds actions:write.
+  post-merge-ci:
+    needs: review
+    if: needs.review.outputs.merged == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      actions: write         # gh workflow run
+    steps:
+      - name: Run CI on main after the auto-merge
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh workflow run ci.yml --repo "$GITHUB_REPOSITORY" --ref main

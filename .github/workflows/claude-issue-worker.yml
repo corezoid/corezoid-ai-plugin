@@ -224,11 +224,12 @@ jobs:
           claude_args: |
             --allowedTools "Bash(git:*),Bash(go:*),Bash(python3:*),Bash(cd:*),Bash(ls:*),Bash(cat:*),Bash(wc:*),Bash(jq:*),Read,Edit,Write,Glob,Grep"
 
-      - name: Tag PR as AI-processed and dispatch second-line reviewer
+      - name: Tag PR as AI-processed, dispatch CI and the second-line reviewer
         if: steps.guard.outputs.skip != 'true' && steps.pr.outputs.skip != 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PR_NUMBER: ${{ steps.pr.outputs.number }}
+          BRANCH: ${{ steps.issue.outputs.branch }}
         run: |
           set -euo pipefail
           # `ai` label on a PR is a visible signal that both sessions
@@ -236,6 +237,15 @@ jobs:
           # events only fire for issues, so this does NOT re-trigger the
           # worker.
           gh pr edit "$PR_NUMBER" --add-label ai
+          # The branch was pushed and the PR opened with GITHUB_TOKEN, so
+          # GitHub starts no CI for it (the pull_request run it shows fails
+          # before any job starts). Dispatch CI on the branch head, after
+          # the self-review's last push; the reviewer merges only once
+          # those checks pass on the commit it reviewed. A failed dispatch
+          # (e.g. a branch cut before ci.yml had workflow_dispatch) must not
+          # skip the review: without CI the reviewer escalates instead.
+          gh workflow run ci.yml --ref "$BRANCH" ||
+            echo "::warning::Could not dispatch CI on $BRANCH — the reviewer will escalate instead of merging"
           # GitHub blocks `pull_request: labeled` triggers when the label
           # was applied by GITHUB_TOKEN — so the pr-reviewer workflow
           # won't fire on its own. Dispatch it explicitly.
