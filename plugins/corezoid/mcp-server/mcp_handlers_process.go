@@ -1634,7 +1634,7 @@ func handleCreateFolder(ctx context.Context, args map[string]interface{}) (strin
 
 	v := NewValidator(ctx, 0)
 	markerWarning := ""
-	newFolderID, err := v.CreateFolder(parentFolderID, folderName, "")
+	newFolderID, err := v.CreateFolder(parentFolderID, folderName, optStrArg(args, "description"))
 	if err != nil {
 		return fmt.Sprintf("Error creating folder '%s': %v", folderName, err), true
 	}

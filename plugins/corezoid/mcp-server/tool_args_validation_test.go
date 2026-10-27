@@ -58,6 +58,58 @@ func TestApplyArgAliases_ConvID(t *testing.T) {
 	}
 }
 
+// The first create-folder call of a session used to name the parent
+// parent_folder_id and the folder title, and was spent on an unknown-argument
+// error. Those names now reach the handler as folder_id and folder_name.
+func TestApplyArgAliases_CreateFolder(t *testing.T) {
+	for _, in := range []map[string]interface{}{
+		{"parent_folder_id": float64(7), "title": "Orders", "description": "d"},
+		{"parent_id": float64(7), "name": "Orders"},
+	} {
+		out, msg := applyArgAliases("create-folder", in)
+		if msg != "" || out["folder_id"] != float64(7) || out["folder_name"] != "Orders" {
+			t.Errorf("%v: want folder_id=7 folder_name=Orders, got %v (%s)", in, out, msg)
+		}
+		if msg := unknownArgsError("create-folder", out); msg != "" {
+			t.Errorf("%v: aliased args must pass validation, got: %s", in, msg)
+		}
+	}
+
+	if _, msg := applyArgAliases("create-folder", map[string]interface{}{"parent_folder_id": 7, "folder_id": 8, "folder_name": "x"}); !strings.Contains(msg, "different values") {
+		t.Errorf("conflicting parent_folder_id/folder_id must be rejected, got %q", msg)
+	}
+
+	// title is modify-folder's own argument, not an alias there.
+	out, _ := applyArgAliases("modify-folder", map[string]interface{}{"folder_id": 1, "title": "x"})
+	if out["title"] != "x" || out["folder_name"] != nil {
+		t.Errorf("create-folder aliases must not leak into modify-folder, got %v", out)
+	}
+}
+
+func TestHandleToolCall_CreateFolderAliasesThroughRouter(t *testing.T) {
+	resetGlobals(t)
+	withAuthLock(func() {
+		apiToken = "test-token"
+		accountURL = "https://account.example"
+		apiURL = "https://api.example"
+		stageID = 1
+	})
+	// An empty parent_path directory has no folder marker, so the handler
+	// fails on target resolution — after argument validation, which is the
+	// part under test.
+	result, _ := handleToolCall(context.Background(), "cz-structure", map[string]interface{}{
+		"action": "create-folder",
+		"args": map[string]interface{}{
+			"parent_path": t.TempDir(),
+			"title":       "Orders",
+			"description": "order processes",
+		},
+	})
+	if strings.Contains(result, "unknown argument") {
+		t.Errorf("title/description must be accepted by create-folder, got: %s", result)
+	}
+}
+
 func TestUnknownArgsError_KnownArgsPass(t *testing.T) {
 	if msg := unknownArgsError("create-process", map[string]interface{}{
 		"process_name": "x", "folder_path": ".", "folder_id": 42,

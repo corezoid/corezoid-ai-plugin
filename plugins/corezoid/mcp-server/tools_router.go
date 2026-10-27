@@ -86,7 +86,7 @@ var toolRouters = []toolRouter{
 			{"list-folders", "immediate children of a folder: subfolders, processes, state diagrams"},
 			{"show-folder", "one folder's metadata: title, obj_type, parent"},
 			{"show-process", "one process's metadata: title, status, owner_id/owner_login, project_id/stage_id"},
-			{"create-folder", "create a folder inside a parent folder"},
+			{"create-folder", "create a folder inside a parent folder; args: folder_name, parent folder_id or parent_path, description"},
 			{"modify-folder", "rename a folder / change its description"},
 			{"delete-folder", "move a folder to Trash (destructive)"},
 			{"move-folder", "reparent a normal folder, keeping its id and descendants; apply=false dry-run first"},
