@@ -123,6 +123,20 @@ var argAliases = map[string]string{
 	"conv_id": "process_id",
 }
 
+// toolArgAliases are aliases that only make sense for one tool — "title" means
+// folder_name to create-folder but is a real argument of modify-folder. The
+// create-folder ones come from sessions where nearly every first call named
+// the parent parent_folder_id and the new folder's name title, and was spent
+// on the unknown-argument error.
+var toolArgAliases = map[string]map[string]string{
+	"create-folder": {
+		"parent_folder_id": "folder_id",
+		"parent_id":        "folder_id",
+		"title":            "folder_name",
+		"name":             "folder_name",
+	},
+}
+
 // applyArgAliases rewrites aliased argument names to their canonical form for
 // tools that declare the canonical name and not the alias. It returns the
 // (possibly copied) args, or a non-empty error message when both names are
@@ -133,8 +147,26 @@ func applyArgAliases(tool string, args map[string]interface{}) (map[string]inter
 	if !ok {
 		return args, ""
 	}
+	aliases := argAliases
+	if extra := toolArgAliases[tool]; len(extra) > 0 {
+		aliases = make(map[string]string, len(argAliases)+len(extra))
+		for a, c := range argAliases {
+			aliases[a] = c
+		}
+		for a, c := range extra {
+			aliases[a] = c
+		}
+	}
+	// Sorted so that two aliases of one canonical name given with different
+	// values are reported the same way every time.
+	names := make([]string, 0, len(aliases))
+	for alias := range aliases {
+		names = append(names, alias)
+	}
+	sort.Strings(names)
 	copied := false
-	for alias, canonical := range argAliases {
+	for _, alias := range names {
+		canonical := aliases[alias]
 		v, has := args[alias]
 		if !has || allowed[alias] || !allowed[canonical] {
 			continue

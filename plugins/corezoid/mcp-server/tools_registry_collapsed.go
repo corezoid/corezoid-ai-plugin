@@ -599,14 +599,14 @@ var collapsedToolRegistry = []mcpTool{
 	},
 	{
 		Name:        "create-folder",
-		Description: "Create a new folder inside a parent Corezoid folder.",
+		Description: "Create a new folder inside a parent Corezoid folder. The parent is folder_id (aliases: parent_folder_id, parent_id) or parent_path; the new folder's name is folder_name (aliases: title, name).",
 		Annotations: toolHints(hintMutates, hintSafe, hintNonIdempotent, hintOpenWorld),
 		InputSchema: map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
 				"folder_id": map[string]interface{}{
 					"type":        "integer",
-					"description": "Explicit Corezoid folder/stage ID to create the folder in; overrides parent_path resolution",
+					"description": "ID of the PARENT Corezoid folder/stage to create the folder in; overrides parent_path resolution",
 				},
 				"parent_path": map[string]interface{}{
 					"type":        "string",
@@ -614,7 +614,11 @@ var collapsedToolRegistry = []mcpTool{
 				},
 				"folder_name": map[string]interface{}{
 					"type":        "string",
-					"description": "Name for the new folder",
+					"description": "Name (title) for the new folder",
+				},
+				"description": map[string]interface{}{
+					"type":        "string",
+					"description": "Optional description for the new folder",
 				},
 			},
 			"required": []string{"folder_name"},
