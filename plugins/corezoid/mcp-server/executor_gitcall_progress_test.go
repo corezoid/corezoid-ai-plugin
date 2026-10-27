@@ -32,7 +32,7 @@ func TestBuildGitCallNodeRecordsLog(t *testing.T) {
 
 	v := &Executor{Ctx: context.Background(), Token: "t", APIUrl: "https://admin.corezoid.com"}
 	g := gitCallBuild{lang: "python", nodeServerID: "n1", nodeTitle: "my-fn"}
-	if err := v.buildGitCallNode(gitCallWSURL(v.APIUrl), g); err != nil {
+	if err := v.buildGitCallNode(v.wsTarget(), g); err != nil {
 		t.Fatalf("buildGitCallNode: %v", err)
 	}
 	joined := strings.Join(v.gitCallBuildLog, "\n")

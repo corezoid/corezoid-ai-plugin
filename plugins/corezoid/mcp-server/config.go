@@ -47,6 +47,11 @@ type Folder struct {
 	ExpiresAt    time.Time `json:"expires_at,omitempty"`
 	APILogin     string    `json:"api_login"`
 	APISecret    string    `json:"api_secret"`
+	// WSURL is the Git Call build / deploy progress WebSocket address
+	// (wss://<host>/api/1/sock_json). Hand-set for self-hosted installs where
+	// it cannot be derived from CorezoidURL; empty means "derive it". Read at
+	// use time (gitCallWSTarget), so an edit applies without a restart.
+	WSURL string `json:"ws_url,omitempty"`
 }
 
 // Config is the whole ~/.corezoid/config.json.

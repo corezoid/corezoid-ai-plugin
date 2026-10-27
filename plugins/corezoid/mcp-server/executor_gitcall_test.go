@@ -1,19 +1,41 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"os"
 	"regexp"
+	"strings"
 	"testing"
 )
 
+// stubWSHostResolves makes only the given hosts resolve for the test.
+func stubWSHostResolves(t *testing.T, hosts ...string) {
+	t.Helper()
+	orig := wsHostResolves
+	t.Cleanup(func() { wsHostResolves = orig })
+	known := map[string]bool{}
+	for _, h := range hosts {
+		known[h] = true
+	}
+	wsHostResolves = func(_ context.Context, host string) bool { return known[host] }
+}
+
 func TestGitCallWSURL(t *testing.T) {
-	// COREZOID_WS_URL override wins.
+	stubWSHostResolves(t, "ws.corezoid.com", "ws.eu.corezoid.com", "ws.corp-corezoid.example.org")
+	configured := func() string { return "wss://configured.example.com/api/1/sock_json" }
+
+	// COREZOID_WS_URL override wins, even over ws_url from the config.
 	t.Setenv("COREZOID_WS_URL", "wss://custom.example.com/api/1/sock_json")
-	if got := gitCallWSURL("https://admin.corezoid.com"); got != "wss://custom.example.com/api/1/sock_json" {
+	if got := resolveGitCallWSTarget(nil, configured, "https://admin.corezoid.com").url; got != "wss://custom.example.com/api/1/sock_json" {
 		t.Fatalf("override not honored: %q", got)
 	}
 	_ = os.Unsetenv("COREZOID_WS_URL")
+
+	// ws_url from the config wins over the derived address.
+	if got := resolveGitCallWSTarget(nil, configured, "https://admin.corezoid.com").url; got != "wss://configured.example.com/api/1/sock_json" {
+		t.Fatalf("configured ws_url not honored: %q", got)
+	}
 
 	cases := map[string]string{
 		"https://admin.corezoid.com":        "wss://ws.corezoid.com/api/1/sock_json",
@@ -23,9 +45,71 @@ func TestGitCallWSURL(t *testing.T) {
 		"":                                  "wss://ws.corezoid.com/api/1/sock_json",
 	}
 	for api, want := range cases {
-		if got := gitCallWSURL(api); got != want {
-			t.Errorf("gitCallWSURL(%q) = %q, want %q", api, got, want)
+		if got := resolveGitCallWSTarget(nil, nil, api).url; got != want {
+			t.Errorf("resolveGitCallWSTarget(%q) = %q, want %q", api, got, want)
 		}
+	}
+}
+
+// TestGitCallWSURL_SelfHostedFallsBackToAPIHost reproduces issue #237: a
+// self-hosted install has no ws.<domain> record, so the derived sibling host
+// cannot be dialled. The API host itself must be used instead.
+func TestGitCallWSURL_SelfHostedFallsBackToAPIHost(t *testing.T) {
+	t.Setenv("COREZOID_WS_URL", "")
+	stubWSHostResolves(t, "corezoid.corp.example", "admin.onprem.example")
+
+	cases := map[string]string{
+		"https://corezoid.corp.example":      "wss://corezoid.corp.example/api/1/sock_json",
+		"https://admin.onprem.example":       "wss://admin.onprem.example/api/1/sock_json",
+		"https://corezoid.corp.example:8443": "wss://corezoid.corp.example:8443/api/1/sock_json",
+	}
+	for api, want := range cases {
+		if got := resolveGitCallWSTarget(nil, nil, api).url; got != want {
+			t.Errorf("resolveGitCallWSTarget(%q) = %q, want %q", api, got, want)
+		}
+	}
+
+	// Nothing resolves: keep the primary guess, and say so in the source.
+	stubWSHostResolves(t)
+	got := resolveGitCallWSTarget(nil, nil, "https://corezoid.corp.example")
+	if got.url != "wss://ws.corezoid.corp.example/api/1/sock_json" || !strings.Contains(got.source, "did not resolve") {
+		t.Errorf("unresolvable target = %+v", got)
+	}
+}
+
+// TestBuildGitCallNode_DialErrorNamesAddressAndSetting: when the build socket
+// cannot be reached the error must name the address used and the settings
+// that override it, so the agent stops guessing (issue #237).
+func TestBuildGitCallNode_DialErrorNamesAddressAndSetting(t *testing.T) {
+	t.Setenv("COREZOID_WS_URL", "")
+	v := &Executor{Ctx: context.Background(), APIUrl: "https://corezoid.corp.example"}
+	target := gitCallWSTarget{url: "ws://127.0.0.1:1/api/1/sock_json", source: `derived from the API URL "https://corezoid.corp.example"`}
+	err := v.buildGitCallNode(target, gitCallBuild{nodeServerID: "n1", lang: "python"})
+	if err == nil {
+		t.Fatal("expected a dial error")
+	}
+	for _, want := range []string{"ws://127.0.0.1:1/api/1/sock_json", "derived from the API URL", `"ws_url"`, "~/.corezoid/config.json", "COREZOID_WS_URL"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("dial error missing %q:\n%v", want, err)
+		}
+	}
+}
+
+// TestWSTarget_ReadsConfiguredWSURL checks ws_url is taken from the current
+// workspace's config entry at use time.
+func TestWSTarget_ReadsConfiguredWSURL(t *testing.T) {
+	t.Setenv("COREZOID_WS_URL", "")
+	home := t.TempDir()
+	work := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("COREZOID_WORK_DIR", work)
+	if err := UpdateCurrent(func(f *Folder) { f.WSURL = "wss://socket.corp.example/api/1/sock_json" }); err != nil {
+		t.Fatalf("UpdateCurrent: %v", err)
+	}
+	v := &Executor{Ctx: context.Background(), APIUrl: "https://corezoid.corp.example"}
+	got := v.wsTarget()
+	if got.url != "wss://socket.corp.example/api/1/sock_json" || !strings.Contains(got.source, "ws_url") {
+		t.Errorf("wsTarget = %+v, want the configured ws_url", got)
 	}
 }
 

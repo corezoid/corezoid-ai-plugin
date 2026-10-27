@@ -43,19 +43,19 @@ func (v *Executor) monitorDeployProgress(hash string) (string, error) {
 	}
 	logOut := func() string { return strings.Join(progress, "\n") }
 
-	wsURL := gitCallWSURL(v.APIUrl)
+	target := v.wsTarget()
 	header := http.Header{}
 	header.Set("Authorization", fmt.Sprintf("Simulator %s", v.Token))
 	header.Set("Origin", gitCallWSOrigin(v.APIUrl))
 
 	dialer := &websocket.Dialer{HandshakeTimeout: gitCallWSHandshakeTimeout}
-	conn, resp, err := dialer.DialContext(v.Ctx, wsURL, header)
+	conn, resp, err := dialer.DialContext(v.Ctx, target.url, header)
 	if err != nil {
 		status := ""
 		if resp != nil {
 			status = " (" + resp.Status + ")"
 		}
-		return "", fmt.Errorf("deploy progress websocket dial %s%s: %w", wsURL, status, err)
+		return "", fmt.Errorf("deploy progress websocket dial %s%s: %w%s", target.url, status, err, target.dialHint())
 	}
 	defer conn.Close()
 

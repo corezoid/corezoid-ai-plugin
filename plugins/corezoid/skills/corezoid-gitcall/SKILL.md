@@ -215,7 +215,14 @@ dependency install), then build from cache. `run-task` reports the task settling
 on a non-final node while the build runs — that is expected; the result merges
 into the task payload asynchronously.
 
-Override the build endpoint for on-prem installs with `COREZOID_WS_URL`.
+The build endpoint defaults to `wss://ws.<domain>/api/1/sock_json`, or to the
+API host itself when that `ws.` host does not resolve (common on self-hosted
+installs). If a push fails with `build websocket dial …`, the error names the
+address it tried. Ask the user for the installation's socket address and set
+`"ws_url"` in the workspace's entry of `~/.corezoid/config.json`: it is read on
+every push, so there's no need to restart the server. The `COREZOID_WS_URL`
+environment variable overrides both. Do not retry the push unchanged or guess
+hostnames.
 
 ### What push-process does under the hood
 The container build runs on Corezoid's build service and is driven over a
