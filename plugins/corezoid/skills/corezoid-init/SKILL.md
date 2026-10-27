@@ -170,6 +170,7 @@ Every field below lives in the current Folder inside `~/.corezoid/config.json`. 
 | `api_login` / `api_secret` | login arguments (API-key auth mode) |
 | `project_id` | cached on first pull-folder / push-process |
 | `git_url` / `git_stage_path` | cached on the first `git-pull-context` action |
+| `ws_url` | never set automatically — hand-set exception for self-hosted installs whose Git Call build / deploy WebSocket is not at `ws.<domain>` or the API host (`wss://<host>/api/1/sock_json`); overridden by `COREZOID_WS_URL` |
 
 `COREZOID_OAUTH_CLIENT_ID` remains an environment variable (not a Folder field) — pre-login only, on-prem deployments with a custom authorization server. Cloud users do not need it.
 

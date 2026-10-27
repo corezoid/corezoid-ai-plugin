@@ -101,7 +101,7 @@ func TestBuildGitCallNode_NoReaderLeakOnCancel(t *testing.T) {
 	v := &Executor{Ctx: ctx, Token: "t", APIUrl: "https://admin.corezoid.com"}
 	g := gitCallBuild{lang: "python", nodeServerID: "n1", nodeTitle: "my-fn"}
 	// Must be the cancellation, not a dial error — see the note in the deploy test.
-	if err := v.buildGitCallNode(gitCallWSURL(v.APIUrl), g); !errors.Is(err, context.DeadlineExceeded) {
+	if err := v.buildGitCallNode(v.wsTarget(), g); !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("expected context deadline exceeded, got %v", err)
 	}
 	assertNoGoroutine(t, "buildGitCallNode.func")

@@ -1,9 +1,11 @@
 package main
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/json"
 	"fmt"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -109,7 +111,7 @@ func (v *Executor) BuildGitCallNodes(nodes []interface{}) error {
 	if len(builds) == 0 {
 		return nil
 	}
-	wsURL := gitCallWSURL(v.APIUrl)
+	var target gitCallWSTarget
 	for _, g := range builds {
 		if !g.needsBuild() {
 			logger.Debug("git_call node %s lang=%s is interpreted — no build", g.nodeServerID, g.lang)
@@ -118,8 +120,11 @@ func (v *Executor) BuildGitCallNodes(nodes []interface{}) error {
 		if err := v.checkCancel(); err != nil {
 			return err
 		}
-		logger.Debug("Building git_call node %s (lang=%s) via %s", g.nodeServerID, g.lang, wsURL)
-		if err := v.buildGitCallNode(wsURL, g); err != nil {
+		if target.url == "" {
+			target = v.wsTarget()
+		}
+		logger.Debug("Building git_call node %s (lang=%s) via %s", g.nodeServerID, g.lang, target.url)
+		if err := v.buildGitCallNode(target, g); err != nil {
 			return fmt.Errorf("git_call build failed for node %q (%s): %w", g.nodeTitle, g.lang, err)
 		}
 		logger.Debug("git_call node %s built", g.nodeServerID)
@@ -130,19 +135,19 @@ func (v *Executor) BuildGitCallNodes(nodes []interface{}) error {
 // buildGitCallNode opens the build WebSocket, starts the build for one node,
 // keeps the socket alive, and returns when the build reports done — or fails /
 // times out. The returned error carries the tail of the build log for context.
-func (v *Executor) buildGitCallNode(wsURL string, g gitCallBuild) error {
+func (v *Executor) buildGitCallNode(target gitCallWSTarget, g gitCallBuild) error {
 	header := http.Header{}
 	header.Set("Authorization", fmt.Sprintf("Simulator %s", v.Token))
 	header.Set("Origin", gitCallWSOrigin(v.APIUrl))
 
 	dialer := &websocket.Dialer{HandshakeTimeout: gitCallWSHandshakeTimeout}
-	conn, resp, err := dialer.DialContext(v.Ctx, wsURL, header)
+	conn, resp, err := dialer.DialContext(v.Ctx, target.url, header)
 	if err != nil {
 		status := ""
 		if resp != nil {
 			status = " (" + resp.Status + ")"
 		}
-		return fmt.Errorf("build websocket dial %s%s: %w", wsURL, status, err)
+		return fmt.Errorf("build websocket dial %s%s: %w%s", target.url, status, err, target.dialHint())
 	}
 	defer conn.Close()
 
@@ -267,16 +272,84 @@ func parseGitCallBuildLog(msg []byte) (status, message string) {
 	return "", ""
 }
 
-// gitCallWSURL derives the build-WebSocket URL from the configured API URL.
-// Cloud: https://admin.corezoid.com -> wss://ws.corezoid.com/api/1/sock_json.
-// Override with COREZOID_WS_URL for on-prem / non-standard deployments.
-func gitCallWSURL(apiURL string) string {
-	if override := strings.TrimSpace(os.Getenv("COREZOID_WS_URL")); override != "" {
-		return override
+// envWSURL overrides the build / deploy-progress WebSocket address.
+const envWSURL = "COREZOID_WS_URL"
+
+// wsHostResolves reports whether host has a DNS record. A package var so tests
+// can decide which derived candidate "exists" without touching the network.
+var wsHostResolves = func(ctx context.Context, host string) bool {
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	addrs, err := net.DefaultResolver.LookupHost(ctx, host)
+	return err == nil && len(addrs) > 0
+}
+
+// gitCallWSTarget is the build / deploy-progress WebSocket address together
+// with where it came from, so a dial failure can say which setting to change.
+type gitCallWSTarget struct {
+	url    string
+	source string
+}
+
+// dialHint is appended to a WebSocket dial error: it names the address used,
+// its origin, and the setting that overrides it. Without this the model saw
+// only "no such host" and guessed at addresses or restarted the server.
+func (t gitCallWSTarget) dialHint() string {
+	return fmt.Sprintf("\nWebSocket address %s was %s. If this installation serves the build socket elsewhere, "+
+		"set \"ws_url\" in this workspace's entry of ~/.corezoid/config.json (read on every push, no restart needed) "+
+		"or the %s environment variable to its wss://<host>/api/1/sock_json address.",
+		t.url, t.source, envWSURL)
+}
+
+// wsTarget resolves the WebSocket address for this executor. Precedence:
+// COREZOID_WS_URL, then ws_url from the current workspace's config entry
+// (not consulted in hosted mode, which never reads local config), then an
+// address derived from the API URL.
+func (v *Executor) wsTarget() gitCallWSTarget {
+	return resolveGitCallWSTarget(v.Ctx, func() string {
+		if hostedMode {
+			return ""
+		}
+		if f := Current(); f != nil {
+			return f.WSURL
+		}
+		return ""
+	}, v.APIUrl)
+}
+
+// resolveGitCallWSTarget applies the precedence documented on wsTarget.
+// configured is called only when COREZOID_WS_URL is unset.
+func resolveGitCallWSTarget(ctx context.Context, configured func() string, apiURL string) gitCallWSTarget {
+	if override := strings.TrimSpace(os.Getenv(envWSURL)); override != "" {
+		return gitCallWSTarget{override, "set by " + envWSURL}
 	}
+	if configured != nil {
+		if c := strings.TrimSpace(configured()); c != "" {
+			return gitCallWSTarget{c, "set by ws_url in ~/.corezoid/config.json"}
+		}
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	source := fmt.Sprintf("derived from the API URL %q", apiURL)
+	candidates := gitCallWSCandidates(apiURL)
+	for _, c := range candidates {
+		if u, err := url.Parse(c); err == nil && wsHostResolves(ctx, u.Hostname()) {
+			return gitCallWSTarget{c, source}
+		}
+	}
+	return gitCallWSTarget{candidates[0], source + " (its host did not resolve)"}
+}
+
+// gitCallWSCandidates lists the WebSocket addresses to try for apiURL, in
+// order. Cloud serves the socket on a sibling host
+// (https://admin.corezoid.com -> wss://ws.corezoid.com/api/1/sock_json);
+// self-hosted installs often have no ws.<domain> record and serve it on the
+// API host itself, so that host is the fallback.
+func gitCallWSCandidates(apiURL string) []string {
 	u, err := url.Parse(apiURL)
 	if err != nil || u.Host == "" {
-		return "wss://ws.corezoid.com/api/1/sock_json"
+		return []string{"wss://ws.corezoid.com/api/1/sock_json"}
 	}
 	host := u.Host
 	// admin.<domain> -> ws.<domain>; otherwise prefix ws. onto the host.
@@ -285,7 +358,11 @@ func gitCallWSURL(apiURL string) string {
 	} else if !strings.HasPrefix(host, "ws.") {
 		host = "ws." + host
 	}
-	return "wss://" + host + "/api/1/sock_json"
+	out := []string{"wss://" + host + "/api/1/sock_json"}
+	if host != u.Host {
+		out = append(out, "wss://"+u.Host+"/api/1/sock_json")
+	}
+	return out
 }
 
 // gitCallWSOrigin returns the Origin header the build WebSocket expects
