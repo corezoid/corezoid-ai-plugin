@@ -172,7 +172,7 @@ var coreToolDefs = []mcpTool{
 			"properties": map[string]interface{}{
 				"process_path": map[string]interface{}{
 					"type":        "string",
-					"description": "Relative path to the process JSON file. Optional when the working directory contains exactly one .conv.json.",
+					"description": "Path to the process .conv.json file, relative to the project root (the server's working directory) or absolute inside it. Optional when the working directory contains exactly one .conv.json.",
 				},
 				"density": map[string]interface{}{
 					"type":        "string",
@@ -195,7 +195,7 @@ var coreToolDefs = []mcpTool{
 			"properties": map[string]interface{}{
 				"process_path": map[string]interface{}{
 					"type":        "string",
-					"description": "Relative path to the process JSON file.",
+					"description": "Path to the process .conv.json file. Relative paths resolve against the project root (the server's working directory), not the directory of a previously opened file; absolute paths inside the project root are accepted too.",
 				},
 			},
 			"required": []string{"process_path"},
