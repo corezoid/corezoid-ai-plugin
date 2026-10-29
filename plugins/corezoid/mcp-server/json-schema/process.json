@@ -41,9 +41,11 @@
       "type": "string",
       "enum": [
         "active",
-        "inactive"
+        "inactive",
+        "paused",
+        "debug"
       ],
-      "description": "Process status"
+      "description": "Process status. 'paused' and 'debug' are written by the server (pull-process carries back whatever mode the process is in), so they are accepted for round-trips"
     },
     "params": {
       "type": "array",

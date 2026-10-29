@@ -21,7 +21,8 @@
       "minItems": 1,
       "items": {
         "type": "object",
-        "additionalProperties": false,
+        "description": "Open on purpose: the server adds service fields with default values to condition items, and pull-process carries them back. All four authored fields are required, so a misspelled one still fails as missing.",
+        "additionalProperties": true,
         "required": ["param", "const", "fun", "cast"],
         "properties": {
           "param": {
