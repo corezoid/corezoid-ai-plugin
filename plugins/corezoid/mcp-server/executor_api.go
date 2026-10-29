@@ -12,6 +12,7 @@ import (
 	"math/rand"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -343,6 +344,56 @@ func jitter(d time.Duration) time.Duration {
 	return time.Duration(rand.Int63n(max)) //nolint:gosec
 }
 
+// reCompanyMismatch matches the API's refusal of an object that lives in a
+// different company than the one the request is scoped to. The wording varies
+// between ops ("company mismatch", "does not belong to company", "company_id
+// does not match"), so it keys on "company" next to any of those verbs.
+var reCompanyMismatch = regexp.MustCompile(`(?i)company(?:[\s_]*id)?\W+(?:\w+\W+){0,2}?(?:mismatch|not\s+match|doesn't\s+match|differ)|(?:mismatch|not\s+belong|doesn't\s+belong|another|other|different|wrong)\W+(?:\w+\W+){0,3}company`)
+
+// reCompanyID picks Corezoid company ids ("i260836082") out of an API message.
+var reCompanyID = regexp.MustCompile(`\bi\d{6,}\b`)
+
+// companyMismatchHint returns the text appended to an API error whose
+// description says the object belongs to another company, or "" for any other
+// error. The raw description only says "company mismatch", so without this the
+// model has to work out by itself that the session is logged into a different
+// workspace and that login is the fix — it took several wasted calls per session.
+func companyMismatchHint(desc, currentWorkspace string) string {
+	if !reCompanyMismatch.MatchString(desc) {
+		return ""
+	}
+	current := strings.TrimSpace(currentWorkspace)
+	required := ""
+	for _, id := range reCompanyID.FindAllString(desc, -1) {
+		if id != current {
+			required = id
+			break
+		}
+	}
+
+	var sb strings.Builder
+	sb.WriteString("\nHint: the object belongs to a different workspace than the one this session is logged into")
+	if current != "" {
+		fmt.Fprintf(&sb, " (current workspace: %s", current)
+	} else {
+		sb.WriteString(" (current workspace: personal")
+	}
+	if required != "" {
+		fmt.Fprintf(&sb, "; object's workspace: %s", required)
+	}
+	sb.WriteString(").")
+	if hostedMode {
+		sb.WriteString(" Reconnect this MCP server scoped to the object's workspace and stage, then retry.")
+		return sb.String()
+	}
+	if required != "" {
+		fmt.Fprintf(&sb, " Call login with workspace_id=%q and the stage_id that contains the object, then retry the same call.", required)
+	} else {
+		sb.WriteString(" Find the owning workspace with cz-structure list-workspaces, call login with that workspace_id and the stage_id that contains the object, then retry the same call.")
+	}
+	return sb.String()
+}
+
 // checkError inspects a Corezoid JSON-RPC response envelope and converts any
 // failure status into a Go error. The prefixes are intentionally neutral
 // ("API error" / "API op error") because this function runs for every API
@@ -383,7 +434,7 @@ func (v *Executor) checkError(rsp map[string]interface{}) error {
 					if msg, ok := opMap["description"].(string); ok {
 						errorMsg = msg
 					}
-					return fmt.Errorf("API op error: %s", errorMsg)
+					return fmt.Errorf("API op error: %s%s", errorMsg, companyMismatchHint(errorMsg, v.WorkspaceID))
 				}
 			}
 		}
