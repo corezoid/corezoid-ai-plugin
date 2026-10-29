@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 )
 
 // reProcessIDFromFilename extracts the leading numeric process ID from a
@@ -1032,6 +1033,10 @@ func handleRunTask(ctx context.Context, args map[string]interface{}) (string, bo
 	if err != nil {
 		return "Error: " + err.Error(), true
 	}
+	fields, fullData, errMsg := runTaskDataSelection(args)
+	if errMsg != "" {
+		return errMsg, true
+	}
 	waitSec := runTaskDefaultWaitSec
 	if _, ok := args["wait_sec"]; ok {
 		n, err := intArg(args, "wait_sec")
@@ -1152,7 +1157,7 @@ func handleRunTask(ctx context.Context, args map[string]interface{}) (string, bo
 	// Task data is the user's business payload: never at Info.
 	logger.Debug("Task response: %+v", rspTask)
 	rspTaskData, _ := rspTask["data"].(map[string]interface{})
-	rspTaskDataBin, _ := json.Marshal(rspTaskData)
+	dataOut := renderRunTaskData(rspTaskData, fields, fullData)
 	serverNodeID, _ := rspTask["node_id"].(string)
 	taskID := ""
 	if idv, ok := rspTask["obj_id"]; ok && idv != nil {
@@ -1160,7 +1165,7 @@ func handleRunTask(ctx context.Context, args map[string]interface{}) (string, bo
 	}
 
 	if !nodeMetaOK {
-		return runTaskNoNodeMetaSummary(v, ref, taskID, serverNodeID, string(rspTaskDataBin), nodeMetaErr,
+		return runTaskNoNodeMetaSummary(v, ref, taskID, serverNodeID, dataOut, nodeMetaErr,
 			"the node it settled on cannot be classified"), false
 	}
 
@@ -1209,8 +1214,163 @@ func handleRunTask(ctx context.Context, args map[string]interface{}) (string, bo
 	}
 
 	summary := fmt.Sprintf("%s\nStatus: %s\nNodeID: %s\nNodeName: %s\nNodeType: %s\nProcessID: %d\nTaskRef: %s\nTaskID: %s\nData: %s",
-		msg, status, serverNodeID, nodeInfo.Name, nodeType, v.ProcessID, ref, taskID, string(rspTaskDataBin))
+		msg, status, serverNodeID, nodeInfo.Name, nodeType, v.ProcessID, ref, taskID, dataOut)
 	return summary, isErr
+}
+
+// Limits for the compact Data rendering run-task uses by default. A task
+// accumulates every field each node writes, so its data routinely ran past
+// 50 KB while the caller only needed the final node and a field or two (#240).
+const (
+	runTaskDataMaxBytes  = 4000 // whole Data line; past this only the keys are listed
+	runTaskValueMaxBytes = 500  // one top-level value (string or nested JSON)
+)
+
+// runTaskFieldsSchema and runTaskFullDataSchema are shared by the local and
+// hosted run-task definitions.
+var (
+	runTaskFieldsSchema = map[string]interface{}{
+		"type":        "array",
+		"items":       map[string]interface{}{"type": "string"},
+		"description": "Task data keys to return (dotted paths like \"customer.id\" reach nested values), untruncated. Default: all data, with large values truncated.",
+	}
+	runTaskFullDataSchema = map[string]interface{}{
+		"type":        "boolean",
+		"description": "Return the complete task data without truncation. Default false.",
+	}
+)
+
+// runTaskDataSelection reads the fields / full_data arguments. fields also
+// accepts a comma-separated string, the shape the CLI sends.
+func runTaskDataSelection(args map[string]interface{}) (fields []string, full bool, errMsg string) {
+	full, errMsg = strictBoolArg(args, "full_data")
+	if errMsg != "" {
+		return nil, false, errMsg
+	}
+	switch raw := args["fields"].(type) {
+	case nil:
+	case string:
+		for _, f := range strings.Split(raw, ",") {
+			if f = strings.TrimSpace(f); f != "" {
+				fields = append(fields, f)
+			}
+		}
+	case []interface{}:
+		for _, item := range raw {
+			s, ok := item.(string)
+			if !ok {
+				return nil, false, fmt.Sprintf("Error: \"fields\" must be an array of strings; got element %#v.", item)
+			}
+			if s = strings.TrimSpace(s); s != "" {
+				fields = append(fields, s)
+			}
+		}
+	case []string:
+		fields = raw
+	default:
+		return nil, false, fmt.Sprintf("Error: \"fields\" must be an array of strings; got %T.", raw)
+	}
+	return fields, full, ""
+}
+
+// renderRunTaskData renders the task data for the run-task summary. full
+// returns it verbatim; fields picks those keys (dotted paths reach into nested
+// objects, missing ones are listed); otherwise large values are truncated and,
+// if the result is still large, only the top-level keys are listed. Selected
+// fields are returned untruncated: the caller asked for them by name.
+func renderRunTaskData(data map[string]interface{}, fields []string, full bool) string {
+	if data == nil {
+		data = map[string]interface{}{}
+	}
+	bin, _ := json.Marshal(data)
+	if full {
+		return string(bin)
+	}
+	const fetchHint = `pass fields ["key", "a.b"] to pick values or full_data true for everything, or read the task with cz-tasks {"action":"show-task"}`
+	if len(fields) > 0 {
+		picked := make(map[string]interface{}, len(fields))
+		var missing []string
+		for _, f := range fields {
+			if val, ok := lookupDataPath(data, f); ok {
+				picked[f] = val
+			} else {
+				missing = append(missing, f)
+			}
+		}
+		out, _ := json.Marshal(picked)
+		if len(missing) > 0 {
+			return fmt.Sprintf("%s\nMissing fields: %s (task data keys: %s)", out, strings.Join(missing, ", "), strings.Join(sortedKeys(data), ", "))
+		}
+		return string(out)
+	}
+	if len(bin) <= runTaskDataMaxBytes {
+		return string(bin)
+	}
+	compact := make(map[string]interface{}, len(data))
+	for k, val := range data {
+		vb, _ := json.Marshal(val)
+		s, isStr := val.(string)
+		switch {
+		case len(vb) <= runTaskValueMaxBytes:
+			compact[k] = val
+		case isStr:
+			cut := truncateUTF8(s, runTaskValueMaxBytes)
+			compact[k] = fmt.Sprintf("%s…[truncated, %d bytes total]", cut, len(s))
+		default:
+			compact[k] = fmt.Sprintf("[%s truncated, %d bytes]", jsonKind(val), len(vb))
+		}
+	}
+	out, _ := json.Marshal(compact)
+	if len(out) <= runTaskDataMaxBytes {
+		return fmt.Sprintf("%s\n(Data compacted from %d bytes: large values truncated — %s.)", out, len(bin), fetchHint)
+	}
+	keys := sortedKeys(data)
+	list := strings.Join(keys, ", ")
+	if len(list) > runTaskDataMaxBytes {
+		list = truncateUTF8(list, runTaskDataMaxBytes) + "…"
+	}
+	return fmt.Sprintf("(%d bytes, %d keys — too large to show) keys: %s\n(%s.)",
+		len(bin), len(keys), list, fetchHint)
+}
+
+// lookupDataPath resolves a dotted path ("customer.id") in task data. An exact
+// top-level key wins, so a key that itself contains dots still resolves.
+func lookupDataPath(data map[string]interface{}, path string) (interface{}, bool) {
+	if val, ok := data[path]; ok {
+		return val, true
+	}
+	var cur interface{} = data
+	for _, part := range strings.Split(path, ".") {
+		m, ok := cur.(map[string]interface{})
+		if !ok {
+			return nil, false
+		}
+		if cur, ok = m[part]; !ok {
+			return nil, false
+		}
+	}
+	return cur, true
+}
+
+func jsonKind(v interface{}) string {
+	switch v.(type) {
+	case map[string]interface{}:
+		return "object"
+	case []interface{}:
+		return "array"
+	}
+	return "value"
+}
+
+// truncateUTF8 cuts s to at most n bytes without splitting a rune.
+func truncateUTF8(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	for n > 0 && !utf8.RuneStart(s[n]) {
+		n--
+	}
+	return s[:n]
 }
 
 // runTaskNoNodeMetaSummary reports a task that was created while the deployed

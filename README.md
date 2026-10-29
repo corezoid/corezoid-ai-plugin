@@ -294,7 +294,7 @@ Tools come in two shapes. The ones below are advertised individually — they ca
 | `create-state-diagram` | Create a new empty state diagram (conv_type "state") in a folder |
 | `delete-process` | Move a process or state diagram to the recycle bin |
 | `create-alias` | Create a short alias for a process |
-| `run-task` | Send a task to a deployed process, by `process_path` or `process_id` (no local file needed) |
+| `run-task` | Send a task to a deployed process, by `process_path` or `process_id` (no local file needed); large task data is compacted unless you pass `fields` or `full_data` |
 | `pause-process` | Preview and explicitly pause a process so Corezoid rejects new tasks |
 | `resume-process` | Preview and explicitly reactivate a paused/debug process |
 | `deploy-stage` | Deploy/promote one stage onto another (develop→production); dry-run by default, requires explicit confirm to apply |
