@@ -16,6 +16,9 @@ func handleLayoutProcess(ctx context.Context, args map[string]interface{}) (stri
 	if err != nil {
 		return "Error: " + err.Error(), true
 	}
+	if err := processFileMissingError(filePath); err != nil {
+		return "Error: " + err.Error(), true
+	}
 
 	density := optStrArg(args, "density")
 	if density == "" {

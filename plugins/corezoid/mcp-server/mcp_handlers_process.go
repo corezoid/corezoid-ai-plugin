@@ -988,6 +988,9 @@ func handleLintProcess(_ context.Context, args map[string]interface{}) (string, 
 	if err != nil {
 		return "Error: " + err.Error(), true
 	}
+	if err := processFileMissingError(filePath); err != nil {
+		return "Error: " + err.Error(), true
+	}
 
 	result, err := lintProcess(filePath)
 	if err != nil {

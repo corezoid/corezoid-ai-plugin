@@ -39,7 +39,10 @@ func confineToWorkdir(p string) (string, error) {
 	if filepath.IsAbs(p) {
 		rel, err := relativeToCwd(p)
 		if err != nil {
-			return "", fmt.Errorf("absolute path %q is not inside the working directory; pass a path relative to the project root (%v)", p, err)
+			// Name the allowed root: without it the caller cannot tell which
+			// relative spelling the server would accept instead.
+			cwd, _ := os.Getwd()
+			return "", fmt.Errorf("absolute path %q is not inside the working directory %s; pass a path inside it, or one relative to it (%v)", p, cwd, err)
 		}
 		return rel, nil
 	}
@@ -320,6 +323,81 @@ func resolveProcessPath(args map[string]interface{}, key string) (string, error)
 		return "", fmt.Errorf("multiple .conv.json files found in current directory — pass process_path explicitly: %v", matches)
 	}
 	return "", fmt.Errorf("no .conv.json file found in current directory and process_path was not provided")
+}
+
+// processFileMissingError returns nil when filePath (as returned by
+// resolveProcessPath) exists, and otherwise an error that says where the
+// server looked.
+//
+// A bare "no such file or directory" left the model guessing: relative paths
+// resolve against the server's working directory (COREZOID_WORK_DIR or the
+// launch directory), which the model cannot see, so it retried with path
+// variants, searched, and made temporary copies until one spelling happened
+// to work. The error now names that base directory and the resolved absolute
+// path, says absolute paths inside it are accepted, and lists workspace files
+// that look like the one meant — same file name, same name ignoring case, or
+// the same "<ID>_" prefix, which still matches when the title part of the
+// name was mistyped or spelled with different non-Latin characters.
+func processFileMissingError(filePath string) error {
+	_, err := os.Stat(filePath)
+	if err == nil || !os.IsNotExist(err) {
+		return nil
+	}
+	cwd, cwdErr := os.Getwd()
+	if cwdErr != nil {
+		return fmt.Errorf("process file %q not found: %v", filePath, err)
+	}
+	var sb strings.Builder
+	fmt.Fprintf(&sb, "process file %q not found (resolved to %s). Relative paths are resolved against the working directory %s; an absolute path inside that directory is also accepted",
+		filePath, filepath.Join(cwd, filePath), cwd)
+	if found := findSimilarProcessFiles(filepath.Base(filePath), 5); len(found) > 0 {
+		fmt.Fprintf(&sb, ". Similar files in the working directory: %s", strings.Join(found, ", "))
+	}
+	return fmt.Errorf("%s", sb.String())
+}
+
+// processIDPrefixRe extracts the "<ID>_" prefix of a pulled process file name.
+var processIDPrefixRe = regexp.MustCompile(`^(\d+)_`)
+
+// similarFilesScanLimit caps how many directory entries findSimilarProcessFiles
+// visits, so a not-found error from a huge or mis-rooted workspace ($HOME)
+// stays fast.
+const similarFilesScanLimit = 20000
+
+// findSimilarProcessFiles walks the working directory for files that look like
+// name — identical, equal ignoring case, or sharing its "<ID>_" prefix — and
+// returns up to max of their cwd-relative paths. Hidden directories and
+// node_modules are skipped.
+func findSimilarProcessFiles(name string, max int) []string {
+	var idPrefix string
+	if m := processIDPrefixRe.FindStringSubmatch(name); m != nil {
+		idPrefix = m[0]
+	}
+	var found []string
+	visited := 0
+	errStop := fmt.Errorf("stop")
+	_ = filepath.WalkDir(".", func(p string, d os.DirEntry, err error) error {
+		if err != nil {
+			return nil
+		}
+		visited++
+		if visited > similarFilesScanLimit || len(found) >= max {
+			return errStop
+		}
+		base := d.Name()
+		if d.IsDir() {
+			if p != "." && (strings.HasPrefix(base, ".") || base == "node_modules") {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if base == name || strings.EqualFold(base, name) ||
+			(idPrefix != "" && strings.HasPrefix(base, idPrefix) && strings.HasSuffix(base, ".conv.json")) {
+			found = append(found, p)
+		}
+		return nil
+	})
+	return found
 }
 
 // resolveProcessID resolves the target process ID from either an explicit
