@@ -344,12 +344,6 @@ func jitter(d time.Duration) time.Duration {
 	return time.Duration(rand.Int63n(max)) //nolint:gosec
 }
 
-// checkError inspects a Corezoid JSON-RPC response envelope and converts any
-// failure status into a Go error. The prefixes are intentionally neutral
-// ("API error" / "API op error") because this function runs for every API
-// call — push, delete, list, deploy, commit, etc. — and the previous
-// "failed to compile API code" label misled callers who saw it for unrelated
-// operations like a failed delete or a bad list query.
 // reCompanyMismatch matches the API's refusal of an object that lives in a
 // different company than the one the request is scoped to. The wording varies
 // between ops ("company mismatch", "does not belong to company", "company_id
@@ -400,6 +394,12 @@ func companyMismatchHint(desc, currentWorkspace string) string {
 	return sb.String()
 }
 
+// checkError inspects a Corezoid JSON-RPC response envelope and converts any
+// failure status into a Go error. The prefixes are intentionally neutral
+// ("API error" / "API op error") because this function runs for every API
+// call — push, delete, list, deploy, commit, etc. — and the previous
+// "failed to compile API code" label misled callers who saw it for unrelated
+// operations like a failed delete or a bad list query.
 func (v *Executor) checkError(rsp map[string]interface{}) error {
 	if rsp == nil {
 		return fmt.Errorf("API error: no response from server")
