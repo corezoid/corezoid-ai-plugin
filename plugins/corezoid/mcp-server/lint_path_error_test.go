@@ -23,7 +23,7 @@ func TestHandleLintProcess_NotFoundNamesBaseDirAndSuggestsFile(t *testing.T) {
 		t.Fatal(err)
 	}
 	realPath := filepath.Join(sub, "123_Обработка заявки.conv.json")
-	if err := os.WriteFile(realPath,[]byte(`{"obj_id":123,"scheme":{"nodes":[]}}`), 0o644); err != nil {
+	if err := os.WriteFile(realPath, []byte(`{"obj_id":123,"scheme":{"nodes":[]}}`), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
