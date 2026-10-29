@@ -1299,7 +1299,11 @@ func renderRunTaskData(data map[string]interface{}, fields []string, full bool) 
 		}
 		out, _ := json.Marshal(picked)
 		if len(missing) > 0 {
-			return fmt.Sprintf("%s\nMissing fields: %s (task data keys: %s)", out, strings.Join(missing, ", "), strings.Join(sortedKeys(data), ", "))
+			keys := strings.Join(sortedKeys(data), ", ")
+			if len(keys) > runTaskDataMaxBytes {
+				keys = truncateUTF8(keys, runTaskDataMaxBytes) + "…"
+			}
+			return fmt.Sprintf("%s\nMissing fields: %s (task data keys: %s)", out, strings.Join(missing, ", "), keys)
 		}
 		return string(out)
 	}
