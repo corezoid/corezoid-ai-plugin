@@ -856,6 +856,13 @@ func pushProcessCore(ctx context.Context, v *Executor, procID int, jsonContent s
 					snapshotNote = fmt.Sprintf("Auto-snapshot skipped: process #%d has not changed on the server since create-process made it, so it has no previous version to restore.", existingObjID)
 				default:
 					logger.Warn("[snapshot] auto-snapshot failed: %v", snapErr)
+					// A snapshot taken in the wrong stage or workspace fails
+					// for a reason neither a retry nor allow_no_snapshot
+					// fixes, and the waiver below would be judged against
+					// the wrong stage. Say what is wrong instead.
+					if msg := snapshotLocationMismatch(v, existingObjID, snapErr); msg != "" {
+						return msg, true
+					}
 					// Resolution succeeded — we know exactly which stage this
 					// would have landed on — so the waiver is checked against
 					// that stage directly rather than re-derived from
@@ -1856,6 +1863,40 @@ func handleDeleteFolder(ctx context.Context, args map[string]interface{}) (strin
 		return fmt.Sprintf("Error: %v", err), true
 	}
 	return fmt.Sprintf("Folder #%d moved to Trash.", folderID), false
+}
+
+// snapshotLocationMismatch explains a failed pre-push snapshot whose cause is
+// that the process lives in another workspace or stage than the session, or
+// returns "" when that is not shown. Without it the push reported the failure
+// as possibly transient and offered allow_no_snapshot, so sessions retried,
+// re-pulled and then pushed every change with the waiver before finding out
+// they were logged into the wrong stage.
+func snapshotLocationMismatch(v *Executor, procID int, snapErr error) string {
+	errText := snapErr.Error()
+	const tail = "\n\nThis is not a transient API failure, so retrying will not help, and allow_no_snapshot is the wrong fix: it would push without a rollback point, judged against the wrong stage."
+	if reCompanyMismatch.MatchString(errText) {
+		// checkError has already appended the hint naming the right workspace.
+		return fmt.Sprintf("Push blocked: the pre-push snapshot of process #%d failed because the process belongs to a different workspace than the current session (%v)%s", procID, snapErr, tail)
+	}
+	fixFor := func(stage string) string {
+		if hostedMode {
+			return fmt.Sprintf("Retry the push with scope.stage_id=%s.", stage)
+		}
+		return fmt.Sprintf("Call login with stage_id=%s, then retry the push.", stage)
+	}
+	info, err := v.ShowProcessLifecycle(procID)
+	if err != nil || info.StageID == 0 || info.StageID == v.StageID {
+		if strings.Contains(strings.ToLower(errText), "not in stage") {
+			return fmt.Sprintf("Push blocked: the pre-push snapshot of process #%d failed because the process is not in the session's stage %d (%v). Find the stage that contains the process with cz-structure list-stages. %s%s", procID, v.StageID, snapErr, fixFor("<that stage>"), tail)
+		}
+		return ""
+	}
+	where := fmt.Sprintf("stage %d", info.StageID)
+	if info.ProjectID != 0 {
+		where += fmt.Sprintf(" (project %d)", info.ProjectID)
+	}
+	fix := fixFor(strconv.Itoa(info.StageID))
+	return fmt.Sprintf("Push blocked: the pre-push snapshot of process #%d failed (%v) because the process lives in %s, but the session is on stage %d. %s%s", procID, snapErr, where, v.StageID, fix, tail)
 }
 
 // handleCreateAlias creates a Corezoid alias (short_name → conv) pointing at
