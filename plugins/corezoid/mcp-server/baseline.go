@@ -344,6 +344,11 @@ func recordPulledBaselines(root string, snapshot map[int]baselineEntry, skipped 
 	}
 	n := 0
 	_ = filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
+		// Hidden directories hold no pulled processes; a .corezoid-pull-*
+		// staging directory of a pull still running (or killed) does.
+		if err == nil && info.IsDir() && path != root && strings.HasPrefix(info.Name(), ".") {
+			return filepath.SkipDir
+		}
 		if err != nil || info.IsDir() || !strings.HasSuffix(path, ".conv.json") {
 			return nil
 		}

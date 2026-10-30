@@ -11,18 +11,29 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 )
 
 // stageArchive is a stage export as Corezoid ships it: a wrapper directory
 // named like the download, holding the <id>_<name>.stage tree.
 func stageArchive(t *testing.T) []byte {
+	return stageArchiveWith(t, nil)
+}
+
+// stageArchiveWith is stageArchive plus extra entries, keyed by their path
+// inside the 42_demo.stage directory.
+func stageArchiveWith(t *testing.T, extra map[string]string) []byte {
 	t.Helper()
 	var buf bytes.Buffer
 	w := zip.NewWriter(&buf)
-	for name, content := range map[string]string{
+	entries := map[string]string{
 		"stage_42_1700000000000.zip/42_demo.stage/100_orders.folder/555_proc.conv.json": `{"obj_id":555,"uuid":"u","scheme":{"nodes":[{"id":"n1","uuid":"x"}]}}`,
 		"stage_42_1700000000000.zip/42_demo.stage/556_top.conv.json":                    `{"obj_id":556,"scheme":{"nodes":[{"id":"n2"}]}}`,
-	} {
+	}
+	for name, content := range extra {
+		entries["stage_42_1700000000000.zip/42_demo.stage/"+name] = content
+	}
+	for name, content := range entries {
 		fw, err := w.Create(name)
 		if err != nil {
 			t.Fatal(err)
@@ -159,5 +170,87 @@ func TestFormatJSON_SkipsUnparsableFile(t *testing.T) {
 	}
 	if got, _ := os.ReadFile(filepath.Join(dir, "good.json")); strings.Contains(string(got), "uuid") {
 		t.Errorf("valid file was not formatted: %s", got)
+	}
+}
+
+// A pull killed before its deferred cleanup leaves its staging directory, with
+// a copy of every process, in the workspace. The next pull removes it, but
+// not a recent one that may belong to a pull still running.
+func TestNewPullStaging_RemovesAbandonedStaging(t *testing.T) {
+	dest := t.TempDir()
+	abandoned := filepath.Join(dest, pullStagingPrefix+"abandoned")
+	live := filepath.Join(dest, pullStagingPrefix+"live")
+	for _, d := range []string{abandoned, live} {
+		if err := os.MkdirAll(filepath.Join(d, "42_demo.stage"), 0755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	old := time.Now().Add(-2 * stalePullStagingAge)
+	if err := os.Chtimes(abandoned, old, old); err != nil {
+		t.Fatal(err)
+	}
+
+	staging, err := newPullStaging(dest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(staging)
+
+	if _, err := os.Stat(abandoned); !os.IsNotExist(err) {
+		t.Errorf("abandoned staging directory was kept (stat err: %v)", err)
+	}
+	if _, err := os.Stat(live); err != nil {
+		t.Errorf("recent staging directory was removed: %v", err)
+	}
+}
+
+// A staging directory's name sorts ahead of every "<id>_<name>" path, so a
+// stale copy inside it used to win the lookup push-process does by id.
+func TestProcessFileForID_IgnoresStagingCopy(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	proc := `{"obj_id":555,"title":"p","scheme":{"nodes":[]}}`
+	for _, p := range []string{
+		filepath.Join(pullStagingPrefix+"abandoned", "42_demo.stage", "100_orders", "555_proc.conv.json"),
+		filepath.Join("100_orders", "555_proc.conv.json"),
+	} {
+		if err := os.MkdirAll(filepath.Dir(p), 0755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte(proc), 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	if got, want := processFileForID(555), filepath.Join("100_orders", "555_proc.conv.json"); got != want {
+		t.Errorf("processFileForID(555) = %q, want %q", got, want)
+	}
+	n := recordPulledBaselines(".", map[int]baselineEntry{555: {}}, nil)
+	if n != 1 {
+		t.Errorf("recordPulledBaselines recorded %d baselines, want 1 (the staging copy must be ignored)", n)
+	}
+}
+
+// Formatting used to fail the whole pull on a file it could not parse; then it
+// published such a file as is, with only a log line. A process file that is
+// not valid JSON is now left out of the pull and reported as skipped.
+func TestDownloadStageRecursively_UnparsableProcessIsSkipped(t *testing.T) {
+	dest := t.TempDir()
+	e := stageExportServer(t, stageArchiveWith(t, map[string]string{
+		"100_orders.folder/557_broken.conv.json": `{"obj_id":557,`,
+	}))
+
+	skipped, err := downloadStageRecursively(e, 42, dest)
+	if err != nil {
+		t.Fatalf("pull failed: %v", err)
+	}
+	if len(skipped) != 1 || skipped[0].processID() != 557 {
+		t.Fatalf("skipped = %v, want the broken process 557", skipped)
+	}
+	if _, err := os.Stat(filepath.Join(dest, "100_orders", "557_broken.conv.json")); !os.IsNotExist(err) {
+		t.Errorf("unparsable process was published (stat err: %v)", err)
+	}
+	if _, err := os.Stat(filepath.Join(dest, "100_orders", "555_proc.conv.json")); err != nil {
+		t.Errorf("valid process missing: %v", err)
 	}
 }

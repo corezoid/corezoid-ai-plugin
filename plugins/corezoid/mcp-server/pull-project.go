@@ -14,6 +14,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 	"unicode/utf8"
 )
 
@@ -516,7 +517,9 @@ func downloadWorkspaceRootRecursively(e *Executor, filePath string) ([]skippedEn
 	if err := renameFiles2Folders(staging); err != nil {
 		return skipped, fmt.Errorf("failed to rename files: %w", err)
 	}
-	if err := formatJSONWithFallback(e, staging); err != nil {
+	invalid, err := formatPulledJSON(e, staging)
+	skipped = append(skipped, invalid...)
+	if err != nil {
 		return skipped, fmt.Errorf("failed to format json: %w", err)
 	}
 	if err := publishPull(staging, filePath); err != nil {
@@ -542,11 +545,46 @@ func newPullStaging(filePath string) (string, error) {
 	if err := os.MkdirAll(filePath, 0755); err != nil {
 		return "", fmt.Errorf("failed to create %s: %w", filePath, err)
 	}
-	staging, err := os.MkdirTemp(filePath, ".corezoid-pull-*")
+	removeStalePullStaging(filePath)
+	staging, err := os.MkdirTemp(filePath, pullStagingPrefix+"*")
 	if err != nil {
 		return "", fmt.Errorf("failed to create pull staging directory: %w", err)
 	}
 	return staging, nil
+}
+
+const pullStagingPrefix = ".corezoid-pull-"
+
+// stalePullStagingAge is how long a staging directory may go unmodified before
+// a later pull treats it as abandoned. A pull removes its staging directory in
+// a deferred call, which does not run when the server is killed mid-pull
+// (SIGTERM exits through os.Exit, see installShutdownFlush), so the copy of
+// the project inside would otherwise stay forever. A live pull rewrites its
+// staging root on every archive it downloads, and each download is bounded by
+// the export retry budget, so an hour is far past anything still in use.
+var stalePullStagingAge = time.Hour
+
+// removeStalePullStaging deletes staging directories under filePath that an
+// earlier, killed pull left behind. Best-effort: a failure only leaves the
+// directory for the next pull to try again.
+func removeStalePullStaging(filePath string) {
+	entries, err := os.ReadDir(filePath)
+	if err != nil {
+		return
+	}
+	for _, en := range entries {
+		if !en.IsDir() || !strings.HasPrefix(en.Name(), pullStagingPrefix) {
+			continue
+		}
+		info, err := en.Info()
+		if err != nil || time.Since(info.ModTime()) < stalePullStagingAge {
+			continue
+		}
+		p := filepath.Join(filePath, en.Name())
+		if err := os.RemoveAll(p); err != nil {
+			logger.Warn("pull-folder: could not remove abandoned %s: %v", p, err)
+		}
+	}
 }
 
 // publishPull moves every entry of the processed staging directory into
@@ -652,7 +690,8 @@ func downloadStageRecursively(e *Executor, folderID int, filePath string) ([]ski
 	if err != nil {
 		return skipped, fmt.Errorf("failed to rename files: %v", err)
 	}
-	err = formatJSONWithFallback(e, stageDir)
+	invalid, err := formatPulledJSON(e, stageDir)
+	skipped = append(skipped, invalid...)
 	if err != nil {
 		return skipped, fmt.Errorf("failed to format json: %v", err)
 	}
@@ -709,11 +748,40 @@ func formatJSON(filePath string) error {
 	return formatJSONWithFallback(nil, filePath)
 }
 
+// formatPulledJSON formats the files a pull extracted under root (see
+// formatJSONWithFallback). A process file it cannot parse is removed from the
+// pull and reported as skipped, so the caller's skipped-entries note tells the
+// model to pull that process individually and no baseline is recorded for it.
+// Published as is, it would replace the local copy with a file no tool reads,
+// with nothing but a log line to say so.
+func formatPulledJSON(e *Executor, root string) ([]skippedEntry, error) {
+	var invalid []skippedEntry
+	if err := formatJSONTree(e, root, &invalid); err != nil {
+		return nil, err
+	}
+	for i, s := range invalid {
+		if err := os.Remove(s.Name); err != nil {
+			return nil, fmt.Errorf("failed to drop unparsable %s: %w", s.Name, err)
+		}
+		if rel, err := filepath.Rel(root, s.Name); err == nil {
+			invalid[i].Name = filepath.ToSlash(rel)
+		}
+	}
+	return invalid, nil
+}
+
 // formatJSONWithFallback formats all JSON files under filePath, pretty-printing
 // them and stripping uuid fields. When e is non-nil, it also applies a fallback
 // for undeployed processes whose scheme.nodes is empty: it fetches nodes via the
 // list API (GetProcessNodes) and patches the file in place before writing.
 func formatJSONWithFallback(e *Executor, filePath string) error {
+	return formatJSONTree(e, filePath, nil)
+}
+
+// formatJSONTree does the work of formatJSONWithFallback. A JSON file it cannot
+// parse is left as it is; when invalid is non-nil, each such process file is
+// also appended to it under its full path.
+func formatJSONTree(e *Executor, filePath string, invalid *[]skippedEntry) error {
 	// теперь везде где json файлы форматировать их через MarshalIndent
 	files, err := os.ReadDir(filePath)
 	if err != nil {
@@ -724,7 +792,7 @@ func formatJSONWithFallback(e *Executor, filePath string) error {
 		if f.IsDir() {
 			subDir := filepath.Join(filePath, f.Name())
 			//fmt.Println("Downloaded folder", subDir)
-			err := formatJSONWithFallback(e, subDir)
+			err := formatJSONTree(e, subDir, invalid)
 			if err != nil {
 				return fmt.Errorf("Failed to format json in directory %s: %v", subDir, err)
 			}
@@ -743,6 +811,9 @@ func formatJSONWithFallback(e *Executor, filePath string) error {
 			// Formatting is cosmetic; a file it cannot parse is left as it
 			// is rather than failing a pull whose download already succeeded.
 			logger.Warn("pull-folder: left %s unformatted: %v", filePath1, err)
+			if invalid != nil && strings.HasSuffix(f.Name(), ".conv.json") {
+				*invalid = append(*invalid, skippedEntry{Name: filePath1, Cause: fmt.Errorf("exported file is not valid JSON: %w", err)})
+			}
 			continue
 		}
 		// везде где есть uuid в scheme.nodes объект удалить

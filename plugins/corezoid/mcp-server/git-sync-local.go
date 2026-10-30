@@ -106,9 +106,15 @@ type processEntry struct {
 }
 
 // scanProcessFiles walks workDir and collects all .conv.json process entries.
+// Hidden directories are skipped: a staging directory a killed pull left
+// behind (.corezoid-pull-*) holds a stale copy of every process, and its name
+// sorts ahead of the real files.
 func scanProcessFiles(workDir string) []processEntry {
 	var entries []processEntry
 	filepath.WalkDir(workDir, func(path string, d os.DirEntry, err error) error { //nolint:errcheck
+		if err == nil && d.IsDir() && path != workDir && strings.HasPrefix(d.Name(), ".") {
+			return filepath.SkipDir
+		}
 		if err != nil || d.IsDir() || !strings.HasSuffix(d.Name(), ".conv.json") {
 			return nil
 		}
