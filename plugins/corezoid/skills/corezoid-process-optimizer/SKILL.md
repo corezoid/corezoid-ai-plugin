@@ -2,9 +2,11 @@
 name: corezoid-process-optimizer
 description: >
   Optimizes a Corezoid process JSON — reduces tact consumption by merging nodes,
-  cleans data flow, fills missing node titles, and adds resilience patterns.
+  cleans data flow, fills missing node titles, adds resilience patterns, and replaces
+  logic-only Code nodes with Condition + Set Parameters.
   Activate when the user says "optimize", "improve", "reduce tacts", "merge nodes",
-  "clean up process", "what can be improved", "show optimizations", or any phrase
+  "clean up process", "what can be improved", "show optimizations", "replace Code node
+  with Set Parameters / Condition", "simplify code nodes", or any phrase
   implying they want to make a process faster, cheaper, or more readable.
   Two modes: plan-only (analysis + report, no changes) and auto (plan + execute immediately).
 ---
@@ -23,7 +25,7 @@ Determine **mode** and **scope** from the user's phrasing before doing anything 
 | "show", "what can", "suggest", "check" — analysis verb | **PLAN** — analyze, report, wait |
 
 In PLAN mode, after presenting the report ask:
-> "Apply all? Apply by group? (1 — tacts, 2 — data, 3 — naming, 4 — resilience)"
+> "Apply all? Apply by group? (1 — tacts, 2 — data, 3 — naming, 4 — resilience, 5 — code nodes)"
 
 ### Scope
 
@@ -35,6 +37,7 @@ The user may request a specific optimization group. Detect from keywords:
 | "data", "payload", "cleanup", "garbage", "fields" | Group 2 |
 | "names", "naming", "titles", "readability", "descriptions" | Group 3 |
 | "resilience", "semaphors", "timeouts", "stability" | Group 4 |
+| "code node", "api_code", "replace code", "simplify code" | Group 5 |
 | No group keyword — general request | All groups |
 
 If scope is a single group — run Phase 1 analysis only for that group. Skip all others entirely.
@@ -65,7 +68,7 @@ Build a node map: `id → { title, obj_type, logics[], sems[], outgoing edges }`
 
 Trace the execution graph from the Start node following `go.to_node_id` and `err_node_id` edges.
 
-Collect candidates for all four groups below.
+Collect candidates for all five groups below.
 
 ---
 
@@ -220,6 +223,87 @@ Semaphor JSON:
 }
 ```
 
+## Group 5 — Code Node Reduction
+
+> Prefer a light Condition + Set Parameters combination over an `api_code` node wherever the logic is only branching on values and assigning them. The logic becomes visible on the canvas, and there is no JavaScript left to fail at runtime. Default: replace wherever possible — "impossible" means only the cases in 5.3.
+
+### 5.1 Audit all code nodes
+
+List every `type: "api_code"` node: title, which task keys it reads, which keys it writes (per outcome), where `go` and `err_node_id` lead. Put each into one category:
+
+| Category | Meaning |
+|----------|---------|
+| **Replace** | Whole node → Condition + Set Parameters (5.2) |
+| **Simplify** | Part of the logic moves out, a smaller Code node stays (5.4) |
+| **Merge** | Join with an adjacent code node (1.2) — decided after replacements |
+| **Keep** | Cite the 5.3 item, or "already optimal" (rename short names only) |
+
+Present the table "node → category → result → reason" in the plan. Always confirm before changing any code node, even in AUTO mode. A node whose `src` carries a comment that it must stay Code is never proposed for replacement.
+
+---
+
+### 5.2 Replace with Condition + Set Parameters
+
+```
+            ┌─ Set Param (outcome 1) ─┐
+Condition ──┼─ Set Param (outcome 2) ─┼──► node the old code node's go led to
+            └─ Set Param (outcome N) ─┘
+```
+
+- One Set Param per **logical outcome**, not always two: `if/else` → 2 branches; `switch` / `if … else if …` → one per distinct result (identical results share a branch).
+- No branching in the code (only assignments) → a single Set Param, no Condition.
+- Several `go_if_const` in one Condition only when they test values of the **same** source. Outcomes that depend on different sources → a chain of single-check Conditions (one `go_if_const` each, default `go` to the next check).
+- `&&` → several `conditions` inside one `go_if_const` (they are ANDed). `||` → several `go_if_const` leading to the same branch.
+- The Condition's default `go` is the final `else`.
+- All Set Params converge on the node the old code node's `go` pointed to.
+
+Translating JS:
+
+| In Code | In Condition / Set Parameters |
+|---------|-------------------------------|
+| `if (data.status === 'paid')` | `"param": "status"`, `"fun": "eq"`, `"const": "paid"`, `"cast": "string"` |
+| `if (data.is_active === true)` | `"param": "is_active"`, `"const": "true"`, `"cast": "string"` |
+| `if (!data.status)` / `=== ''` | `"param": "status"`, `"fun": "eq"`, `"const": ""` |
+| `if (data.order.status === 'paid')` | `"param": "{{order.status}}"` — a nested path must be wrapped in `{{}}`; a bare `order.status` is not resolved (only bare top-level names are) |
+| `if (!data.items \|\| !data.items.length)` | `"param": "{{items[0]}}"`, `"fun": "eq"`, `"const": ""` — a missing key or element compares as `""` |
+| `if (data.a === data.b)` | `"param": "{{a}}"`, `"fun": "eq"`, `"const": "{{b}}"` — `const` accepts a template |
+| `if (data.total > 5)` | `"fun": "more"`, `"cast": "number"` |
+| `data.x = 'const'` | `"x": "const"` |
+| `data.x = data.y` | `"x": "{{y}}"` |
+| `data.x = data.a + '_' + data.b` | `"x": "{{a}}_{{b}}"` |
+| `data.x = data.a + data.b` (numbers) | `"x": "$.math({{a}}+{{b}})"` — `$.math` evaluates only two operands (`a+b+c` silently gives `a+b`): one operation per key, intermediate results in separate keys |
+| `data.x = []` / `{…}` | JSON string value, `extra_type` `array` / `object` |
+| `delete data.tmp` | Set Param cannot delete keys → `"tmp": ""` |
+
+---
+
+### 5.3 When NOT to replace (keep Code)
+
+1. **Adding fields to an existing object.** `data.order = data.order || {}; data.order.status = …` — Set Param keys `{{order.status}}`, `{{order.total}}` in one node do **not** merge: only one of them (the last alphabetically) survives, the rest are silently dropped, and the node still exits via `go`. Treat a single `{{obj.x}}` key over an existing object as unsafe too.
+   - Replaceable only if this node **creates** the object from scratch: one key `order`, `extra_type: object`, value = JSON of all fields. Anything previously in the object is lost — confirm nothing earlier in the flow wrote it.
+2. **Fallback to the current value** — `data.x = data.x || 'default'`. Possible as Condition (`x` eq `""`) + Set Param on the empty branch only; if `x` is a nested field, see item 1 → keep Code.
+3. **Operations Set Param lacks**: `.length`, regex, `JSON.parse`/`stringify`, `.map`/`.filter`/`.reduce`, iterating object keys, loops, date libraries, building arrays or tables from lists.
+4. **Too many outcomes** — more than ~5–6 outcomes from different sources would make the diagram unreadable; discuss with the user.
+
+---
+
+### 5.4 Simplify the code that stays
+
+- **Move the replaceable part out.** Constant/template assignments and value branches that do not depend on the irreplaceable part → Set Param / Condition before or after the Code node; only 5.3 logic stays in `src`. Do it only if the remaining Code really shrinks — do not add a node for a single key.
+- **Dead code** (extends 2.2): unreachable branches, unused helpers, task keys the node writes that nothing downstream reads (search the whole `.conv.json` for `{{key}}` and `data.key`; keys returned in a Reply count as used).
+- **Simplify JS** without changing behaviour: drop duplicate checks and needless copies of `data`, flatten nested `if` into early returns.
+- **Readable names** across the whole node, not just edited lines: `orderTotal`, `customerQuery`, `padTwoDigits` — not `d`, `q`, `t`, `op`. Exceptions: `i`/`j` loop counters, `e` in `catch (e)`.
+
+Check behaviour locally: run the old and new `src` (Node.js) on inputs covering every branch and compare the resulting `data` key by key.
+
+---
+
+### 5.5 Wiring the new nodes
+
+- **Changing node kind = a new node.** When a Code (or other action) node becomes a Condition, do not reuse its `id`: delete it, create the Condition with a new `id`, and re-point all incoming edges. Reusing the id breaks merges between stages ("referenced node … does not exist"). Code → Set Param (action → action) is safe.
+- If the old code node had its own error cluster used only by it, remove the cluster with it.
+- Position new nodes per `${CLAUDE_PLUGIN_ROOT}/docs/process/node-positioning-best-practices.md` — do not re-layout the rest of the process.
+
 ---
 
 ## Step 2 — Plan report
@@ -256,6 +340,13 @@ Total nodes removed: N | Tacts saved: X/task
 | 1 | "Call SMS API"          | Missing timeout semaphor      | Add 30sec          |
 | 2 | "Wait callback" 🔴      | Missing timeout semaphor      | Add 3600sec        |
 
+### Group 5 — Code Node Reduction ⚠️ confirm
+| # | Code node            | Category | Result                                        | Reason           |
+|---|----------------------|----------|-----------------------------------------------|------------------|
+| 1 | "Set order flags"    | Replace  | Condition "Paid?" → 2 Set Params              | if/else only     |
+| 2 | "Fill order fields"  | Keep     | —                                             | 5.3 item 1       |
+| 3 | "Build items table"  | Simplify | constants → Set Param, loop stays in Code     | 5.3 item 3       |
+
 ### Requires action outside this process
 - Hardcoded URL in "Call Stripe API" → use /corezoid-variable-manager
 - Numeric conv_id 1307813 (×3 nodes)  → use /corezoid-alias-manager
@@ -268,10 +359,11 @@ Total nodes removed: N | Tacts saved: X/task
 ### Execution order
 
 Always apply in this sequence:
-1. Group 1 — tact reduction (graph changes first)
-2. Group 4 — resilience (semaphors reference the now-clean graph)
-3. Group 2 — data cleanup (inline into final node set)
-4. Group 3 — naming (operates on final nodes)
+1. Group 5 — code node replacements, then simplifications (decides what remains Code)
+2. Group 1 — tact reduction (graph changes; 1.2 merges only the code nodes that remain)
+3. Group 4 — resilience (semaphors reference the now-clean graph)
+4. Group 2 — data cleanup (inline into final node set)
+5. Group 3 — naming (operates on final nodes)
 
 ### Confirmation rules
 
@@ -279,6 +371,7 @@ Always apply in this sequence:
 |--------|----------------|-----------------|
 | Merge set_param / code / condition | No | Yes per group |
 | api_rpc → api_copy | **Always** | **Always** |
+| Replace / simplify code node (Group 5) | **Always** | **Always** |
 | Add semaphors | No | Yes per group |
 | Fill titles (critical nodes) | No | No |
 | Fill titles (other nodes) | No | Yes per group |
@@ -290,7 +383,11 @@ Always apply in this sequence:
 1. Write updated JSON to `PROCESS_PATH`.
 2. Call **`lint-process`** — fix any errors before proceeding.
 3. Call **`push-process`**.
-4. Notify the user: "Deployed. Please **refresh the page** in Corezoid to see the updated process."
+4. If any code node was replaced or simplified — verify before reporting done:
+   - before editing, list **every** key the old code node wrote, per outcome;
+   - `run-task` once per Condition branch, with input that reaches it;
+   - check each listed key is present with the right value (nested fields especially). Branches that cannot be reached without a server-side failure — list them to the user as unverified.
+5. Notify the user: "Deployed. Please **refresh the page** in Corezoid to see the updated process."
 
 ---
 
@@ -313,6 +410,8 @@ Always apply in this sequence:
 | `${CLAUDE_PLUGIN_ROOT}/docs/node-structures.md` | JSON schemas for all node types |
 | `${CLAUDE_PLUGIN_ROOT}/docs/nodes/set-parameters-node.md` | set_param merge rules |
 | `${CLAUDE_PLUGIN_ROOT}/docs/nodes/code-node.md` | Code node structure |
+| `${CLAUDE_PLUGIN_ROOT}/docs/nodes/condition-node.md` | Condition structure for Group 5 replacements |
+| `${CLAUDE_PLUGIN_ROOT}/docs/nodes/set-parameters-built-in-functions.md` | `$.math` and other value functions |
 | `${CLAUDE_PLUGIN_ROOT}/docs/nodes/api-call-node.md` | API Call semaphor configuration |
 | `${CLAUDE_PLUGIN_ROOT}/docs/nodes/call-process-node.md` | api_rpc vs api_copy decision |
 | `${CLAUDE_PLUGIN_ROOT}/docs/nodes/copy-task-node.md` | api_copy structure |
