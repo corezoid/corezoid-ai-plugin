@@ -8,6 +8,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // errTaskNotFound is returned by showTask when the API answers with an empty
@@ -454,9 +455,18 @@ func handleListNodeTasks(ctx context.Context, args map[string]interface{}) (stri
 	return string(data), false
 }
 
+// nodeStatDefaultWindow is the period get-node-stat covers when the caller
+// gives no start. Requiring both bounds cost most "how is this node doing"
+// calls a failed first attempt, since a quick look has no natural period.
+const nodeStatDefaultWindow = 24 * 60 * 60
+
+// nodeStatNow is the clock get-node-stat defaults end to; a var for tests.
+var nodeStatNow = func() int { return int(time.Now().Unix()) }
+
 // handleGetNodeStat returns time-series in/out statistics for a process node
-// over a caller-specified time window. The interval parameter controls bucket
-// granularity ("day" or "hour", default "day").
+// over a time window — the last 24 hours ending now unless start/end say
+// otherwise. The interval parameter controls bucket granularity ("day" or
+// "hour", default "day").
 func handleGetNodeStat(ctx context.Context, args map[string]interface{}) (string, bool) {
 	processID, err := intArg(args, "process_id")
 	if err != nil {
@@ -466,13 +476,20 @@ func handleGetNodeStat(ctx context.Context, args map[string]interface{}) (string
 	if err != nil {
 		return "Error: " + err.Error(), true
 	}
-	start, err := intArg(args, "start")
-	if err != nil {
-		return "Error: " + err.Error(), true
+	end := nodeStatNow()
+	if _, ok := args["end"]; ok {
+		if end, err = intArg(args, "end"); err != nil {
+			return "Error: " + err.Error(), true
+		}
 	}
-	end, err := intArg(args, "end")
-	if err != nil {
-		return "Error: " + err.Error(), true
+	start := end - nodeStatDefaultWindow
+	if _, ok := args["start"]; ok {
+		if start, err = intArg(args, "start"); err != nil {
+			return "Error: " + err.Error(), true
+		}
+	}
+	if start > end {
+		return fmt.Sprintf("Error: start (%d) is after end (%d)", start, end), true
 	}
 	interval := "day"
 	if v, ok := args["interval"].(string); ok && v != "" {

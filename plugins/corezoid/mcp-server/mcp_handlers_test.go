@@ -2322,3 +2322,77 @@ func TestHandleToolCall_ModifyTask_RefusesUnreadableDeepMerge(t *testing.T) {
 		t.Errorf("error should name deep_merge, got %q", result)
 	}
 }
+
+// nodeStatServer records the ops of every get_node_stat request.
+func nodeStatServer(t *testing.T) *[]map[string]interface{} {
+	t.Helper()
+	var got []map[string]interface{}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Ops []map[string]interface{} `json:"ops"`
+		}
+		json.NewDecoder(r.Body).Decode(&body) //nolint:errcheck
+		got = append(got, body.Ops...)
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{ //nolint:errcheck
+			"request_proc": "ok",
+			"ops":          []interface{}{map[string]interface{}{"proc": "ok", "data": []interface{}{}}},
+		})
+	}))
+	t.Cleanup(srv.Close)
+	origAccount := accountURL
+	accountURL = srv.URL
+	t.Cleanup(func() { accountURL = origAccount })
+	apiURL = srv.URL
+	apiToken = "test-token"
+	workspaceID = "1"
+	stageID = 1
+	return &got
+}
+
+// A quick look at a node has no natural period, so get-node-stat used to fail
+// on a missing start for most first calls. Without bounds it covers the last
+// 24 hours ending now; a given bound is used as is.
+func TestHandleToolCall_GetNodeStat_DefaultPeriod(t *testing.T) {
+	resetGlobals(t)
+	ops := nodeStatServer(t)
+	origNow := nodeStatNow
+	nodeStatNow = func() int { return 1_800_000_000 }
+	t.Cleanup(func() { nodeStatNow = origNow })
+
+	cases := []struct {
+		name             string
+		args             map[string]interface{}
+		wantStart, wantE float64
+	}{
+		{"no bounds", map[string]interface{}{}, 1_800_000_000 - 86400, 1_800_000_000},
+		{"end only", map[string]interface{}{"end": float64(1_700_000_000)}, 1_700_000_000 - 86400, 1_700_000_000},
+		{"start only", map[string]interface{}{"start": float64(1_799_000_000)}, 1_799_000_000, 1_800_000_000},
+		{"both", map[string]interface{}{"start": float64(10), "end": float64(20)}, 10, 20},
+	}
+	for _, tc := range cases {
+		*ops = nil
+		tc.args["process_id"] = float64(123)
+		tc.args["node_id"] = "aaaaaaaaaaaaaaaaaaaaaaaa"
+		result, isErr := handleToolCall(context.Background(), "get-node-stat", tc.args)
+		if isErr {
+			t.Errorf("%s: get-node-stat failed: %s", tc.name, result)
+			continue
+		}
+		if len(*ops) != 1 {
+			t.Fatalf("%s: got %d ops, want 1", tc.name, len(*ops))
+		}
+		op := (*ops)[0]
+		if op["start"] != tc.wantStart || op["end"] != tc.wantE {
+			t.Errorf("%s: period = %v..%v, want %v..%v", tc.name, op["start"], op["end"], tc.wantStart, tc.wantE)
+		}
+	}
+
+	result, isErr := handleToolCall(context.Background(), "get-node-stat", map[string]interface{}{
+		"process_id": float64(123), "node_id": "aaaaaaaaaaaaaaaaaaaaaaaa",
+		"start": float64(30), "end": float64(20),
+	})
+	if !isErr || !strings.Contains(result, "after end") {
+		t.Errorf("start after end: got isErr=%v %q", isErr, result)
+	}
+}

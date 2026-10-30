@@ -229,6 +229,41 @@ func TestResolveRouterCall_HelpRunsNothing(t *testing.T) {
 	}
 }
 
+// help put inside args is still a help request: it used to reach the handler
+// (and get-node-stat then failed on a required argument the caller had asked
+// to see). That reading is only safe while no action has a "help" argument.
+func TestResolveRouterCall_HelpInsideArgs(t *testing.T) {
+	for name, def := range collapsedToolByName {
+		schema, _ := def.InputSchema.(map[string]interface{})
+		props, _ := schema["properties"].(map[string]interface{})
+		if _, ok := props["help"]; ok {
+			t.Fatalf("%s has a help argument; nested help would shadow it", name)
+		}
+	}
+
+	got := resolveRouterCall("cz-tasks", map[string]interface{}{
+		"action": "get-node-stat",
+		"args":   map[string]interface{}{"process_id": float64(1), "help": true},
+	})
+	if !got.Handled || got.Tool != "" || got.IsError {
+		t.Fatalf("got %+v, want inert help", got)
+	}
+	if !strings.Contains(got.Text, "node_id") {
+		t.Errorf("want get-node-stat's schema, got %q", got.Text)
+	}
+
+	got = resolveRouterCall("cz-tasks", map[string]interface{}{
+		"action": "get-node-stat",
+		"args":   map[string]interface{}{"process_id": float64(1), "help": false},
+	})
+	if got.Tool != "get-node-stat" {
+		t.Fatalf("help=false inside args must run the action, got %+v", got)
+	}
+	if _, ok := got.Args["help"]; ok {
+		t.Error("help=false must not reach the handler as an unknown argument")
+	}
+}
+
 func TestActionHelpText_CoversEveryAction(t *testing.T) {
 	for _, r := range toolRouters {
 		for _, a := range r.Actions {

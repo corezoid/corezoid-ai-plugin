@@ -897,7 +897,7 @@ var collapsedToolRegistry = []mcpTool{
 	},
 	{
 		Name:        "get-node-stat",
-		Description: "Return time-series statistics (in/out counts) for a node over a time range. node_id is the ID shown in the Corezoid UI archive URL (/diagram/{node_id}/archive). ops[0]['data'] contains [{\"date\":\"YYYY-MM-DD\",\"in\":N,\"out\":M}] for non-zero buckets. ops[0]['title'] is the node title.",
+		Description: "Return time-series statistics (in/out counts) for a node over a time range — the last 24 hours unless start/end are given. node_id is the ID shown in the Corezoid UI archive URL (/diagram/{node_id}/archive). ops[0]['data'] contains [{\"date\":\"YYYY-MM-DD\",\"in\":N,\"out\":M}] for non-zero buckets. ops[0]['title'] is the node title.",
 		Annotations: toolHints(hintReadOnly, hintSafe, hintIdempotent, hintOpenWorld),
 		InputSchema: map[string]interface{}{
 			"type": "object",
@@ -912,11 +912,11 @@ var collapsedToolRegistry = []mcpTool{
 				},
 				"start": map[string]interface{}{
 					"type":        "integer",
-					"description": "Unix timestamp — start of the period",
+					"description": "Unix timestamp — start of the period (default: 24 hours before end)",
 				},
 				"end": map[string]interface{}{
 					"type":        "integer",
-					"description": "Unix timestamp — end of the period",
+					"description": "Unix timestamp — end of the period (default: now)",
 				},
 				"interval": map[string]interface{}{
 					"type":        "string",
@@ -927,7 +927,7 @@ var collapsedToolRegistry = []mcpTool{
 					"description": "UTC offset in minutes, negative westward (e.g. -180 for UTC+3, default: 0)",
 				},
 			},
-			"required": []string{"process_id", "node_id", "start", "end"},
+			"required": []string{"process_id", "node_id"},
 		},
 	},
 	// ---- cz-dashboards ----
