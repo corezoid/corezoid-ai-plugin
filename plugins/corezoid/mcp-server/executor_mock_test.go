@@ -180,6 +180,7 @@ func TestExportProcess_Error(t *testing.T) {
 }
 
 func TestPullZip_Error(t *testing.T) {
+	fastExportRetry(t)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "bad", http.StatusInternalServerError)
 	}))

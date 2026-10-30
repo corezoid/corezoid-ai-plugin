@@ -3,6 +3,7 @@ package main
 import (
 	"archive/zip"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -534,7 +535,10 @@ func downloadStageRecursively(e *Executor, folderID int, filePath string) ([]ski
 	var err error
 	for _, objType := range objTypes {
 		data, err = e.PullZip(folderID, objType)
-		if err == nil {
+		if err == nil || errors.Is(err, errExportStillTransient) {
+			// A timeout means the platform found the object under this
+			// obj_type; probing the others would only bury the timeout
+			// under their "not found" errors.
 			break
 		}
 	}
