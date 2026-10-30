@@ -447,13 +447,15 @@ func handleCreateVariable(ctx context.Context, args map[string]interface{}) (str
 //     because "override" is not a possible resolution — the file must be fixed.
 //   - overridable: contract/warning-level issues that block by default and
 //     force=true can waive (MissingDefaultGo, ShortTimers, RpcReplyMismatches,
-//     LiteralReplyValues, UnrepliedTerminals).
+//     LiteralReplyValues, UnrepliedTerminals, IncompleteParams,
+//     IncompleteCallProcess).
 //   - advisory: never block; surfaced in the response so the user sees them.
 func categorizeLintForPush(lintRes *LintResult) (structural, overridable, advisory int) {
 	structural = len(lintRes.BrokenLinks) + len(lintRes.OldFormatNodes) + len(lintRes.SelfReferenceCopies)
 	overridable = len(lintRes.MissingDefaultGo) + len(lintRes.ShortTimers) +
 		len(lintRes.RpcReplyMismatches) + len(lintRes.LiteralReplyValues) +
-		len(lintRes.UnrepliedTerminals)
+		len(lintRes.UnrepliedTerminals) + len(lintRes.IncompleteParams) +
+		len(lintRes.IncompleteCallProcess)
 	advisory = len(lintRes.NoopConditions) + len(lintRes.UnusedSetParams) +
 		len(lintRes.OrphanedNodes) + len(lintRes.PassthroughEscalations) +
 		len(lintRes.SharedErrorClusters) + len(lintRes.GitCallUsages)

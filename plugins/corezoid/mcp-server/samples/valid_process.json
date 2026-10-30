@@ -3,7 +3,7 @@
   "obj_id": 0,
   "title": "Valid Process",
   "params": [
-    {"name": "user_id", "type": "string", "descr": "User ID", "flags": ["required", "input"]}
+    {"name": "user_id", "type": "string", "descr": "User ID", "flags": ["required", "input"], "regex": "", "regex_error_text": ""}
   ],
   "scheme": {
     "nodes": [
