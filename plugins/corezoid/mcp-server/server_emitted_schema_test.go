@@ -51,25 +51,20 @@ func TestSchema_AcceptsServerEmittedProcessStatus(t *testing.T) {
 	}
 }
 
-// The server adds service fields with default values to go_if_const condition
-// items. All four authored fields are required, so a misspelling of any of them
-// still fails as a missing property; extra keys only come from the server.
-func TestSchema_AcceptsServerEmittedConditionField(t *testing.T) {
-	cond := `{"fun": "eq", "const": "1", "param": "x", "cast": "string", "__service__": ""}`
-	if err := ValidateJSONSchemaData(pulledProcess("active", cond), false); err != nil {
-		t.Fatalf("a condition carrying a server-emitted field must validate, got: %v", err)
-	}
-	res, err := lintProcessData(pulledProcess("active", cond))
-	if err != nil {
-		t.Fatalf("lint: %v", err)
-	}
-	if !res.SchemaValid {
-		t.Errorf("lint must agree with push validation, got: %s", res.SchemaError)
+// go_if_const condition items stay closed. The server-emitted field reported
+// in #239 was chunkify on the logic itself (condition.logics[N]), which is
+// declared on every logic type (see chunkify_schema_test.go); nothing the
+// server writes inside conditions[] is known. An undeclared key there is a
+// model invention, so it must fail, and a misspelled cast must still fail.
+func TestSchema_RejectsUndeclaredConditionField(t *testing.T) {
+	extra := `{"fun": "eq", "const": "1", "param": "x", "cast": "string", "operator": "eq"}`
+	err := ValidateJSONSchemaData(pulledProcess("active", extra), false)
+	if err == nil || !strings.Contains(err.Error(), "operator") {
+		t.Fatalf("an undeclared condition field must fail schema validation, got: %v", err)
 	}
 
 	typo := `{"fun": "eq", "const": "1", "param": "x", "cats": "string"}`
-	err = ValidateJSONSchemaData(pulledProcess("active", typo), false)
-	if err == nil || !strings.Contains(err.Error(), "cast") {
-		t.Fatalf("a misspelled cast must still fail as missing 'cast', got: %v", err)
+	if err := ValidateJSONSchemaData(pulledProcess("active", typo), false); err == nil {
+		t.Fatal("a misspelled cast must still fail schema validation")
 	}
 }
