@@ -230,11 +230,18 @@ func (v *Executor) ListWorkspaceRoot() ([]WorkspaceRootItem, error) {
 // BatchExportSchemes exports many items in a single API call and returns their
 // download URLs, one per item in the same order. Cuts N round-trips (one per
 // item) down to one when mirroring a whole workspace root — the Corezoid API
-// accepts multiple obj_scheme ops per request.
+// accepts multiple obj_scheme ops per request. Platform timeouts and transient
+// failures are repeated (see withExportRetry).
 func (v *Executor) BatchExportSchemes(items []WorkspaceRootItem) ([]string, error) {
 	if len(items) == 0 {
 		return nil, nil
 	}
+	return withExportRetry(v, fmt.Sprintf("%d workspace-root objects", len(items)), func() ([]string, error) {
+		return v.batchExportSchemesOnce(items)
+	})
+}
+
+func (v *Executor) batchExportSchemesOnce(items []WorkspaceRootItem) ([]string, error) {
 	opType := "create"
 	if v.Token != "" {
 		opType = "download"

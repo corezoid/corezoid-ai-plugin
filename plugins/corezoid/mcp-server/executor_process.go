@@ -68,7 +68,14 @@ func (v *Executor) fetchDownload(downloadURL string) ([]byte, error) {
 }
 
 // PullZip exports a process or folder as a ZIP archive and returns the raw bytes.
+// Platform timeouts and transient failures are repeated (see withExportRetry).
 func (v *Executor) PullZip(id int, objType string) ([]byte, error) {
+	return withExportRetry(v, fmt.Sprintf("%s #%d", objType, id), func() ([]byte, error) {
+		return v.pullZipOnce(id, objType)
+	})
+}
+
+func (v *Executor) pullZipOnce(id int, objType string) ([]byte, error) {
 	// /api/2/download (Simulator) accepts type="download".
 	// /api/2/json (API key) only accepts type="create" — "download" returns "undefined request".
 	opType := "create"
