@@ -80,6 +80,9 @@ For complete JSON structures see `${CLAUDE_PLUGIN_ROOT}/docs/node-structures.md`
 - Treat active Stub Mode (`obj_type: 4` + `condition.stub`) as a temporary mock only: it bypasses the called process and can fake success. Preserve `condition.stub` during round trips, but do not leave `obj_type: 4` enabled on production paths unless the user explicitly confirms `allow_active_stub_mode=true`.
 - Raw JSON objects as values in `extra` — must be stringified: `"{\"key\":\"val\"}"`
 - Keys in `extra` and `extra_type` must match exactly
+- **Changing a node's kind in place** — turning an action node (`api_code`, `api_rpc`, `set_param`, …) into a Condition (`go_if_const`) or back while keeping its `id`. The process itself pushes and runs fine, but a later stage merge / deploy (develop → qa) can fail with `Key 'to_node_id'. referenced node … does not exist` when the reshaped node now routes to nodes that already existed. Instead, delete the old node and create a new one with a new `id` (and `uuid`, if present), then relink every incoming `go` / `err_node_id` / `to_node_id` to it. A node already changed in place can be repaired the same way: assign a new id, replace all references, push
+- **Replacing Code with Set Parameters / Condition** — read [Runtime Behaviour (verified)](${CLAUDE_PLUGIN_ROOT}/docs/nodes/set-parameters-node.md#runtime-behaviour-verified) first: dotted keys like `{{view.x}}` replace the whole parent object, keys of one node do not see each other, missing fields fail on non-string types
+- **Call a Process with empty `extra` and `group: ""`** — the call sends nothing and lint does not catch it; use `"group": "all"` when the callee has no input parameters
 
 ---
 

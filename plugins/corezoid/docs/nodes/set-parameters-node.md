@@ -159,9 +159,10 @@ calculations or transformations.
   - Use `{{result}}` instead of `{{data.result}}` to access parameters
   - Using `{{data.result}}` will cause validation errors
 - **Avoid using more than one dynamic element at root level** in parameter keys
-  - Instead of `"test_results.tests[{{test_results.tests.length}}]"`, use
-    `"test_results.tests": "{{JSON.stringify(test_results.tests.concat([{...}]))}}"`
-  - This limitation prevents errors when setting dynamic array elements
+  - Instead of `"test_results.tests[{{test_results.tests.length}}]"`, append by an explicit
+    index counter — see [Dynamic Array Operations Limitation](#dynamic-array-operations-limitation)
+- Read the [Runtime Behaviour (verified)](#runtime-behaviour-verified) section before replacing a
+  Code node with Set Parameters
 - **Always properly stringify object values with escaped quotes**
   - Object values must be JSON strings with properly escaped quotes
   - Example: `"object_param": "{\"key\":\"value\",\"nested\":{\"key2\":\"value2\"}}"`
@@ -261,12 +262,23 @@ This example demonstrates how to correctly stringify object values in a Set Para
 
 ### Dynamic Array Operations Limitation
 
-When working with arrays in Set Parameters nodes, you might encounter limitations with dynamic
-indices, especially when trying to append elements directly using syntax like
-`"my_array[{{my_array.length}}]": ...`.
+When trying to append elements using syntax like `"my_array[{{my_array.length}}]": ...`, you might
+encounter limitations. Appending by an **explicit index counter** works (verified with `run-task`): a key written as
+a template with a nested index, typed `object`, writes the element at that index; when the index
+equals the current length the array grows by one and earlier elements are kept.
 
-For reliable dynamic array manipulation (like appending elements), it is generally recommended to
-use a **Code Node** instead:
+```json
+"extra":      { "{{items_out[{{item_idx}}]}}": "{\"id\":\"{{item.id}}\",\"total\":{{item.total}}}" },
+"extra_type": { "{{items_out[{{item_idx}}]}}": "object" }
+```
+
+Increment `item_idx` in a separate node (`$.math({{item_idx}}+1)`, see the built-in functions).
+Fields the template reads come straight from the task, so reset the per-iteration source (for
+example the previous API response) at the start of each loop pass — otherwise values from the
+previous iteration leak into the next element.
+
+When there is no index counter, or several fields must be merged into an existing element, use a
+**Code Node**:
 
 ```javascript
 // Example in a Code Node to append an object to an array
@@ -275,6 +287,55 @@ if (!data.my_array) {
 }
 data.my_array.push({ new_key: "new_value" });
 ```
+
+## Runtime Behaviour (verified)
+
+Observed with `run-task` on a live Corezoid installation. None of these cases is reported by
+`lint-process`; most of them fail silently (the task goes to `go`), so check the task data after
+the node, not only the route it took.
+
+**Keys of one node do not see each other.** Every `{{…}}` in a node is resolved against the task
+data *as it entered the node*. `"order": "{{response.order}}"` plus
+`"order_id": "{{order.id}}"` in the same node gives `order_id = ""`. Reference the source
+(`{{response.order.id}}`) or move the dependent key to the next node.
+
+**Dotted keys replace the parent object.** Several keys like `{{view.title}}`, `{{view.items}}`
+in one node do not add fields to `view` — each key overwrites `view` as a whole and only one of
+them survives, with no error. Build the object with **one** key of type `object`:
+
+```json
+"extra":      { "view": "{\"title\":\"{{title}}\",\"items\":{{items}},\"total\":{{total}}}" },
+"extra_type": { "view": "object" }
+```
+
+To add fields to an object that already exists in the task, use a Code node.
+
+**Missing fields.** A reference to a field that is not in the task resolves to `""` when the key
+type is `string`, and the node goes to `go`. For `number`, `boolean`, `object` and `array` keys the
+same reference sends the task to the error branch. Inside an `object` template a missing field is
+inserted as `""`.
+
+**`null` values.** A field whose value is JSON `null` is substituted as the string `"null"`
+(both in `string` keys and inside object templates). A key of type `object` whose value is the
+literal `null` fails with `set_param_wrong_convert_param` — use `{}` / `[]` or a `string` `""`.
+
+**Quotes inside object templates.** Put quotes only around string values. `"{{obj}}"` in quotes,
+where `obj` is an object or array, renders as `"{"x":1}"` — invalid JSON, the key fails with
+`set_param_wrong_convert_param`. If the error exit points to the same node as `go`, the key is
+silently not set (for example, an API call later sends an empty body). Correct:
+
+```json
+"{\"data\":{{data}},\"title\":\"{{title}}\",\"active\":{{is_active}}}"
+```
+
+String values substituted inside quotes are escaped correctly (quotes and backslashes in the value
+keep the JSON valid).
+
+**Values read from a state diagram are not re-rendered.** If a value read with
+`{{conv[@sd-alias].ref[key].field}}` contains `{{x}}`, it comes back verbatim even when `x` exists in
+the task — so templates can be stored in a state diagram. A nested lookup with a dynamic key works,
+including keys with spaces: `{{conv[@sd-alias].ref[dict].titles.{{code}}}}` (string type) gives `""`
+for an unknown key and goes to `go`; with type `object` a missing ref goes to the error branch.
 
 ## Node Patterns
 

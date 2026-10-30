@@ -257,6 +257,22 @@ When returning complex objects in a Reply to Process node, you must properly str
 2. Use a single set of quotes around the entire string
 3. Set the correct data type in `res_data_type` (usually "object" for objects and "array" for arrays)
 
+A value of type `object` can also be assembled from task values directly in the Reply, without a
+preceding Code or Set Parameters node (verified with `run-task`):
+
+- `{{flag}}` **without quotes** inserts `true`/`false` as a boolean, `{{items}}` inserts a whole
+  array or object, `{}` is a valid literal;
+- `"{{text}}"` in quotes inserts a string; a missing field becomes `""` (no error);
+- `$.unixtime()` as the whole value of a `number` key returns the current time.
+
+```json
+"res_data":      { "response": "{\"error\":{{has_error}},\"items\":{{items}},\"message\":\"{{message}}\"}" },
+"res_data_type": { "response": "object" }
+```
+
+So "build a response and reply" can be a Condition with one Reply per outcome. Note that a Reply
+does not change the data of its own task — check the result in the **caller's** task.
+
 ### Real-World Example
 
 Here's a real-world example of a Reply to Process node with properly stringified object values:

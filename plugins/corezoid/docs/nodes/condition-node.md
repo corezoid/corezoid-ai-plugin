@@ -52,6 +52,24 @@ The following functions are allowed in condition expressions:
    - Sequence of conditions to evaluate in order.
    - Example: Multiple entries in the "logics" array
 
+### Templates and missing keys (verified)
+
+- **Nested paths need braces in `param`.** `"param": "{{customer.id}}"` resolves the path; a bare
+  `"param": "customer.id"` does not (it is compared as an empty value). A bare top-level name
+  (`"param": "status"`) works.
+- **A missing key or element equals `""`.** `{{a.id}}` when `a` is `{}` or absent, and
+  `{{items[0]}}` when `items` is `[]` or absent, satisfy `eq ""` and do not satisfy `not_eq ""`.
+  So "is it empty / is the array non-empty" can be checked directly, without a normalising Set
+  Parameters or Code node:
+  ```json
+  { "param": "{{items[0].id}}", "const": "", "fun": "eq", "cast": "string" }
+  ```
+- **`const` accepts a template**, so two task values can be compared without Code:
+  ```json
+  { "param": "{{found[0].ref}}", "const": "{{current_ref}}", "fun": "eq", "cast": "string" }
+  ```
+- With `cast: "number"`, `more` / `less` on a missing key route to the default path (no error).
+
 ## Error Handling
 
 - Condition nodes are central to error handling in Corezoid processes:

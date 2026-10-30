@@ -347,8 +347,10 @@ $.filter(fun(x) -> x > 10 end, {{numbers}})        // Returns elements greater t
 
 When using dynamic values, be aware of the following potential issues:
 
-1. **Missing Parameters**: If a referenced parameter doesn't exist, it may result in an empty string
-   or error
+1. **Missing Parameters**: If a referenced parameter doesn't exist, it resolves to `""` for a
+   `string` key and sends the task to the error branch for `number`/`boolean`/`object`/`array` keys.
+   A JSON `null` value is substituted as the string `"null"`. Keys of the same node cannot reference
+   each other. See [Runtime Behaviour](set-parameters-node.md#runtime-behaviour-verified)
 2. **Type Conversion Issues**: Ensure the parameter type in `extra_type` matches the expected type
    after substitution
 3. **Invalid Syntax**: Ensure all curly braces are properly closed and the syntax is correct
