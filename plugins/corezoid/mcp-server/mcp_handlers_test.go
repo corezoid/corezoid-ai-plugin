@@ -1882,6 +1882,136 @@ func TestHandleRunTask_ProcessIDWithoutLocalFile(t *testing.T) {
 	}
 }
 
+// runTaskTypedServer rejects a task whose "amount" is not a number, the way
+// the platform rejects a value that does not match its declared parameter
+// type, and records the data of every create it receives.
+func runTaskTypedServer(t *testing.T, sent *[]map[string]interface{}) string {
+	t.Helper()
+	srv, _ := mockAPIServer(t, func(ops []map[string]interface{}) interface{} {
+		obj, _ := ops[0]["obj"].(string)
+		typ, _ := ops[0]["type"].(string)
+		switch obj + ":" + typ {
+		case "task:create":
+			data, _ := ops[0]["data"].(map[string]interface{})
+			*sent = append(*sent, data)
+			if _, ok := data["amount"].(float64); !ok {
+				return map[string]interface{}{"request_proc": "ok", "ops": []interface{}{map[string]interface{}{
+					"proc": "error", "description": "Value is not valid: amount",
+				}}}
+			}
+			return map[string]interface{}{"request_proc": "ok", "ops": []interface{}{map[string]interface{}{"proc": "ok"}}}
+		default:
+			return map[string]interface{}{"request_proc": "error", "description": "unexpected operation"}
+		}
+	})
+	return srv.URL
+}
+
+const runTaskTypedConv = `{"obj_id":123,"title":"typed","params":[
+	{"name":"amount","type":"number","flags":["required","input"]},
+	{"name":"active","type":"boolean","flags":["input"]},
+	{"name":"tags","type":"array","flags":["input"]},
+	{"name":"name","type":"string","flags":["input"]},
+	{"name":"result","type":"string","flags":["output"]}
+],"scheme":{"nodes":[]}}`
+
+// A string where the process declares a number (#258) used to cost a
+// rejected task and a retry: with a local file declaring the types, run-task
+// converts the obvious cases and says so.
+func TestHandleRunTask_CoercesToDeclaredParamTypes(t *testing.T) {
+	resetGlobals(t)
+	var sent []map[string]interface{}
+	setProjectAuth(t, runTaskTypedServer(t, &sent))
+	dir := t.TempDir()
+	t.Chdir(dir)
+	if err := os.WriteFile("123_typed.conv.json", []byte(runTaskTypedConv), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	result, isErr := handleRunTask(context.Background(), map[string]interface{}{
+		"process_path": "123_typed.conv.json",
+		"data":         `{"amount":"21","active":"true","tags":"[\"a\"]","name":7,"extra":"5"}`,
+		"wait_sec":     0,
+	})
+	if isErr {
+		t.Fatalf("task with coercible values rejected: %s", result)
+	}
+	if !strings.Contains(result, "Converted task data") || !strings.Contains(result, "amount: string → number") {
+		t.Errorf("conversion not reported: %s", result)
+	}
+	if len(sent) != 1 {
+		t.Fatalf("want one create, got %d", len(sent))
+	}
+	got := sent[0]
+	if got["amount"] != float64(21) || got["active"] != true || got["name"] != "7" || got["extra"] != "5" {
+		t.Errorf("sent data = %#v", got)
+	}
+	if tags, _ := got["tags"].([]interface{}); len(tags) != 1 || tags[0] != "a" {
+		t.Errorf("tags sent as %#v, want [a]", got["tags"])
+	}
+}
+
+// A value that cannot be converted safely is sent as given, and the rejection
+// names the declared types and the mismatched value instead of only the
+// platform's terse error.
+func TestHandleRunTask_RejectionListsDeclaredTypes(t *testing.T) {
+	resetGlobals(t)
+	var sent []map[string]interface{}
+	setProjectAuth(t, runTaskTypedServer(t, &sent))
+	dir := t.TempDir()
+	t.Chdir(dir)
+	if err := os.WriteFile("123_typed.conv.json", []byte(runTaskTypedConv), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	result, isErr := handleRunTask(context.Background(), map[string]interface{}{
+		"process_path": "123_typed.conv.json", "data": `{"amount":"21.50"}`, "wait_sec": 0,
+	})
+	if !isErr {
+		t.Fatalf("expected rejection: %s", result)
+	}
+	for _, want := range []string{"Value is not valid: amount", "amount: number, required — sent string", "tags: array", "send numbers and booleans unquoted"} {
+		if !strings.Contains(result, want) {
+			t.Errorf("result missing %q: %s", want, result)
+		}
+	}
+	if strings.Contains(result, "result: string") {
+		t.Errorf("output-only parameter listed as input: %s", result)
+	}
+}
+
+func TestCoerceValue(t *testing.T) {
+	cases := []struct {
+		in   interface{}
+		typ  string
+		want interface{}
+		ok   bool
+	}{
+		{"5", "number", float64(5), true},
+		{" -1.5 ", "number", -1.5, true},
+		{"007", "number", nil, false},
+		{"1e3", "number", nil, false},
+		{"12345678901234567890", "number", nil, false},
+		{"abc", "number", nil, false},
+		{"true", "boolean", true, true},
+		{"yes", "boolean", nil, false},
+		{float64(42), "string", "42", true},
+		{false, "string", "false", true},
+		{`{"a":1}`, "array", nil, false},
+		{"not json", "object", nil, false},
+		{float64(1), "boolean", nil, false},
+	}
+	for _, tc := range cases {
+		got, ok := coerceValue(tc.in, tc.typ)
+		if ok != tc.ok || (ok && got != tc.want) {
+			t.Errorf("coerceValue(%#v, %s) = %#v, %v; want %#v, %v", tc.in, tc.typ, got, ok, tc.want, tc.ok)
+		}
+	}
+	if got, ok := coerceValue(`{"a":1}`, "object"); !ok || got.(map[string]interface{})["a"] != float64(1) {
+		t.Errorf("object string not parsed: %#v, %v", got, ok)
+	}
+}
+
 // runTaskParkedServer serves a deployed process with one node of each kind
 // run-task tells apart, keeps the task on taskNodeID, and records each
 // operation it receives.
