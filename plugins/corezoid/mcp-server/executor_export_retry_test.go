@@ -209,11 +209,85 @@ func TestIsTransientExportError(t *testing.T) {
 		{errors.New("API returned 503 after 3 attempts"), true},
 		{errors.New("API op error: Object not found"), false},
 		{errors.New("API op error: Access denied"), false},
+		{&nonJSONResponseError{Status: 502, Err: errors.New("invalid character '<'")}, true},
+		{&nonJSONResponseError{Status: 403, Err: errors.New("invalid character '<'")}, false},
+		{&nonJSONResponseError{Status: 404, Err: errors.New("invalid character '<'")}, false},
 		{nil, false},
 	}
 	for _, c := range cases {
 		if got := isTransientExportError(c.err); got != c.want {
 			t.Errorf("isTransientExportError(%v) = %v, want %v", c.err, got, c.want)
 		}
+	}
+}
+
+// htmlExportServer answers every request with an HTML page and the given
+// status, the way a gateway or WAF in front of Corezoid does.
+func htmlExportServer(t *testing.T, status int) (*Executor, *int32) {
+	t.Helper()
+	var calls int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&calls, 1)
+		w.Header().Set("Content-Type", "text/html")
+		w.WriteHeader(status)
+		w.Write([]byte("<html><body>blocked</body></html>")) //nolint:errcheck
+	}))
+	t.Cleanup(srv.Close)
+	return &Executor{APIUrl: srv.URL, Token: "test", Ctx: context.Background(), NodeIDMap: make(map[string]NodeInfo)}, &calls
+}
+
+// A 4xx HTML page (WAF block, wrong API URL) fails the same way every time:
+// repeating it would only delay the error and wrap it in a "retry the tool"
+// hint that sends the model into a loop.
+func TestPullZip_HTMLClientErrorNotRetried(t *testing.T) {
+	fastExportRetry(t)
+	e, calls := htmlExportServer(t, http.StatusForbidden)
+
+	_, err := e.PullZip(42, "stage")
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if errors.Is(err, errExportStillTransient) {
+		t.Errorf("a 403 page must not carry the retry hint: %v", err)
+	}
+	if !strings.Contains(err.Error(), "HTTP 403") {
+		t.Errorf("error should name the HTTP status: %v", err)
+	}
+	if got := atomic.LoadInt32(calls); got != 1 {
+		t.Errorf("export calls = %d, want 1", got)
+	}
+}
+
+func TestPullZip_HTMLGatewayErrorRetried(t *testing.T) {
+	fastExportRetry(t)
+	e, calls := htmlExportServer(t, http.StatusBadGateway)
+
+	_, err := e.PullZip(42, "stage")
+	if !errors.Is(err, errExportStillTransient) {
+		t.Errorf("a 502 page should be retried and carry the hint: %v", err)
+	}
+	if want := int32(len(exportRetryDelaysVar) + 1); atomic.LoadInt32(calls) != want {
+		t.Errorf("export calls = %d, want %d", atomic.LoadInt32(calls), want)
+	}
+}
+
+// Once the budget is spent, no repeat after the first one starts, however many
+// are left in exportRetryDelaysVar.
+func TestWithExportRetry_BudgetStopsLaterRepeats(t *testing.T) {
+	fastExportRetry(t)
+	origBudget := exportRetryBudgetVar
+	exportRetryBudgetVar = 0
+	t.Cleanup(func() { exportRetryBudgetVar = origBudget })
+
+	calls := 0
+	_, err := withExportRetry(&Executor{Ctx: context.Background()}, "stage #1", func() (int, error) {
+		calls++
+		return 0, errors.New("API op error: Timeout export_scheme")
+	})
+	if !errors.Is(err, errExportStillTransient) {
+		t.Errorf("error should carry the retry hint: %v", err)
+	}
+	if calls != 2 {
+		t.Errorf("export calls = %d, want 2 (the first repeat only)", calls)
 	}
 }

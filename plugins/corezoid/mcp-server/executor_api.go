@@ -31,6 +31,21 @@ var (
 	apiRetryMaxDelayVar  = 5 * time.Second
 )
 
+// nonJSONResponseError is returned when the API answers with a body that is
+// not JSON — usually an HTML page from a gateway, proxy or WAF in front of
+// Corezoid. Status keeps the HTTP code so callers can tell a gateway that gave
+// up on a slow request (5xx) from a block or a wrong API URL (4xx).
+type nonJSONResponseError struct {
+	Status int
+	Err    error
+}
+
+func (e *nonJSONResponseError) Error() string {
+	return fmt.Sprintf("API returned HTTP %d with a non-JSON body: %v", e.Status, e.Err)
+}
+
+func (e *nonJSONResponseError) Unwrap() error { return e.Err }
+
 // req sends an authenticated JSON-RPC request to the Corezoid API, retrying
 // transient 429/503 responses. Safe for every op whose duplicate is harmless
 // or cheap to undo — which is all of them except the ones reqOnce exists for.
@@ -124,7 +139,7 @@ func (v *Executor) reqAttempts(method string, ops []map[string]any, maxAttempts 
 	err = json.Unmarshal(body, &response)
 	if err != nil {
 		logger.Error("Error parsing response: %v", err)
-		return nil, err
+		return nil, &nonJSONResponseError{Status: resp.StatusCode, Err: err}
 	}
 	err = v.checkError(response, ops)
 	if err != nil {

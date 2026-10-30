@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -15,6 +14,13 @@ import (
 // repeat a few seconds later succeeds, so the first repeat comes quickly and
 // the later ones give the platform more room. Tests dial these down.
 var exportRetryDelaysVar = []time.Duration{2 * time.Second, 5 * time.Second, 10 * time.Second}
+
+// exportRetryBudgetVar caps how long after the first attempt a further repeat
+// may still start. A platform timeout can itself take minutes, so counting
+// attempts alone lets one pull run for many minutes, long after the client has
+// given up on the tool call and the model has called it again. The first
+// repeat is always made, since it is the one that usually succeeds.
+var exportRetryBudgetVar = 2 * time.Minute
 
 // errExportStillTransient is wrapped into an export error that is still
 // transient after every repeat. Its text is the hint that makes the model
@@ -48,8 +54,10 @@ var transientExportMarkers = []string{
 }
 
 // isTransientExportError reports whether a failed scheme export is worth
-// repeating. A non-JSON body counts: a gateway that gives up on a slow export
-// answers with an HTML error page.
+// repeating. A non-JSON body counts only with a 5xx status: a gateway that
+// gives up on a slow export answers with an HTML error page, but so do a WAF
+// block or a wrong API URL (4xx), and repeating those only delays the real
+// error behind a "retry the tool" hint.
 func isTransientExportError(err error) bool {
 	if err == nil || errors.Is(err, context.Canceled) {
 		return false
@@ -57,9 +65,9 @@ func isTransientExportError(err error) bool {
 	if errors.Is(err, context.DeadlineExceeded) {
 		return true
 	}
-	var syntaxErr *json.SyntaxError
-	if errors.As(err, &syntaxErr) {
-		return true
+	var nonJSON *nonJSONResponseError
+	if errors.As(err, &nonJSON) {
+		return nonJSON.Status >= 500
 	}
 	msg := strings.ToLower(err.Error())
 	for _, m := range transientExportMarkers {
@@ -71,10 +79,12 @@ func isTransientExportError(err error) bool {
 }
 
 // withExportRetry runs export, repeating it with backoff while it fails
-// transiently. Exports are read-only, so a repeat cannot create anything. The
-// error that survives every repeat wraps errExportStillTransient.
+// transiently, until the repeats or exportRetryBudgetVar run out. Exports are
+// read-only, so a repeat cannot create anything. The error that survives every
+// repeat wraps errExportStillTransient.
 func withExportRetry[T any](v *Executor, what string, export func() (T, error)) (T, error) {
 	var zero T
+	start := time.Now()
 	for attempt := 0; ; attempt++ {
 		res, err := export()
 		if err == nil {
@@ -83,7 +93,8 @@ func withExportRetry[T any](v *Executor, what string, export func() (T, error)) 
 		if !isTransientExportError(err) {
 			return zero, err
 		}
-		if attempt >= len(exportRetryDelaysVar) {
+		if attempt >= len(exportRetryDelaysVar) ||
+			(attempt > 0 && time.Since(start)+exportRetryDelaysVar[attempt] > exportRetryBudgetVar) {
 			return zero, fmt.Errorf("%w (after %d attempts)%w", err, attempt+1, errExportStillTransient)
 		}
 		if cerr := v.checkCancel(); cerr != nil {
