@@ -36,6 +36,9 @@
    - In the UI this backs **Send all parameters**.
    - `"all"` sends all current task parameters to the called process; `""` sends only `extra` / `extra_type`.
    - Example: `"group": "all"`
+   - **Do not combine empty `extra: {}` with `group: ""`** — the call is created with nothing to
+     send, and `lint-process` does not report it. If the called process takes no input
+     parameters, use `"group": "all"`; otherwise list the parameters in `extra` / `extra_type`.
 2. **User ID** (Number)
    - User ID for authentication purposes.
    - Example: `"user_id": 56171`

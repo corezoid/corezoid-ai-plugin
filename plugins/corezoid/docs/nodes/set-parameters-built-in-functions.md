@@ -48,6 +48,15 @@ $.math($.math({{value}}+1)-1)     // Nested math functions
 - The result is always returned as a string representation of the number
 - Decimal results are returned with a decimal point (e.g., "50.0")
 - Can be used in array indices: `{{array[$.math({{index}}+1)]}}`
+- **One operator per expression.** Only two operands are evaluated: `$.math({{a}}+{{b}}+{{c}})`
+  returns `a+b` and `$.math({{a}}+{{b}}*2)` returns `a+b` — silently, without an error. Compute
+  one operation per key and keep intermediate results in separate keys
+- Supported operators: `+ - * /`. There is no `%`, `^`, `div`, `rem`, `floor`, `round`, `abs` or
+  `trunc` — such a key goes to the error branch
+- `+ - *` are exact for large integers (19+ digits); `/` returns a float
+  (`$.math(4111111111111111/10)` → `411111111111111.125`)
+- `lint-process` may report a key as unused (`UNUSED SET_PARAM`) when it is referenced only
+  inside `$.math(...)` — a false positive
 
 ### Random Number Generation
 
@@ -167,6 +176,13 @@ $.unixtime(format)
 ```
 $.unixtime(%y-%m-%d %h:%i:%s)    // Returns the Unix timestamp for the specified date
 ```
+
+**Current time:** `$.unixtime()` without arguments returns the current Unix time in seconds — but
+only when it is the **whole value** of a key typed `number` (also in a Reply node `res_data`).
+Wrapped in a template or embedded in a string / object JSON (`{{$.unixtime()}}`,
+`"{\"at\":{{$.unixtime()}}}"`) it resolves to `""`, and in an `object` key that makes the JSON
+invalid (error branch). To put the time into an object, set it in one node
+(`"checked_at": "$.unixtime()"`, `number`) and reference `{{checked_at}}` in the next node.
 
 ### Cryptographic Functions
 
@@ -443,6 +459,16 @@ end, {{records}})                                          // Keeps only records
   - erlang:hd/1, erlang:tl/1
 - You can reference object properties using the dot notation in the function
 - You can call other built-in functions like $.random() within the function
+- Verified pitfalls:
+  - `lists:*` functions (`lists:member`, `lists:any`, …) are not allowed — the key goes to the
+    error branch. Use `orelse` / `=:=` chains instead
+  - JSON `null` arrives as the atom `null`, and in Erlang term order an atom is greater than any
+    number: `null > 0` is **true**. Guard numeric checks:
+    `(is_number(V) andalso V > 0)`
+  - An empty string is `<<>>`; read object fields with
+    `proplists:get_value(<<"key">>, Item, Default)`
+  - To test "is the result non-empty", use a Condition on `{{result[0].id}}` `eq ""` (a missing
+    element resolves to `""`, see the Condition node docs)
 
 ## Function Nesting
 
