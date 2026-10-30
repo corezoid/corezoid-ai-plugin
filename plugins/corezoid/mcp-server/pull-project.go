@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strings"
 	"unicode/utf8"
 )
@@ -31,8 +32,118 @@ func fixMojibake(s string) string {
 	return s
 }
 
+// windowsFileNames selects the Windows file-name rules in portableEntryPath.
+// A variable rather than a constant so tests on other OSes can exercise them.
+var windowsFileNames = runtime.GOOS == "windows"
+
+// maxFileNameBytes caps a single path component. 255 bytes is the limit on
+// Linux and macOS, and stays within the 255 UTF-16 units Windows allows, since
+// no character takes more UTF-16 units than UTF-8 bytes.
+const maxFileNameBytes = 255
+
+// windowsReservedNames are device names Windows refuses as a file stem,
+// whatever the extension ("CON.json" is as invalid as "CON").
+var windowsReservedNames = map[string]bool{
+	"CON": true, "PRN": true, "AUX": true, "NUL": true,
+	"COM1": true, "COM2": true, "COM3": true, "COM4": true, "COM5": true,
+	"COM6": true, "COM7": true, "COM8": true, "COM9": true,
+	"LPT1": true, "LPT2": true, "LPT3": true, "LPT4": true, "LPT5": true,
+	"LPT6": true, "LPT7": true, "LPT8": true, "LPT9": true,
+}
+
+// exportNameSuffixes are the multi-dot suffixes Corezoid's exporter puts on
+// entry names. Truncation keeps them intact, because file discovery and the
+// .folder/.stage/.project unwrapping both match on them.
+var exportNameSuffixes = []string{
+	".conv.json", ".folder.json", ".stage.json", ".project.json", ".dashboard.json",
+	".folder", ".stage", ".project",
+}
+
+// portableEntryPath rewrites a zip entry name so every component can be
+// created on the local file system. Corezoid builds entry names from object
+// titles, so a process called `say "hi"` arrives as `123_say "hi".conv.json`,
+// which Windows rejects. On Windows, the characters it reserves (<>:"|?* and
+// control characters) become "_", trailing dots and spaces are trimmed, and
+// device names (CON, NUL, …) get a "_" appended. On every OS, a component
+// longer than maxFileNameBytes is shortened at the end of its title, keeping
+// the "<id>_" prefix that ties the file to its object and the export suffix.
+//
+// Other OSes keep those characters as they are, so existing workspaces there
+// do not see their files renamed on the next pull.
+func portableEntryPath(name string, windows bool) string {
+	if windows {
+		// On Windows filepath.Join treats a backslash as a separator, so a
+		// backslash in an entry name already split it; keep that behaviour.
+		name = strings.ReplaceAll(name, `\`, "/")
+	}
+	parts := strings.Split(name, "/")
+	for i, p := range parts {
+		if p == "" || p == "." || p == ".." {
+			continue
+		}
+		parts[i] = portableComponent(p, windows)
+	}
+	return strings.Join(parts, "/")
+}
+
+func portableComponent(p string, windows bool) string {
+	if windows {
+		var b strings.Builder
+		b.Grow(len(p))
+		for _, r := range p {
+			if r < 0x20 || strings.ContainsRune(`<>:"|?*`, r) {
+				b.WriteByte('_')
+			} else {
+				b.WriteRune(r)
+			}
+		}
+		p = strings.TrimRight(b.String(), ". ")
+		stem, rest, hasDot := strings.Cut(p, ".")
+		if windowsReservedNames[strings.ToUpper(strings.TrimRight(stem, " "))] {
+			p = stem + "_"
+			if hasDot {
+				p += "." + rest
+			}
+		}
+		if p == "" {
+			p = "_"
+		}
+	}
+	if len(p) > maxFileNameBytes {
+		suffix := filepath.Ext(p)
+		for _, s := range exportNameSuffixes {
+			if strings.HasSuffix(p, s) {
+				suffix = s
+				break
+			}
+		}
+		if len(suffix) >= maxFileNameBytes {
+			suffix = ""
+		}
+		stem := p[:len(p)-len(suffix)]
+		limit := maxFileNameBytes - len(suffix)
+		// Back off to a rune boundary so the name stays valid UTF-8.
+		for limit > 0 && !utf8.RuneStart(stem[limit]) {
+			limit--
+		}
+		stem = stem[:limit]
+		if windows {
+			stem = strings.TrimRight(stem, ". ")
+		}
+		p = stem + suffix
+	}
+	return p
+}
+
 // unzipFile extracts a ZIP archive to destDir using Go's archive/zip package.
-// Applies fixMojibake to entry names to handle servers that double-encode UTF-8 filenames.
+// Applies fixMojibake to entry names to handle servers that double-encode UTF-8
+// filenames, then portableEntryPath so object titles with characters the local
+// file system rejects still produce a file.
+//
+// An entry whose directory or file still cannot be created is skipped rather
+// than fatal: one oddly named process must not cost the user the rest of the
+// folder. Skipped entries are logged and returned so the caller can report
+// them. The security rejections below stay fatal.
 //
 // Two separate containment checks run per entry, because they stop two
 // different things. The ".." / absolute-path check rejects hostile names
@@ -42,10 +153,10 @@ func fixMojibake(s string) string {
 // wherever "docs" happens to point, and a plain name whose file is already a
 // symlink overwrites the link's target. Neither is reachable through the
 // archive-name check, since the name itself is perfectly ordinary.
-func unzipFile(src, destDir string) error {
+func unzipFile(src, destDir string) (skipped []string, err error) {
 	r, err := zip.OpenReader(src)
 	if err != nil {
-		return fmt.Errorf("failed to open zip %s: %w", src, err)
+		return nil, fmt.Errorf("failed to open zip %s: %w", src, err)
 	}
 	defer r.Close()
 
@@ -56,7 +167,7 @@ func unzipFile(src, destDir string) error {
 	// caller that stops pre-creating the directory would get "failed to resolve
 	// extraction root" instead of an extraction.
 	if err := os.MkdirAll(destDir, 0755); err != nil {
-		return fmt.Errorf("failed to create extraction root %s: %w", destDir, err)
+		return nil, fmt.Errorf("failed to create extraction root %s: %w", destDir, err)
 	}
 
 	// Resolve the root once. The workspace itself may legitimately sit under a
@@ -65,15 +176,22 @@ func unzipFile(src, destDir string) error {
 	// raw strings would reject those ordinary setups.
 	rootReal, err := filepath.EvalSymlinks(destDir)
 	if err != nil {
-		return fmt.Errorf("failed to resolve extraction root %s: %w", destDir, err)
+		return nil, fmt.Errorf("failed to resolve extraction root %s: %w", destDir, err)
+	}
+
+	skip := func(name string, cause error) {
+		logger.Warn("unzip: skipped %s: %v", name, cause)
+		skipped = append(skipped, fmt.Sprintf("%s (%v)", name, cause))
 	}
 
 	for _, f := range r.File {
-		name := fixMojibake(f.Name)
+		// Sanitize before the zip-slip check: trimming a trailing space can
+		// turn ".. " into "..", and the check must see the final name.
+		name := portableEntryPath(fixMojibake(f.Name), windowsFileNames)
 		// Guard against zip-slip: reject absolute paths and paths with ".." components.
 		cleaned := filepath.Clean(name)
 		if filepath.IsAbs(cleaned) || cleaned == ".." || strings.HasPrefix(cleaned, ".."+string(os.PathSeparator)) {
-			return fmt.Errorf("illegal zip path: %s", name)
+			return skipped, fmt.Errorf("illegal zip path: %s", name)
 		}
 		destPath := filepath.Join(destDir, name)
 
@@ -82,43 +200,45 @@ func unzipFile(src, destDir string) error {
 		// create the missing components on the far side of the link, so
 		// checking afterwards would report an escape we had already made.
 		if err := ensureInsideRoot(filepath.Dir(destPath), rootReal); err != nil {
-			return fmt.Errorf("illegal zip path %s: %w", name, err)
+			return skipped, fmt.Errorf("illegal zip path %s: %w", name, err)
 		}
 
 		if f.FileInfo().IsDir() {
 			if err := os.MkdirAll(destPath, 0755); err != nil {
-				return err
+				skip(name, err)
 			}
 			continue
 		}
 
 		if err := os.MkdirAll(filepath.Dir(destPath), 0755); err != nil {
-			return err
+			skip(name, err)
+			continue
 		}
 
 		// The parent is now real directories all the way down, but the leaf
 		// itself can still be a pre-existing symlink pointing anywhere.
 		if fi, lerr := os.Lstat(destPath); lerr == nil && fi.Mode()&os.ModeSymlink != 0 {
-			return fmt.Errorf("illegal zip path %s: %s already exists as a symlink; refusing to write through it", name, destPath)
+			return skipped, fmt.Errorf("illegal zip path %s: %s already exists as a symlink; refusing to write through it", name, destPath)
 		}
 
 		rc, err := f.Open()
 		if err != nil {
-			return fmt.Errorf("failed to open zip entry %s: %w", name, err)
+			return skipped, fmt.Errorf("failed to open zip entry %s: %w", name, err)
 		}
 		out, err := os.Create(destPath)
 		if err != nil {
 			rc.Close()
-			return fmt.Errorf("failed to create file %s: %w", destPath, err)
+			skip(name, err)
+			continue
 		}
 		_, copyErr := io.Copy(out, rc)
 		rc.Close()
 		out.Close()
 		if copyErr != nil {
-			return fmt.Errorf("failed to extract %s: %w", name, copyErr)
+			return skipped, fmt.Errorf("failed to extract %s: %w", name, copyErr)
 		}
 	}
-	return nil
+	return skipped, nil
 }
 
 // ensureInsideRoot reports an error unless dir — with every symlink resolved —
@@ -279,40 +399,45 @@ func hoistZipWrapperDirs(root string) error {
 // Used when the user picked "No Project" during login — the workspace has no
 // stage root, so we mirror what the Corezoid UI's root view shows straight
 // into the workspace directory.
-func downloadWorkspaceRootRecursively(e *Executor, filePath string) error {
+//
+// The returned list names archive entries that could not be written locally
+// (see unzipFile); the rest of the workspace is still saved.
+func downloadWorkspaceRootRecursively(e *Executor, filePath string) ([]string, error) {
 	if err := e.checkCancel(); err != nil {
-		return err
+		return nil, err
 	}
 
 	items, err := e.ListWorkspaceRoot()
 	if err != nil {
-		return fmt.Errorf("failed to list workspace root: %w", err)
+		return nil, fmt.Errorf("failed to list workspace root: %w", err)
 	}
 	if len(items) == 0 {
-		return nil
+		return nil, nil
 	}
 
 	urls, err := e.BatchExportSchemes(items)
 	if err != nil {
-		return fmt.Errorf("failed to batch export workspace root: %w", err)
+		return nil, fmt.Errorf("failed to batch export workspace root: %w", err)
 	}
 
+	var skipped []string
 	for i, url := range urls {
 		if err := e.checkCancel(); err != nil {
-			return err
+			return skipped, err
 		}
 		data, err := e.fetchDownload(url)
 		if err != nil {
-			return fmt.Errorf("failed to download %s #%d: %w", items[i].ObjType, items[i].ObjID, err)
+			return skipped, fmt.Errorf("failed to download %s #%d: %w", items[i].ObjType, items[i].ObjID, err)
 		}
 		zipPath := filepath.Join(filePath, fmt.Sprintf(".root_%s_%d.zip", items[i].ObjType, items[i].ObjID))
 		if err := os.WriteFile(zipPath, data, 0644); err != nil {
-			return fmt.Errorf("failed to write zip: %w", err)
+			return skipped, fmt.Errorf("failed to write zip: %w", err)
 		}
-		unzipErr := unzipFile(zipPath, filePath)
+		s, unzipErr := unzipFile(zipPath, filePath)
+		skipped = append(skipped, s...)
 		os.Remove(zipPath)
 		if unzipErr != nil {
-			return fmt.Errorf("failed to unzip %s #%d: %w", items[i].ObjType, items[i].ObjID, unzipErr)
+			return skipped, fmt.Errorf("failed to unzip %s #%d: %w", items[i].ObjType, items[i].ObjID, unzipErr)
 		}
 	}
 
@@ -320,7 +445,7 @@ func downloadWorkspaceRootRecursively(e *Executor, filePath string) error {
 	// {stage,folder,conv,dashboard}_<id>_<ts>.zip wrapper directory. Unwrap
 	// them so folder / conv / dashboard files land directly at filePath.
 	if err := hoistZipWrapperDirs(filePath); err != nil {
-		return fmt.Errorf("failed to unwrap workspace-root archives: %w", err)
+		return skipped, fmt.Errorf("failed to unwrap workspace-root archives: %w", err)
 	}
 
 	// Some archives contain inner *.zip files that also need extracting.
@@ -329,7 +454,7 @@ func downloadWorkspaceRootRecursively(e *Executor, filePath string) error {
 	for {
 		files, err := os.ReadDir(filePath)
 		if err != nil {
-			return fmt.Errorf("failed to read directory: %w", err)
+			return skipped, fmt.Errorf("failed to read directory: %w", err)
 		}
 		var innerZip string
 		for _, f := range files {
@@ -341,25 +466,29 @@ func downloadWorkspaceRootRecursively(e *Executor, filePath string) error {
 		if innerZip == "" {
 			break
 		}
-		err = unzipFile(innerZip, filePath)
+		s, err := unzipFile(innerZip, filePath)
+		skipped = append(skipped, s...)
 		os.Remove(innerZip)
 		if err != nil {
-			return fmt.Errorf("failed to unzip %s: %w", filepath.Base(innerZip), err)
+			return skipped, fmt.Errorf("failed to unzip %s: %w", filepath.Base(innerZip), err)
 		}
 	}
 
 	if err := renameFiles2Folders(filePath); err != nil {
-		return fmt.Errorf("failed to rename files: %w", err)
+		return skipped, fmt.Errorf("failed to rename files: %w", err)
 	}
 	if err := formatJSONWithFallback(e, filePath); err != nil {
-		return fmt.Errorf("failed to format json: %w", err)
+		return skipped, fmt.Errorf("failed to format json: %w", err)
 	}
-	return nil
+	return skipped, nil
 }
 
-func downloadStageRecursively(e *Executor, folderID int, filePath string) error {
+// downloadStageRecursively pulls folderID into filePath. The returned list
+// names archive entries that could not be written locally (see unzipFile);
+// the rest of the folder is still saved.
+func downloadStageRecursively(e *Executor, folderID int, filePath string) ([]string, error) {
 	if err := e.checkCancel(); err != nil {
-		return err
+		return nil, err
 	}
 	// If folderID matches the configured stage root, we know it's a stage —
 	// no need to probe. Otherwise try folder first (common case for sub-folders),
@@ -379,16 +508,17 @@ func downloadStageRecursively(e *Executor, folderID int, filePath string) error 
 		}
 	}
 	if err != nil {
-		return fmt.Errorf("failed to PullZip: %w", err)
+		return nil, fmt.Errorf("failed to PullZip: %w", err)
 	}
 	zipPath := filePath + "/stage.zip"
 	err = os.WriteFile(zipPath, data, 0644)
 	if err != nil {
-		return fmt.Errorf("failed to write file: %v", err)
+		return nil, fmt.Errorf("failed to write file: %v", err)
 	}
 	defer os.Remove(zipPath)
-	if err = unzipFile(zipPath, filePath); err != nil {
-		return fmt.Errorf("failed to unzip: %w", err)
+	skipped, err := unzipFile(zipPath, filePath)
+	if err != nil {
+		return skipped, fmt.Errorf("failed to unzip: %w", err)
 	}
 
 	// Unzip any inner zip files: stage_<id>_<id>.zip (may be nested)
@@ -396,7 +526,7 @@ func downloadStageRecursively(e *Executor, folderID int, filePath string) error 
 	for {
 		files, err := os.ReadDir(filePath)
 		if err != nil {
-			return fmt.Errorf("failed to read directory: %v", err)
+			return skipped, fmt.Errorf("failed to read directory: %v", err)
 		}
 		var innerZip string
 		for _, f := range files {
@@ -408,10 +538,11 @@ func downloadStageRecursively(e *Executor, folderID int, filePath string) error 
 		if innerZip == "" {
 			break
 		}
-		err = unzipFile(innerZip, filePath)
+		s, err := unzipFile(innerZip, filePath)
+		skipped = append(skipped, s...)
 		os.Remove(innerZip)
 		if err != nil {
-			return fmt.Errorf("failed to unzip %s: %w", filepath.Base(innerZip), err)
+			return skipped, fmt.Errorf("failed to unzip %s: %w", filepath.Base(innerZip), err)
 		}
 	}
 
@@ -424,16 +555,16 @@ func downloadStageRecursively(e *Executor, folderID int, filePath string) error 
 	// wrapper next to it. Doing this before findStageDir guarantees the
 	// freshly-extracted stage lands at filePath, overwriting any prior copy.
 	if err := hoistZipWrapperDirs(filePath); err != nil {
-		return fmt.Errorf("failed to unwrap stage archive: %w", err)
+		return skipped, fmt.Errorf("failed to unwrap stage archive: %w", err)
 	}
 
 	// Find .stage directory anywhere up to depth 2: <id>_<name>.stage
 	stageDir, err := findStageDir(filePath, 2)
 	if err != nil {
-		return fmt.Errorf("failed to find stage dir: %v", err)
+		return skipped, fmt.Errorf("failed to find stage dir: %v", err)
 	}
 	if stageDir == "" {
-		return fmt.Errorf("stage directory not found (*.stage / *.folder / *.project) — " +
+		return skipped, fmt.Errorf("stage directory not found (*.stage / *.folder / *.project) — " +
 			"if COREZOID_WORK_DIR (or the MCP server launch directory) is $HOME " +
 			"or another large directory, set it to a dedicated project folder and " +
 			"restart Claude Code / the MCP server")
@@ -446,13 +577,13 @@ func downloadStageRecursively(e *Executor, folderID int, filePath string) error 
 	// the exporter placed above it.
 	if stageDir != filePath {
 		if err := moveContents(stageDir, filePath); err != nil {
-			return fmt.Errorf("failed to flatten stage into workspace: %v", err)
+			return skipped, fmt.Errorf("failed to flatten stage into workspace: %v", err)
 		}
 		wrapper := stageDir
 		for wrapper != filePath {
 			parent := filepath.Dir(wrapper)
 			if err := os.RemoveAll(wrapper); err != nil {
-				return fmt.Errorf("failed to remove stage wrapper: %v", err)
+				return skipped, fmt.Errorf("failed to remove stage wrapper: %v", err)
 			}
 			if parent == filePath {
 				break
@@ -465,14 +596,14 @@ func downloadStageRecursively(e *Executor, folderID int, filePath string) error 
 	// previously pulled at a different depth.
 	err = renameFiles2Folders(filePath)
 	if err != nil {
-		return fmt.Errorf("failed to rename files: %v", err)
+		return skipped, fmt.Errorf("failed to rename files: %v", err)
 	}
 	err = formatJSONWithFallback(e, filePath)
 	if err != nil {
-		return fmt.Errorf("failed to format json: %v", err)
+		return skipped, fmt.Errorf("failed to format json: %v", err)
 	}
 
-	return nil
+	return skipped, nil
 }
 
 func renameFiles2Folders(filePath string) error {

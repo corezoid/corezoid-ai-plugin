@@ -517,7 +517,8 @@ func handleLogin(ctx context.Context, args map[string]interface{}) (string, bool
 		})
 		pv := NewValidator(ctx, 0)
 		baselineSnapshot := captureWorkspaceBaselineSnapshot(pv)
-		if pullErr := downloadWorkspaceRootRecursively(pv, pullDest); pullErr != nil {
+		// Skipped entries are already logged by unzipFile.
+		if _, pullErr := downloadWorkspaceRootRecursively(pv, pullDest); pullErr != nil {
 			logger.Warn("login: auto workspace-root pull failed: %v", pullErr)
 			autoPullErr = pullErr
 		} else {
@@ -531,7 +532,7 @@ func handleLogin(ctx context.Context, args map[string]interface{}) (string, bool
 		buf.stage(func(f *Folder) { f.StageID = selectedStageID })
 		pv := NewValidator(ctx, 0)
 		baselineSnapshot := captureFolderBaselineSnapshot(pv, snapStageID)
-		if pullErr := downloadStageRecursively(pv, snapStageID, pullDest); pullErr != nil {
+		if _, pullErr := downloadStageRecursively(pv, snapStageID, pullDest); pullErr != nil {
 			logger.Warn("login: auto pull-folder failed: %v", pullErr)
 			autoPullErr = pullErr
 		} else {
