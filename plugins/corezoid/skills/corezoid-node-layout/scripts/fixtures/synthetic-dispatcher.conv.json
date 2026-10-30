@@ -1,0 +1,681 @@
+{
+ "obj_type": 1,
+ "obj_id": 0,
+ "title": "Synthetic dispatcher",
+ "description": "",
+ "status": "active",
+ "params": [],
+ "ref_mask": true,
+ "conv_type": "process",
+ "scheme": {
+  "nodes": [
+   {
+    "id": "f00000000000000000000001",
+    "obj_type": 1,
+    "condition": {
+     "logics": [
+      {
+       "type": "go",
+       "to_node_id": "f00000000000000000000002"
+      }
+     ],
+     "semaphors": []
+    },
+    "title": "Start",
+    "description": "",
+    "x": 0,
+    "y": 0,
+    "extra": "{\"modeForm\": \"expand\", \"icon\": \"\"}",
+    "options": null
+   },
+   {
+    "id": "f00000000000000000000002",
+    "obj_type": 0,
+    "condition": {
+     "logics": [
+      {
+       "type": "go_if_const",
+       "to_node_id": "f0000000000000000000000a",
+       "conditions": [
+        {
+         "param": "action",
+         "const": "create",
+         "fun": "eq",
+         "cast": "string"
+        }
+       ]
+      },
+      {
+       "type": "go",
+       "to_node_id": "f00000000000000000000003"
+      }
+     ],
+     "semaphors": []
+    },
+    "title": "Router: create?",
+    "description": "",
+    "x": 0,
+    "y": 0,
+    "extra": "{\"modeForm\": \"expand\", \"icon\": \"\"}",
+    "options": null
+   },
+   {
+    "id": "f00000000000000000000003",
+    "obj_type": 0,
+    "condition": {
+     "logics": [
+      {
+       "type": "go_if_const",
+       "to_node_id": "f0000000000000000000000f",
+       "conditions": [
+        {
+         "param": "action",
+         "const": "update",
+         "fun": "eq",
+         "cast": "string"
+        }
+       ]
+      },
+      {
+       "type": "go",
+       "to_node_id": "f00000000000000000000004"
+      }
+     ],
+     "semaphors": []
+    },
+    "title": "Router: update?",
+    "description": "",
+    "x": 0,
+    "y": 0,
+    "extra": "{\"modeForm\": \"expand\", \"icon\": \"\"}",
+    "options": null
+   },
+   {
+    "id": "f00000000000000000000004",
+    "obj_type": 0,
+    "condition": {
+     "logics": [
+      {
+       "type": "go_if_const",
+       "to_node_id": "f00000000000000000000014",
+       "conditions": [
+        {
+         "param": "action",
+         "const": "delete",
+         "fun": "eq",
+         "cast": "string"
+        }
+       ]
+      },
+      {
+       "type": "go",
+       "to_node_id": "f00000000000000000000005"
+      }
+     ],
+     "semaphors": []
+    },
+    "title": "Router: delete?",
+    "description": "",
+    "x": 0,
+    "y": 0,
+    "extra": "{\"modeForm\": \"expand\", \"icon\": \"\"}",
+    "options": null
+   },
+   {
+    "id": "f00000000000000000000005",
+    "obj_type": 0,
+    "condition": {
+     "logics": [
+      {
+       "type": "go_if_const",
+       "to_node_id": "f00000000000000000000019",
+       "conditions": [
+        {
+         "param": "action",
+         "const": "archive",
+         "fun": "eq",
+         "cast": "string"
+        }
+       ]
+      },
+      {
+       "type": "go",
+       "to_node_id": "f0000000000000000000001b"
+      }
+     ],
+     "semaphors": []
+    },
+    "title": "Router: archive?",
+    "description": "",
+    "x": 0,
+    "y": 0,
+    "extra": "{\"modeForm\": \"expand\", \"icon\": \"\"}",
+    "options": null
+   },
+   {
+    "id": "f00000000000000000000006",
+    "obj_type": 2,
+    "condition": {
+     "logics": [],
+     "semaphors": []
+    },
+    "title": "Success create",
+    "description": "",
+    "x": 0,
+    "y": 0,
+    "extra": "{\"modeForm\": \"expand\", \"icon\": \"success\"}",
+    "options": null
+   },
+   {
+    "id": "f00000000000000000000007",
+    "obj_type": 0,
+    "condition": {
+     "logics": [
+      {
+       "type": "api_rpc_reply",
+       "mode": "key_value",
+       "res_data": {
+        "status": "ok"
+       },
+       "res_data_type": {
+        "status": "string"
+       },
+       "throw_exception": false
+      },
+      {
+       "type": "go",
+       "to_node_id": "f00000000000000000000006"
+      }
+     ],
+     "semaphors": []
+    },
+    "title": "Reply success — create",
+    "description": "",
+    "x": 0,
+    "y": 0,
+    "extra": "{\"modeForm\": \"expand\", \"icon\": \"\"}",
+    "options": null
+   },
+   {
+    "id": "f00000000000000000000008",
+    "obj_type": 2,
+    "condition": {
+     "logics": [],
+     "semaphors": []
+    },
+    "title": "Error — create",
+    "description": "",
+    "x": 0,
+    "y": 0,
+    "extra": "{\"modeForm\": \"expand\", \"icon\": \"error\"}",
+    "options": null
+   },
+   {
+    "id": "f00000000000000000000009",
+    "obj_type": 0,
+    "condition": {
+     "logics": [
+      {
+       "type": "api_rpc_reply",
+       "mode": "key_value",
+       "res_data": {
+        "status": "error"
+       },
+       "res_data_type": {
+        "status": "string"
+       },
+       "throw_exception": false
+      },
+      {
+       "type": "go",
+       "to_node_id": "f00000000000000000000008"
+      }
+     ],
+     "semaphors": []
+    },
+    "title": "Reply error — create",
+    "description": "",
+    "x": 0,
+    "y": 0,
+    "extra": "{\"modeForm\": \"expand\", \"icon\": \"\"}",
+    "options": null
+   },
+   {
+    "id": "f0000000000000000000000a",
+    "obj_type": 0,
+    "condition": {
+     "logics": [
+      {
+       "type": "api_rpc",
+       "conv_id": "{{conv[@items-create]}}",
+       "extra": {
+        "id": "{{id}}"
+       },
+       "extra_type": {
+        "id": "string"
+       },
+       "group": "",
+       "err_node_id": "f00000000000000000000009"
+      },
+      {
+       "type": "go",
+       "to_node_id": "f00000000000000000000007"
+      }
+     ],
+     "semaphors": []
+    },
+    "title": "Call create item",
+    "description": "",
+    "x": 0,
+    "y": 0,
+    "extra": "{\"modeForm\": \"expand\", \"icon\": \"\"}",
+    "options": null
+   },
+   {
+    "id": "f0000000000000000000000b",
+    "obj_type": 2,
+    "condition": {
+     "logics": [],
+     "semaphors": []
+    },
+    "title": "Success update",
+    "description": "",
+    "x": 0,
+    "y": 0,
+    "extra": "{\"modeForm\": \"expand\", \"icon\": \"success\"}",
+    "options": null
+   },
+   {
+    "id": "f0000000000000000000000c",
+    "obj_type": 0,
+    "condition": {
+     "logics": [
+      {
+       "type": "api_rpc_reply",
+       "mode": "key_value",
+       "res_data": {
+        "status": "ok"
+       },
+       "res_data_type": {
+        "status": "string"
+       },
+       "throw_exception": false
+      },
+      {
+       "type": "go",
+       "to_node_id": "f0000000000000000000000b"
+      }
+     ],
+     "semaphors": []
+    },
+    "title": "Reply success — update",
+    "description": "",
+    "x": 0,
+    "y": 0,
+    "extra": "{\"modeForm\": \"expand\", \"icon\": \"\"}",
+    "options": null
+   },
+   {
+    "id": "f0000000000000000000000d",
+    "obj_type": 2,
+    "condition": {
+     "logics": [],
+     "semaphors": []
+    },
+    "title": "Error — update",
+    "description": "",
+    "x": 0,
+    "y": 0,
+    "extra": "{\"modeForm\": \"expand\", \"icon\": \"error\"}",
+    "options": null
+   },
+   {
+    "id": "f0000000000000000000000e",
+    "obj_type": 0,
+    "condition": {
+     "logics": [
+      {
+       "type": "api_rpc_reply",
+       "mode": "key_value",
+       "res_data": {
+        "status": "error"
+       },
+       "res_data_type": {
+        "status": "string"
+       },
+       "throw_exception": false
+      },
+      {
+       "type": "go",
+       "to_node_id": "f0000000000000000000000d"
+      }
+     ],
+     "semaphors": []
+    },
+    "title": "Reply error — update",
+    "description": "",
+    "x": 0,
+    "y": 0,
+    "extra": "{\"modeForm\": \"expand\", \"icon\": \"\"}",
+    "options": null
+   },
+   {
+    "id": "f0000000000000000000000f",
+    "obj_type": 0,
+    "condition": {
+     "logics": [
+      {
+       "type": "api_rpc",
+       "conv_id": "{{conv[@items-update]}}",
+       "extra": {
+        "id": "{{id}}"
+       },
+       "extra_type": {
+        "id": "string"
+       },
+       "group": "",
+       "err_node_id": "f0000000000000000000000e"
+      },
+      {
+       "type": "go",
+       "to_node_id": "f0000000000000000000000c"
+      }
+     ],
+     "semaphors": []
+    },
+    "title": "Call update item",
+    "description": "",
+    "x": 0,
+    "y": 0,
+    "extra": "{\"modeForm\": \"expand\", \"icon\": \"\"}",
+    "options": null
+   },
+   {
+    "id": "f00000000000000000000010",
+    "obj_type": 2,
+    "condition": {
+     "logics": [],
+     "semaphors": []
+    },
+    "title": "Success delete",
+    "description": "",
+    "x": 0,
+    "y": 0,
+    "extra": "{\"modeForm\": \"expand\", \"icon\": \"success\"}",
+    "options": null
+   },
+   {
+    "id": "f00000000000000000000011",
+    "obj_type": 0,
+    "condition": {
+     "logics": [
+      {
+       "type": "api_rpc_reply",
+       "mode": "key_value",
+       "res_data": {
+        "status": "ok"
+       },
+       "res_data_type": {
+        "status": "string"
+       },
+       "throw_exception": false
+      },
+      {
+       "type": "go",
+       "to_node_id": "f00000000000000000000010"
+      }
+     ],
+     "semaphors": []
+    },
+    "title": "Reply success — delete",
+    "description": "",
+    "x": 0,
+    "y": 0,
+    "extra": "{\"modeForm\": \"expand\", \"icon\": \"\"}",
+    "options": null
+   },
+   {
+    "id": "f00000000000000000000012",
+    "obj_type": 2,
+    "condition": {
+     "logics": [],
+     "semaphors": []
+    },
+    "title": "Error — delete",
+    "description": "",
+    "x": 0,
+    "y": 0,
+    "extra": "{\"modeForm\": \"expand\", \"icon\": \"error\"}",
+    "options": null
+   },
+   {
+    "id": "f00000000000000000000013",
+    "obj_type": 0,
+    "condition": {
+     "logics": [
+      {
+       "type": "api_rpc_reply",
+       "mode": "key_value",
+       "res_data": {
+        "status": "error"
+       },
+       "res_data_type": {
+        "status": "string"
+       },
+       "throw_exception": false
+      },
+      {
+       "type": "go",
+       "to_node_id": "f00000000000000000000012"
+      }
+     ],
+     "semaphors": []
+    },
+    "title": "Reply error — delete",
+    "description": "",
+    "x": 0,
+    "y": 0,
+    "extra": "{\"modeForm\": \"expand\", \"icon\": \"\"}",
+    "options": null
+   },
+   {
+    "id": "f00000000000000000000014",
+    "obj_type": 0,
+    "condition": {
+     "logics": [
+      {
+       "type": "api_rpc",
+       "conv_id": "{{conv[@items-delete]}}",
+       "extra": {
+        "id": "{{id}}"
+       },
+       "extra_type": {
+        "id": "string"
+       },
+       "group": "",
+       "err_node_id": "f00000000000000000000013"
+      },
+      {
+       "type": "go",
+       "to_node_id": "f00000000000000000000011"
+      }
+     ],
+     "semaphors": []
+    },
+    "title": "Call delete item",
+    "description": "",
+    "x": 0,
+    "y": 0,
+    "extra": "{\"modeForm\": \"expand\", \"icon\": \"\"}",
+    "options": null
+   },
+   {
+    "id": "f00000000000000000000015",
+    "obj_type": 2,
+    "condition": {
+     "logics": [],
+     "semaphors": []
+    },
+    "title": "Success archive",
+    "description": "",
+    "x": 0,
+    "y": 0,
+    "extra": "{\"modeForm\": \"expand\", \"icon\": \"success\"}",
+    "options": null
+   },
+   {
+    "id": "f00000000000000000000016",
+    "obj_type": 0,
+    "condition": {
+     "logics": [
+      {
+       "type": "api_rpc_reply",
+       "mode": "key_value",
+       "res_data": {
+        "status": "ok"
+       },
+       "res_data_type": {
+        "status": "string"
+       },
+       "throw_exception": false
+      },
+      {
+       "type": "go",
+       "to_node_id": "f00000000000000000000015"
+      }
+     ],
+     "semaphors": []
+    },
+    "title": "Reply success — archive",
+    "description": "",
+    "x": 0,
+    "y": 0,
+    "extra": "{\"modeForm\": \"expand\", \"icon\": \"\"}",
+    "options": null
+   },
+   {
+    "id": "f00000000000000000000017",
+    "obj_type": 2,
+    "condition": {
+     "logics": [],
+     "semaphors": []
+    },
+    "title": "Error — archive",
+    "description": "",
+    "x": 0,
+    "y": 0,
+    "extra": "{\"modeForm\": \"expand\", \"icon\": \"error\"}",
+    "options": null
+   },
+   {
+    "id": "f00000000000000000000018",
+    "obj_type": 0,
+    "condition": {
+     "logics": [
+      {
+       "type": "api_rpc_reply",
+       "mode": "key_value",
+       "res_data": {
+        "status": "error"
+       },
+       "res_data_type": {
+        "status": "string"
+       },
+       "throw_exception": false
+      },
+      {
+       "type": "go",
+       "to_node_id": "f00000000000000000000017"
+      }
+     ],
+     "semaphors": []
+    },
+    "title": "Reply error — archive",
+    "description": "",
+    "x": 0,
+    "y": 0,
+    "extra": "{\"modeForm\": \"expand\", \"icon\": \"\"}",
+    "options": null
+   },
+   {
+    "id": "f00000000000000000000019",
+    "obj_type": 0,
+    "condition": {
+     "logics": [
+      {
+       "type": "api_rpc",
+       "conv_id": "{{conv[@items-archive]}}",
+       "extra": {
+        "id": "{{id}}"
+       },
+       "extra_type": {
+        "id": "string"
+       },
+       "group": "",
+       "err_node_id": "f00000000000000000000018"
+      },
+      {
+       "type": "go",
+       "to_node_id": "f00000000000000000000016"
+      }
+     ],
+     "semaphors": []
+    },
+    "title": "Call archive item",
+    "description": "",
+    "x": 0,
+    "y": 0,
+    "extra": "{\"modeForm\": \"expand\", \"icon\": \"\"}",
+    "options": null
+   },
+   {
+    "id": "f0000000000000000000001a",
+    "obj_type": 2,
+    "condition": {
+     "logics": [],
+     "semaphors": []
+    },
+    "title": "Error — unknown action",
+    "description": "",
+    "x": 0,
+    "y": 0,
+    "extra": "{\"modeForm\": \"expand\", \"icon\": \"\"}",
+    "options": null
+   },
+   {
+    "id": "f0000000000000000000001b",
+    "obj_type": 0,
+    "condition": {
+     "logics": [
+      {
+       "type": "api_rpc_reply",
+       "mode": "key_value",
+       "res_data": {
+        "status": "error"
+       },
+       "res_data_type": {
+        "status": "string"
+       },
+       "throw_exception": false
+      },
+      {
+       "type": "go",
+       "to_node_id": "f0000000000000000000001a"
+      }
+     ],
+     "semaphors": []
+    },
+    "title": "Reply error — unknown action",
+    "description": "",
+    "x": 0,
+    "y": 0,
+    "extra": "{\"modeForm\": \"expand\", \"icon\": \"\"}",
+    "options": null
+   }
+  ],
+  "web_settings": [
+   [],
+   []
+  ]
+ }
+}
