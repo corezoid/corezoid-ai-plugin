@@ -229,11 +229,30 @@ func TestUnzipFile_UnwritableEntryIsSkipped(t *testing.T) {
 	if err != nil {
 		t.Fatalf("one unwritable entry must not fail the whole extraction: %v", err)
 	}
-	if len(skipped) != 1 || !strings.Contains(skipped[0], "1_bad") {
-		t.Errorf("skipped = %q, want exactly the 1_bad entry", skipped)
+	if len(skipped) != 1 || !strings.Contains(skipped[0].Name, "1_bad") {
+		t.Errorf("skipped = %v, want exactly the 1_bad entry", skipped)
+	} else if id := skipped[0].processID(); id != 1 {
+		t.Errorf("skipped[0].processID() = %d, want 1", id)
 	}
 	if _, err := os.Stat(filepath.Join(dest, "2_good.conv.json")); err != nil {
 		t.Errorf("sibling entry not extracted: %v", err)
+	}
+}
+
+func TestSkippedEntryProcessID(t *testing.T) {
+	cases := map[string]int{
+		"123_say hi.conv.json":                     123,
+		"stage_1_2.zip/5_dev.stage/77_x.conv.json": 77,
+		"9.conv.json":                              9,
+		"10_orders.folder":                         0,
+		"10_orders.folder/11_board.dashboard.json": 0,
+		"10_orders.folder/notes_12.conv.json":      0,
+		"10_orders.folder/12.something.conv.json":  0,
+	}
+	for name, want := range cases {
+		if got := (skippedEntry{Name: name}).processID(); got != want {
+			t.Errorf("processID(%q) = %d, want %d", name, got, want)
+		}
 	}
 }
 

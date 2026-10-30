@@ -518,11 +518,11 @@ func handleLogin(ctx context.Context, args map[string]interface{}) (string, bool
 		pv := NewValidator(ctx, 0)
 		baselineSnapshot := captureWorkspaceBaselineSnapshot(pv)
 		// Skipped entries are already logged by unzipFile.
-		if _, pullErr := downloadWorkspaceRootRecursively(pv, pullDest); pullErr != nil {
+		if skipped, pullErr := downloadWorkspaceRootRecursively(pv, pullDest); pullErr != nil {
 			logger.Warn("login: auto workspace-root pull failed: %v", pullErr)
 			autoPullErr = pullErr
 		} else {
-			recordPulledBaselines(pullDest, baselineSnapshot)
+			recordPulledBaselines(pullDest, baselineSnapshot, skipped)
 			if err := writeWorkspaceProvisionedMarkerIfEmpty(pullDest); err != nil {
 				logger.Warn("login: could not write %s marker: %v", workspaceProvisionedMarker, err)
 			}
@@ -532,11 +532,11 @@ func handleLogin(ctx context.Context, args map[string]interface{}) (string, bool
 		buf.stage(func(f *Folder) { f.StageID = selectedStageID })
 		pv := NewValidator(ctx, 0)
 		baselineSnapshot := captureFolderBaselineSnapshot(pv, snapStageID)
-		if _, pullErr := downloadStageRecursively(pv, snapStageID, pullDest); pullErr != nil {
+		if skipped, pullErr := downloadStageRecursively(pv, snapStageID, pullDest); pullErr != nil {
 			logger.Warn("login: auto pull-folder failed: %v", pullErr)
 			autoPullErr = pullErr
 		} else {
-			recordPulledBaselines(pullDest, baselineSnapshot)
+			recordPulledBaselines(pullDest, baselineSnapshot, skipped)
 			if err := writeWorkspaceProvisionedMarkerIfEmpty(pullDest); err != nil {
 				logger.Warn("login: could not write %s marker: %v", workspaceProvisionedMarker, err)
 			}

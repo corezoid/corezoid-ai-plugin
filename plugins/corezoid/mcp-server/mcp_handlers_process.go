@@ -368,7 +368,7 @@ func handlePullFolder(ctx context.Context, args map[string]interface{}) (string,
 		if err := writeWorkspaceProvisionedMarkerIfEmpty(dest); err != nil {
 			logger.Warn("pull-folder: could not write %s marker: %v", workspaceProvisionedMarker, err)
 		}
-		captured := recordPulledBaselines(dest, baselineSnapshot)
+		captured := recordPulledBaselines(dest, baselineSnapshot, skipped)
 		regenerateLocalCLAUDEMDIfNeeded(ctx)
 		return fmt.Sprintf("Workspace root saved to %s (%d baseline(s) recorded)", dest, captured) + skippedEntriesNote(skipped), false
 	}
@@ -392,20 +392,25 @@ func handlePullFolder(ctx context.Context, args map[string]interface{}) (string,
 
 	// Record a pull baseline for every process so push-process can detect a
 	// concurrent server-side change before overwriting it.
-	captured := recordPulledBaselines(dest, baselineSnapshot)
+	captured := recordPulledBaselines(dest, baselineSnapshot, skipped)
 	return fmt.Sprintf("Folder %d saved to %s (%d baseline(s) recorded)", folderID, dest, captured) + skippedEntriesNote(skipped), false
 }
 
 // skippedEntriesNote tells the model which archive entries pull-folder could
 // not write, so it pulls those objects individually instead of retrying the
 // whole folder. Empty when nothing was skipped.
-func skippedEntriesNote(skipped []string) string {
+func skippedEntriesNote(skipped []skippedEntry) string {
 	if len(skipped) == 0 {
 		return ""
 	}
+	lines := make([]string, len(skipped))
+	for i, s := range skipped {
+		lines[i] = s.String()
+	}
 	return fmt.Sprintf("\nWarning: %d archive entr(ies) could not be written locally and were skipped; the rest of the folder was saved. "+
+		"A local copy of a skipped process left by an earlier pull is out of date and got no new baseline. "+
 		"Pull these objects individually with pull-process, or rename them on the server:\n- %s",
-		len(skipped), strings.Join(skipped, "\n- "))
+		len(skipped), strings.Join(lines, "\n- "))
 }
 
 // handleCreateVariable creates a Corezoid env variable in the current stage.
