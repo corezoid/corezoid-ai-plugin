@@ -182,8 +182,9 @@ Step 10).
 Follow `references/test-rules.md`. In short:
 
 1. Build test data from the contract (docs examples; ask the user for what is missing).
-2. **Positive test** via `run-task` — expect `result = ok`, the expected `http_code`, result
-   fields matching the output params by name and type.
+2. **Positive test** via `run-task` with `fields` naming `result`, `http_code` and the output
+   params — expect `result = ok`, the expected `http_code`, result fields matching the output
+   params by name and type.
 3. **Negative validation test** (if validation exists) — invalid input → `error_type =
    validation` + `invalid_params`, no API call made.
 4. Unsafe methods (POST / PUT / PATCH / DELETE) — only after the user confirms, or against a
@@ -203,7 +204,9 @@ Follow `references/registration.md`. In short:
    the resource may have been renamed/removed; don't guess which. Stop here and finish: the
    connector is ready, Smart API was not registered (not found). Never block.
 2. `run-task` into the receiver process, exactly ONCE, with the task data in
-   `references/registration.md`. Task ref = `conv_id` of the connector.
+   `references/registration.md` and `mode: "full"` — the task carries the whole connector
+   contract, so by default its data would be left out of the summary. Task ref = `conv_id`
+   of the connector.
 3. Report whatever comes back, verbatim, and stop there: a successful Reply → show the user
    the Smart API actor id; any error, rejection, timeout, or no answer → tell the user Smart
    API was not registered and why, quoting the receiver's own error. **Never** retry, guess a

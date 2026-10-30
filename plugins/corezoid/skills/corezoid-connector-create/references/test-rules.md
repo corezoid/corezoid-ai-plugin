@@ -12,21 +12,25 @@ successful **positive** test. Metrics are not checked at this stage.
 
 ## 2. Positive test
 
-`run-task` with valid data (it waits up to 30 s for the task to finish). Pass when ALL hold:
+`run-task` with valid data (it waits up to 30 s for the task to finish) and
+`fields: ["result", "http_code", <every output param>, "data", "response"]` — an API
+response easily runs past the 4 KB `run-task` prints by default, and without `fields`
+large data comes back as keys only. Pass when ALL hold:
 
 - [ ] the task reached the success final;
 - [ ] `result = "ok"`;
 - [ ] `http_code` equals the expected code (usually 200 / 201);
-- [ ] every output param is present in the reply with the declared type;
-- [ ] no field named `data` / `response`.
+- [ ] every output param is present on the `Fields` line with the declared type;
+- [ ] `data` and `response` are both listed under `MissingFields`.
 
 ## 3. Negative validation test (if the connector validates input)
 
-`run-task` with deliberately invalid data. Pass when:
+`run-task` with deliberately invalid data and
+`fields: ["result", "error_type", "invalid_params", "http_code"]`. Pass when:
 
 - [ ] `result = "error"`, `error_type = "validation"`;
 - [ ] `invalid_params` lists the broken params;
-- [ ] the task did not pass through the API Call node.
+- [ ] the task did not pass through the API Call node (no `http_code` on the `Fields` line).
 
 ## 4. On failure
 

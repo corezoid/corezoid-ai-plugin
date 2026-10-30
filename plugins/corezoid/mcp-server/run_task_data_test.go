@@ -187,3 +187,55 @@ func TestRenderRunTaskData_CapsKeyList(t *testing.T) {
 		t.Fatalf("without a task id the show-task hint must use the ref: %s", out)
 	}
 }
+
+func showTaskWithData(t *testing.T, data map[string]interface{}, extra map[string]interface{}) (string, bool) {
+	t.Helper()
+	resetGlobals(t)
+	setProjectAuth(t, runTaskDataServer(t, data))
+	t.Chdir(t.TempDir())
+	args := map[string]interface{}{"process_id": float64(123), "task_id": "task-1"}
+	for k, v := range extra {
+		args[k] = v
+	}
+	return handleShowTask(context.Background(), args)
+}
+
+// show-task is where run-task sends the caller for large data (#240), so it
+// must narrow to fields too — and keep the whole data as its default, since
+// it is the read before a modify-task.
+func TestHandleShowTask_Fields(t *testing.T) {
+	result, isErr := showTaskWithData(t, bigTaskData(), map[string]interface{}{
+		"fields": []interface{}{"status", "customer.id", "nope"},
+	})
+	if isErr {
+		t.Fatalf("show-task failed: %s", result)
+	}
+	for _, want := range []string{`"customer.id": "c-42"`, `"status": "ok"`, `"missing_fields": [`, `"nope"`, `"data_keys": [`, `"obj_id": "task-1"`} {
+		if !strings.Contains(result, want) {
+			t.Errorf("show-task missing %q: %s", want, result)
+		}
+	}
+	if strings.Contains(result, `"data":`) || len(result) > 1500 {
+		t.Fatalf("fields must replace the data: %s", result)
+	}
+
+	result, _ = showTaskWithData(t, bigTaskData(), nil)
+	if !strings.Contains(result, strings.Repeat("ё", 20000)) || strings.Contains(result, "missing_fields") {
+		t.Fatalf("show-task without fields must return the whole data (got %d bytes)", len(result))
+	}
+}
+
+// show-task takes fields and max_value_length; mode and filter belong to
+// list-node-tasks and are refused, not silently ignored.
+func TestShowTaskSchema_ViewArgs(t *testing.T) {
+	for _, arg := range []string{"fields", "max_value_length"} {
+		if msg := unknownArgsError("show-task", map[string]interface{}{"process_id": 1, arg: nil}); msg != "" {
+			t.Errorf("show-task must accept %s: %s", arg, msg)
+		}
+	}
+	for _, arg := range []string{"mode", "filter"} {
+		if msg := unknownArgsError("show-task", map[string]interface{}{"process_id": 1, arg: nil}); msg == "" {
+			t.Errorf("show-task must refuse %s", arg)
+		}
+	}
+}

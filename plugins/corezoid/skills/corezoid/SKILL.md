@@ -86,7 +86,7 @@ Arguments go **inside `args`**, never at the top level. Add `"help": true` to ge
 
 | Action | Purpose |
 |--------|---------|
-| `show-task` | Look up one task by `ref` and/or `task_id` — returns its current `data`, `node_id` and status. Read-only; use it instead of paging `list-node-tasks` |
+| `show-task` | Look up one task by `ref` and/or `task_id` — returns its current `data`, `node_id` and status. Read-only; use it instead of paging `list-node-tasks`. `fields` returns only those data paths (under `fields`, keyed by path) — the way to read large data `run-task` left out |
 | `modify-task` | Change a task's data; deep_merge=true merges instead of replacing |
 | `delete-task` | Delete a task from a process (destructive) |
 | `list-node-tasks` | Tasks currently parked in a node — compact (metadata only) by default; pass `fields` for specific data paths (returned under `fields`, keyed by path — not a `modify-task` payload), `filter` to match data within the page, `mode: "full"` for whole payloads |

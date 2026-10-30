@@ -1353,8 +1353,8 @@ func renderRunTaskData(data map[string]interface{}, view nodeTaskView, processID
 	}
 	show, _ := json.Marshal(map[string]interface{}{"action": "show-task", "args": showArgs})
 	return fmt.Sprintf("Data: (not shown: %d bytes, %d keys)\nDataKeys: %s\n"+
-		"Read the data with cz-tasks %s (read-only). Do not re-run the task to see it: "+
-		"fields and mode \"full\" shape a run-task call, and a re-run starts a second task.",
+		"Read it with cz-tasks %s (read-only), adding \"fields\": [\"key\", \"a.b\"] to the args for only those paths. "+
+		"Do not re-run the task to see it: fields and mode \"full\" on run-task shape the next run, and a re-run starts a second task.",
 		len(raw), len(data), runTaskDataKeyList(data), show)
 }
 

@@ -731,7 +731,7 @@ var collapsedToolRegistry = []mcpTool{
 	// ---- cz-tasks ----
 	{
 		Name:        "show-task",
-		Description: "Return the current state of a single task — data, obj_id (task_id), node_id and status — resolved by task_id and/or ref. At least one of task_id or ref must be provided; when both are given task_id wins. This is the way to look a task up from an external ref: list-node-tasks needs the node the task is parked in and pages through it, while this is a single lookup. Read-only — it commits nothing, so it also works on immutable stages and with view-only access.",
+		Description: "Return the current state of a single task — data, obj_id (task_id), node_id and status — resolved by task_id and/or ref. At least one of task_id or ref must be provided; when both are given task_id wins. This is the way to look a task up from an external ref: list-node-tasks needs the node the task is parked in and pages through it, while this is a single lookup. Read-only — it commits nothing, so it also works on immutable stages and with view-only access. Returns the whole data unless fields narrows it.",
 		Annotations: toolHints(hintReadOnly, hintSafe, hintIdempotent, hintOpenWorld),
 		InputSchema: map[string]interface{}{
 			"type": "object",
@@ -749,6 +749,15 @@ var collapsedToolRegistry = []mcpTool{
 					"type":        "string",
 					"minLength":   1,
 					"description": "Task reference string",
+				},
+				"fields": map[string]interface{}{
+					"type":        "array",
+					"items":       map[string]interface{}{"type": "string"},
+					"description": "Data paths to return instead of the whole data, dot-separated for nested keys (e.g. [\"status\", \"customer.id\"]). Returned under fields, keyed by the path as given ({\"customer.id\": 3}) — not the shape of the task's data, so never send it to modify-task as-is. Paths not found are listed under missing_fields, with the data keys.",
+				},
+				"max_value_length": map[string]interface{}{
+					"type":        "integer",
+					"description": "Truncate string values in the returned data or fields to this many characters (default 0 = no truncation). A truncated value is not the task's data — never send it back through modify-task.",
 				},
 			},
 			"required": []string{"process_id"},

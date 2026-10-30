@@ -364,7 +364,7 @@ Tasks inside a deployed process (create one with `run-task`).
 
 | Action              | Description                                        |
 |---------------------|----------------------------------------------------|
-| `show-task` | Look up one task by `ref` and/or `task_id` — data, node, status (read-only) |
+| `show-task` | Look up one task by `ref` and/or `task_id` — data, node, status (read-only); `fields` returns only those data paths |
 | `modify-task` | Update task parameters |
 | `delete-task` | Remove a task from a node |
 | `list-node-tasks` | List tasks currently sitting in a node — compact metadata by default; `fields`, `filter`, `mode: "full"` for data |
