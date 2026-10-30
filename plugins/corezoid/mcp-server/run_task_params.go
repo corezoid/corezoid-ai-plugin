@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"sort"
 	"strconv"
@@ -72,9 +73,48 @@ func localTaskParams(path string) map[string]taskParam {
 	return declaredTaskParams(doc)
 }
 
+// decodeTaskData parses run-task's data argument. Numbers stay json.Number,
+// so an integer beyond 2^53 reaches the platform with every digit instead of
+// being rounded through float64, and a conversion to string keeps the literal.
+func decodeTaskData(s string) (map[string]interface{}, error) {
+	data := make(map[string]interface{})
+	if err := decodeJSONUseNumber(s, &data); err != nil {
+		return nil, err
+	}
+	return data, nil
+}
+
+// decodeJSONUseNumber is json.Unmarshal with UseNumber: one value, nothing
+// after it.
+func decodeJSONUseNumber(s string, v interface{}) error {
+	dec := json.NewDecoder(strings.NewReader(s))
+	dec.UseNumber()
+	if err := dec.Decode(v); err != nil {
+		return err
+	}
+	if _, err := dec.Token(); err != io.EOF {
+		return fmt.Errorf("invalid character after top-level value")
+	}
+	return nil
+}
+
+// needsCoercion reports whether coerceTaskData would change anything in data
+// under params, without changing it.
+func needsCoercion(data map[string]interface{}, params map[string]taskParam) bool {
+	for name, val := range data {
+		if p, ok := params[name]; ok && jsonTypeOf(val) != p.Type {
+			if _, ok := coerceValue(val, p.Type); ok {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // coerceTaskData converts values whose JSON type differs from the declared
 // parameter type when the conversion is lossless and unambiguous: "5" → 5,
-// "true" → true, 5 → "5", "[1,2]" → [1,2]. Anything else is left alone for the
+// "true" → true, 5 → "5", "[1,2]" → [1,2]. params must be the deployed
+// process's: the platform checks the data against those. Anything else is left alone for the
 // platform to judge. It returns one line per converted key, sorted, so the
 // caller can say what was changed.
 func coerceTaskData(data map[string]interface{}, params map[string]taskParam) []string {
@@ -101,11 +141,12 @@ func coerceValue(val interface{}, typ string) (interface{}, bool) {
 		case "number":
 			f, err := strconv.ParseFloat(s, 64)
 			// Round-trip check: "007", "1e3", "+1" or a 20-digit ID would not
-			// come back unchanged, so they stay strings.
-			if err != nil || strconv.FormatFloat(f, 'f', -1, 64) != s {
+			// come back unchanged, so they stay strings. "NaN" and "Inf" do
+			// come back, but are not JSON numbers.
+			if err != nil || strconv.FormatFloat(f, 'f', -1, 64) != s || !json.Valid([]byte(s)) {
 				return nil, false
 			}
-			return f, true
+			return json.Number(s), true
 		case "boolean":
 			switch s {
 			case "true":
@@ -115,9 +156,13 @@ func coerceValue(val interface{}, typ string) (interface{}, bool) {
 			}
 		case "array", "object":
 			var parsed interface{}
-			if json.Unmarshal([]byte(s), &parsed) == nil && jsonTypeOf(parsed) == typ {
+			if decodeJSONUseNumber(s, &parsed) == nil && jsonTypeOf(parsed) == typ {
 				return parsed, true
 			}
+		}
+	case json.Number:
+		if typ == "string" {
+			return v.String(), true
 		}
 	case float64:
 		if typ == "string" {
@@ -136,7 +181,7 @@ func jsonTypeOf(v interface{}) string {
 	switch v.(type) {
 	case string:
 		return "string"
-	case float64:
+	case float64, json.Number:
 		return "number"
 	case bool:
 		return "boolean"
@@ -152,9 +197,10 @@ func jsonTypeOf(v interface{}) string {
 
 // runTaskCreateError reports a refused task together with the declared
 // parameter types — the usual cause is a value of the wrong JSON type, and
-// without the types the caller can only guess. When there was no local file
-// to read them from, the deployed scheme is exported read-only; this costs a
-// call only on the failure path.
+// without the types the caller can only guess. params are the deployed ones
+// when run-task already exported them; otherwise the deployed scheme is
+// exported read-only here, which costs a call only on the failure path. A
+// local file is never the source: its types may not be deployed yet.
 func runTaskCreateError(v *Executor, params map[string]taskParam, data map[string]interface{}, err error) string {
 	msg := fmt.Sprintf("Error creating task: %v", err)
 	if params == nil {

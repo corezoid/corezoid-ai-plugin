@@ -408,7 +408,7 @@ func skippedEntriesNote(skipped []skippedEntry) string {
 		lines[i] = s.String()
 	}
 	return fmt.Sprintf("\nWarning: %d archive entr(ies) could not be written locally and were skipped; the rest of the folder was saved. "+
-		"A local copy of a skipped process left by an earlier pull is out of date and got no new baseline. "+
+		"A local copy of a skipped process left by an earlier pull is kept with the baseline it had: it may be out of date, and push-process will detect a server change since then. "+
 		"Pull these objects individually with pull-process, or rename them on the server:\n- %s",
 		len(skipped), strings.Join(lines, "\n- "))
 }
@@ -1097,18 +1097,28 @@ func handleRunTask(ctx context.Context, args map[string]interface{}) (out string
 
 	v := NewValidator(ctx, procID)
 
-	taskData := make(map[string]interface{})
-	if err := json.Unmarshal([]byte(dataStr), &taskData); err != nil {
+	taskData, err := decodeTaskData(dataStr)
+	if err != nil {
 		return fmt.Sprintf("Error parsing task data: %v", err), true
 	}
 	// The platform rejects a value whose JSON type differs from the declared
-	// parameter type. The local file, when there is one, says what those
-	// types are, so the obvious mismatches ("5" for a number) are fixed here
-	// instead of costing a rejected task and a retry.
-	params := localTaskParams(filePath)
+	// parameter type, so the obvious mismatches ("5" for a number) are fixed
+	// here instead of costing a rejected task and a retry. The types are the
+	// deployed process's: the local file may carry parameter changes not yet
+	// pushed, and converting to those would turn a value the deployed process
+	// accepts into one it rejects. The local file only says whether a
+	// conversion is likely, so the scheme is exported only then.
+	var params map[string]taskParam
 	coerced := ""
-	if changed := coerceTaskData(taskData, params); len(changed) > 0 {
-		coerced = "Converted task data to the declared parameter types: " + strings.Join(changed, ", ") + "\n"
+	if needsCoercion(taskData, localTaskParams(filePath)) {
+		if doc, exportErr := v.ExportProcess(); exportErr == nil {
+			params = declaredTaskParams(doc)
+			if changed := coerceTaskData(taskData, params); len(changed) > 0 {
+				coerced = "Converted task data to the deployed parameter types: " + strings.Join(changed, ", ") + "\n"
+			}
+		} else {
+			logger.Info("run-task: deployed parameters of process %d unavailable, sending data as given: %v", v.ProcessID, exportErr)
+		}
 	}
 	ref := optStrArg(args, "ref")
 	if ref == "" {

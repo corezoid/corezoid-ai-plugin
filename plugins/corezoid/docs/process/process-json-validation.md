@@ -214,7 +214,10 @@ The Corezoid process JSON schema defines that a process must always be an object
     {
       "name": "param1",
       "type": "string",
-      "flags": ["input"]
+      "descr": "",
+      "flags": ["input"],
+      "regex": "",
+      "regex_error_text": ""
     }
   ],
   "scheme": {
@@ -238,6 +241,9 @@ The Corezoid process JSON schema defines that a process must always be an object
 The schema enforces the following requirements:
 - Process must be an object (not an array)
 - Required fields: obj_type, obj_id, parent_id, title, status, params, scheme
+- Every `params` element carries all of name, type, descr, flags, regex and
+  regex_error_text (empty strings where unused); `push-process` blocks on an
+  element missing any of them
 - The scheme must contain at least one node
 - Each node must have id, obj_type, condition, title, x, y properties
 - Node IDs must be 24-character hexadecimal strings

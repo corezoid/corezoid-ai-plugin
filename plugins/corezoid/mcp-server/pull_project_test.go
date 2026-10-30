@@ -191,9 +191,9 @@ func TestUnzipFile_NotFound(t *testing.T) {
 // the whole pull. With the Windows rules on, the entry lands under a
 // sanitized name that keeps the "<id>_" prefix, next to its siblings.
 func TestUnzipFile_WindowsReservedCharsAreSanitized(t *testing.T) {
-	old := windowsFileNames
-	windowsFileNames = true
-	t.Cleanup(func() { windowsFileNames = old })
+	old := localFileNameRules
+	localFileNameRules = fileNameRules{windows: true, utf16: true}
+	t.Cleanup(func() { localFileNameRules = old })
 
 	zipPath := makeZip(t, map[string]string{
 		`10_my "quoted".folder/123_say "hi"?.conv.json`: "{}",
@@ -257,36 +257,57 @@ func TestSkippedEntryProcessID(t *testing.T) {
 }
 
 func TestPortableEntryPath(t *testing.T) {
-	long := "1_" + strings.Repeat("я", 200) + ".conv.json" // 412 bytes
+	linux := fileNameRules{}
+	windows := fileNameRules{windows: true, utf16: true}
 	cases := []struct {
-		name    string
-		windows bool
-		want    string
+		name  string
+		rules fileNameRules
+		want  string
 	}{
-		{`5_a"b.conv.json`, false, `5_a"b.conv.json`},
-		{`5_a"b.conv.json`, true, `5_a_b.conv.json`},
-		{`f/5_a<b>:c|d*e?.conv.json`, true, `f/5_a_b__c_d_e_.conv.json`},
-		{"5_tab\there.conv.json", true, "5_tab_here.conv.json"},
-		{"7_trailing. ./x.json", true, "7_trailing/x.json"},
-		{"CON.json", true, "CON_.json"},
-		{"con", true, "con_"},
-		{"a/../b", true, "a/../b"},
-		{`a\b.json`, true, "a/b.json"},
+		{`5_a"b.conv.json`, linux, `5_a"b.conv.json`},
+		{`5_a"b.conv.json`, windows, `5_a_b.conv.json`},
+		{`f/5_a<b>:c|d*e?.conv.json`, windows, `f/5_a_b__c_d_e_.conv.json`},
+		{"5_tab\there.conv.json", windows, "5_tab_here.conv.json"},
+		{"7_trailing. ./x.json", windows, "7_trailing/x.json"},
+		{"CON.json", windows, "CON_.json"},
+		{"con", windows, "con_"},
+		{"a/../b", windows, "a/../b"},
+		{`a\b.json`, windows, "a/b.json"},
 	}
 	for _, c := range cases {
-		if got := portableEntryPath(c.name, c.windows); got != c.want {
-			t.Errorf("portableEntryPath(%q, %v) = %q, want %q", c.name, c.windows, got, c.want)
+		if got := portableEntryPath(c.name, c.rules); got != c.want {
+			t.Errorf("portableEntryPath(%q, %+v) = %q, want %q", c.name, c.rules, got, c.want)
 		}
 	}
 
-	for _, windows := range []bool{false, true} {
-		got := portableEntryPath(long, windows)
-		if len(got) > maxFileNameBytes {
-			t.Errorf("windows=%v: len = %d, want <= %d", windows, len(got), maxFileNameBytes)
+	long := "1_" + strings.Repeat("я", 300) + ".conv.json" // 312 characters, 612 bytes
+	for _, rules := range []fileNameRules{linux, windows, {utf16: true}} {
+		got := portableEntryPath(long, rules)
+		if n := fileNameLen(got, rules); n > maxFileNameLen {
+			t.Errorf("%+v: length = %d, want <= %d", rules, n, maxFileNameLen)
 		}
 		if !strings.HasPrefix(got, "1_я") || !strings.HasSuffix(got, ".conv.json") || !utf8.ValidString(got) {
-			t.Errorf("windows=%v: truncated name %q lost its id prefix, suffix, or UTF-8 validity", windows, got)
+			t.Errorf("%+v: truncated name %q lost its id prefix, suffix, or UTF-8 validity", rules, got)
 		}
+	}
+}
+
+// A Cyrillic title of 200 characters is 412 bytes: too long for Linux, but
+// within the 255 UTF-16 units macOS and Windows allow, where such names were
+// always written in full. Shortening it there would give the process a second
+// file on the next pull.
+func TestPortableEntryPath_UTF16LimitKeepsNamesThatFit(t *testing.T) {
+	name := "1_" + strings.Repeat("я", 200) + ".conv.json"
+	if got := portableEntryPath(name, fileNameRules{utf16: true}); got != name {
+		t.Errorf("macOS rules shortened a %d-character name to %q", utf8.RuneCountInString(name), got)
+	}
+	if got := portableEntryPath(name, fileNameRules{}); len(got) > maxFileNameLen {
+		t.Errorf("Linux rules kept %d bytes, want <= %d", len(got), maxFileNameLen)
+	}
+	// A character outside the BMP is two UTF-16 units.
+	emoji := "1_" + strings.Repeat("😀", 130) + ".conv.json"
+	if got := portableEntryPath(emoji, fileNameRules{utf16: true}); fileNameLen(got, fileNameRules{utf16: true}) > maxFileNameLen || !utf8.ValidString(got) {
+		t.Errorf("surrogate pairs not counted as two units: %q", got)
 	}
 }
 

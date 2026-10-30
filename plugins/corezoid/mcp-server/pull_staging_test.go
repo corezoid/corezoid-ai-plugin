@@ -254,3 +254,49 @@ func TestDownloadStageRecursively_UnparsableProcessIsSkipped(t *testing.T) {
 		t.Errorf("valid process missing: %v", err)
 	}
 }
+
+// A pull replaces each folder as a whole. A process it skipped inside one used
+// to lose its earlier local copy, baseline and merge ancestor along with the
+// old folder, while the pull reported success. They are now carried into the
+// new folder, and the copy keeps the baseline it had.
+func TestDownloadStageRecursively_SkippedProcessKeepsLocalCopy(t *testing.T) {
+	dest := t.TempDir()
+	orders := filepath.Join(dest, "100_orders")
+	if err := os.MkdirAll(orders, 0755); err != nil {
+		t.Fatal(err)
+	}
+	local := `{"obj_id":557,"title":"my edits"}`
+	if err := os.WriteFile(filepath.Join(orders, "557_broken.conv.json"), []byte(local), 0644); err != nil {
+		t.Fatal(err)
+	}
+	old := baselineEntry{ChangeTime: 111}
+	if err := writeBaseline(orders, 557, old); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeAncestorScheme(orders, 557, `{"obj_id":557}`); err != nil {
+		t.Fatal(err)
+	}
+
+	e := stageExportServer(t, stageArchiveWith(t, map[string]string{
+		"100_orders.folder/557_broken.conv.json": `{"obj_id":557,`,
+	}))
+	skipped, err := downloadStageRecursively(e, 42, dest)
+	if err != nil {
+		t.Fatalf("pull failed: %v", err)
+	}
+	snapshot := map[int]baselineEntry{555: {ChangeTime: 222}, 557: {ChangeTime: 222}}
+	recordPulledBaselines(dest, snapshot, skipped)
+
+	if b, err := os.ReadFile(filepath.Join(orders, "557_broken.conv.json")); err != nil || string(b) != local {
+		t.Errorf("local copy of the skipped process = %q, %v; want it kept unchanged", b, err)
+	}
+	if got, ok, err := lookupBaseline(orders, 557); err != nil || !ok || got.ChangeTime != old.ChangeTime {
+		t.Errorf("baseline of the skipped process = %+v, %v, %v; want the old one kept", got, ok, err)
+	}
+	if got, ok := readAncestorScheme(orders, 557); !ok || got != `{"obj_id":557}` {
+		t.Errorf("ancestor of the skipped process = %q, %v; want the old one kept", got, ok)
+	}
+	if got, ok, _ := lookupBaseline(orders, 555); !ok || got.ChangeTime != 222 {
+		t.Errorf("baseline of the pulled process = %+v, %v; want the fresh one", got, ok)
+	}
+}
