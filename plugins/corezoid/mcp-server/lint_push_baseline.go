@@ -16,7 +16,8 @@ import (
 // Only the caller-contract findings of the overridable bucket are diffed
 // (unreplied terminals, rpc reply mismatches): the server accepts those, so a
 // version that had them really did deploy. Missing default go and short timers
-// are rejected by the server on every deploy, and literal reply values hang
+// are rejected by the server on every deploy, as are incomplete params elements
+// and Call Process data blocks, and literal reply values hang
 // its commit — "the pulled version had it too" does not make the next deploy
 // succeed, it only trades a clear block for a server failure past the
 // concurrency gate. Those block whatever their age, like structural findings.
@@ -53,6 +54,8 @@ func splitInheritedLint(cur, base *LintResult) (introduced, inherited *LintResul
 	introduced.MissingDefaultGo = cur.MissingDefaultGo
 	introduced.ShortTimers = cur.ShortTimers
 	introduced.LiteralReplyValues = cur.LiteralReplyValues
+	introduced.IncompleteParams = cur.IncompleteParams
+	introduced.IncompleteCallProcess = cur.IncompleteCallProcess
 	// A reply node that gains another untyped key is a new problem even though
 	// the node was already flagged, so the keys are part of the identity.
 	introduced.RpcReplyMismatches, inherited.RpcReplyMismatches = splitByKey(cur.RpcReplyMismatches, base.RpcReplyMismatches,

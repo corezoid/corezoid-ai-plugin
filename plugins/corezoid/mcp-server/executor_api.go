@@ -435,6 +435,10 @@ func (v *Executor) checkError(rsp map[string]interface{}, ops []map[string]any) 
 		for i, op := range opsArray {
 			if opMap, ok := op.(map[string]interface{}); ok {
 				if proc, ok := opMap["proc"].(string); !ok || proc != "ok" {
+					var sent map[string]any
+					if i < len(ops) {
+						sent = ops[i]
+					}
 					if errors, ok := opMap["errors"].(map[string]interface{}); ok {
 						var errorMsgs []string
 						for objID, errMsgs := range errors {
@@ -448,21 +452,19 @@ func (v *Executor) checkError(rsp map[string]interface{}, ops []map[string]any) 
 							}
 						}
 						if len(errorMsgs) > 0 {
-							return fmt.Errorf("API op error:\n%s", strings.Join(errorMsgs, "\n"))
+							return fmt.Errorf("API op error:\n%s%s", strings.Join(errorMsgs, "\n"), v.rejectedDeployOpContext(sent))
 						}
 					}
 
 					errorMsg := "unknown error"
-					if msg, ok := opMap["description"].(string); ok {
+					if msg, ok := opMap["description"].(string); ok && strings.TrimSpace(msg) != "" {
 						errorMsg = msg
 					}
 					requestWorkspace := v.WorkspaceID
-					if i < len(ops) {
-						if c, ok := ops[i]["company_id"].(string); ok {
-							requestWorkspace = c
-						}
+					if c, ok := sent["company_id"].(string); ok {
+						requestWorkspace = c
 					}
-					return fmt.Errorf("API op error: %s%s", errorMsg, companyMismatchHint(errorMsg, requestWorkspace, v.WorkspaceID))
+					return fmt.Errorf("API op error: %s%s%s", errorMsg, companyMismatchHint(errorMsg, requestWorkspace, v.WorkspaceID), v.rejectedDeployOpContext(sent))
 				}
 			}
 		}

@@ -28,6 +28,8 @@ type LintResult struct {
 	StubModeNodes          []StubModeNode
 	GitCallUsages          []GitCallUsage
 	SelfReferenceCopies    []SelfReferenceCopy
+	IncompleteParams       []IncompleteParam
+	IncompleteCallProcess  []IncompleteCallProcess
 	TotalNodes             int
 	ReachableCount         int
 	SchemaValid            bool
@@ -185,6 +187,27 @@ type GitCallUsage struct {
 	Issue string
 }
 
+// IncompleteParam is a process `params` element missing one of the keys the
+// server requires on every element. The JSON schema requires none of them, so
+// the scheme lints clean, and the deploy fails with a bare "Params are not
+// valid" that names neither the parameter nor the key.
+type IncompleteParam struct {
+	Index   int
+	Name    string
+	Missing []string
+	Issue   string
+}
+
+// IncompleteCallProcess is a Call Process (api_rpc) logic whose data block —
+// extra / extra_type — is missing, not an object, or has keys without a type.
+// The server rejects the node with a generic invalid-parameters error that
+// names no field.
+type IncompleteCallProcess struct {
+	ID    string
+	Title string
+	Issue string
+}
+
 // processNode is the typed representation of a Corezoid node used throughout lint checks.
 type processNode struct {
 	id      string
@@ -268,6 +291,8 @@ func lintProcessData(data []byte) (*LintResult, error) {
 	result.StubModeNodes = findStubModeNodes(typed)
 	result.GitCallUsages = findGitCallUsages(typed)
 	result.SelfReferenceCopies = findSelfReferenceCopies(typed, processID)
+	result.IncompleteParams = findIncompleteParams(proc["params"])
+	result.IncompleteCallProcess = findIncompleteCallProcess(typed)
 
 	schemaErr := ValidateJSONSchemaData(data, debug)
 	if schemaErr != nil {
@@ -1250,6 +1275,91 @@ func findUnderspecifiedAPINodes(nodes []processNode) []UnderspecifiedAPINode {
 	return result
 }
 
+// paramRequiredKeys are the keys every `params` element must carry for the
+// server to accept the deploy (docs/process/process-with-parameters.md). Values
+// may be empty — "", [] — but the keys must be present.
+var paramRequiredKeys = []string{"name", "type", "descr", "flags", "regex", "regex_error_text"}
+
+// findIncompleteParams flags params elements the server rejects with "Params
+// are not valid". An absent or empty params array is valid.
+func findIncompleteParams(raw interface{}) []IncompleteParam {
+	params, _ := raw.([]interface{})
+	var result []IncompleteParam
+	for i, p := range params {
+		m, ok := p.(map[string]interface{})
+		if !ok {
+			result = append(result, IncompleteParam{
+				Index:   i,
+				Missing: paramRequiredKeys,
+				Issue:   fmt.Sprintf("params[%d] is not an object — every element must be {%s}", i, strings.Join(paramRequiredKeys, ", ")),
+			})
+			continue
+		}
+		var missing []string
+		for _, k := range paramRequiredKeys {
+			if _, ok := m[k]; !ok {
+				missing = append(missing, k)
+			}
+		}
+		if len(missing) == 0 {
+			continue
+		}
+		name, _ := m["name"].(string)
+		result = append(result, IncompleteParam{
+			Index:   i,
+			Name:    name,
+			Missing: missing,
+			Issue: fmt.Sprintf("params[%d] (%q) is missing [%s] — the server rejects the deploy with \"Params are not valid\". Every element needs all of %s; empty values (\"\", []) are fine",
+				i, name, strings.Join(missing, ", "), strings.Join(paramRequiredKeys, ", ")),
+		})
+	}
+	return result
+}
+
+// findIncompleteCallProcess flags api_rpc logics whose extra / extra_type data
+// block is missing, not an object, or misaligned. "Send nothing" is
+// extra: {} with extra_type: {} — both keys stay present.
+func findIncompleteCallProcess(nodes []processNode) []IncompleteCallProcess {
+	var result []IncompleteCallProcess
+	for _, n := range nodes {
+		for _, lg := range n.logics {
+			if t, _ := lg["type"].(string); t != "api_rpc" {
+				continue
+			}
+			var parts []string
+			for _, field := range []string{"extra", "extra_type"} {
+				v, present := lg[field]
+				if _, isObj := v.(map[string]interface{}); !isObj {
+					if present {
+						parts = append(parts, fmt.Sprintf("%s is %s, not an object", field, describeLiteral(v)))
+					} else {
+						parts = append(parts, field+" is missing")
+					}
+				}
+			}
+			if len(parts) == 0 {
+				if m := checkDataTypeAlignment(n, lg, "extra", "extra_type"); m != nil {
+					parts = append(parts, m.Issue)
+				}
+			}
+			if len(parts) == 0 {
+				continue
+			}
+			displayTitle := n.title
+			if displayTitle == "" {
+				displayTitle = "(untitled)"
+			}
+			result = append(result, IncompleteCallProcess{
+				ID:    n.id,
+				Title: displayTitle,
+				Issue: fmt.Sprintf("Call Process (api_rpc) data block is incomplete: %s — the server rejects the node with a generic invalid-parameters error. Give both extra and extra_type as objects with the same keys (use {} and {} to pass nothing)",
+					strings.Join(parts, "; ")),
+			})
+		}
+	}
+	return result
+}
+
 // describeLiteral renders a res_data value for the lint message ([], {}, 0, true, null).
 func describeLiteral(v interface{}) string {
 	b, err := json.Marshal(v)
@@ -1479,6 +1589,24 @@ func FormatLintResult(result *LintResult) string {
 		}
 	}
 
+	if len(result.IncompleteParams) > 0 {
+		hasIssues = true
+		sb.WriteString(fmt.Sprintf("\n=== INCOMPLETE PROCESS PARAMS (%d) — server rejects the deploy ===\n", len(result.IncompleteParams)))
+		for _, ip := range result.IncompleteParams {
+			sb.WriteString(fmt.Sprintf("  params[%d] %s\n", ip.Index, ip.Name))
+			sb.WriteString(fmt.Sprintf("  Issue: %s\n", ip.Issue))
+		}
+	}
+
+	if len(result.IncompleteCallProcess) > 0 {
+		hasIssues = true
+		sb.WriteString(fmt.Sprintf("\n=== INCOMPLETE CALL PROCESS DATA (%d) — server rejects the deploy ===\n", len(result.IncompleteCallProcess)))
+		for _, ic := range result.IncompleteCallProcess {
+			sb.WriteString(fmt.Sprintf("  [%s] %s\n", ic.ID, ic.Title))
+			sb.WriteString(fmt.Sprintf("  Issue: %s\n", ic.Issue))
+		}
+	}
+
 	if len(result.StubModeNodes) > 0 {
 		hasIssues = true
 		sb.WriteString(fmt.Sprintf("\n=== ACTIVE STUB MODE NODES (%d) — temporary mock replies ===\n", len(result.StubModeNodes)))
@@ -1514,7 +1642,7 @@ func FormatLintResult(result *LintResult) string {
 		if !result.SchemaValid {
 			schemaIssues = 1
 		}
-		total := len(result.NoopConditions) + len(result.UnusedSetParams) + len(result.OrphanedNodes) + len(result.RpcReplyMismatches) + len(result.PassthroughEscalations) + len(result.LiteralReplyValues) + len(result.SharedErrorClusters) + len(result.OldFormatNodes) + len(result.UnrepliedTerminals) + len(result.MissingDefaultGo) + len(result.ShortTimers) + len(result.BrokenLinks) + len(result.UnderspecifiedAPINodes) + len(result.StubModeNodes) + len(result.GitCallUsages) + len(result.SelfReferenceCopies) + schemaIssues
+		total := len(result.NoopConditions) + len(result.UnusedSetParams) + len(result.OrphanedNodes) + len(result.RpcReplyMismatches) + len(result.PassthroughEscalations) + len(result.LiteralReplyValues) + len(result.SharedErrorClusters) + len(result.OldFormatNodes) + len(result.UnrepliedTerminals) + len(result.MissingDefaultGo) + len(result.ShortTimers) + len(result.BrokenLinks) + len(result.UnderspecifiedAPINodes) + len(result.StubModeNodes) + len(result.GitCallUsages) + len(result.SelfReferenceCopies) + len(result.IncompleteParams) + len(result.IncompleteCallProcess) + schemaIssues
 		sb.WriteString(fmt.Sprintf("\nTotal issues: %d\n", total))
 	}
 
