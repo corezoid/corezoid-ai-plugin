@@ -42,7 +42,9 @@ on.
 ### L2 — The command process on its own
 
 `run-task` straight at the generated command, with the data the Router would
-supply:
+supply, and `fields: ["text_id", <the namespaced keys PLAN.md requires>]` — a
+command's task carries every key its calls wrote and easily runs past the 4 KB
+`run-task` prints by default:
 
 ```jsonc
 {"channel":"telegram","chat_id":"<test chat id>","message":{"type":"text","text":"/balance"}}
@@ -66,10 +68,11 @@ mapped value; the task reached `END -> Router`. Inspect with
 > `api_copy`'s `data` block. To close that gap, **render one message per distinct
 > `text_id` the way Send Message does**: `run-task` on Send Message itself with
 > `{channel, chat_id, text_id, attachment_id}` plus the values the text
-> interpolates, then read `data.text` off the resulting task. With a synthetic
+> interpolates and `fields: ["text", "reply_markup"]`, then read `text` off the
+> `Fields` line. With a synthetic
 > `chat_id` the Telegram call fails with `Bad Request: chat not found` — that is
 > fine and expected, because the text and attachment are resolved *before* the
-> send. Assert on `data.text` and on `reply_markup`.
+> send. Assert on `text` and on `reply_markup`.
 
 ### L3 — Through the Router
 

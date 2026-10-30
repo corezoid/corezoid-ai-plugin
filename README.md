@@ -294,7 +294,7 @@ Tools come in two shapes. The ones below are advertised individually — they ca
 | `create-state-diagram` | Create a new empty state diagram (conv_type "state") in a folder |
 | `delete-process` | Move a process or state diagram to the recycle bin |
 | `create-alias` | Create a short alias for a process |
-| `run-task` | Send a task to a deployed process, by `process_path` or `process_id` (no local file needed) |
+| `run-task` | Send a task to a deployed process, by `process_path` or `process_id` (no local file needed). Task data over 4 KB is left out (size and keys only) unless you pass `fields` or `mode: "full"` |
 | `pause-process` | Preview and explicitly pause a process so Corezoid rejects new tasks |
 | `resume-process` | Preview and explicitly reactivate a paused/debug process |
 | `deploy-stage` | Deploy/promote one stage onto another (develop→production); dry-run by default, requires explicit confirm to apply |
@@ -364,7 +364,7 @@ Tasks inside a deployed process (create one with `run-task`).
 
 | Action              | Description                                        |
 |---------------------|----------------------------------------------------|
-| `show-task` | Look up one task by `ref` and/or `task_id` — data, node, status (read-only) |
+| `show-task` | Look up one task by `ref` and/or `task_id` — data, node, status (read-only); `fields` returns only those data paths |
 | `modify-task` | Update task parameters |
 | `delete-task` | Remove a task from a node |
 | `list-node-tasks` | List tasks currently sitting in a node — compact metadata by default; `fields`, `filter`, `mode: "full"` for data |

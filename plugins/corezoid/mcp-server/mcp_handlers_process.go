@@ -1061,6 +1061,10 @@ func handleRunTask(ctx context.Context, args map[string]interface{}) (out string
 	if err != nil {
 		return "Error: " + err.Error(), true
 	}
+	view, err := parseNodeTaskView(args)
+	if err != nil {
+		return "Error: " + err.Error(), true
+	}
 	waitSec := runTaskDefaultWaitSec
 	if _, ok := args["wait_sec"]; ok {
 		n, err := intArg(args, "wait_sec")
@@ -1170,7 +1174,7 @@ func handleRunTask(ctx context.Context, args map[string]interface{}) (out string
 			if time.Now().After(deadline) {
 				if !nodeMetaOK {
 					// The task itself was created; only the follow-up read failed.
-					return runTaskNoNodeMetaSummary(v, ref, "", "", "{}", nodeMetaErr,
+					return runTaskNoNodeMetaSummary(v, ref, "", "", "Data: {}", nodeMetaErr,
 						fmt.Sprintf("its result could not be read (%v)", err)), false
 				}
 				return fmt.Sprintf("Error getting task result (ref %s): %v", ref, err), true
@@ -1195,15 +1199,15 @@ func handleRunTask(ctx context.Context, args map[string]interface{}) (out string
 	// Task data is the user's business payload: never at Info.
 	logger.Debug("Task response: %+v", rspTask)
 	rspTaskData, _ := rspTask["data"].(map[string]interface{})
-	rspTaskDataBin, _ := json.Marshal(rspTaskData)
 	serverNodeID, _ := rspTask["node_id"].(string)
 	taskID := ""
 	if idv, ok := rspTask["obj_id"]; ok && idv != nil {
 		taskID = fmt.Sprintf("%v", idv)
 	}
+	dataOut := renderRunTaskData(rspTaskData, view, v.ProcessID, taskID, ref)
 
 	if !nodeMetaOK {
-		return runTaskNoNodeMetaSummary(v, ref, taskID, serverNodeID, string(rspTaskDataBin), nodeMetaErr,
+		return runTaskNoNodeMetaSummary(v, ref, taskID, serverNodeID, dataOut, nodeMetaErr,
 			"the node it settled on cannot be classified"), false
 	}
 
@@ -1250,8 +1254,8 @@ func handleRunTask(ctx context.Context, args map[string]interface{}) (out string
 			"Inspect that node. %s; a re-run with a larger wait_sec starts a second task", waitSec, recheck)
 	}
 
-	summary := fmt.Sprintf("%s\nStatus: %s\nNodeID: %s\nNodeName: %s\nNodeType: %s\nProcessID: %d\nTaskRef: %s\nTaskID: %s\nData: %s",
-		msg, status, serverNodeID, nodeInfo.Name, nodeType, v.ProcessID, ref, taskID, string(rspTaskDataBin))
+	summary := fmt.Sprintf("%s\nStatus: %s\nNodeID: %s\nNodeName: %s\nNodeType: %s\nProcessID: %d\nTaskRef: %s\nTaskID: %s\n%s",
+		msg, status, serverNodeID, nodeInfo.Name, nodeType, v.ProcessID, ref, taskID, dataOut)
 	return summary, isErr
 }
 
@@ -1260,16 +1264,116 @@ func handleRunTask(ctx context.Context, args map[string]interface{}) (out string
 // send tasks but not inspect the scheme. The task creation is the part that
 // succeeded, so this is not an error; the summary just says which half of the
 // usual answer is missing.
-func runTaskNoNodeMetaSummary(v *Executor, ref, taskID, serverNodeID, data string, metaErr error, consequence string) string {
-	if data == "" {
-		data = "{}"
-	}
+func runTaskNoNodeMetaSummary(v *Executor, ref, taskID, serverNodeID, dataOut string, metaErr error, consequence string) string {
 	return fmt.Sprintf(
 		"Task created, but %s: the deployed node list could not be read (%v). "+
 			"This usually means run-only access to the process — the task was still sent. "+
 			"Use cz-tasks {\"action\":\"show-task\"} (pass the ref you sent) or its list-task-history action to follow it.\n"+
-			"NodeID: %s\nNodeName: (unknown)\nNodeType: (unknown)\nProcessID: %d\nTaskRef: %s\nTaskID: %s\nData: %s",
-		consequence, metaErr, serverNodeID, v.ProcessID, ref, taskID, data)
+			"NodeID: %s\nNodeName: (unknown)\nNodeType: (unknown)\nProcessID: %d\nTaskRef: %s\nTaskID: %s\n%s",
+		consequence, metaErr, serverNodeID, v.ProcessID, ref, taskID, dataOut)
+}
+
+// runTaskDataInlineMax is the largest task data run-task prints whole by
+// default. A task accumulates every field each node writes, so its data
+// routinely ran past 50 KB when the caller only needed the final node and a
+// field or two (#240).
+const runTaskDataInlineMax = 4000
+
+// runTaskDataKeysMax caps the key list printed in place of large data.
+const runTaskDataKeysMax = 2000
+
+// The data-view arguments of run-task, shared by the local and hosted
+// definitions. They are list-node-tasks' mode / fields / max_value_length, so
+// one task tool does not teach a second contract.
+var (
+	runTaskModeSchema = map[string]interface{}{
+		"type":        "string",
+		"enum":        []string{"compact", "full"},
+		"description": "compact (default): task data up to 4 KB is returned whole; larger data is left out and its size and top-level keys are listed instead. full: the whole data.",
+	}
+	runTaskFieldsSchema = map[string]interface{}{
+		"type":        "array",
+		"items":       map[string]interface{}{"type": "string"},
+		"description": "Data paths to return, dot-separated for nested keys (e.g. [\"status\", \"customer.id\"]). Returned on a Fields line keyed by the path as given ({\"customer.id\": 3}) — not the shape of the task's data, so never send it to modify-task as-is. Overrides mode.",
+	}
+	runTaskMaxValueSchema = map[string]interface{}{
+		"type":        "integer",
+		"description": "Truncate string values in fields or mode full output to this many characters (default 0 = no truncation). A truncated value is not the task's data — never send it back through modify-task.",
+	}
+)
+
+// renderRunTaskData is the data part of the run-task summary, shaped by the
+// same view as list-node-tasks (#222):
+//
+//   - default: data up to runTaskDataInlineMax is printed whole; larger data
+//     is left out and only its size and top-level keys are listed. Nothing is
+//     cut by default — a shortened value read as the task's data would be
+//     written back through modify-task as its new content.
+//   - fields: those data paths on a Fields line, keyed by the path as given.
+//     That map is not the shape of the task's data, so it is never labelled
+//     Data.
+//   - mode full: the whole data.
+//
+// max_value_length truncates strings in fields and full only when asked, as in
+// list-node-tasks.
+func renderRunTaskData(data map[string]interface{}, view nodeTaskView, processID int, taskID, ref string) string {
+	if len(view.fields) > 0 {
+		picked := make(map[string]interface{}, len(view.fields))
+		var missing []string
+		for _, f := range view.fields {
+			if val, ok := dataPath(data, f); ok {
+				picked[f] = val
+			} else {
+				missing = append(missing, f)
+			}
+		}
+		out, _ := json.Marshal(truncateValues(picked, view.maxValue))
+		line := "Fields: " + string(out)
+		if len(missing) > 0 {
+			line += fmt.Sprintf("\nMissingFields: %s (data keys: %s)", strings.Join(missing, ", "), runTaskDataKeyList(data))
+		}
+		return line
+	}
+	if view.full {
+		out, _ := json.Marshal(truncateValues(data, view.maxValue))
+		return "Data: " + string(out)
+	}
+	raw, _ := json.Marshal(data)
+	if len(raw) <= runTaskDataInlineMax {
+		return "Data: " + string(raw)
+	}
+	// Reading the task is the way to the rest: fields and mode full only
+	// shape the next run-task, and a re-run starts a second task with all of
+	// the process's side effects.
+	showArgs := map[string]interface{}{"process_id": processID}
+	if taskID != "" {
+		showArgs["task_id"] = taskID
+	} else {
+		showArgs["ref"] = ref
+	}
+	show, _ := json.Marshal(map[string]interface{}{"action": "show-task", "args": showArgs})
+	return fmt.Sprintf("Data: (not shown: %d bytes, %d keys)\nDataKeys: %s\n"+
+		"Read it with cz-tasks %s (read-only), adding \"fields\": [\"key\", \"a.b\"] to the args for only those paths. "+
+		"Do not re-run the task to see it: fields and mode \"full\" on run-task shape the next run, and a re-run starts a second task.",
+		len(raw), len(data), runTaskDataKeyList(data), show)
+}
+
+// runTaskDataKeyList is the sorted top-level keys of data, cut to
+// runTaskDataKeysMax with a count of the rest.
+func runTaskDataKeyList(data map[string]interface{}) string {
+	keys := sortedKeys(data)
+	var b strings.Builder
+	for i, k := range keys {
+		if b.Len()+len(k) > runTaskDataKeysMax {
+			fmt.Fprintf(&b, " … and %d more", len(keys)-i)
+			break
+		}
+		if i > 0 {
+			b.WriteString(", ")
+		}
+		b.WriteString(k)
+	}
+	return b.String()
 }
 
 // loadRuntimeNodeMap indexes the server's currently deployed nodes without

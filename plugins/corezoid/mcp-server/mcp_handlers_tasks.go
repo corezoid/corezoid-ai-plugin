@@ -73,6 +73,11 @@ func showTask(v *Executor, processID int, taskID, ref string) (*taskSnapshot, er
 // node_id and status — resolved by task_id and/or ref. This is the read-only
 // counterpart to modify-task: it never writes, so it is usable on immutable
 // stages and by callers who only hold view rights.
+//
+// The whole data is the default: this is the read before a modify-task, and
+// the lookup run-task points to when it leaves large data out (#240). fields
+// narrows it with list-node-tasks' view — the picked paths under "fields",
+// keyed by the path as given, and the paths not found under "missing_fields".
 func handleShowTask(ctx context.Context, args map[string]interface{}) (string, bool) {
 	processID, err := intArg(args, "process_id")
 	if err != nil {
@@ -83,12 +88,30 @@ func handleShowTask(ctx context.Context, args map[string]interface{}) (string, b
 	if taskID == "" && ref == "" {
 		return "Error: at least one of task_id or ref must be provided", true
 	}
+	view, err := parseNodeTaskView(args)
+	if err != nil {
+		return "Error: " + err.Error(), true
+	}
+	view.full = true
 
 	snap, err := showTask(NewValidator(ctx, processID), processID, taskID, ref)
 	if err != nil {
 		return fmt.Sprintf("Error: %v", err), true
 	}
-	data, _ := json.MarshalIndent(snap.Op, "", "  ")
+	op := view.shapeTask(snap.Op)
+	if len(view.fields) > 0 {
+		var missing []string
+		for _, f := range view.fields {
+			if _, ok := dataPath(snap.Data, f); !ok {
+				missing = append(missing, f)
+			}
+		}
+		if len(missing) > 0 {
+			op["missing_fields"] = missing
+			op["data_keys"] = sortedKeys(snap.Data)
+		}
+	}
+	data, _ := json.MarshalIndent(op, "", "  ")
 	return string(data), false
 }
 
@@ -166,6 +189,16 @@ func parseNodeTaskView(args map[string]interface{}) (nodeTaskView, error) {
 		return view, fmt.Errorf(`argument mode must be "compact" or "full", got %q`, mode)
 	}
 	if raw, ok := args["fields"]; ok && raw != nil {
+		// The CLI sends every argument as a string: fields=status,customer.id.
+		if s, isStr := raw.(string); isStr {
+			var list []interface{}
+			for _, f := range strings.Split(s, ",") {
+				if f = strings.TrimSpace(f); f != "" {
+					list = append(list, f)
+				}
+			}
+			raw = list
+		}
 		list, ok := raw.([]interface{})
 		if !ok {
 			return view, fmt.Errorf("argument fields must be an array of strings, got %T", raw)

@@ -32,8 +32,10 @@ Finish the skill normally.
 ## 2. Call the receiver
 
 `run-task` into the receiver process resolved in Step 1 (by `conv_id`; directly by `alias` +
-`project` + `stage` once the plugin supports that), **exactly once**. Synchronous — wait for
-the Reply.
+`project` + `stage` once the plugin supports that), **exactly once**, with `mode: "full"`:
+the task carries the whole contract, and by default `run-task` leaves data over 4 KB out of
+its summary — the Reply would not be visible, and there is no second attempt. Synchronous —
+wait for the Reply.
 
 Whatever comes back — success, a rejected param, a timeout, no right to run tasks in the
 receiver process, or no answer at all — report it to the user verbatim (see `/corezoid-access`
