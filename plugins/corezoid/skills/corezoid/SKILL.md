@@ -29,7 +29,7 @@ Tools come in two shapes. These are called directly, one tool per operation:
 | `lint-process` | Validate process structure locally (no API needed) |
 | `layout-process` | Auto-arrange node coordinates into a clean layout (local; only x/y and collapse flags change) |
 | `clean-process` | Remove nodes with no traffic in the last N days (default 90) and save the result as a reviewable `<ID>_<title>.cleaned.json` proposal — never deploys. Review the diff, then pass that path explicitly to `lint-process`/`push-process` |
-| `run-task` | Run a task on an already-deployed process, by `process_path` or `process_id` — `process_id` needs no local file, so it also works in hosts with no local process repository (no `pull-process` required) |
+| `run-task` | Run a task on an already-deployed process, by `process_path` or `process_id` — `process_id` needs no local file, so it also works in hosts with no local process repository (no `pull-process` required). Task data over 4 KB is left out — only its size and keys; to read it use `show-task` with the returned TaskID, not a re-run. Pass `fields` (returned on a `Fields` line keyed by path — not a `modify-task` payload) or `mode: "full"` up front when you know you need the data |
 | `create-process` | Create a new empty process (`conv_type: "process"`) in a folder |
 | `create-state-diagram` | Create a new empty state diagram (`conv_type: "state"`) in a folder |
 | `pause-process` / `resume-process` | Explicitly pause or reactivate one process; dry-run + exact confirmation required |

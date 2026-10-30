@@ -166,6 +166,16 @@ func parseNodeTaskView(args map[string]interface{}) (nodeTaskView, error) {
 		return view, fmt.Errorf(`argument mode must be "compact" or "full", got %q`, mode)
 	}
 	if raw, ok := args["fields"]; ok && raw != nil {
+		// The CLI sends every argument as a string: fields=status,customer.id.
+		if s, isStr := raw.(string); isStr {
+			var list []interface{}
+			for _, f := range strings.Split(s, ",") {
+				if f = strings.TrimSpace(f); f != "" {
+					list = append(list, f)
+				}
+			}
+			raw = list
+		}
 		list, ok := raw.([]interface{})
 		if !ok {
 			return view, fmt.Errorf("argument fields must be an array of strings, got %T", raw)
