@@ -15,6 +15,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf16"
 	"unicode/utf8"
 )
 
@@ -37,14 +38,42 @@ func fixMojibake(s string) string {
 	return s
 }
 
-// windowsFileNames selects the Windows file-name rules in portableEntryPath.
-// A variable rather than a constant so tests on other OSes can exercise them.
-var windowsFileNames = runtime.GOOS == "windows"
+// fileNameRules are the local file system's limits that portableEntryPath
+// applies to archive entry names.
+type fileNameRules struct {
+	// windows selects the Windows rules: reserved characters, trailing dots
+	// and spaces, device names.
+	windows bool
+	// utf16 counts the 255 name limit in UTF-16 units, as NTFS (Windows) and
+	// APFS/HFS+ (macOS) do; otherwise it is counted in bytes, as on Linux. A
+	// Cyrillic title is two bytes per character, so counting bytes on macOS
+	// would cut names that were always written in full there, and the next
+	// pull would leave the old file next to a shortened copy with the same id.
+	utf16 bool
+}
 
-// maxFileNameBytes caps a single path component. 255 bytes is the limit on
-// Linux and macOS, and stays within the 255 UTF-16 units Windows allows, since
-// no character takes more UTF-16 units than UTF-8 bytes.
-const maxFileNameBytes = 255
+// localFileNameRules are the rules for the OS the server runs on. A variable
+// rather than a constant so tests on other OSes can exercise the others.
+var localFileNameRules = fileNameRules{
+	windows: runtime.GOOS == "windows",
+	utf16:   runtime.GOOS == "windows" || runtime.GOOS == "darwin",
+}
+
+// maxFileNameLen caps a single path component: 255 bytes on Linux, 255 UTF-16
+// units on Windows and macOS (see fileNameRules.utf16).
+const maxFileNameLen = 255
+
+// fileNameLen measures a name the way rules' file system does.
+func fileNameLen(s string, rules fileNameRules) int {
+	if !rules.utf16 {
+		return len(s)
+	}
+	n := 0
+	for _, r := range s {
+		n += utf16.RuneLen(r)
+	}
+	return n
+}
 
 // windowsReservedNames are device names Windows refuses as a file stem,
 // whatever the extension ("CON.json" is as invalid as "CON").
@@ -70,13 +99,13 @@ var exportNameSuffixes = []string{
 // which Windows rejects. On Windows, the characters it reserves (<>:"|?* and
 // control characters) become "_", trailing dots and spaces are trimmed, and
 // device names (CON, NUL, …) get a "_" appended. On every OS, a component
-// longer than maxFileNameBytes is shortened at the end of its title, keeping
+// longer than maxFileNameLen is shortened at the end of its title, keeping
 // the "<id>_" prefix that ties the file to its object and the export suffix.
 //
 // Other OSes keep those characters as they are, so existing workspaces there
 // do not see their files renamed on the next pull.
-func portableEntryPath(name string, windows bool) string {
-	if windows {
+func portableEntryPath(name string, rules fileNameRules) string {
+	if rules.windows {
 		// On Windows filepath.Join treats a backslash as a separator, so a
 		// backslash in an entry name already split it; keep that behaviour.
 		name = strings.ReplaceAll(name, `\`, "/")
@@ -86,13 +115,13 @@ func portableEntryPath(name string, windows bool) string {
 		if p == "" || p == "." || p == ".." {
 			continue
 		}
-		parts[i] = portableComponent(p, windows)
+		parts[i] = portableComponent(p, rules)
 	}
 	return strings.Join(parts, "/")
 }
 
-func portableComponent(p string, windows bool) string {
-	if windows {
+func portableComponent(p string, rules fileNameRules) string {
+	if rules.windows {
 		var b strings.Builder
 		b.Grow(len(p))
 		for _, r := range p {
@@ -114,7 +143,7 @@ func portableComponent(p string, windows bool) string {
 			p = "_"
 		}
 	}
-	if len(p) > maxFileNameBytes {
+	if fileNameLen(p, rules) > maxFileNameLen {
 		suffix := filepath.Ext(p)
 		for _, s := range exportNameSuffixes {
 			if strings.HasSuffix(p, s) {
@@ -122,17 +151,16 @@ func portableComponent(p string, windows bool) string {
 				break
 			}
 		}
-		if len(suffix) >= maxFileNameBytes {
+		if len(suffix) >= maxFileNameLen {
 			suffix = ""
 		}
 		stem := p[:len(p)-len(suffix)]
-		limit := maxFileNameBytes - len(suffix)
-		// Back off to a rune boundary so the name stays valid UTF-8.
-		for limit > 0 && !utf8.RuneStart(stem[limit]) {
-			limit--
+		// Drop whole runes from the end so the name stays valid UTF-8.
+		for stem != "" && fileNameLen(stem, rules)+len(suffix) > maxFileNameLen {
+			_, size := utf8.DecodeLastRuneInString(stem)
+			stem = stem[:len(stem)-size]
 		}
-		stem = stem[:limit]
-		if windows {
+		if rules.windows {
 			stem = strings.TrimRight(stem, ". ")
 		}
 		p = stem + suffix
@@ -221,7 +249,7 @@ func unzipFile(src, destDir string) (skipped []skippedEntry, err error) {
 	for _, f := range r.File {
 		// Sanitize before the zip-slip check: trimming a trailing space can
 		// turn ".. " into "..", and the check must see the final name.
-		name := portableEntryPath(fixMojibake(f.Name), windowsFileNames)
+		name := portableEntryPath(fixMojibake(f.Name), localFileNameRules)
 		// Guard against zip-slip: reject absolute paths and paths with ".." components.
 		cleaned := filepath.Clean(name)
 		if filepath.IsAbs(cleaned) || cleaned == ".." || strings.HasPrefix(cleaned, ".."+string(os.PathSeparator)) {
@@ -522,7 +550,7 @@ func downloadWorkspaceRootRecursively(e *Executor, filePath string) ([]skippedEn
 	if err != nil {
 		return skipped, fmt.Errorf("failed to format json: %w", err)
 	}
-	if err := publishPull(staging, filePath); err != nil {
+	if err := publishPull(staging, filePath, skipped); err != nil {
 		return skipped, fmt.Errorf("failed to move pulled workspace root into %s: %w", filePath, err)
 	}
 	return skipped, nil
@@ -589,10 +617,105 @@ func removeStalePullStaging(filePath string) {
 
 // publishPull moves every entry of the processed staging directory into
 // filePath, replacing what a previous pull left under the same names.
-func publishPull(staging, filePath string) error {
+//
+// A directory is replaced as a whole, which would also delete the local copy
+// of a process this pull skipped (see skippedEntry) together with its baseline
+// and merge ancestor, while the pull reports success. Those copies are carried
+// into the new tree first, so a skipped process keeps its file and the
+// version it was last synced at, and push-process still detects a server
+// change since then.
+func publishPull(staging, filePath string, skipped []skippedEntry) error {
 	pullPublishMu.Lock()
 	defer pullPublishMu.Unlock()
+	ids := map[int]bool{}
+	for _, s := range skipped {
+		if id := s.processID(); id != 0 {
+			ids[id] = true
+		}
+	}
+	if len(ids) > 0 {
+		entries, err := os.ReadDir(staging)
+		if err != nil {
+			return err
+		}
+		for _, en := range entries {
+			if !en.IsDir() {
+				continue
+			}
+			oldDir := filepath.Join(filePath, en.Name())
+			if info, err := os.Lstat(oldDir); err != nil || !info.IsDir() {
+				continue
+			}
+			if err := keepSkippedProcesses(oldDir, filepath.Join(staging, en.Name()), ids); err != nil {
+				return fmt.Errorf("keep local copies of skipped processes in %s: %w", oldDir, err)
+			}
+		}
+	}
 	return moveContents(staging, filePath)
+}
+
+// keepSkippedProcesses moves the process files under oldDir whose id is in ids
+// to the same relative path under newDir, with their baseline entry and merge
+// ancestor. A file the new tree already has at that path is left alone.
+func keepSkippedProcesses(oldDir, newDir string, ids map[int]bool) error {
+	type kept struct {
+		path string
+		id   int
+	}
+	var found []kept
+	err := filepath.WalkDir(oldDir, func(p string, d os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			if p != oldDir && strings.HasPrefix(d.Name(), ".") {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if id := (skippedEntry{Name: d.Name()}).processID(); ids[id] {
+			found = append(found, kept{path: p, id: id})
+		}
+		return nil
+	})
+	if err != nil {
+		return err
+	}
+	for _, k := range found {
+		rel, err := filepath.Rel(oldDir, k.path)
+		if err != nil {
+			return err
+		}
+		target := filepath.Join(newDir, rel)
+		if _, err := os.Lstat(target); err == nil {
+			continue
+		}
+		srcDir, dstDir := filepath.Dir(k.path), filepath.Dir(target)
+		if err := os.MkdirAll(dstDir, 0755); err != nil {
+			return err
+		}
+		if err := os.Rename(k.path, target); err != nil {
+			return err
+		}
+		// Without its baseline the kept file could not be pushed at all; a
+		// corrupt old sidecar leaves it that way, which is the safe side.
+		if m, err := readBaselines(srcDir); err == nil {
+			if base, ok := m[strconv.Itoa(k.id)]; ok {
+				if err := writeBaseline(dstDir, k.id, base); err != nil {
+					return err
+				}
+			}
+		}
+		if _, err := os.Stat(ancestorPath(srcDir, k.id)); err == nil {
+			if err := os.MkdirAll(filepath.Join(dstDir, ancestorDirName), 0755); err != nil {
+				return err
+			}
+			if err := os.Rename(ancestorPath(srcDir, k.id), ancestorPath(dstDir, k.id)); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }
 
 // downloadStageRecursively pulls folderID into filePath. The returned list
@@ -699,7 +822,7 @@ func downloadStageRecursively(e *Executor, folderID int, filePath string) ([]ski
 	// <id>_<name>.{stage,folder,project} directory up so subfolders and the
 	// stage marker JSON land directly at the workspace root. moveContents
 	// overwrites any stale entry at the destination — a re-pull always wins.
-	if err := publishPull(stageDir, filePath); err != nil {
+	if err := publishPull(stageDir, filePath, skipped); err != nil {
 		return skipped, fmt.Errorf("failed to flatten stage into workspace: %v", err)
 	}
 

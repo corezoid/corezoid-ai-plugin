@@ -1884,14 +1884,23 @@ func TestHandleRunTask_ProcessIDWithoutLocalFile(t *testing.T) {
 
 // runTaskTypedServer rejects a task whose "amount" is not a number, the way
 // the platform rejects a value that does not match its declared parameter
-// type, and records the data of every create it receives.
-func runTaskTypedServer(t *testing.T, sent *[]map[string]interface{}) string {
+// type, records the data of every create it receives, and exports deployed as
+// the process scheme.
+func runTaskTypedServer(t *testing.T, sent *[]map[string]interface{}, deployed string) string {
 	t.Helper()
+	dl := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte("[" + deployed + "]")) //nolint:errcheck
+	}))
+	t.Cleanup(dl.Close)
 	srv, _ := mockAPIServer(t, func(ops []map[string]interface{}) interface{} {
 		obj, _ := ops[0]["obj"].(string)
 		typ, _ := ops[0]["type"].(string)
-		switch obj + ":" + typ {
-		case "task:create":
+		switch {
+		case obj == "obj_scheme":
+			return map[string]interface{}{"request_proc": "ok", "ops": []interface{}{map[string]interface{}{
+				"proc": "ok", "download_url": dl.URL + "/dl",
+			}}}
+		case obj == "task" && typ == "create":
 			data, _ := ops[0]["data"].(map[string]interface{})
 			*sent = append(*sent, data)
 			if _, ok := data["amount"].(float64); !ok {
@@ -1913,7 +1922,7 @@ const runTaskTypedConv = `{"obj_id":123,"title":"typed","params":[
 	{"name":"tags","type":"array","flags":["input"]},
 	{"name":"name","type":"string","flags":["input"]},
 	{"name":"result","type":"string","flags":["output"]}
-],"scheme":{"nodes":[]}}`
+],"scheme":{"nodes":[{"id":"n1"}]}}`
 
 // A string where the process declares a number (#258) used to cost a
 // rejected task and a retry: with a local file declaring the types, run-task
@@ -1921,7 +1930,7 @@ const runTaskTypedConv = `{"obj_id":123,"title":"typed","params":[
 func TestHandleRunTask_CoercesToDeclaredParamTypes(t *testing.T) {
 	resetGlobals(t)
 	var sent []map[string]interface{}
-	setProjectAuth(t, runTaskTypedServer(t, &sent))
+	setProjectAuth(t, runTaskTypedServer(t, &sent, runTaskTypedConv))
 	dir := t.TempDir()
 	t.Chdir(dir)
 	if err := os.WriteFile("123_typed.conv.json", []byte(runTaskTypedConv), 0644); err != nil {
@@ -1957,7 +1966,7 @@ func TestHandleRunTask_CoercesToDeclaredParamTypes(t *testing.T) {
 func TestHandleRunTask_RejectionListsDeclaredTypes(t *testing.T) {
 	resetGlobals(t)
 	var sent []map[string]interface{}
-	setProjectAuth(t, runTaskTypedServer(t, &sent))
+	setProjectAuth(t, runTaskTypedServer(t, &sent, runTaskTypedConv))
 	dir := t.TempDir()
 	t.Chdir(dir)
 	if err := os.WriteFile("123_typed.conv.json", []byte(runTaskTypedConv), 0644); err != nil {
@@ -1987,19 +1996,23 @@ func TestCoerceValue(t *testing.T) {
 		want interface{}
 		ok   bool
 	}{
-		{"5", "number", float64(5), true},
-		{" -1.5 ", "number", -1.5, true},
+		{"5", "number", json.Number("5"), true},
+		{" -1.5 ", "number", json.Number("-1.5"), true},
 		{"007", "number", nil, false},
 		{"1e3", "number", nil, false},
 		{"12345678901234567890", "number", nil, false},
+		{"NaN", "number", nil, false},
+		{"+Inf", "number", nil, false},
 		{"abc", "number", nil, false},
 		{"true", "boolean", true, true},
 		{"yes", "boolean", nil, false},
+		{json.Number("42"), "string", "42", true},
+		{json.Number("1234567890123456789"), "string", "1234567890123456789", true},
 		{float64(42), "string", "42", true},
 		{false, "string", "false", true},
 		{`{"a":1}`, "array", nil, false},
 		{"not json", "object", nil, false},
-		{float64(1), "boolean", nil, false},
+		{json.Number("1"), "boolean", nil, false},
 	}
 	for _, tc := range cases {
 		got, ok := coerceValue(tc.in, tc.typ)
@@ -2007,8 +2020,62 @@ func TestCoerceValue(t *testing.T) {
 			t.Errorf("coerceValue(%#v, %s) = %#v, %v; want %#v, %v", tc.in, tc.typ, got, ok, tc.want, tc.ok)
 		}
 	}
-	if got, ok := coerceValue(`{"a":1}`, "object"); !ok || got.(map[string]interface{})["a"] != float64(1) {
+	if got, ok := coerceValue(`{"a":1}`, "object"); !ok || got.(map[string]interface{})["a"] != json.Number("1") {
 		t.Errorf("object string not parsed: %#v, %v", got, ok)
+	}
+}
+
+// Numbers in task data used to go through float64, so an integer beyond 2^53 —
+// given directly, or inside a JSON string converted to an array or object —
+// reached the platform with other digits.
+func TestTaskData_KeepsLargeIntegersExact(t *testing.T) {
+	data, err := decodeTaskData(`{"id":9007199254740993,"ext":1234567890123456789,"list":"[9007199254740993]","obj":"{\"id\":9007199254740993}"}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	coerceTaskData(data, map[string]taskParam{
+		"ext":  {Name: "ext", Type: "string"},
+		"list": {Name: "list", Type: "array"},
+		"obj":  {Name: "obj", Type: "object"},
+	})
+	b, err := json.Marshal(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := `{"ext":"1234567890123456789","id":9007199254740993,"list":[9007199254740993],"obj":{"id":9007199254740993}}`
+	if string(b) != want {
+		t.Errorf("sent %s\nwant %s", b, want)
+	}
+	if _, err := decodeTaskData(`{"a":1} {"b":2}`); err == nil {
+		t.Error("trailing data after the object must be rejected, as json.Unmarshal did")
+	}
+}
+
+// The local file may carry parameter changes not yet pushed. Converting to
+// its types turned a value the deployed process accepts into one it rejects:
+// here the deployed amount is a number, the local draft says string, and a
+// correct {"amount":21} must reach the platform unchanged.
+func TestHandleRunTask_CoercesToDeployedNotLocalTypes(t *testing.T) {
+	resetGlobals(t)
+	var sent []map[string]interface{}
+	setProjectAuth(t, runTaskTypedServer(t, &sent, runTaskTypedConv))
+	t.Chdir(t.TempDir())
+	draft := strings.Replace(runTaskTypedConv, `"name":"amount","type":"number"`, `"name":"amount","type":"string"`, 1)
+	if err := os.WriteFile("123_typed.conv.json", []byte(draft), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	result, isErr := handleRunTask(context.Background(), map[string]interface{}{
+		"process_path": "123_typed.conv.json", "data": `{"amount":21}`, "wait_sec": 0,
+	})
+	if isErr {
+		t.Fatalf("value valid for the deployed process rejected: %s", result)
+	}
+	if strings.Contains(result, "Converted") {
+		t.Errorf("nothing should be converted: %s", result)
+	}
+	if len(sent) != 1 || sent[0]["amount"] != float64(21) {
+		t.Errorf("sent data = %#v, want amount 21 as a number", sent)
 	}
 }
 

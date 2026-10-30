@@ -22,7 +22,8 @@
         "required",
         "input"
       ],
-      "regex": ""
+      "regex": "",
+      "regex_error_text": ""
     }
   ],
   "ref_mask": true,
