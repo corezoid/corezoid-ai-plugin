@@ -135,6 +135,14 @@ var toolArgAliases = map[string]map[string]string{
 		"title":            "folder_name",
 		"name":             "folder_name",
 	},
+	// Searches by email or login read naturally as a query; sessions spent the
+	// first find-principal call on the unknown-argument error for query.
+	"find-principal": {
+		"query":  "name",
+		"search": "name",
+		"email":  "name",
+		"type":   "kind",
+	},
 }
 
 // applyArgAliases rewrites aliased argument names to their canonical form for

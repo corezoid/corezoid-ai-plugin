@@ -54,7 +54,7 @@ var toolRouters = []toolRouter{
 		Actions: []routerAction{
 			{"share-object", "grant/revoke access to a process/folder/stage/project for a user, API key or group"},
 			{"list-shares", "who currently has access to an object"},
-			{"find-principal", "search users, groups and API keys by substring — use it to resolve a name to an id"},
+			{"find-principal", "search users, groups and API keys by substring (args: name, kind) — use it to resolve a name or email to an id"},
 			{"list-groups", "user groups in the workspace"},
 			{"create-group", "create a user group"},
 			{"modify-group", "rename a group / change its description"},
