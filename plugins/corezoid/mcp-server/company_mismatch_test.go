@@ -155,3 +155,66 @@ func TestCheckError_CompanyMismatchNamesRequestCompany(t *testing.T) {
 		t.Errorf("login does not change an explicit company_id:\n%s", msg)
 	}
 }
+
+// Viewing projects, folders and processes that live in another workspace
+// returned the raw API refusal, and sessions spent several calls on other
+// workspaces and argument combinations before logging in elsewhere. Every
+// cz-structure view must carry the hint, whichever shape the refusal comes in:
+// an op description, per-object errors, or a failed request envelope.
+func TestCzStructure_CompanyMismatchNamesWorkspaceAndLogin(t *testing.T) {
+	const desc = "Company mismatch: conv 12345 belongs to company i999000111"
+	shapes := map[string]map[string]interface{}{
+		"op description": {
+			"request_proc": "ok",
+			"ops":          []interface{}{map[string]interface{}{"proc": "error", "description": desc}},
+		},
+		"op errors": {
+			"request_proc": "ok",
+			"ops": []interface{}{map[string]interface{}{
+				"proc":   "error",
+				"errors": map[string]interface{}{"12345": []interface{}{desc}},
+			}},
+		},
+		"request envelope": {"request_proc": "error", "description": desc},
+	}
+	actions := map[string]map[string]interface{}{
+		"list-projects": {},
+		"show-project":  {"project_id": float64(1)},
+		"list-stages":   {"project_id": float64(1)},
+		"list-folders":  {"folder_id": float64(1)},
+		"show-folder":   {"folder_id": float64(1)},
+		"show-process":  {"process_id": float64(12345)},
+	}
+	for shape, rsp := range shapes {
+		for action, args := range actions {
+			t.Run(shape+"/"+action, func(t *testing.T) {
+				resetGlobals(t)
+				srv, _ := mockAPIServer(t, func([]map[string]interface{}) interface{} { return rsp })
+				setProjectAuth(t, srv.URL)
+				origAccount := accountURL
+				accountURL = srv.URL
+				t.Cleanup(func() { accountURL = origAccount })
+				stageID = 20
+
+				res, isErr := handleToolCall(context.Background(), "cz-structure", map[string]interface{}{
+					"action": action,
+					"args":   args,
+				})
+				if !isErr {
+					t.Fatalf("expected an error, got: %s", res)
+				}
+				for _, want := range []string{
+					"Company mismatch",
+					"different workspace",
+					"current workspace: i260836082",
+					"object's workspace: i999000111",
+					`login with workspace_id="i999000111"`,
+				} {
+					if !strings.Contains(res, want) {
+						t.Errorf("error missing %q:\n%s", want, res)
+					}
+				}
+			})
+		}
+	}
+}
