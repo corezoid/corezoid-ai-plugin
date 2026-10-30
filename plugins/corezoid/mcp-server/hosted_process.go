@@ -91,13 +91,13 @@ var hostedToolDefs = map[string]mcpTool{
 	},
 	"run-task": {
 		Name:        "run-task",
-		Description: "Create a task in a deployed Corezoid process and wait for it to reach a final node. Returns the task's final node and data.",
+		Description: "Create a task in a deployed Corezoid process and wait for it to reach a final node. Returns the task's final node and data. Each data value is checked against the type of the process input parameter it fills; a rejected task lists the expected types.",
 		Annotations: toolHints(hintMutates, hintDestructive, hintNonIdempotent, hintOpenWorld), // runs the process: its side effects are arbitrary
 		InputSchema: map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
 				"process_id": map[string]interface{}{"type": "integer", "description": "Corezoid process (conv) ID."},
-				"data":       map[string]interface{}{"type": "string", "description": "Task input as a JSON object string, e.g. {\"amount\": 21}."},
+				"data":       map[string]interface{}{"type": "string", "description": "Task input as a JSON object string with values of the declared parameter types, e.g. {\"amount\": 21, \"active\": true} — numbers and booleans unquoted."},
 				"ref":        map[string]interface{}{"type": "string", "description": "Optional task ref (lookup key)."},
 				"wait_sec":   map[string]interface{}{"type": "integer", "description": "How long to wait for a final node, seconds (default 30, max 600). 0 creates the task without waiting. A task still on a non-final node at the deadline is reported as in progress, not as an error."},
 			},

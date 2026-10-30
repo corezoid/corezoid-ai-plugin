@@ -1052,7 +1052,7 @@ var runTaskFirstPollAfter = 300 * time.Millisecond
 // reaches a final node or wait_sec elapses. It deliberately reads runtime node
 // metadata from the server and never deploys the local file: all deployments
 // must pass through push-process and its safety gates first.
-func handleRunTask(ctx context.Context, args map[string]interface{}) (string, bool) {
+func handleRunTask(ctx context.Context, args map[string]interface{}) (out string, isErr bool) {
 	procID, filePath, errMsg := resolveProcessID(args, "process_path", "process_id")
 	if errMsg != "" {
 		return errMsg, true
@@ -1095,15 +1095,24 @@ func handleRunTask(ctx context.Context, args map[string]interface{}) (string, bo
 	if err := json.Unmarshal([]byte(dataStr), &taskData); err != nil {
 		return fmt.Sprintf("Error parsing task data: %v", err), true
 	}
+	// The platform rejects a value whose JSON type differs from the declared
+	// parameter type. The local file, when there is one, says what those
+	// types are, so the obvious mismatches ("5" for a number) are fixed here
+	// instead of costing a rejected task and a retry.
+	params := localTaskParams(filePath)
+	coerced := ""
+	if changed := coerceTaskData(taskData, params); len(changed) > 0 {
+		coerced = "Converted task data to the declared parameter types: " + strings.Join(changed, ", ") + "\n"
+	}
 	ref := optStrArg(args, "ref")
 	if ref == "" {
 		ref = fmt.Sprintf("%d_%d", time.Now().Unix(), rand.Intn(1000000))
 	}
 	if noWait {
 		if err := v.createTask(ref, taskData); err != nil {
-			return fmt.Sprintf("Error creating task: %v", err), true
+			return runTaskCreateError(v, params, taskData, err), true
 		}
-		return fmt.Sprintf("Task created (wait_sec 0: not waiting for a final node). "+
+		return coerced + fmt.Sprintf("Task created (wait_sec 0: not waiting for a final node). "+
 			"Follow it with cz-tasks {\"action\":\"show-task\"} (pass the ref) or its list-task-history action.\n"+
 			"Status: created\nProcessID: %d\nTaskRef: %s", v.ProcessID, ref), false
 	}
@@ -1122,7 +1131,12 @@ func handleRunTask(ctx context.Context, args map[string]interface{}) (string, bo
 	}
 
 	if err := v.createTask(ref, taskData); err != nil {
-		return fmt.Sprintf("Error creating task: %v", err), true
+		return runTaskCreateError(v, params, taskData, err), true
+	}
+	if coerced != "" {
+		// Every report from here on is about the task just created with the
+		// converted data, so each one leads with what was converted.
+		defer func() { out = coerced + out }()
 	}
 
 	// Poll until the task settles on a final node or the wait budget runs out.
@@ -1211,7 +1225,6 @@ func handleRunTask(ctx context.Context, args map[string]interface{}) (string, bo
 	nodeType := "logic (not final)"
 	status := "in progress"
 	recheck := "Re-check later with cz-tasks {\"action\":\"show-task\"} (a single read-only lookup by ref or task_id) or its list-task-history action"
-	isErr := false
 	var msg string
 	switch {
 	case nodeInfo.Type == 2:

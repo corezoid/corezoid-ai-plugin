@@ -226,7 +226,7 @@ var coreToolDefs = []mcpTool{
 	},
 	{
 		Name:        "run-task",
-		Description: "Run a task on an already-deployed Corezoid process (without re-deploying) and wait for it to reach a final node. Never commits or deploys, so it needs only run access and works on immutable stages; if the deployed node list is unreadable the task is still sent, just reported without node names. Identify the target with EXACTLY ONE of process_path (a local .conv.json) or process_id (the numeric ID, as in show-task/list-task-history) — process_id needs no local file, so it works in hosts with no process repository; passing both is rejected as ambiguous. Polls up to wait_sec (default 30), so tasks crossing async nodes (api, api_rpc, db_call, delay) still return their final result. On timeout returns success with Status: in progress and the node the task is on — expected on state, callback, delay and storage nodes; on any other node the summary flags that step as slow or stuck — plus TaskRef/TaskID for follow-up via list-task-history. wait_sec 0 creates the task without waiting.",
+		Description: "Run a task on an already-deployed Corezoid process (without re-deploying) and wait for it to reach a final node. Never commits or deploys, so it needs only run access and works on immutable stages; if the deployed node list is unreadable the task is still sent, just reported without node names. Identify the target with EXACTLY ONE of process_path (a local .conv.json) or process_id (the numeric ID, as in show-task/list-task-history) — process_id needs no local file, so it works in hosts with no process repository; passing both is rejected as ambiguous. Polls up to wait_sec (default 30), so tasks crossing async nodes (api, api_rpc, db_call, delay) still return their final result. On timeout returns success with Status: in progress and the node the task is on — expected on state, callback, delay and storage nodes; on any other node the summary flags that step as slow or stuck — plus TaskRef/TaskID for follow-up via list-task-history. wait_sec 0 creates the task without waiting. The platform checks every data value against the type of the process input parameter it fills (the \"params\" list of the .conv.json): read those types first and send numbers and booleans unquoted and arrays/objects as nested JSON, not strings. With process_path, obvious mismatches (\"5\" for a number, 5 for a string) are converted and reported; a rejected task lists the expected types.",
 		Annotations: toolHints(hintMutates, hintDestructive, hintNonIdempotent, hintOpenWorld), // runs the process: its side effects are arbitrary
 		InputSchema: map[string]interface{}{
 			"type": "object",
@@ -241,7 +241,7 @@ var coreToolDefs = []mcpTool{
 				},
 				"data": map[string]interface{}{
 					"type":        "string",
-					"description": "JSON string with task input parameters",
+					"description": "Task input as a JSON object string; each value must have the JSON type its process input parameter declares, e.g. {\"amount\": 21, \"active\": true, \"tags\": [\"a\"], \"name\": \"Ann\"} — not {\"amount\": \"21\", \"tags\": \"[\\\"a\\\"]\"}.",
 				},
 				"ref": map[string]interface{}{
 					"type":        "string",
