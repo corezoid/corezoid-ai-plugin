@@ -442,8 +442,27 @@ func (v *Executor) checkError(rsp map[string]interface{}, ops []map[string]any) 
 		return fmt.Errorf("API error: no response from server")
 	}
 
+	// requestWorkspace is the company the sent op was scoped to: its own
+	// company_id when given, else the session's workspace.
+	requestWorkspace := func(sent map[string]any) string {
+		if c, ok := sent["company_id"].(string); ok {
+			return c
+		}
+		return v.WorkspaceID
+	}
+
 	if requestProc, ok := rsp["request_proc"].(string); !ok || requestProc != "ok" {
-		return fmt.Errorf("API error: request_proc not ok")
+		// A refusal of the whole request can still carry the reason — a
+		// company mismatch among them — so keep it instead of dropping it.
+		desc, _ := rsp["description"].(string)
+		if strings.TrimSpace(desc) == "" {
+			return fmt.Errorf("API error: request_proc not ok")
+		}
+		var sent map[string]any
+		if len(ops) > 0 {
+			sent = ops[0]
+		}
+		return fmt.Errorf("API error: request_proc not ok: %s%s", desc, companyMismatchHint(desc, requestWorkspace(sent), v.WorkspaceID))
 	}
 
 	if opsArray, ok := rsp["ops"].([]interface{}); ok {
@@ -467,7 +486,8 @@ func (v *Executor) checkError(rsp map[string]interface{}, ops []map[string]any) 
 							}
 						}
 						if len(errorMsgs) > 0 {
-							return fmt.Errorf("API op error:\n%s%s", strings.Join(errorMsgs, "\n"), v.rejectedDeployOpContext(sent))
+							joined := strings.Join(errorMsgs, "\n")
+							return fmt.Errorf("API op error:\n%s%s%s", joined, companyMismatchHint(joined, requestWorkspace(sent), v.WorkspaceID), v.rejectedDeployOpContext(sent))
 						}
 					}
 
@@ -475,11 +495,7 @@ func (v *Executor) checkError(rsp map[string]interface{}, ops []map[string]any) 
 					if msg, ok := opMap["description"].(string); ok && strings.TrimSpace(msg) != "" {
 						errorMsg = msg
 					}
-					requestWorkspace := v.WorkspaceID
-					if c, ok := sent["company_id"].(string); ok {
-						requestWorkspace = c
-					}
-					return fmt.Errorf("API op error: %s%s%s", errorMsg, companyMismatchHint(errorMsg, requestWorkspace, v.WorkspaceID), v.rejectedDeployOpContext(sent))
+					return fmt.Errorf("API op error: %s%s%s", errorMsg, companyMismatchHint(errorMsg, requestWorkspace(sent), v.WorkspaceID), v.rejectedDeployOpContext(sent))
 				}
 			}
 		}
