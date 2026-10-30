@@ -14,6 +14,7 @@ description: >
   re-arrange a process the user already positioned — see the "When you MAY
   re-layout" rules in the body. It changes x/y coordinates only — never
   collapse/expand state, edges, logic, conv_id, aliases or node types.
+  Opt-in tidy-tree mode (bundled script) for router processes, on request.
 ---
 
 # Auto-Layout Corezoid Process Nodes
@@ -173,6 +174,84 @@ Full re-layout is idempotent: running it again over its own output must preserve
 the same coordinates. Every input `extra.modeForm` must be identical after the
 run; `collapsed=0` and `mode-passes=1` are mandatory. The engine revision makes
 stale runtime tests visible.
+
+## Alternative: tidy-tree mode (opt-in)
+
+`layout-process` stays the default. Tidy-tree is a second engine — a
+stdlib-only Python script shipped with this skill — for the cases where a
+shared rail and a single business spine read badly. Choose it only when:
+
+- the user (or their project instructions) asks for tidy-tree layout, or
+- the process is **dispatcher/router-shaped** — one entry, a chain of routers,
+  many independent branches that never reconverge (a webhook or UI-event
+  handler, an action router) — and the user agrees to try it. There every
+  branch's error handling ends up on one shared rail far from its branch.
+
+What it produces instead: one trunk (vertical, or horizontal for a router
+chain), an **exclusive lane per branch**, a local error "hook" next to every
+node that can fail (Reply to the right, End: Error straight below it),
+`modeForm` set by node role (calls/routers expanded; circles, error stubs,
+result checks, plain Set Parameters collapsed), and an **incremental mode**
+that places only the nodes you added. Unlike `layout-process`, the script
+**does set `extra.modeForm`** — say so before using it on a process whose
+expand/collapse state the user cares about.
+
+**Structure first.** Layout cannot fix a badly shaped graph. When branches
+differ by *source* (different fields/buttons/events), build a chain of
+single-condition routers — one `go_if_const` per node, default `go` to the
+next router — not one condition node with N unrelated `go_if_const`. Keep one
+condition node only when the branches are values of the *same* source and
+reconverge below. Every call gets its own error Reply + End pair.
+
+**How to run** (rewrites the file in place; without the structural flags only
+`x`, `y` and `extra.modeForm` change):
+
+```bash
+S="${CLAUDE_PLUGIN_ROOT}/skills/corezoid-node-layout/scripts/tidy_tree_layout.py"
+python3 "$S" <file.conv.json>                        # full layout (new process / explicit request)
+python3 "$S" <file> --only-new <before.conv.json>    # place only nodes absent from <before> (rule 19)
+python3 "$S" <file> --only-new <before> --nodes=<id1>,<id2>   # + existing nodes whose wiring changed
+python3 "$S" <file> --fix-setparam-errors            # rule 21: string-only Set Parameters error exit -> its go target
+python3 "$S" <file> --split-errors                   # rule 11: give each source its own copy of a shared error cluster
+python3 "$S" <file> --fix-final-icons                # rule 27: set empty/wrong End icons (error / success) by title
+python3 "$S" <file> --vertical                       # only on request: one vertical trunk, no horizontal rows
+```
+
+Flags combine. `--split-errors`, `--fix-setparam-errors` and
+`--fix-final-icons` change the graph or node data — they are edits, so on a
+process you did not build use them only when the user asked for that change,
+and review the `split:` / `fix:` / `removed orphan` lines. Then
+`lint-process` → `push-process` as usual.
+
+**Incremental mode respects the authorship rules above.** For an edit to an
+existing process, copy the file right after `pull-process` (e.g.
+`before.conv.json` in a scratch directory), make the edit, then run
+`--only-new before.conv.json`. Every existing node keeps its `x`/`y` and
+`modeForm`; new nodes are placed relative to their nearest existing ancestor,
+and only the nodes hanging below the insertion are shifted down (or right on a
+router chain) by just enough to make room. This is an alternative to leaving
+new nodes at `0,0` for push-time placement — it never re-lays-out the user's
+arrangement. A full tidy-tree run on someone else's process is a full
+re-layout and needs the same explicit request as `layout-process`.
+
+**Reading the output:**
+
+| Line | Meaning / action |
+|---|---|
+| `row: A -> B -> …` | a horizontal row of checks was found (rule 23) — sanity-check it |
+| `WARNING (rule 21)` | a string-only Set Parameters owns an error path — `--fix-setparam-errors` (structural) |
+| `CHECK (rule 21)` | a fallback rejoins further down than its success step — a question, maybe intended |
+| `WARNING (rule 27)` | an End has an empty icon or an error-titled End is not `error` — `--fix-final-icons` |
+| `split:` / `fix:` / `removed orphan` | structural changes — review before pushing |
+| `new:` / `shift:` / `compact:` | incremental placements; a `WARNING … overlaps` → fix or ask for a full re-layout |
+| `WARNING: canvas span exceeds` | the process is too big — split it into sub-processes, don't squeeze it |
+
+Rule numbers refer to
+`${CLAUDE_PLUGIN_ROOT}/skills/corezoid-node-layout/references/tidy-tree-rules.md`
+— full rule texts, measured constants and known gaps. Open it when the user
+disputes a placement or a warning needs explaining. A small synthetic
+dispatcher to try it on is in `scripts/fixtures/synthetic-dispatcher.conv.json`
+(copy it first — the script rewrites its input).
 
 ## Honest limits
 
