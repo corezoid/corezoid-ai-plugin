@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+	"unicode/utf8"
 )
 
 // ---- fixMojibake -----------------------------------------------------------
@@ -71,7 +73,7 @@ func TestUnzipFile_Basic(t *testing.T) {
 		"sub/deep.txt": "content",
 	})
 	dest := t.TempDir()
-	if err := unzipFile(zipPath, dest); err != nil {
+	if _, err := unzipFile(zipPath, dest); err != nil {
 		t.Fatalf("unzipFile error: %v", err)
 	}
 	data, err := os.ReadFile(filepath.Join(dest, "hello.txt"))
@@ -96,7 +98,7 @@ func TestUnzipFile_ZipSlip(t *testing.T) {
 	f.Close()
 
 	dest := t.TempDir()
-	err := unzipFile(zipPath, dest)
+	_, err := unzipFile(zipPath, dest)
 	if err == nil {
 		t.Error("expected zip-slip error, got nil")
 	}
@@ -118,7 +120,7 @@ func TestUnzipFile_SymlinkedDirEscape(t *testing.T) {
 	}
 
 	zipPath := makeZip(t, map[string]string{"docs/victim.txt": "overwritten"})
-	if err := unzipFile(zipPath, dest); err == nil {
+	if _, err := unzipFile(zipPath, dest); err == nil {
 		t.Error("expected an error for a write through a symlinked directory, got nil")
 	}
 
@@ -145,7 +147,7 @@ func TestUnzipFile_SymlinkedFileEscape(t *testing.T) {
 	}
 
 	zipPath := makeZip(t, map[string]string{"hello.txt": "overwritten"})
-	if err := unzipFile(zipPath, dest); err == nil {
+	if _, err := unzipFile(zipPath, dest); err == nil {
 		t.Error("expected an error for a write through a symlinked file, got nil")
 	}
 
@@ -169,7 +171,7 @@ func TestUnzipFile_SymlinkedRootIsAllowed(t *testing.T) {
 	}
 
 	zipPath := makeZip(t, map[string]string{"sub/deep.txt": "content"})
-	if err := unzipFile(zipPath, link); err != nil {
+	if _, err := unzipFile(zipPath, link); err != nil {
 		t.Fatalf("extraction into a symlinked root should succeed, got %v", err)
 	}
 	data, err := os.ReadFile(filepath.Join(real, "sub", "deep.txt"))
@@ -179,9 +181,93 @@ func TestUnzipFile_SymlinkedRootIsAllowed(t *testing.T) {
 }
 
 func TestUnzipFile_NotFound(t *testing.T) {
-	err := unzipFile("/nonexistent.zip", t.TempDir())
+	_, err := unzipFile("/nonexistent.zip", t.TempDir())
 	if err == nil {
 		t.Error("expected error for missing zip, got nil")
+	}
+}
+
+// A process title with a character Windows rejects (here quotes) used to abort
+// the whole pull. With the Windows rules on, the entry lands under a
+// sanitized name that keeps the "<id>_" prefix, next to its siblings.
+func TestUnzipFile_WindowsReservedCharsAreSanitized(t *testing.T) {
+	old := windowsFileNames
+	windowsFileNames = true
+	t.Cleanup(func() { windowsFileNames = old })
+
+	zipPath := makeZip(t, map[string]string{
+		`10_my "quoted".folder/123_say "hi"?.conv.json`: "{}",
+		`10_my "quoted".folder/124_plain.conv.json`:     "{}",
+	})
+	dest := t.TempDir()
+	skipped, err := unzipFile(zipPath, dest)
+	if err != nil {
+		t.Fatalf("unzipFile error: %v", err)
+	}
+	if len(skipped) != 0 {
+		t.Errorf("skipped = %v, want none", skipped)
+	}
+	for _, want := range []string{
+		filepath.Join("10_my _quoted_.folder", "123_say _hi__.conv.json"),
+		filepath.Join("10_my _quoted_.folder", "124_plain.conv.json"),
+	} {
+		if _, err := os.Stat(filepath.Join(dest, want)); err != nil {
+			t.Errorf("expected %s: %v", want, err)
+		}
+	}
+}
+
+// An entry that still cannot be created (a NUL byte is invalid on every OS)
+// is skipped and reported; the rest of the archive is extracted.
+func TestUnzipFile_UnwritableEntryIsSkipped(t *testing.T) {
+	zipPath := makeZip(t, map[string]string{
+		"1_bad\x00name.conv.json": "{}",
+		"2_good.conv.json":        "{}",
+	})
+	dest := t.TempDir()
+	skipped, err := unzipFile(zipPath, dest)
+	if err != nil {
+		t.Fatalf("one unwritable entry must not fail the whole extraction: %v", err)
+	}
+	if len(skipped) != 1 || !strings.Contains(skipped[0], "1_bad") {
+		t.Errorf("skipped = %q, want exactly the 1_bad entry", skipped)
+	}
+	if _, err := os.Stat(filepath.Join(dest, "2_good.conv.json")); err != nil {
+		t.Errorf("sibling entry not extracted: %v", err)
+	}
+}
+
+func TestPortableEntryPath(t *testing.T) {
+	long := "1_" + strings.Repeat("я", 200) + ".conv.json" // 412 bytes
+	cases := []struct {
+		name    string
+		windows bool
+		want    string
+	}{
+		{`5_a"b.conv.json`, false, `5_a"b.conv.json`},
+		{`5_a"b.conv.json`, true, `5_a_b.conv.json`},
+		{`f/5_a<b>:c|d*e?.conv.json`, true, `f/5_a_b__c_d_e_.conv.json`},
+		{"5_tab\there.conv.json", true, "5_tab_here.conv.json"},
+		{"7_trailing. ./x.json", true, "7_trailing/x.json"},
+		{"CON.json", true, "CON_.json"},
+		{"con", true, "con_"},
+		{"a/../b", true, "a/../b"},
+		{`a\b.json`, true, "a/b.json"},
+	}
+	for _, c := range cases {
+		if got := portableEntryPath(c.name, c.windows); got != c.want {
+			t.Errorf("portableEntryPath(%q, %v) = %q, want %q", c.name, c.windows, got, c.want)
+		}
+	}
+
+	for _, windows := range []bool{false, true} {
+		got := portableEntryPath(long, windows)
+		if len(got) > maxFileNameBytes {
+			t.Errorf("windows=%v: len = %d, want <= %d", windows, len(got), maxFileNameBytes)
+		}
+		if !strings.HasPrefix(got, "1_я") || !strings.HasSuffix(got, ".conv.json") || !utf8.ValidString(got) {
+			t.Errorf("windows=%v: truncated name %q lost its id prefix, suffix, or UTF-8 validity", windows, got)
+		}
 	}
 }
 
@@ -462,7 +548,7 @@ func TestFormatJSON_RemovesUUID(t *testing.T) {
 
 func TestFormatJSON_NonJSONSkipped(t *testing.T) {
 	dir := t.TempDir()
-	os.WriteFile(filepath.Join(dir, "readme.txt"), []byte("text file"), 0644) //nolint:errcheck
+	os.WriteFile(filepath.Join(dir, "readme.txt"), []byte("text file"), 0644)     //nolint:errcheck
 	os.WriteFile(filepath.Join(dir, "valid.json"), []byte(`{"key":"val"}`), 0644) //nolint:errcheck
 
 	if err := formatJSON(dir); err != nil {
@@ -498,10 +584,10 @@ func TestRenameFiles2Folders_RenamesFolderDir(t *testing.T) {
 func TestRenameFiles2Folders_StripsAllSuffixes(t *testing.T) {
 	root := t.TempDir()
 	cases := map[string]string{
-		"671255_develop.stage":   "671255_develop",
-		"555_orders.folder":      "555_orders",
-		"999_billing.project":    "999_billing",
-		"777_plain":              "777_plain",
+		"671255_develop.stage": "671255_develop",
+		"555_orders.folder":    "555_orders",
+		"999_billing.project":  "999_billing",
+		"777_plain":            "777_plain",
 	}
 	for src := range cases {
 		if err := os.MkdirAll(filepath.Join(root, src), 0755); err != nil {
