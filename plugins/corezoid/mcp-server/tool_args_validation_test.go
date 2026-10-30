@@ -86,6 +86,51 @@ func TestApplyArgAliases_CreateFolder(t *testing.T) {
 	}
 }
 
+// find-principal searches used to pass the search text as query (or email) and
+// fail on the unknown-argument error before retrying with name (#247).
+func TestApplyArgAliases_FindPrincipal(t *testing.T) {
+	for _, alias := range []string{"query", "search", "email"} {
+		out, msg := applyArgAliases("find-principal", map[string]interface{}{alias: "bob@example.com", "type": "user"})
+		if msg != "" || out["name"] != "bob@example.com" || out["kind"] != "user" {
+			t.Errorf("%s: want name=bob@example.com kind=user, got %v (%s)", alias, out, msg)
+		}
+		if msg := unknownArgsError("find-principal", out); msg != "" {
+			t.Errorf("%s: aliased args must pass validation, got: %s", alias, msg)
+		}
+	}
+	if _, msg := applyArgAliases("find-principal", map[string]interface{}{"query": "a", "name": "b"}); !strings.Contains(msg, "different values") {
+		t.Errorf("conflicting query/name must be rejected, got %q", msg)
+	}
+}
+
+func TestHandleToolCall_FindPrincipalQueryThroughRouter(t *testing.T) {
+	resetGlobals(t)
+	var captured []map[string]interface{}
+	srv, _ := mockAPIServer(t, func(ops []map[string]interface{}) interface{} {
+		captured = ops
+		return map[string]interface{}{
+			"request_proc": "ok",
+			"ops":          []interface{}{map[string]interface{}{"proc": "ok", "list": []interface{}{}}},
+		}
+	})
+	withAuthLock(func() {
+		setProjectAuth(t, srv.URL)
+		accountURL = "https://account.example"
+		stageID = 1
+	})
+
+	result, isErr := handleToolCall(context.Background(), "cz-access", map[string]interface{}{
+		"action": "find-principal",
+		"args":   map[string]interface{}{"query": "bob@example.com"},
+	})
+	if isErr {
+		t.Fatalf("query must be accepted by find-principal, got: %s", result)
+	}
+	if len(captured) != 1 || captured[0]["name"] != "bob@example.com" {
+		t.Errorf("search text must reach the API as name, got ops %v", captured)
+	}
+}
+
 func TestHandleToolCall_CreateFolderAliasesThroughRouter(t *testing.T) {
 	resetGlobals(t)
 	withAuthLock(func() {
