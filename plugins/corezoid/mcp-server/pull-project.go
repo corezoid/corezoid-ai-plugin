@@ -6,9 +6,11 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path"
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"strconv"
 	"strings"
 	"unicode/utf8"
 )
@@ -135,6 +137,35 @@ func portableComponent(p string, windows bool) string {
 	return p
 }
 
+// skippedEntry is an archive entry unzipFile could not write locally.
+type skippedEntry struct {
+	Name  string // entry path inside the archive, after portableEntryPath
+	Cause error
+}
+
+func (s skippedEntry) String() string {
+	return fmt.Sprintf("%s (%v)", s.Name, s.Cause)
+}
+
+// processID returns the id of the process the entry would have written, or 0
+// when the entry is not a process file. The exporter names process files
+// "<id>_<title>.conv.json", and portableEntryPath keeps that prefix.
+func (s skippedEntry) processID() int {
+	base := path.Base(s.Name)
+	if !strings.HasSuffix(base, ".conv.json") {
+		return 0
+	}
+	m := reProcessIDFromFilename.FindStringSubmatch(base)
+	if m == nil {
+		return 0
+	}
+	id, err := strconv.Atoi(m[1])
+	if err != nil {
+		return 0
+	}
+	return id
+}
+
 // unzipFile extracts a ZIP archive to destDir using Go's archive/zip package.
 // Applies fixMojibake to entry names to handle servers that double-encode UTF-8
 // filenames, then portableEntryPath so object titles with characters the local
@@ -153,7 +184,7 @@ func portableComponent(p string, windows bool) string {
 // wherever "docs" happens to point, and a plain name whose file is already a
 // symlink overwrites the link's target. Neither is reachable through the
 // archive-name check, since the name itself is perfectly ordinary.
-func unzipFile(src, destDir string) (skipped []string, err error) {
+func unzipFile(src, destDir string) (skipped []skippedEntry, err error) {
 	r, err := zip.OpenReader(src)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open zip %s: %w", src, err)
@@ -181,7 +212,7 @@ func unzipFile(src, destDir string) (skipped []string, err error) {
 
 	skip := func(name string, cause error) {
 		logger.Warn("unzip: skipped %s: %v", name, cause)
-		skipped = append(skipped, fmt.Sprintf("%s (%v)", name, cause))
+		skipped = append(skipped, skippedEntry{Name: name, Cause: cause})
 	}
 
 	for _, f := range r.File {
@@ -402,7 +433,7 @@ func hoistZipWrapperDirs(root string) error {
 //
 // The returned list names archive entries that could not be written locally
 // (see unzipFile); the rest of the workspace is still saved.
-func downloadWorkspaceRootRecursively(e *Executor, filePath string) ([]string, error) {
+func downloadWorkspaceRootRecursively(e *Executor, filePath string) ([]skippedEntry, error) {
 	if err := e.checkCancel(); err != nil {
 		return nil, err
 	}
@@ -420,7 +451,7 @@ func downloadWorkspaceRootRecursively(e *Executor, filePath string) ([]string, e
 		return nil, fmt.Errorf("failed to batch export workspace root: %w", err)
 	}
 
-	var skipped []string
+	var skipped []skippedEntry
 	for i, url := range urls {
 		if err := e.checkCancel(); err != nil {
 			return skipped, err
@@ -486,7 +517,7 @@ func downloadWorkspaceRootRecursively(e *Executor, filePath string) ([]string, e
 // downloadStageRecursively pulls folderID into filePath. The returned list
 // names archive entries that could not be written locally (see unzipFile);
 // the rest of the folder is still saved.
-func downloadStageRecursively(e *Executor, folderID int, filePath string) ([]string, error) {
+func downloadStageRecursively(e *Executor, folderID int, filePath string) ([]skippedEntry, error) {
 	if err := e.checkCancel(); err != nil {
 		return nil, err
 	}

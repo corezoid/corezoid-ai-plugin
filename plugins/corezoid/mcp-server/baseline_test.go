@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -101,7 +102,7 @@ func TestRecordPulledBaselinesUsesPreExportSnapshot(t *testing.T) {
 		10: {ChangeTime: 100, Version: 10},
 		20: {ChangeTime: 200, Version: 20},
 	}
-	if n := recordPulledBaselines(dir, snapshot); n != 2 {
+	if n := recordPulledBaselines(dir, snapshot, nil); n != 2 {
 		t.Fatalf("expected 2 baselines recorded, got %d", n)
 	}
 	e10, ok10, err10 := lookupBaseline(dir, 10)
@@ -114,6 +115,48 @@ func TestRecordPulledBaselinesUsesPreExportSnapshot(t *testing.T) {
 	}
 	if !ok20 || e20.ChangeTime != 200 || e20.Version != 20 {
 		t.Fatalf("process 20 baseline (subfolder) wrong: %+v ok=%v", e20, ok20)
+	}
+}
+
+// A process whose archive entry unzipFile skipped was not written by this
+// pull, so the file the walk finds for it is a copy from an earlier pull.
+// Giving that copy the fresh baseline would let push-process overwrite the
+// newer server version without a conflict, so it must keep its old baseline
+// and ancestor.
+func TestRecordPulledBaselinesSkipsUnwrittenProcesses(t *testing.T) {
+	dir := t.TempDir()
+	mustWrite(t, filepath.Join(dir, "10_a.conv.json"), `{"obj_id":10,"scheme":{"nodes":[]}}`)
+	stale := `{"obj_id":20,"scheme":{"nodes":[{"old":"copy"}]}}`
+	mustWrite(t, filepath.Join(dir, "20_old title.conv.json"), stale)
+	oldBase := baselineEntry{ChangeTime: 50, Version: 5}
+	if err := writePulledBaseline(dir, 20, oldBase); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeAncestorScheme(dir, 20, stale); err != nil {
+		t.Fatal(err)
+	}
+
+	snapshot := map[int]baselineEntry{
+		10: {ChangeTime: 100, Version: 10},
+		20: {ChangeTime: 200, Version: 20},
+	}
+	skipped := []skippedEntry{{
+		Name:  "stage_1_2.zip/5_dev.stage/20_new title.conv.json",
+		Cause: errors.New("access denied"),
+	}}
+	if n := recordPulledBaselines(dir, snapshot, skipped); n != 1 {
+		t.Fatalf("expected 1 baseline recorded (only process 10), got %d", n)
+	}
+
+	got, ok, err := lookupBaseline(dir, 20)
+	if err != nil || !ok {
+		t.Fatalf("process 20 baseline lookup: ok=%v err=%v", ok, err)
+	}
+	if got.ChangeTime != oldBase.ChangeTime || got.Version != oldBase.Version {
+		t.Fatalf("process 20 baseline was moved to the fresh snapshot: %+v", got)
+	}
+	if e10, ok, _ := lookupBaseline(dir, 10); !ok || e10.ChangeTime != 100 {
+		t.Fatalf("process 10 baseline wrong: %+v ok=%v", e10, ok)
 	}
 }
 
@@ -144,7 +187,7 @@ func TestRecordPulledBaselinesSkipsFilesOutsideSnapshot(t *testing.T) {
 	snapshot := map[int]baselineEntry{
 		10: {ChangeTime: 100, Version: 10},
 	}
-	if n := recordPulledBaselines(dir, snapshot); n != 1 {
+	if n := recordPulledBaselines(dir, snapshot, nil); n != 1 {
 		t.Fatalf("expected 1 baseline recorded (only process 10), got %d", n)
 	}
 

@@ -329,7 +329,19 @@ func baselineFromWorkspaceRootItem(it WorkspaceRootItem) baselineEntry {
 // recordPulledBaselines pairs the pre-export snapshot with the files produced
 // by that export. The pulled file itself becomes the merge ancestor. Processes
 // absent from the pre-export snapshot intentionally get no baseline.
-func recordPulledBaselines(root string, snapshot map[int]baselineEntry) int {
+//
+// Processes whose archive entry was skipped (see unzipFile) get none either.
+// The export did not write them, so a file the walk finds for one is a copy
+// left by an earlier pull. Recording the fresh baseline against it would tell
+// push-process the stale copy is up to date, and the push would overwrite the
+// newer server version without a conflict.
+func recordPulledBaselines(root string, snapshot map[int]baselineEntry, skipped []skippedEntry) int {
+	notWritten := map[int]bool{}
+	for _, s := range skipped {
+		if id := s.processID(); id != 0 {
+			notWritten[id] = true
+		}
+	}
 	n := 0
 	_ = filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
 		if err != nil || info.IsDir() || !strings.HasSuffix(path, ".conv.json") {
@@ -354,7 +366,7 @@ func recordPulledBaselines(root string, snapshot map[int]baselineEntry) int {
 		// with its own WIP content, and a later 3-way merge would see
 		// base == mine and silently drop the local edits.
 		base, ok := snapshot[objID]
-		if !ok {
+		if !ok || notWritten[objID] {
 			return nil
 		}
 		if aerr := writeAncestorScheme(filepath.Dir(path), objID, string(b)); aerr != nil {
