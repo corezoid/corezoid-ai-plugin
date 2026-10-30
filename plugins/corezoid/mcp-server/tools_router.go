@@ -104,7 +104,7 @@ var toolRouters = []toolRouter{
 			{"delete-task", "delete a task from a process (destructive)"},
 			{"list-node-tasks", "tasks currently parked in a node"},
 			{"list-task-history", "the node path a task has taken, by task_id and/or ref"},
-			{"get-node-stat", "in/out counts for a node over a time range"},
+			{"get-node-stat", "in/out counts for a node (args: process_id, node_id; start/end default to the last 24h)"},
 		},
 	},
 	{
@@ -332,6 +332,15 @@ func resolveRouterCall(name string, args map[string]interface{}) routerCallResul
 	if err != nil {
 		return routerCallResult{Handled: true, IsError: true,
 			Text: fmt.Sprintf("Error: %s in %s action %q. %s", err, r.Name, action, actionHelpText(r.Name, action))}
+	}
+	// help nested inside args is the same request one level too deep. No
+	// action takes an argument by that name, so it can only mean help — and
+	// passing it on ran the action without the schema the caller asked for.
+	if h, nested := actionArgs["help"]; nested {
+		if helpRequested(h) {
+			return routerCallResult{Handled: true, Text: actionHelpText(r.Name, action)}
+		}
+		delete(actionArgs, "help")
 	}
 	return routerCallResult{Handled: true, Tool: action, Args: actionArgs}
 }
