@@ -20,14 +20,14 @@ func TestCheckError_OK(t *testing.T) {
 		},
 	}
 	e := &Executor{}
-	if err := e.checkError(rsp); err != nil {
+	if err := e.checkError(rsp, nil); err != nil {
 		t.Errorf("expected nil error for ok response, got: %v", err)
 	}
 }
 
 func TestCheckError_Nil(t *testing.T) {
 	e := &Executor{}
-	if err := e.checkError(nil); err == nil {
+	if err := e.checkError(nil, nil); err == nil {
 		t.Error("expected error for nil response, got nil")
 	}
 }
@@ -37,14 +37,14 @@ func TestCheckError_RequestProcNotOK(t *testing.T) {
 		"request_proc": "fail",
 	}
 	e := &Executor{}
-	if err := e.checkError(rsp); err == nil {
+	if err := e.checkError(rsp, nil); err == nil {
 		t.Error("expected error when request_proc != ok, got nil")
 	}
 }
 
 func TestCheckError_RequestProcMissing(t *testing.T) {
 	e := &Executor{}
-	if err := e.checkError(map[string]interface{}{}); err == nil {
+	if err := e.checkError(map[string]interface{}{}, nil); err == nil {
 		t.Error("expected error when request_proc missing, got nil")
 	}
 }
@@ -60,7 +60,7 @@ func TestCheckError_OpProcNotOK_WithDescription(t *testing.T) {
 		},
 	}
 	e := &Executor{}
-	err := e.checkError(rsp)
+	err := e.checkError(rsp, nil)
 	if err == nil {
 		t.Error("expected error for op proc != ok, got nil")
 	}
@@ -79,7 +79,7 @@ func TestCheckError_OpProcNotOK_WithErrors(t *testing.T) {
 		},
 	}
 	e := &Executor{}
-	err := e.checkError(rsp)
+	err := e.checkError(rsp, nil)
 	if err == nil {
 		t.Error("expected error for op with errors map, got nil")
 	}
@@ -94,7 +94,7 @@ func TestCheckError_MultipleOpsAllOK(t *testing.T) {
 		},
 	}
 	e := &Executor{}
-	if err := e.checkError(rsp); err != nil {
+	if err := e.checkError(rsp, nil); err != nil {
 		t.Errorf("expected nil error for all-ok ops, got: %v", err)
 	}
 }
