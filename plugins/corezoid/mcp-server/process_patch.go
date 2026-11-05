@@ -1,0 +1,463 @@
+package main
+
+// patch-process: point edits of a process scheme. A model that changes one
+// node of a 60-node process used to resend the whole JSON (push-process
+// content, hosted push) and get the whole deployed scheme back; with
+// patch-process it names the nodes it changes and gets back what changed.
+
+import (
+	"bytes"
+	"context"
+	"crypto/rand"
+	"encoding/hex"
+	"encoding/json"
+	"fmt"
+	"os"
+	"sort"
+	"strings"
+)
+
+// nodePatchOp is one edit: set {node, set, unset}, add {value}, remove {node}.
+type nodePatchOp struct {
+	Op    string
+	Node  string                 // a node id, or a title no other node has
+	Set   map[string]interface{} // node keys to replace; logics/semaphors land in condition
+	Unset []string
+	Value map[string]interface{} // the whole new node of add
+}
+
+type processPatch struct {
+	ops     []nodePatchOp
+	process map[string]interface{} // process keys to replace: title, description, params
+}
+
+var (
+	patchNodeKeys    = []string{"title", "description", "condition", "logics", "semaphors", "x", "y", "extra", "options", "obj_type"}
+	patchProcessKeys = []string{"title", "description", "params"}
+	patchOps         = []string{"set", "add", "remove"}
+)
+
+const maxPatchOps = 100
+
+// parseProcessPatch reads ops and process from tool arguments and checks
+// their shape, so a malformed patch is refused before anything is read.
+func parseProcessPatch(args map[string]interface{}) (processPatch, error) {
+	var p processPatch
+	rawOps, _ := args["ops"].([]interface{})
+	if proc, ok := args["process"].(map[string]interface{}); ok {
+		for k := range proc {
+			if !containsStr(patchProcessKeys, k) {
+				return p, fmt.Errorf("process.%s cannot be patched; allowed: %s", k, strings.Join(patchProcessKeys, ", "))
+			}
+		}
+		p.process = proc
+	} else if args["process"] != nil {
+		return p, fmt.Errorf("process must be an object of process keys (%s)", strings.Join(patchProcessKeys, ", "))
+	}
+	if len(rawOps) == 0 && len(p.process) == 0 {
+		return p, fmt.Errorf("ops (1..%d node edits) or process is required", maxPatchOps)
+	}
+	if len(rawOps) > maxPatchOps {
+		return p, fmt.Errorf("at most %d ops per call, got %d", maxPatchOps, len(rawOps))
+	}
+	for i, raw := range rawOps {
+		m, ok := raw.(map[string]interface{})
+		if !ok {
+			return p, fmt.Errorf("ops[%d] must be an object", i)
+		}
+		op := nodePatchOp{}
+		op.Op, _ = m["op"].(string)
+		op.Node, _ = m["node"].(string)
+		op.Set, _ = m["set"].(map[string]interface{})
+		op.Value, _ = m["value"].(map[string]interface{})
+		if u, ok := m["unset"].([]interface{}); ok {
+			for _, k := range u {
+				s, _ := k.(string)
+				op.Unset = append(op.Unset, s)
+			}
+		}
+		if err := op.check(); err != nil {
+			return p, fmt.Errorf("ops[%d] (%s): %v", i, op.Op, err)
+		}
+		p.ops = append(p.ops, op)
+	}
+	return p, nil
+}
+
+func (op nodePatchOp) check() error {
+	switch op.Op {
+	case "set":
+		if op.Node == "" || len(op.Set)+len(op.Unset) == 0 {
+			return fmt.Errorf("set needs node (an id or title) and set or unset")
+		}
+		for k := range op.Set {
+			if !containsStr(patchNodeKeys, k) {
+				return fmt.Errorf("set.%s is not a node key you can change; allowed: %s (id is the server's)", k, strings.Join(patchNodeKeys, ", "))
+			}
+		}
+		for _, k := range op.Unset {
+			if k != "description" && k != "extra" && k != "options" {
+				return fmt.Errorf("unset.%s refused: only description, extra and options may be dropped", k)
+			}
+		}
+	case "add":
+		if op.Value == nil {
+			return fmt.Errorf("add needs value: the whole node {title, obj_type, condition: {logics, semaphors}, ...}")
+		}
+		if _, ok := op.Value["title"].(string); !ok {
+			return fmt.Errorf("value.title (string) is required")
+		}
+		if _, ok := op.Value["obj_type"]; !ok {
+			return fmt.Errorf("value.obj_type is required: 0 code/api, 1 start, 2 end, 3 condition")
+		}
+	case "remove":
+		if op.Node == "" {
+			return fmt.Errorf("remove needs node (an id or title)")
+		}
+	default:
+		return fmt.Errorf("unknown op %q; allowed: %s", op.Op, strings.Join(patchOps, ", "))
+	}
+	return nil
+}
+
+func containsStr(list []string, v string) bool {
+	for _, s := range list {
+		if s == v {
+			return true
+		}
+	}
+	return false
+}
+
+// schemeNodes returns doc.scheme.nodes as objects.
+func schemeNodes(doc map[string]interface{}) ([]map[string]interface{}, error) {
+	scheme, _ := doc["scheme"].(map[string]interface{})
+	raw, ok := scheme["nodes"].([]interface{})
+	if scheme == nil || (!ok && scheme["nodes"] != nil) {
+		return nil, fmt.Errorf("the process has no scheme.nodes list")
+	}
+	out := make([]map[string]interface{}, 0, len(raw))
+	for i, n := range raw {
+		m, ok := n.(map[string]interface{})
+		if !ok {
+			return nil, fmt.Errorf("scheme.nodes[%d] is not an object", i)
+		}
+		out = append(out, m)
+	}
+	return out, nil
+}
+
+func setSchemeNodes(doc map[string]interface{}, nodes []map[string]interface{}) {
+	scheme, _ := doc["scheme"].(map[string]interface{})
+	list := make([]interface{}, len(nodes))
+	for i, n := range nodes {
+		list[i] = n
+	}
+	scheme["nodes"] = list
+}
+
+// findNode resolves a node reference: an id first, else a unique title.
+func findNode(nodes []map[string]interface{}, ref string) (int, error) {
+	var byTitle []int
+	for i, n := range nodes {
+		if id, _ := n["id"].(string); id == ref {
+			return i, nil
+		}
+		if t, _ := n["title"].(string); t == ref {
+			byTitle = append(byTitle, i)
+		}
+	}
+	switch len(byTitle) {
+	case 1:
+		return byTitle[0], nil
+	case 0:
+		return -1, fmt.Errorf("no node has id or title %q; nodes: %s", ref, nodeList(nodes))
+	}
+	ids := make([]string, len(byTitle))
+	for i, k := range byTitle {
+		ids[i], _ = nodes[k]["id"].(string)
+	}
+	return -1, fmt.Errorf("%d nodes are titled %q (%s): name the node by its id", len(byTitle), ref, strings.Join(ids, ", "))
+}
+
+func nodeList(nodes []map[string]interface{}) string {
+	var parts []string
+	for i, n := range nodes {
+		if i == 40 {
+			parts = append(parts, fmt.Sprintf("… (%d in all)", len(nodes)))
+			break
+		}
+		id, _ := n["id"].(string)
+		t, _ := n["title"].(string)
+		parts = append(parts, fmt.Sprintf("%s %q", id, t))
+	}
+	return strings.Join(parts, ", ")
+}
+
+// applyProcessPatch applies the ops in order, then refuses a scheme where a
+// logic or semaphore points at a node that is not there. It returns the ids
+// of the nodes it changed or added. On an error doc may be partly changed:
+// callers drop it, so nothing is written or deployed.
+func applyProcessPatch(doc map[string]interface{}, p processPatch) ([]string, error) {
+	for k, v := range p.process {
+		doc[k] = v
+	}
+	nodes, err := schemeNodes(doc)
+	if err != nil {
+		if len(p.ops) == 0 {
+			return nil, nil
+		}
+		return nil, err
+	}
+	var touched []string
+	for i, op := range p.ops {
+		ref, err := applyNodeOp(&nodes, op)
+		if err != nil {
+			return nil, fmt.Errorf("ops[%d] (%s): %v; nothing was changed", i, op.Op, err)
+		}
+		if ref != "" {
+			touched = append(touched, ref)
+		}
+	}
+	if err := checkNodeLinks(nodes); err != nil {
+		return nil, fmt.Errorf("%v; nothing was changed", err)
+	}
+	setSchemeNodes(doc, nodes)
+	return touched, nil
+}
+
+func applyNodeOp(nodes *[]map[string]interface{}, op nodePatchOp) (string, error) {
+	switch op.Op {
+	case "remove":
+		i, err := findNode(*nodes, op.Node)
+		if err != nil {
+			return "", err
+		}
+		*nodes = append((*nodes)[:i], (*nodes)[i+1:]...)
+		return "", nil
+	case "add":
+		n := map[string]interface{}{}
+		for k, v := range op.Value {
+			n[k] = v
+		}
+		id, _ := n["id"].(string)
+		if id == "" {
+			id = newNodeID()
+			n["id"] = id
+		}
+		if _, err := findNode(*nodes, id); err == nil {
+			return "", fmt.Errorf("a node with id %s already exists", id)
+		}
+		if _, ok := n["condition"]; !ok {
+			n["condition"] = map[string]interface{}{"logics": []interface{}{}, "semaphors": []interface{}{}}
+		}
+		*nodes = append(*nodes, n)
+		return id, nil
+	}
+	i, err := findNode(*nodes, op.Node)
+	if err != nil {
+		return "", err
+	}
+	n := (*nodes)[i]
+	for k, v := range op.Set {
+		if k == "logics" || k == "semaphors" {
+			cond, _ := n["condition"].(map[string]interface{})
+			if cond == nil {
+				cond = map[string]interface{}{}
+				n["condition"] = cond
+			}
+			cond[k] = v
+			continue
+		}
+		n[k] = v
+	}
+	for _, k := range op.Unset {
+		delete(n, k)
+	}
+	id, _ := n["id"].(string)
+	return id, nil
+}
+
+// checkNodeLinks names the first logic or semaphore whose target node is
+// missing — what lint would block at push, said where the patch made it.
+func checkNodeLinks(nodes []map[string]interface{}) error {
+	ids := map[string]bool{}
+	for _, n := range nodes {
+		if id, _ := n["id"].(string); id != "" {
+			ids[id] = true
+		}
+	}
+	for _, n := range nodes {
+		cond, _ := n["condition"].(map[string]interface{})
+		for _, part := range []string{"logics", "semaphors"} {
+			items, _ := cond[part].([]interface{})
+			for j, it := range items {
+				m, _ := it.(map[string]interface{})
+				for _, key := range []string{"to_node_id", "err_node_id"} {
+					if target, _ := m[key].(string); target != "" && !ids[target] {
+						id, _ := n["id"].(string)
+						title, _ := n["title"].(string)
+						return fmt.Errorf("node %s %q %s[%d].%s points to %s, which is not in the process: repoint it in the same patch", id, title, part, j, key, target)
+					}
+				}
+			}
+		}
+	}
+	return nil
+}
+
+// newNodeID is a 24-hex id like Corezoid's own; the server assigns its own on deploy.
+func newNodeID() string {
+	b := make([]byte, 12)
+	_, _ = rand.Read(b)
+	return hex.EncodeToString(b)
+}
+
+// nodeOutline is a node in a line: what it is and where it goes, not its logic bodies.
+type nodeOutline struct {
+	ID     string   `json:"id"`
+	Title  string   `json:"title"`
+	Kind   string   `json:"kind"`
+	Logics []string `json:"logics,omitempty"`
+	To     []string `json:"to,omitempty"`
+	Err    []string `json:"err,omitempty"`
+}
+
+var nodeKinds = map[string]string{"0": "node", "1": "start", "2": "end", "3": "condition"}
+
+func outlineOf(n map[string]interface{}) nodeOutline {
+	o := nodeOutline{}
+	o.ID, _ = n["id"].(string)
+	o.Title, _ = n["title"].(string)
+	o.Kind = nodeKinds[fmt.Sprint(n["obj_type"])]
+	if o.Kind == "" {
+		o.Kind = fmt.Sprint(n["obj_type"])
+	}
+	cond, _ := n["condition"].(map[string]interface{})
+	for _, part := range []string{"logics", "semaphors"} {
+		items, _ := cond[part].([]interface{})
+		for _, it := range items {
+			m, _ := it.(map[string]interface{})
+			if t, _ := m["type"].(string); t != "" && part == "logics" {
+				o.Logics = append(o.Logics, t)
+			}
+			if t, _ := m["to_node_id"].(string); t != "" {
+				o.To = append(o.To, t)
+			}
+			if t, _ := m["err_node_id"].(string); t != "" {
+				o.Err = append(o.Err, t)
+			}
+		}
+	}
+	return o
+}
+
+// processOutline lists every node (or, with only, the named ones) one per line.
+func processOutline(doc map[string]interface{}, only []string) string {
+	nodes, _ := schemeNodes(doc)
+	want := map[string]bool{}
+	for _, r := range only {
+		want[r] = true
+	}
+	var b strings.Builder
+	for _, n := range nodes {
+		o := outlineOf(n)
+		if len(only) > 0 && !want[o.ID] && !want[o.Title] {
+			continue
+		}
+		line, _ := json.Marshal(o)
+		b.Write(line)
+		b.WriteByte('\n')
+	}
+	return b.String()
+}
+
+// selectNodes returns the full JSON of the named nodes, refusing a name that
+// matches none (so a typo does not read as "the node is empty").
+func selectNodes(doc map[string]interface{}, refs []string) (string, error) {
+	nodes, err := schemeNodes(doc)
+	if err != nil {
+		return "", err
+	}
+	var picked []map[string]interface{}
+	seen := map[int]bool{}
+	for _, r := range refs {
+		i, err := findNode(nodes, r)
+		if err != nil {
+			return "", err
+		}
+		if !seen[i] {
+			seen[i] = true
+			picked = append(picked, nodes[i])
+		}
+	}
+	data, err := json.MarshalIndent(picked, "", "  ")
+	return string(data), err
+}
+
+// handlePatchProcess edits a pulled process file in place; push-process deploys it.
+func handlePatchProcess(_ context.Context, args map[string]interface{}) (string, bool) {
+	patch, err := parseProcessPatch(args)
+	if err != nil {
+		return "Error: " + err.Error(), true
+	}
+	filePath, err := resolveProcessPath(args, "process_path")
+	if err != nil {
+		return "Error: " + err.Error(), true
+	}
+	if err := processFileMissingError(filePath); err != nil {
+		return "Error: " + err.Error(), true
+	}
+	raw, err := os.ReadFile(filePath)
+	if err != nil {
+		return "Error: " + err.Error(), true
+	}
+	doc, err := decodeProcessDoc(raw)
+	if err != nil {
+		return fmt.Sprintf("Error: %s is not a process JSON object: %v", filePath, err), true
+	}
+	touched, err := applyProcessPatch(doc, patch)
+	if err != nil {
+		return "Error: " + err.Error(), true
+	}
+	out, err := json.MarshalIndent(doc, "", "  ")
+	if err != nil {
+		return "Error: " + err.Error(), true
+	}
+	if err := os.WriteFile(filePath, out, 0644); err != nil {
+		return "Error writing " + filePath + ": " + err.Error(), true
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "Patched %s: %d op(s)%s. Not deployed — run push-process on it.\n", filePath, len(patch.ops), processKeysNote(patch))
+	if len(touched) > 0 {
+		b.WriteString("Changed nodes:\n")
+		b.WriteString(processOutline(doc, touched))
+	}
+	return b.String(), false
+}
+
+func processKeysNote(p processPatch) string {
+	if len(p.process) == 0 {
+		return ""
+	}
+	keys := make([]string, 0, len(p.process))
+	for k := range p.process {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return " and process " + strings.Join(keys, ", ")
+}
+
+// decodeProcessDoc keeps numbers exact (ids and limits beyond 2^53).
+func decodeProcessDoc(raw []byte) (map[string]interface{}, error) {
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	dec.UseNumber()
+	var doc map[string]interface{}
+	if err := dec.Decode(&doc); err != nil {
+		return nil, err
+	}
+	if doc == nil {
+		return nil, fmt.Errorf("empty document")
+	}
+	return doc, nil
+}

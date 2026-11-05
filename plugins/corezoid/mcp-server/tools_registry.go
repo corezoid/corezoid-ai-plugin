@@ -164,6 +164,23 @@ var coreToolDefs = []mcpTool{
 		},
 	},
 	{
+		Name:        "patch-process",
+		Description: "Change a few nodes of a pulled process file in place, by node id or title, instead of rewriting the file or sending the whole JSON as push-process content: ops set/add/remove and process keys. A logic or semaphore left pointing at a missing node is refused. Writes only the local file (no API) and answers the changed nodes; run push-process on the file to deploy.",
+		Annotations: toolHints(hintMutates, hintSafe, hintNonIdempotent, hintLocal),
+		InputSchema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"process_path": map[string]interface{}{
+					"type":        "string",
+					"description": "Path to the pulled process JSON file, relative to the project root.",
+				},
+				"ops":     patchOpsSchema,
+				"process": patchProcessSchema,
+			},
+			"required": []string{"process_path"},
+		},
+	},
+	{
 		Name:        "layout-process",
 		Description: "Auto-arrange a process's node coordinates into a clean, readable layout (waterfall for simple trees, layered+error-rail for meshes, aligned table/star grids for region bundles). Rewrites ONLY x/y; collapse/expand state, extra, edges, logic, conv_id and aliases stay intact. Runs entirely on the local file (no API, no auth). The result always reports the chosen strategy, canvas size and overlap count; dry=true previews placements without writing.",
 		Annotations: toolHints(hintMutates, hintSafe, hintIdempotent, hintLocal),
