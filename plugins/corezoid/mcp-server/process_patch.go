@@ -194,36 +194,62 @@ func nodeList(nodes []map[string]interface{}) string {
 	return strings.Join(parts, ", ")
 }
 
+// patchResult is what a patch touched: ids of the nodes it changed (the
+// server keeps them on deploy), ids it gave the nodes it added (the server
+// replaces them), and how many it removed.
+type patchResult struct {
+	changed, added []string
+	removed        int
+}
+
+func (r patchResult) all() []string { return append(append([]string{}, r.changed...), r.added...) }
+
 // applyProcessPatch applies the ops in order, then refuses a scheme where a
-// logic or semaphore points at a node that is not there. It returns the ids
-// of the nodes it changed or added. On an error doc may be partly changed:
-// callers drop it, so nothing is written or deployed.
-func applyProcessPatch(doc map[string]interface{}, p processPatch) ([]string, error) {
+// logic or semaphore points at a node that is not there. On an error doc may
+// be partly changed: callers drop it, so nothing is written or deployed.
+func applyProcessPatch(doc map[string]interface{}, p processPatch) (patchResult, error) {
 	for k, v := range p.process {
 		doc[k] = v
 	}
+	var r patchResult
 	nodes, err := schemeNodes(doc)
 	if err != nil {
 		if len(p.ops) == 0 {
-			return nil, nil
+			return r, nil
 		}
-		return nil, err
+		return r, err
 	}
-	var touched []string
 	for i, op := range p.ops {
 		ref, err := applyNodeOp(&nodes, op)
 		if err != nil {
-			return nil, fmt.Errorf("ops[%d] (%s): %v; nothing was changed", i, op.Op, err)
+			return patchResult{}, fmt.Errorf("ops[%d] (%s): %v; nothing was changed", i, op.Op, err)
 		}
-		if ref != "" {
-			touched = append(touched, ref)
+		switch {
+		case op.Op == "remove":
+			r.removed++
+			r.changed = without(r.changed, ref)
+			r.added = without(r.added, ref)
+		case op.Op == "add":
+			r.added = append(r.added, ref)
+		case !containsStr(r.changed, ref) && !containsStr(r.added, ref):
+			r.changed = append(r.changed, ref)
 		}
 	}
 	if err := checkNodeLinks(nodes); err != nil {
-		return nil, fmt.Errorf("%v; nothing was changed", err)
+		return patchResult{}, fmt.Errorf("%v; nothing was changed", err)
 	}
 	setSchemeNodes(doc, nodes)
-	return touched, nil
+	return r, nil
+}
+
+func without(list []string, v string) []string {
+	out := list[:0]
+	for _, s := range list {
+		if s != v {
+			out = append(out, s)
+		}
+	}
+	return out
 }
 
 func applyNodeOp(nodes *[]map[string]interface{}, op nodePatchOp) (string, error) {
@@ -233,8 +259,9 @@ func applyNodeOp(nodes *[]map[string]interface{}, op nodePatchOp) (string, error
 		if err != nil {
 			return "", err
 		}
+		id, _ := (*nodes)[i]["id"].(string)
 		*nodes = append((*nodes)[:i], (*nodes)[i+1:]...)
-		return "", nil
+		return id, nil
 	case "add":
 		n := map[string]interface{}{}
 		for k, v := range op.Value {
@@ -278,8 +305,16 @@ func applyNodeOp(nodes *[]map[string]interface{}, op nodePatchOp) (string, error
 	return id, nil
 }
 
-// checkNodeLinks names the first logic or semaphore whose target node is
-// missing — what lint would block at push, said where the patch made it.
+// linkFields are the transition fields of a logic and of a semaphore, as
+// lint's findBrokenLinks reads them.
+var nodeLinkFields = map[string][]string{
+	"logics":    {"to_node_id", "err_node_id", "go_to", "goto"},
+	"semaphors": {"to_node_id", "esc_node_id"},
+}
+
+// checkNodeLinks names the first logic or semaphore whose static target node
+// is missing — what lint blocks at push, said where the patch made it. Dynamic
+// targets ({{...}}, @alias) resolve at deploy and are left alone, as in lint.
 func checkNodeLinks(nodes []map[string]interface{}) error {
 	ids := map[string]bool{}
 	for _, n := range nodes {
@@ -293,8 +328,8 @@ func checkNodeLinks(nodes []map[string]interface{}) error {
 			items, _ := cond[part].([]interface{})
 			for j, it := range items {
 				m, _ := it.(map[string]interface{})
-				for _, key := range []string{"to_node_id", "err_node_id"} {
-					if target, _ := m[key].(string); target != "" && !ids[target] {
+				for _, key := range nodeLinkFields[part] {
+					if target, static := isStaticNodeID(m[key]); static && !ids[target] {
 						id, _ := n["id"].(string)
 						title, _ := n["title"].(string)
 						return fmt.Errorf("node %s %q %s[%d].%s points to %s, which is not in the process: repoint it in the same patch", id, title, part, j, key, target)
@@ -321,6 +356,7 @@ type nodeOutline struct {
 	Logics []string `json:"logics,omitempty"`
 	To     []string `json:"to,omitempty"`
 	Err    []string `json:"err,omitempty"`
+	Esc    []string `json:"esc,omitempty"`
 }
 
 var nodeKinds = map[string]string{"0": "node", "1": "start", "2": "end", "3": "condition"}
@@ -341,11 +377,16 @@ func outlineOf(n map[string]interface{}) nodeOutline {
 			if t, _ := m["type"].(string); t != "" && part == "logics" {
 				o.Logics = append(o.Logics, t)
 			}
-			if t, _ := m["to_node_id"].(string); t != "" {
-				o.To = append(o.To, t)
+			for _, k := range []string{"to_node_id", "go_to", "goto"} {
+				if t, _ := m[k].(string); t != "" {
+					o.To = append(o.To, t)
+				}
 			}
 			if t, _ := m["err_node_id"].(string); t != "" {
 				o.Err = append(o.Err, t)
+			}
+			if t, _ := m["esc_node_id"].(string); t != "" {
+				o.Esc = append(o.Esc, t)
 			}
 		}
 	}
@@ -405,6 +446,9 @@ func handlePatchProcess(_ context.Context, args map[string]interface{}) (string,
 	if err != nil {
 		return "Error: " + err.Error(), true
 	}
+	if !strings.HasSuffix(filePath, ".conv.json") {
+		return fmt.Sprintf("Error: process_path must name a .conv.json file (got %q); patch-process edits process files only", filePath), true
+	}
 	if err := processFileMissingError(filePath); err != nil {
 		return "Error: " + err.Error(), true
 	}
@@ -416,7 +460,7 @@ func handlePatchProcess(_ context.Context, args map[string]interface{}) (string,
 	if err != nil {
 		return fmt.Sprintf("Error: %s is not a process JSON object: %v", filePath, err), true
 	}
-	touched, err := applyProcessPatch(doc, patch)
+	res, err := applyProcessPatch(doc, patch)
 	if err != nil {
 		return "Error: " + err.Error(), true
 	}
@@ -428,10 +472,14 @@ func handlePatchProcess(_ context.Context, args map[string]interface{}) (string,
 		return "Error writing " + filePath + ": " + err.Error(), true
 	}
 	var b strings.Builder
-	fmt.Fprintf(&b, "Patched %s: %d op(s)%s. Not deployed — run push-process on it.\n", filePath, len(patch.ops), processKeysNote(patch))
-	if len(touched) > 0 {
-		b.WriteString("Changed nodes:\n")
-		b.WriteString(processOutline(doc, touched))
+	fmt.Fprintf(&b, "Patched %s: %d op(s)%s", filePath, len(patch.ops), processKeysNote(patch))
+	if res.removed > 0 {
+		fmt.Fprintf(&b, ", %d node(s) removed", res.removed)
+	}
+	b.WriteString(". Not deployed — run push-process on it.\n")
+	if all := res.all(); len(all) > 0 {
+		b.WriteString("Changed and added nodes:\n")
+		b.WriteString(processOutline(doc, all))
 	}
 	return b.String(), false
 }

@@ -105,6 +105,11 @@ func hostedPatchProcess(ctx context.Context, args map[string]interface{}) (strin
 	if msg := hostedCheckPushStage(v, procID); msg != "" {
 		return msg, true
 	}
+	if !boolishArg(args, "discard_draft") {
+		if msg := hostedDraftGuard(v, procID); msg != "" {
+			return msg, true
+		}
+	}
 	data, _, err := exportProcessJSON(v)
 	if err != nil {
 		return fmt.Sprintf("Error fetching process: %v", err), true
@@ -113,7 +118,7 @@ func hostedPatchProcess(ctx context.Context, args map[string]interface{}) (strin
 	if err != nil {
 		return fmt.Sprintf("Error: the exported process is not a JSON object: %v", err), true
 	}
-	touched, err := applyProcessPatch(doc, patch)
+	res, err := applyProcessPatch(doc, patch)
 	if err != nil {
 		return "Error: " + err.Error(), true
 	}
@@ -122,22 +127,28 @@ func hostedPatchProcess(ctx context.Context, args map[string]interface{}) (strin
 		return "Error: " + err.Error(), true
 	}
 	content := string(out)
-	src := patchPushSource{hostedPushSource: hostedPushSource{base: &b, content: content}, touched: changedTitles(doc, touched)}
+	src := patchPushSource{hostedPushSource: hostedPushSource{base: &b, content: content}, changed: res.changed, added: addedTitles(doc, res.added), addedCount: len(res.added), removed: res.removed}
 	result, isErr := pushProcessCore(ctx, v, procID, content, args, src)
 	if isErr && strings.Contains(result, "merge=true") {
-		result += "\n\nOn the hosted server merge=true is not available: pull-process again (outline) and redo the patch on what is there now — or pass overwrite_server_change=true to drop the server change."
+		result += "\n\nOn the hosted server merge=true is not available. The ops were applied to the server's current scheme, so overwrite_server_change=true deploys them on top of that change (it drops nothing the server has now) — pass it only after pull-process outline=true shows the change is one to keep; otherwise redo the patch on what is there now."
 	}
 	return result, isErr
 }
 
-// changedTitles maps changed node references to their titles: the server gives
-// every node a new id on deploy, the title is what finds it afterwards.
-func changedTitles(doc map[string]interface{}, refs []string) []string {
+// addedTitles finds added nodes after deploy, where the server has replaced the
+// ids they were given: by title when the title is theirs alone. The others are
+// only counted.
+func addedTitles(doc map[string]interface{}, ids []string) []string {
 	nodes, _ := schemeNodes(doc)
+	count := map[string]int{}
+	for _, n := range nodes {
+		t, _ := n["title"].(string)
+		count[t]++
+	}
 	var out []string
-	for _, r := range refs {
-		if i, err := findNode(nodes, r); err == nil {
-			if t, _ := nodes[i]["title"].(string); t != "" {
+	for _, id := range ids {
+		if i, err := findNode(nodes, id); err == nil {
+			if t, _ := nodes[i]["title"].(string); t != "" && count[t] == 1 {
 				out = append(out, t)
 			}
 		}
@@ -145,11 +156,47 @@ func changedTitles(doc map[string]interface{}, refs []string) []string {
 	return out
 }
 
+// hostedDraftGuard refuses to deploy over changes someone left undeployed in
+// the editor: every deploy starts by deleting the process's pending version
+// (ProcessJSON → DeleteVersion), so that work would vanish without a word.
+// A process that was never deployed has nothing to lose. discard_draft=true
+// deploys anyway. Fail-closed: a state that cannot be read is not deployed over.
+func hostedDraftGuard(v *Executor, procID int) string {
+	info, err := v.ShowProcessLifecycle(procID)
+	if err != nil {
+		return fmt.Sprintf("Error: could not read process #%d to check for undeployed changes (%v); retry, or pass discard_draft=true to deploy over them", procID, err)
+	}
+	children, err := v.ListFolder(info.ParentObjID)
+	if err != nil {
+		return fmt.Sprintf("Error: could not list folder #%d to check process #%d for undeployed changes (%v); retry, or pass discard_draft=true to deploy over them", info.ParentObjID, procID, err)
+	}
+	proc, err := v.GetProcessByID(procID)
+	if err != nil {
+		return fmt.Sprintf("Error: could not read process #%d to check for undeployed changes (%v)", procID, err)
+	}
+	lcv, _ := proc["last_confirmed_version"].(float64)
+	for _, c := range children {
+		if c.Obj == "conv" && c.ObjID == procID && draftPending(c, lcv) {
+			return fmt.Sprintf("Error: process #%d has changes made in the editor that are not deployed (draft version %d). Deploying deletes them. Ask the user: deploy them first in Corezoid, or pass discard_draft=true to drop them.", procID, c.Version)
+		}
+	}
+	return ""
+}
+
+// draftPending: a process deployed before (last_confirmed_version) that the
+// folder list shows undeployed with a draft version.
+func draftPending(c FolderChild, lastConfirmed float64) bool {
+	return !c.IsDeployed && c.Version > 0 && lastConfirmed > 0
+}
+
 // patchPushSource is the hosted push source with a compact answer: the new
 // base and the outline of the changed nodes, not the whole deployed scheme.
 type patchPushSource struct {
 	hostedPushSource
-	touched []string
+	changed    []string // ids: the server keeps an existing node's id
+	added      []string // titles: the server gives an added node a new id
+	addedCount int
+	removed    int
 }
 
 func (p patchPushSource) afterDeploy(_ context.Context, v *Executor) ([]string, string) {
@@ -172,12 +219,17 @@ func (p patchPushSource) afterDeploy(_ context.Context, v *Executor) ([]string, 
 		return nil, b.String()
 	}
 	nodes, _ := schemeNodes(doc)
-	fmt.Fprintf(&b, "Deployed: %d nodes. ", len(nodes))
-	if len(p.touched) > 0 {
-		b.WriteString("Changed nodes with their server IDs:\n")
-		b.WriteString(processOutline(doc, p.touched))
-	} else {
-		b.WriteString("No node changed.\n")
+	fmt.Fprintf(&b, "Deployed: %d nodes", len(nodes))
+	if p.removed > 0 {
+		fmt.Fprintf(&b, ", %d removed", p.removed)
+	}
+	b.WriteString(".\n")
+	if refs := append(append([]string{}, p.changed...), p.added...); len(refs) > 0 {
+		b.WriteString("Changed and added nodes with their server IDs:\n")
+		b.WriteString(processOutline(doc, refs))
+	}
+	if n := p.addedCount - len(p.added); n > 0 {
+		fmt.Fprintf(&b, "%d added node(s) without a title of their own: read pull-process outline=true for their server IDs.\n", n)
 	}
 	return nil, b.String()
 }

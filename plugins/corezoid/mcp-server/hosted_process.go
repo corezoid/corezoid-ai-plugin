@@ -50,7 +50,7 @@ var hostedToolDefs = map[string]mcpTool{
 	"patch-process": {
 		Name: "patch-process",
 		Description: "Change a few nodes of a Corezoid process and deploy it, without sending or receiving the whole JSON: the current scheme is read from the server, the ops are applied, and the result goes through the same gates as push-process (schema, lint, the concurrency check against `base`, pre-push snapshot). " +
-			"Read the nodes first with pull-process outline=true and nodes=[...]. Returns the new `base` and the changed nodes with their server IDs (the server gives every node a new ID on deploy: reference nodes by title, or read the outline again). Needs scope.stage_id.",
+			"Read the nodes first with pull-process outline=true and nodes=[...]. Refuses a process with undeployed editor changes (deploying deletes them) unless discard_draft=true. Returns the new `base` and the changed nodes with their server IDs (an existing node keeps its ID; an added one gets a new ID, found by its title or the outline). Needs scope.stage_id.",
 		Annotations: toolHints(hintMutates, hintDestructive, hintNonIdempotent, hintOpenWorld),
 		InputSchema: map[string]interface{}{
 			"type": "object",
@@ -63,6 +63,7 @@ var hostedToolDefs = map[string]mcpTool{
 				"overwrite_server_change": map[string]interface{}{"type": "boolean", "description": "Deploy over a server change made since `base`, dropping it. Pass only in reply to the block report."},
 				"allow_active_stub_mode":  map[string]interface{}{"type": "boolean", "description": "Allow active Stub Mode nodes on a stage that otherwise refuses them."},
 				"allow_no_snapshot":       map[string]interface{}{"type": "boolean", "description": "Deploy although no pre-push snapshot could be taken (mutable stages only)."},
+				"discard_draft":           map[string]interface{}{"type": "boolean", "description": "Deploy although the process has changes made in the editor and not deployed — deploying deletes them. Pass only after the user agreed."},
 			},
 			"required": []string{"process_id", "base"},
 		},

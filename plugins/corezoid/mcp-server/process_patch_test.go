@@ -43,13 +43,13 @@ func TestApplyProcessPatchByIDAndTitle(t *testing.T) {
 		t.Fatal(err)
 	}
 	p.process = map[string]interface{}{"description": "patched"}
-	touched, err := applyProcessPatch(doc, p)
+	res, err := applyProcessPatch(doc, p)
 	if err != nil {
 		t.Fatal(err)
 	}
 	nodes, _ := schemeNodes(doc)
-	if len(nodes) != 27 || len(touched) != 3 || touched[0] != "68cd3f94b677ac95d109fb49" || len(touched[1]) != 24 || doc["description"] != "patched" {
-		t.Fatalf("%d nodes, touched %v, description %v", len(nodes), touched, doc["description"])
+	if len(nodes) != 27 || len(res.changed) != 2 || res.changed[0] != "68cd3f94b677ac95d109fb49" || len(res.added) != 1 || len(res.added[0]) != 24 || doc["description"] != "patched" {
+		t.Fatalf("%d nodes, %+v, description %v", len(nodes), res, doc["description"])
 	}
 	i, _ := findNode(nodes, "Configuration")
 	cond := nodes[i]["condition"].(map[string]interface{})
@@ -194,5 +194,71 @@ func TestHostedPullView(t *testing.T) {
 	}
 	if _, _, err := hostedPullView(doc, map[string]interface{}{"nodes": []interface{}{"Missing"}}); err == nil {
 		t.Fatal("an unknown node read as empty")
+	}
+}
+
+// Links are checked on every field lint checks; dynamic targets are left to the deploy.
+func TestCheckNodeLinksAsLint(t *testing.T) {
+	const a, b, gone = "aaaaaaaaaaaaaaaaaaaaaaaa", "bbbbbbbbbbbbbbbbbbbbbbbb", "cccccccccccccccccccccccc"
+	node := func(id, part, field, target string) map[string]interface{} {
+		return map[string]interface{}{"id": id, "title": id[:1], "condition": map[string]interface{}{part: []interface{}{map[string]interface{}{field: target}}}}
+	}
+	for _, c := range []struct{ part, field string }{{"logics", "go_to"}, {"logics", "goto"}, {"logics", "err_node_id"}, {"semaphors", "esc_node_id"}, {"semaphors", "to_node_id"}} {
+		err := checkNodeLinks([]map[string]interface{}{node(a, c.part, c.field, gone), {"id": b}})
+		if err == nil || !strings.Contains(err.Error(), c.part+"[0]."+c.field+" points to "+gone) {
+			t.Errorf("%s.%s: %v", c.part, c.field, err)
+		}
+	}
+	for _, dynamic := range []string{"{{node}}", "@alias", "short"} {
+		if err := checkNodeLinks([]map[string]interface{}{node(a, "logics", "to_node_id", dynamic)}); err != nil {
+			t.Errorf("dynamic target %q refused: %v", dynamic, err)
+		}
+	}
+	o := outlineOf(node(a, "semaphors", "esc_node_id", b))
+	if len(o.Esc) != 1 || o.Esc[0] != b {
+		t.Fatalf("%+v", o)
+	}
+}
+
+func TestDraftPending(t *testing.T) {
+	for _, c := range []struct {
+		child FolderChild
+		lcv   float64
+		want  bool
+	}{
+		{FolderChild{IsDeployed: false, Version: 1790000000}, 12, true},
+		{FolderChild{IsDeployed: true}, 12, false},
+		{FolderChild{IsDeployed: false, Version: 1790000000}, 0, false}, // never deployed: nothing to lose
+	} {
+		if got := draftPending(c.child, c.lcv); got != c.want {
+			t.Errorf("%+v lcv %v: %v", c.child, c.lcv, got)
+		}
+	}
+}
+
+func TestAddedTitlesOnlyUnique(t *testing.T) {
+	doc := map[string]interface{}{"scheme": map[string]interface{}{"nodes": []interface{}{
+		map[string]interface{}{"id": "n1", "title": "Audit"},
+		map[string]interface{}{"id": "n2", "title": "Step"},
+		map[string]interface{}{"id": "n3", "title": "Step"},
+		map[string]interface{}{"id": "n4", "title": ""},
+	}}}
+	if got := addedTitles(doc, []string{"n1", "n2", "n4"}); len(got) != 1 || got[0] != "Audit" {
+		t.Fatal(got)
+	}
+}
+
+func TestHandlePatchProcessConvJSONOnly(t *testing.T) {
+	dir := t.TempDir()
+	chdirTemp(t, dir)
+	if err := os.WriteFile("notes.json", []byte(`{"title":"x"}`), 0644); err != nil {
+		t.Fatal(err)
+	}
+	out, isErr := handlePatchProcess(context.Background(), map[string]interface{}{"process_path": "notes.json", "process": map[string]interface{}{"title": "y"}})
+	if !isErr || !strings.Contains(out, ".conv.json") {
+		t.Fatalf("%v %s", isErr, out)
+	}
+	if b, _ := os.ReadFile("notes.json"); string(b) != `{"title":"x"}` {
+		t.Fatal("a non-process file was rewritten")
 	}
 }

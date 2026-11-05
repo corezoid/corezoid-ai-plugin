@@ -48,7 +48,8 @@ edit those nodes in the file. Without them (a host with no file tools, or the ho
 plus `process: {title, description, params}`. A logic or semaphore left pointing at a missing node
 is refused, so repoint references in the same call. Locally it edits `PROCESS_PATH` and you still
 run `push-process`; on the hosted server it deploys through the same gates with the `base` token
-and answers only the changed nodes and the new `base`. On the hosted server read with
+and answers only the changed nodes and the new `base`. It refuses a process with changes made
+in the editor and not deployed — a deploy deletes them: ask the user before passing `discard_draft: true`. On the hosted server read with
 `pull-process {outline: true}` (one line per node) and `nodes: [...]` (only those nodes' JSON)
 instead of the whole process.
 
