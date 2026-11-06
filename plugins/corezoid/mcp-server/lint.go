@@ -364,16 +364,17 @@ func findNoopNodes(nodes []processNode) ([]NoopCondition, []UnusedSetParam) {
 	}
 
 	// --- Pattern 2: Unused set_param ---
-	// Build reference blob from all non-noop, non-set_param logics
+	// Build reference blob from all non-noop logics. set_param logics count
+	// too: a key read only by another Set Parameters node — `$.math({{i}}+1)`,
+	// an object template, an index in `{{arr[{{i}}]}}` — is used. Plain key
+	// names in the blob do not match, since referencesVar wants {{name}} or
+	// data.name.
 	var refParts []string
 	for _, n := range nodes {
 		if noopNodeIDs[n.id] {
 			continue
 		}
 		for _, lg := range n.logics {
-			if t, _ := lg["type"].(string); t == "set_param" {
-				continue
-			}
 			refParts = append(refParts, fmt.Sprintf("%v", lg))
 		}
 		for _, sem := range n.sems {
@@ -394,7 +395,7 @@ func findNoopNodes(nodes []processNode) ([]NoopCondition, []UnusedSetParam) {
 			}
 			var unreferenced []string
 			for varName := range extra {
-				if !referencesVar(refBlob, varName) {
+				if !referencesVar(refBlob, varName) && !referencesVar(refBlob, setParamRoot(varName)) {
 					unreferenced = append(unreferenced, varName)
 				}
 			}
@@ -457,6 +458,20 @@ func referencesVar(blob, name string) bool {
 		}
 		i = end
 	}
+}
+
+// setParamRoot returns the top-level variable a set_param key writes:
+// `{{items_out[{{i}}]}}` and `view.title` write `items_out` and `view`, which
+// a later node reads as {{items_out}} / {{view}}.
+func setParamRoot(key string) string {
+	k := strings.TrimSpace(key)
+	if strings.HasPrefix(k, "{{") && strings.HasSuffix(k, "}}") {
+		k = k[2 : len(k)-2]
+	}
+	if i := strings.IndexAny(k, "[."); i >= 0 {
+		k = k[:i]
+	}
+	return k
 }
 
 func isIdentChar(c byte) bool {

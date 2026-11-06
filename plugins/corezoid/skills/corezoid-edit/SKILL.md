@@ -82,7 +82,7 @@ For complete JSON structures see `${CLAUDE_PLUGIN_ROOT}/docs/node-structures.md`
 - Keys in `extra` and `extra_type` must match exactly
 - **Changing a node's kind in place** — turning an action node (`api_code`, `api_rpc`, `set_param`, …) into a Condition (`go_if_const`) or back while keeping its `id`. The process itself pushes and runs fine, but a later stage merge / deploy (develop → qa) can fail with `Key 'to_node_id'. referenced node … does not exist` when the reshaped node now routes to nodes that already existed. Instead, delete the old node and create a new one with a new `id` (and `uuid`, if present), then relink every incoming `go` / `err_node_id` / `to_node_id` to it. A node already changed in place can be repaired the same way: assign a new id, replace all references, push
 - **Replacing Code with Set Parameters / Condition** — read [Runtime Behaviour (verified)](${CLAUDE_PLUGIN_ROOT}/docs/nodes/set-parameters-node.md#runtime-behaviour-verified) first: dotted keys like `{{view.x}}` replace the whole parent object, keys of one node do not see each other, missing fields fail on non-string types
-- **Call a Process with empty `extra` and `group: ""`** — the call sends nothing and lint does not catch it; use `"group": "all"` when the callee has no input parameters
+- **Call a Process with empty `extra` and `group: ""`** — the call sends nothing, and lint cannot tell whether the callee expected input. Check the callee's parameters and list them in `extra` / `extra_type`; do not switch to `"group": "all"`, which forwards the whole task
 
 ---
 

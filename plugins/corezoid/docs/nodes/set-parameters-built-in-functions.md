@@ -55,8 +55,6 @@ $.math($.math({{value}}+1)-1)     // Nested math functions
   `trunc` — such a key goes to the error branch
 - `+ - *` are exact for large integers (19+ digits); `/` returns a float
   (`$.math(4111111111111111/10)` → `411111111111111.125`)
-- `lint-process` may report a key as unused (`UNUSED SET_PARAM`) when it is referenced only
-  inside `$.math(...)` — a false positive
 
 ### Random Number Generation
 
