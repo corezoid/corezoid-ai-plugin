@@ -102,7 +102,7 @@ func TestRecordPulledBaselinesUsesPreExportSnapshot(t *testing.T) {
 		10: {ChangeTime: 100, Version: 10},
 		20: {ChangeTime: 200, Version: 20},
 	}
-	if n := recordPulledBaselines(dir, snapshot, nil); n != 2 {
+	if n := recordPulledBaselines(dir, snapshot, pullResult{}).recorded; n != 2 {
 		t.Fatalf("expected 2 baselines recorded, got %d", n)
 	}
 	e10, ok10, err10 := lookupBaseline(dir, 10)
@@ -144,7 +144,7 @@ func TestRecordPulledBaselinesSkipsUnwrittenProcesses(t *testing.T) {
 		Name:  "stage_1_2.zip/5_dev.stage/20_new title.conv.json",
 		Cause: errors.New("access denied"),
 	}}
-	if n := recordPulledBaselines(dir, snapshot, skipped); n != 1 {
+	if n := recordPulledBaselines(dir, snapshot, pullResult{skipped: skipped}).recorded; n != 1 {
 		t.Fatalf("expected 1 baseline recorded (only process 10), got %d", n)
 	}
 
@@ -187,7 +187,7 @@ func TestRecordPulledBaselinesSkipsFilesOutsideSnapshot(t *testing.T) {
 	snapshot := map[int]baselineEntry{
 		10: {ChangeTime: 100, Version: 10},
 	}
-	if n := recordPulledBaselines(dir, snapshot, nil); n != 1 {
+	if n := recordPulledBaselines(dir, snapshot, pullResult{}).recorded; n != 1 {
 		t.Fatalf("expected 1 baseline recorded (only process 10), got %d", n)
 	}
 

@@ -202,6 +202,13 @@ func resolveConflictWith(v *Executor, store conflictStore, procID int, localJSON
 	// or, worse, teach it to reach for overwrite_server_change. Every other
 	// outcome — a real diff, no ancestor, a failed export — keeps the block.
 	if !contentDiffers && store.contentChangedSince(v, procID) == contentCheckUnchanged {
+		if base.Source == baselineSourceContent {
+			// No version was recorded at pull (see baselineSourceContent), so
+			// "moved" only means "unknown"; the content check is the real one.
+			notes = append(notes, fmt.Sprintf(
+				"Note: process #%d was pulled without a server version, so its server scheme was compared with what you pulled instead: identical, nothing this push could overwrite.", procID))
+			return proceed()
+		}
 		notes = append(notes, fmt.Sprintf(
 			"Note: process #%d's server version moved since your pull (change_time %d → %d, version %d → %d), but its scheme and process fields are identical to what you pulled, so there is nothing this push could overwrite.",
 			procID, base.ChangeTime, current.ChangeTime, base.Version, current.Version))

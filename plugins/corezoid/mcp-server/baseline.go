@@ -7,6 +7,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -75,6 +76,15 @@ type baselineEntry struct {
 const (
 	baselineSourceDetail = "detail" // commits-derived version (GetProcessByID, last_confirmed_version)
 	baselineSourceList   = "list"   // ListFolder version (draft timestamp; not comparable to detail)
+	// baselineSourceContent marks a folder-pull baseline for a process the
+	// pre-export list did not report, so its server version at export time is
+	// unknown. Only the pulled content (the merge ancestor) is known.
+	// ChangeTime stays 0, so serverMovedSince always says "moved" and the
+	// push compares the ancestor with the live scheme: it proceeds when they
+	// are equal and reports a conflict otherwise. A version taken after the
+	// export would not be safe here: a commit during the export would make
+	// the older file look up to date.
+	baselineSourceContent = "content"
 )
 
 type corruptBaselineError struct {
@@ -326,23 +336,88 @@ func baselineFromWorkspaceRootItem(it WorkspaceRootItem) baselineEntry {
 	}
 }
 
+// pulledProcessID returns the id push-process will use for a pulled file: the
+// numeric obj_id in its JSON, or else the id in its "<id>_<name>.conv.json"
+// name. push-process falls back to the name the same way (fixStruct fills a
+// missing obj_id from it), so a baseline keyed any other way is never found.
+// Exported files do not always carry a numeric obj_id, and keying by obj_id
+// alone left a whole folder pull without baselines.
+func pulledProcessID(path string, doc map[string]any) int {
+	if f, ok := doc["obj_id"].(float64); ok && int(f) != 0 {
+		return int(f)
+	}
+	if doc["obj_id"] != nil {
+		// Present but not a number: fixStruct keeps it, and push-process then
+		// skips the conflict gate entirely, so no baseline is ever read.
+		return 0
+	}
+	if id, errMsg := extractProcessIDFromPath(path); errMsg == "" {
+		return id
+	}
+	return 0
+}
+
+// processIDsUnder returns the ids of the process files under root, skipping
+// hidden directories (sidecars, pull staging). A pull calls it on its staging
+// tree before publishing, so the result names exactly the processes the pull
+// wrote.
+func processIDsUnder(root string) map[int]bool {
+	ids := map[int]bool{}
+	_ = filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
+		if err == nil && info.IsDir() && path != root && strings.HasPrefix(info.Name(), ".") {
+			return filepath.SkipDir
+		}
+		if err != nil || info.IsDir() || !strings.HasSuffix(path, ".conv.json") {
+			return nil
+		}
+		b, rerr := os.ReadFile(path)
+		if rerr != nil {
+			return nil
+		}
+		var doc map[string]any
+		if json.Unmarshal(b, &doc) != nil {
+			return nil
+		}
+		if id := pulledProcessID(path, doc); id != 0 {
+			ids[id] = true
+		}
+		return nil
+	})
+	return ids
+}
+
+// baselineRecord reports what recordPulledBaselines did, for the pull result.
+type baselineRecord struct {
+	recorded    int   // processes given a baseline by this pull
+	contentOnly []int // of those, recorded without a pre-export version (see baselineSourceContent)
+	failed      []int // processes this pull wrote that still have no fresh baseline
+}
+
 // recordPulledBaselines pairs the pre-export snapshot with the files produced
-// by that export. The pulled file itself becomes the merge ancestor. Processes
-// absent from the pre-export snapshot intentionally get no baseline.
+// by that export. The pulled file itself becomes the merge ancestor.
 //
-// Processes whose archive entry was skipped (see unzipFile) get none either.
+// A process the pull wrote (pulled.written) but the pre-export snapshot
+// does not list — the list call failed, or did not report it — gets a
+// content-only baseline (see baselineSourceContent) instead of none. With no
+// baseline, push-process blocks it as a blind overwrite, and the only way out
+// was a pull-process that replaces the local edits. A file that is neither in
+// the snapshot nor written by this pull is left alone: it belongs to some
+// other folder and may hold local edits.
+//
+// Processes whose archive entry was skipped (see unzipFile) get no baseline.
 // The export did not write them, so a file the walk finds for one is a copy
 // left by an earlier pull. Recording the fresh baseline against it would tell
 // push-process the stale copy is up to date, and the push would overwrite the
 // newer server version without a conflict.
-func recordPulledBaselines(root string, snapshot map[int]baselineEntry, skipped []skippedEntry) int {
+func recordPulledBaselines(root string, snapshot map[int]baselineEntry, pulled pullResult) baselineRecord {
 	notWritten := map[int]bool{}
-	for _, s := range skipped {
+	for _, s := range pulled.skipped {
 		if id := s.processID(); id != 0 {
 			notWritten[id] = true
 		}
 	}
-	n := 0
+	var rec baselineRecord
+	done := map[int]bool{}
 	_ = filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
 		// Hidden directories hold no pulled processes; a .corezoid-pull-*
 		// staging directory of a pull still running (or killed) does.
@@ -360,31 +435,71 @@ func recordPulledBaselines(root string, snapshot map[int]baselineEntry, skipped 
 		if json.Unmarshal(b, &doc) != nil {
 			return nil
 		}
-		f, ok := doc["obj_id"].(float64)
-		if !ok || int(f) == 0 {
+		objID := pulledProcessID(path, doc)
+		if objID == 0 || notWritten[objID] {
 			return nil
 		}
-		objID := int(f)
 		// Only touch ancestor/baseline for processes this export actually
-		// produced (i.e. present in the pre-export snapshot). Otherwise the
-		// walk would rewrite the ancestor of an unrelated, locally-edited file
-		// with its own WIP content, and a later 3-way merge would see
-		// base == mine and silently drop the local edits.
+		// produced. Otherwise the walk would rewrite the ancestor of an
+		// unrelated, locally-edited file with its own WIP content, and a later
+		// 3-way merge would see base == mine and silently drop the local edits.
 		base, ok := snapshot[objID]
-		if !ok || notWritten[objID] {
-			return nil
+		if !ok {
+			if !pulled.written[objID] {
+				return nil
+			}
+			base = baselineEntry{PulledAt: time.Now().Unix(), Source: baselineSourceContent}
 		}
-		if aerr := writeAncestorScheme(filepath.Dir(path), objID, string(b)); aerr != nil {
-			logger.Warn("pull-folder: ancestor write failed for %d: %v", objID, aerr)
+		ancestorErr := writeAncestorScheme(filepath.Dir(path), objID, string(b))
+		if ancestorErr != nil {
+			logger.Warn("pull-folder: ancestor write failed for %d: %v", objID, ancestorErr)
+			if base.Source == baselineSourceContent {
+				// A content-only baseline is meaningless without its ancestor.
+				return nil
+			}
 		}
 		if werr := writePulledBaseline(filepath.Dir(path), objID, base); werr != nil {
 			logger.Warn("pull-folder: baseline write failed for %d: %v", objID, werr)
 			return nil
 		}
-		n++
+		done[objID] = true
+		rec.recorded++
+		if base.Source == baselineSourceContent {
+			rec.contentOnly = append(rec.contentOnly, objID)
+		}
 		return nil
 	})
-	return n
+	for id := range pulled.written {
+		if !done[id] && !notWritten[id] {
+			rec.failed = append(rec.failed, id)
+		}
+	}
+	sort.Ints(rec.contentOnly)
+	sort.Ints(rec.failed)
+	return rec
+}
+
+// baselineSummary is the pull result's account of the baselines it recorded.
+func baselineSummary(rec baselineRecord) string {
+	s := fmt.Sprintf("%d baseline(s) recorded", rec.recorded)
+	if n := len(rec.contentOnly); n > 0 {
+		s += fmt.Sprintf("; %d of them without a pre-export server version, so the first push of those compares the pulled content with the server", n)
+	}
+	return s
+}
+
+// baselineFailureNote warns about pulled processes that got no baseline, so
+// the model learns it before editing them rather than from a blocked push.
+func baselineFailureNote(rec baselineRecord) string {
+	if len(rec.failed) == 0 {
+		return ""
+	}
+	ids := make([]string, len(rec.failed))
+	for i, id := range rec.failed {
+		ids[i] = strconv.Itoa(id)
+	}
+	return fmt.Sprintf("\nWarning: no pull baseline could be recorded for %d process(es): %s. push-process will refuse to overwrite their deployed versions. Re-run pull-folder (or pull-process for each) BEFORE editing them; once edited, a pull replaces the local file.",
+		len(rec.failed), strings.Join(ids, ", "))
 }
 
 // untouchedSinceCreate reports whether the process still sits exactly where
