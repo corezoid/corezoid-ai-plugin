@@ -267,13 +267,13 @@ Translating JS:
 | `if (data.is_active === true)` | `"param": "is_active"`, `"fun": "eq"`, `"const": "true"`, `"cast": "string"` |
 | `if (!data.status)` / `=== ''` — `status` is a string | `"param": "status"`, `"fun": "eq"`, `"const": ""` — matches only a missing or empty value; for a key that can hold `false`, `0` or `null` see 5.3 item 5 |
 | `if (data.order.status === 'paid')` | `"param": "{{order.status}}"` — a nested path must be wrapped in `{{}}`; a bare `order.status` is not resolved (only bare top-level names are) |
-| `if (!data.items \|\| !data.items.length)` | `"param": "{{items[0]}}"`, `"fun": "eq"`, `"const": ""` — a missing key or element compares as `""` |
+| `if (!data.items \|\| !data.items.length)` | Keep Code (5.3 item 3) — `{{items[0]}}` `eq ""` is not a length check: for `items = [""]` the JS is false and the Condition is true, so the task silently takes the other branch. Replace only if every writer of `items` is known to put objects or non-empty strings in it; then a missing key or element compares as `""` |
 | `if (data.a === data.b)` | `"param": "{{a}}"`, `"fun": "eq"`, `"const": "{{b}}"` — `const` accepts a template |
 | `if (data.total > 5)` | `"fun": "more"`, `"cast": "number"` |
 | `data.x = 'const'` | `"x": "const"` |
 | `data.x = data.y` | `"x": "{{y}}"` |
 | `data.x = data.a + '_' + data.b` | `"x": "{{a}}_{{b}}"` |
-| `data.x = data.a + data.b` (numbers) | `"x": "$.math({{a}}+{{b}})"` — `$.math` evaluates only two operands (`a+b+c` silently gives `a+b`): one operation per key, intermediate results in separate keys |
+| `data.x = data.a + data.b` (numbers) | `"x": "$.math({{a}}+{{b}})"` — `$.math` evaluates only two operands (`a+b+c` silently gives `a+b`): one operation per key, and a key that uses another key's result goes in the **next** Set Parameters node: keys of one node do not see each other ([Runtime Behaviour](${CLAUDE_PLUGIN_ROOT}/docs/nodes/set-parameters-node.md#runtime-behaviour-verified)). `a+b+c` = two nodes, +1 tact |
 | `data.x = []` / `{…}` | JSON string value, `extra_type` `array` / `object` |
 | `delete data.tmp` | Set Param cannot delete keys → `"tmp": ""` — the key stays in the task; if it reaches a Reply or is read downstream, see 5.3 item 5 |
 

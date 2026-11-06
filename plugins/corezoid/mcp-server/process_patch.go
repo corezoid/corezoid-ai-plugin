@@ -229,6 +229,12 @@ func applyProcessPatch(doc map[string]interface{}, p processPatch) (patchResult,
 		}
 		return r, err
 	}
+	before := map[string]string{}
+	for _, n := range nodes {
+		if id, _ := n["id"].(string); id != "" {
+			before[id] = nodeKindOf(n)
+		}
+	}
 	for i, op := range p.ops {
 		ref, err := applyNodeOp(&nodes, op)
 		if err != nil {
@@ -244,6 +250,9 @@ func applyProcessPatch(doc map[string]interface{}, p processPatch) (patchResult,
 		case !containsStr(r.changed, ref) && !containsStr(r.added, ref):
 			r.changed = append(r.changed, ref)
 		}
+	}
+	if err := checkNodeKinds(before, nodes); err != nil {
+		return patchResult{}, fmt.Errorf("%v; nothing was changed", err)
 	}
 	if err := checkNodeLinks(nodes); err != nil {
 		return patchResult{}, fmt.Errorf("%v; nothing was changed", err)
@@ -349,6 +358,68 @@ func checkNodeLinks(nodes []map[string]interface{}) error {
 		}
 	}
 	return nil
+}
+
+// nodeKindOf is what a node is: its obj_type (Stub Mode 4 counts as 0 — it is
+// switched on and off) and, from its logics, condition (go_if_const) or action
+// (any other non-go logic). A node with only go, or none, has no shape of its
+// own, so only its obj_type is compared.
+func nodeKindOf(n map[string]interface{}) string {
+	objType := fmt.Sprint(n["obj_type"])
+	if objType == "4" {
+		objType = "0"
+	}
+	shape := ""
+	cond, _ := n["condition"].(map[string]interface{})
+	logics, _ := cond["logics"].([]interface{})
+	for _, it := range logics {
+		m, _ := it.(map[string]interface{})
+		switch t, _ := m["type"].(string); t {
+		case "", "go":
+		case "go_if_const":
+			shape = "condition"
+		default:
+			if shape == "" {
+				shape = "action"
+			}
+		}
+	}
+	return objType + "/" + shape
+}
+
+// checkNodeKinds refuses a node that keeps its id but changes kind — set on an
+// action that makes it a condition, or remove and add again under the same id.
+// The process runs, but a later stage merge fails with "referenced node …
+// does not exist" (corezoid-edit, Common mistakes).
+func checkNodeKinds(before map[string]string, nodes []map[string]interface{}) error {
+	for _, n := range nodes {
+		id, _ := n["id"].(string)
+		was, ok := before[id]
+		if !ok {
+			continue
+		}
+		now := nodeKindOf(n)
+		if kindsDiffer(was, now) {
+			title, _ := n["title"].(string)
+			return fmt.Errorf("node %s %q changes kind (%s → %s) while keeping its id: it pushes and runs, but a later stage merge fails with \"referenced node … does not exist\". Remove it and add the new node without an id (one is made), and repoint every logic that led to it in the same patch", id, title, kindLabel(was), kindLabel(now))
+		}
+	}
+	return nil
+}
+
+func kindsDiffer(was, now string) bool {
+	wt, ws, _ := strings.Cut(was, "/")
+	nt, ns, _ := strings.Cut(now, "/")
+	return wt != nt || (ws != "" && ns != "" && ws != ns)
+}
+
+func kindLabel(k string) string {
+	t, shape, _ := strings.Cut(k, "/")
+	label := "obj_type " + t
+	if shape != "" {
+		label += " " + shape
+	}
+	return label
 }
 
 // newNodeID is a 24-hex id like Corezoid's own; the server assigns its own on deploy.

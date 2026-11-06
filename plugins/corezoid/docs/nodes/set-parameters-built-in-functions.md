@@ -50,7 +50,10 @@ $.math($.math({{value}}+1)-1)     // Nested math functions
 - Can be used in array indices: `{{array[$.math({{index}}+1)]}}`
 - **One operator per expression.** Only two operands are evaluated: `$.math({{a}}+{{b}}+{{c}})`
   returns `a+b` and `$.math({{a}}+{{b}}*2)` returns `a+b` — silently, without an error. Compute
-  one operation per key and keep intermediate results in separate keys
+  one operation per key, and put a key that uses an intermediate result in the next Set
+  Parameters node — keys of one node do not see each other
+  ([Runtime Behaviour](set-parameters-node.md#runtime-behaviour-verified)): `a+b+c` is
+  `ab = $.math({{a}}+{{b}})` in one node, `sum = $.math({{ab}}+{{c}})` in the next
 - Supported operators: `+ - * /`. There is no `%`, `^`, `div`, `rem`, `floor`, `round`, `abs` or
   `trunc` — such a key goes to the error branch
 - `+ - *` are exact for large integers (19+ digits); `/` returns a float
