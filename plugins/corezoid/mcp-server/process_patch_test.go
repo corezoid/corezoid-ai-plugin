@@ -262,3 +262,16 @@ func TestHandlePatchProcessConvJSONOnly(t *testing.T) {
 		t.Fatal("a non-process file was rewritten")
 	}
 }
+
+// condition holds logics and semaphors: both in one set would depend on map order.
+func TestPatchSetConditionWithLogicsRefused(t *testing.T) {
+	for _, k := range []string{"logics", "semaphors"} {
+		ops := `[{"op":"set","node":"a","set":{"condition":{"logics":[],"semaphors":[]},"` + k + `":[]}}]`
+		if _, err := parseProcessPatch(patchArgs(t, ops)); err == nil || !strings.Contains(err.Error(), "set.condition and set."+k+" in one set") {
+			t.Errorf("%s: %v", k, err)
+		}
+	}
+	if _, err := parseProcessPatch(patchArgs(t, `[{"op":"set","node":"a","set":{"logics":[],"semaphors":[]}}]`)); err != nil {
+		t.Errorf("logics with semaphors refused: %v", err)
+	}
+}

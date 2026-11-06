@@ -95,6 +95,16 @@ func (op nodePatchOp) check() error {
 				return fmt.Errorf("set.%s is not a node key you can change; allowed: %s (id is the server's)", k, strings.Join(patchNodeKeys, ", "))
 			}
 		}
+		// condition holds logics and semaphors: with both in one set the result
+		// would hang on map order, condition dropping the list or the list
+		// landing in the condition that is then replaced.
+		if _, ok := op.Set["condition"]; ok {
+			for _, k := range []string{"logics", "semaphors"} {
+				if _, both := op.Set[k]; both {
+					return fmt.Errorf("set.condition and set.%s in one set: condition replaces logics and semaphors together — send condition alone, or logics/semaphors alone", k)
+				}
+			}
+		}
 		for _, k := range op.Unset {
 			if k != "description" && k != "extra" && k != "options" {
 				return fmt.Errorf("unset.%s refused: only description, extra and options may be dropped", k)
