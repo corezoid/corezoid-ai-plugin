@@ -188,17 +188,20 @@ var coreToolDefs = []mcpTool{
 	},
 	{
 		Name:        "lint-process",
-		Description: "Validate process structure. Reports orphaned nodes, noop conditions, unused set_params, passthrough escalations, shared error clusters (an error node fed by several different failing nodes — each needs its own Reply/Error cluster), old-format nodes (obj_type:0 err_node_id targets, or action logic mixed with go_if_const — the UI would force-convert the process), finals reachable without api_rpc_reply in a process that replies elsewhere (an RPC caller would hang), nodes whose logics do not end with a default go and time semaphors under the 30s server minimum (both reject the deploy), literal non-string values in api_rpc_reply res_data (a scheme shape that hangs the server commit on push), active Call Process Stub Mode nodes (obj_type:4) that bypass the real called process, self-referencing api_copy/api_rpc nodes (valid in the Corezoid UI but always blocked by push-process — force=true does not bypass this), and git_call (api_git) usage (advisory: ~60s execution deadline, 50 MB/0.1 CPU shared defaults, ephemeral local storage — see the corezoid-gitcall skill).",
+		Description: "Validate a local process file (no server call — pull-process first; pass process_path or process_id). Reports orphaned nodes, noop conditions, unused set_params, passthrough escalations, shared error clusters (an error node fed by several different failing nodes — each needs its own Reply/Error cluster), old-format nodes (obj_type:0 err_node_id targets, or action logic mixed with go_if_const — the UI would force-convert the process), finals reachable without api_rpc_reply in a process that replies elsewhere (an RPC caller would hang), nodes whose logics do not end with a default go and time semaphors under the 30s server minimum (both reject the deploy), literal non-string values in api_rpc_reply res_data (a scheme shape that hangs the server commit on push), active Call Process Stub Mode nodes (obj_type:4) that bypass the real called process, self-referencing api_copy/api_rpc nodes (valid in the Corezoid UI but always blocked by push-process — force=true does not bypass this), and git_call (api_git) usage (advisory: ~60s execution deadline, 50 MB/0.1 CPU shared defaults, ephemeral local storage — see the corezoid-gitcall skill).",
 		Annotations: toolHints(hintReadOnly, hintSafe, hintIdempotent, hintLocal),
 		InputSchema: map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
 				"process_path": map[string]interface{}{
 					"type":        "string",
-					"description": "Path to the process .conv.json file. Relative paths resolve against the project root (the server's working directory), not the directory of a previously opened file; absolute paths inside the project root are accepted too.",
+					"description": "Path to the local process .conv.json file (the one pull-process saved). Relative paths resolve against the project root (the server's working directory), not the directory of a previously opened file; absolute paths inside the project root are accepted too. Give either this or process_id.",
+				},
+				"process_id": map[string]interface{}{
+					"type":        "integer",
+					"description": "Numeric process ID — lints the local pulled copy <ID>_<title>.conv.json found in the workspace. Lint never fetches from the server: run pull-process first if the process has no local copy.",
 				},
 			},
-			"required": []string{"process_path"},
 		},
 	},
 	{
