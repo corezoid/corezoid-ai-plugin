@@ -226,6 +226,8 @@ Semaphor JSON:
 ## Group 5 — Code Node Reduction
 
 > Prefer a light Condition + Set Parameters combination over an `api_code` node wherever the logic is only branching on values and assigning them. The logic becomes visible on the canvas, and there is no JavaScript left to fail at runtime. Default: replace wherever possible — "impossible" means only the cases in 5.3.
+>
+> **Replacing costs tacts — this group works against Group 1.** One Code node is one tact; on any path the replacement is a Condition plus a Set Param, so **+1 tact per task**, and a chain of *k* single-check Conditions costs up to **+k**. Only a branch-free node that becomes a single Set Param stays at +0; moving part of a Code node out (5.4) adds +1 per new node. Always state this cost in the plan. If the user asked to reduce tacts (Group 1 keywords), propose Replace only with +0, and list the rest as optional with their cost.
 
 ### 5.1 Audit all code nodes
 
@@ -238,7 +240,7 @@ List every `type: "api_code"` node: title, which task keys it reads, which keys 
 | **Merge** | Join with an adjacent code node (1.2) — decided after replacements |
 | **Keep** | Cite the 5.3 item, or "already optimal" (rename short names only) |
 
-Present the table "node → category → result → reason" in the plan. Always confirm before changing any code node, even in AUTO mode. A node whose `src` carries a comment that it must stay Code is never proposed for replacement.
+Present the table "node → category → result → tact cost → reason" in the plan, with the total tact change per task. Always confirm before changing any code node, even in AUTO mode. A node whose `src` carries a comment that it must stay Code is never proposed for replacement.
 
 ---
 
@@ -262,8 +264,8 @@ Translating JS:
 | In Code | In Condition / Set Parameters |
 |---------|-------------------------------|
 | `if (data.status === 'paid')` | `"param": "status"`, `"fun": "eq"`, `"const": "paid"`, `"cast": "string"` |
-| `if (data.is_active === true)` | `"param": "is_active"`, `"const": "true"`, `"cast": "string"` |
-| `if (!data.status)` / `=== ''` | `"param": "status"`, `"fun": "eq"`, `"const": ""` |
+| `if (data.is_active === true)` | `"param": "is_active"`, `"fun": "eq"`, `"const": "true"`, `"cast": "string"` |
+| `if (!data.status)` / `=== ''` — `status` is a string | `"param": "status"`, `"fun": "eq"`, `"const": ""` — matches only a missing or empty value; for a key that can hold `false`, `0` or `null` see 5.3 item 5 |
 | `if (data.order.status === 'paid')` | `"param": "{{order.status}}"` — a nested path must be wrapped in `{{}}`; a bare `order.status` is not resolved (only bare top-level names are) |
 | `if (!data.items \|\| !data.items.length)` | `"param": "{{items[0]}}"`, `"fun": "eq"`, `"const": ""` — a missing key or element compares as `""` |
 | `if (data.a === data.b)` | `"param": "{{a}}"`, `"fun": "eq"`, `"const": "{{b}}"` — `const` accepts a template |
@@ -273,7 +275,7 @@ Translating JS:
 | `data.x = data.a + '_' + data.b` | `"x": "{{a}}_{{b}}"` |
 | `data.x = data.a + data.b` (numbers) | `"x": "$.math({{a}}+{{b}})"` — `$.math` evaluates only two operands (`a+b+c` silently gives `a+b`): one operation per key, intermediate results in separate keys |
 | `data.x = []` / `{…}` | JSON string value, `extra_type` `array` / `object` |
-| `delete data.tmp` | Set Param cannot delete keys → `"tmp": ""` |
+| `delete data.tmp` | Set Param cannot delete keys → `"tmp": ""` — the key stays in the task; if it reaches a Reply or is read downstream, see 5.3 item 5 |
 
 ---
 
@@ -284,6 +286,9 @@ Translating JS:
 2. **Fallback to the current value** — `data.x = data.x || 'default'`. Possible as Condition (`x` eq `""`) + Set Param on the empty branch only; if `x` is a nested field, see item 1 → keep Code.
 3. **Operations Set Param lacks**: `.length`, regex, `JSON.parse`/`stringify`, `.map`/`.filter`/`.reduce`, iterating object keys, loops, date libraries, building arrays or tables from lists.
 4. **Too many outcomes** — more than ~5–6 outcomes from different sources would make the diagram unreadable; discuss with the user.
+5. **JS semantics a Condition cannot reproduce.**
+   - Falsy checks (`!x`, `x || …`, `if (x)`) on a key that can hold `false`, `0` or `null`: `eq ""` misses those values, and the task silently takes the other branch. Replace only if every writer of the key is known to produce a string.
+   - `delete data.key` where the key reaches a Reply, is copied to another process, or is checked for presence downstream: `"key": ""` leaves it in the task, so the output changes.
 
 ---
 
@@ -341,11 +346,13 @@ Total nodes removed: N | Tacts saved: X/task
 | 2 | "Wait callback" 🔴      | Missing timeout semaphor      | Add 3600sec        |
 
 ### Group 5 — Code Node Reduction ⚠️ confirm
-| # | Code node            | Category | Result                                        | Reason           |
-|---|----------------------|----------|-----------------------------------------------|------------------|
-| 1 | "Set order flags"    | Replace  | Condition "Paid?" → 2 Set Params              | if/else only     |
-| 2 | "Fill order fields"  | Keep     | —                                             | 5.3 item 1       |
-| 3 | "Build items table"  | Simplify | constants → Set Param, loop stays in Code     | 5.3 item 3       |
+| # | Code node            | Category | Result                                        | Tact cost    | Reason           |
+|---|----------------------|----------|-----------------------------------------------|--------------|------------------|
+| 1 | "Set order flags"    | Replace  | Condition "Paid?" → 2 Set Params              | +1 tact/task | if/else only     |
+| 2 | "Fill order fields"  | Keep     | —                                             | 0            | 5.3 item 1       |
+| 3 | "Build items table"  | Simplify | constants → Set Param, loop stays in Code     | +1 tact/task | 5.3 item 3       |
+
+Total tact change: +2/task
 
 ### Requires action outside this process
 - Hardcoded URL in "Call Stripe API" → use /corezoid-variable-manager
@@ -372,6 +379,7 @@ Always apply in this sequence:
 | Merge set_param / code / condition | No | Yes per group |
 | api_rpc → api_copy | **Always** | **Always** |
 | Replace / simplify code node (Group 5) | **Always** | **Always** |
+| `run-task` to verify Group 5 branches | **Always** | **Always** |
 | Add semaphors | No | Yes per group |
 | Fill titles (critical nodes) | No | No |
 | Fill titles (other nodes) | No | Yes per group |
@@ -385,6 +393,7 @@ Always apply in this sequence:
 3. Call **`push-process`**.
 4. If any code node was replaced or simplified — verify before reporting done:
    - before editing, list **every** key the old code node wrote, per outcome;
+   - `run-task` creates real tasks in the deployed process, and everything downstream runs too (API calls, Call Process, messages, payments). **Ask the user before running them**, naming the side-effecting nodes each branch reaches. If they decline, or the side effects cannot be made harmless, run on a non-production stage or skip, and report every branch as unverified;
    - `run-task` once per Condition branch, with input that reaches it;
    - check each listed key is present with the right value (nested fields especially). Branches that cannot be reached without a server-side failure — list them to the user as unverified.
 5. Notify the user: "Deployed. Please **refresh the page** in Corezoid to see the updated process."
