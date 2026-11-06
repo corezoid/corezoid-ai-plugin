@@ -22,6 +22,7 @@ var hostedHandlers = map[string]toolHandler{
 	"create-process": hostedCreateProcess,
 	"run-task":       hostedRunTask,
 	"push-process":   hostedPushProcess,
+	"patch-process":  hostedPatchProcess,
 }
 
 // hostedMaxContentBytes caps process JSON accepted in a request. Large
@@ -34,14 +35,37 @@ var hostedToolDefs = map[string]mcpTool{
 	"pull-process": {
 		Name: "pull-process",
 		Description: "Fetch a Corezoid process as JSON. Returns the process scheme and a `base` token naming the server version it was read at — keep it: a later deploy of this process compares it with the server to detect concurrent changes. " +
-			"Read-only; nothing is written anywhere.",
+			"outline=true answers one line per node and nodes=[...] only those nodes' JSON: read that way before patch-process instead of the whole process. Read-only; nothing is written anywhere.",
 		Annotations: toolHints(hintReadOnly, hintSafe, hintIdempotent, hintOpenWorld),
 		InputSchema: map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
 				"process_id": map[string]interface{}{"type": "integer", "description": "Corezoid process (conv) ID."},
+				"outline":    map[string]interface{}{"type": "boolean", "description": "Return one line per node (id, title, kind, logic types, targets) instead of the whole JSON."},
+				"nodes":      map[string]interface{}{"type": "array", "items": map[string]interface{}{"type": "string"}, "description": "Return the full JSON of only these nodes (ids or titles), e.g. the ones patch-process will change."},
 			},
 			"required": []string{"process_id"},
+		},
+	},
+	"patch-process": {
+		Name: "patch-process",
+		Description: "Change a few nodes of a Corezoid process and deploy it, without sending or receiving the whole JSON: the current scheme is read from the server, the ops are applied, and the result goes through the same gates as push-process (schema, lint, the concurrency check against `base`, pre-push snapshot). " +
+			"Read the nodes first with pull-process outline=true and nodes=[...]. Refuses a process with undeployed editor changes (deploying deletes them) unless discard_draft=true. Returns the new `base` and the changed nodes with their server IDs (an existing node keeps its ID; an added one gets a new ID, found by its title or the outline). Needs scope.stage_id.",
+		Annotations: toolHints(hintMutates, hintDestructive, hintNonIdempotent, hintOpenWorld),
+		InputSchema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"process_id":              map[string]interface{}{"type": "integer", "description": "Corezoid process (conv) ID."},
+				"base":                    map[string]interface{}{"type": "string", "description": "Base token from pull-process / the previous push or patch: a process changed on the server since is refused."},
+				"ops":                     patchOpsSchema,
+				"process":                 patchProcessSchema,
+				"force":                   map[string]interface{}{"type": "boolean", "description": "Deploy despite blocking lint findings (not structural ones, not conflicts)."},
+				"overwrite_server_change": map[string]interface{}{"type": "boolean", "description": "Deploy over a server change made since `base`, dropping it. Pass only in reply to the block report."},
+				"allow_active_stub_mode":  map[string]interface{}{"type": "boolean", "description": "Allow active Stub Mode nodes on a stage that otherwise refuses them."},
+				"allow_no_snapshot":       map[string]interface{}{"type": "boolean", "description": "Deploy although no pre-push snapshot could be taken (mutable stages only)."},
+				"discard_draft":           map[string]interface{}{"type": "boolean", "description": "Deploy although the process has changes made in the editor and not deployed — deploying deletes them. Pass only after the user agreed."},
+			},
+			"required": []string{"process_id", "base"},
 		},
 	},
 	"lint-process": {
@@ -165,6 +189,10 @@ func hostedPullProcess(ctx context.Context, args map[string]interface{}) (string
 	if err != nil {
 		return fmt.Sprintf("Error fetching process: %v", err), true
 	}
+	view, compact, err := hostedPullView(proc, args)
+	if err != nil {
+		return "Error: " + err.Error(), true
+	}
 	var b strings.Builder
 	title, _ := proc["title"].(string)
 	fmt.Fprintf(&b, "Process %d %q.\n", processID, title)
@@ -174,6 +202,10 @@ func hostedPullProcess(ctx context.Context, args map[string]interface{}) (string
 		fmt.Fprintf(&b, "base: unavailable (%v) — a later deploy cannot check for concurrent changes.\n", baseErr)
 	}
 	b.WriteString("\n")
+	if compact {
+		b.WriteString(view)
+		return b.String(), false
+	}
 	b.Write(data)
 	return b.String(), false
 }

@@ -41,6 +41,18 @@ Open and analyze `PROCESS_PATH` to understand the current structure and logic. P
 
 Apply changes to `PROCESS_PATH`.
 
+**Change only the nodes the task names — never resend the whole process.** With file-editing tools,
+edit those nodes in the file. Without them (a host with no file tools, or the hosted server), use
+`patch-process`: ops by node id or title — `{op: "set", node, set: {title|description|logics|semaphors|condition|x|y|extra|options: value}}`,
+`{op: "add", value: {title, obj_type, condition: {logics, semaphors}}}`, `{op: "remove", node}` —
+plus `process: {title, description, params}`. A logic or semaphore left pointing at a missing node
+is refused, so repoint references in the same call. Locally it edits `PROCESS_PATH` and you still
+run `push-process`; on the hosted server it deploys through the same gates with the `base` token
+and answers only the changed nodes and the new `base`. It refuses a process with changes made
+in the editor and not deployed — a deploy deletes them: ask the user before passing `discard_draft: true`. On the hosted server read with
+`pull-process {outline: true}` (one line per node) and `nodes: [...]` (only those nodes' JSON)
+instead of the whole process.
+
 ### Core rules
 
 - Connect nodes only through the `go` field

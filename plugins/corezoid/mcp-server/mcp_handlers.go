@@ -32,6 +32,7 @@ var toolHandlers = map[string]toolHandler{
 	"push-process":         handlePushProcess,
 	"clean-process":        handleCleanProcess,
 	"layout-process":       handleLayoutProcess,
+	"patch-process":        handlePatchProcess,
 	"lint-process":         handleLintProcess,
 	"run-task":             handleRunTask,
 	"create-process":       handleCreateProcess,
@@ -121,6 +122,7 @@ var toolHandlers = map[string]toolHandler{
 // the current Folder in ~/.corezoid/config.json) rather than Corezoid API auth.
 var noAuthTools = map[string]struct{}{
 	"layout-process":      {},
+	"patch-process":       {},
 	"lint-process":        {},
 	"login":               {},
 	"logout":              {},
