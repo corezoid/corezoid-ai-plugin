@@ -43,6 +43,32 @@ func TestUnusedSetParam_StillCatchesDead(t *testing.T) {
 	}
 }
 
+// A key read only by another set_param — inside $.math, or as the index in a
+// templated key — is used. Set Parameters nodes used to be left out of the
+// reference blob, so an index counter was always reported dead.
+func TestUnusedSetParam_SetParamReadCounts(t *testing.T) {
+	nodes := []processNode{
+		{id: "n1", title: "Init", objType: 0, logics: []map[string]interface{}{
+			{"type": "set_param", "extra": map[string]interface{}{"item_idx": "0", "step": "1"}, "err_node_id": "e1"},
+			{"type": "go", "to_node_id": "n2"},
+		}},
+		{id: "n2", title: "Append", objType: 0, logics: []map[string]interface{}{
+			{"type": "set_param", "extra": map[string]interface{}{
+				"{{items_out[{{item_idx}}]}}": "{\"id\":\"{{item.id}}\"}",
+				"next_idx":                    "$.math({{item_idx}}+{{step}})",
+			}, "err_node_id": "e2"},
+			{"type": "go", "to_node_id": "n3"},
+		}},
+		{id: "n3", title: "Reply", objType: 0, logics: []map[string]interface{}{
+			{"type": "api_rpc_reply", "res_data": map[string]interface{}{"items": "{{items_out}}", "n": "{{next_idx}}"}},
+		}},
+	}
+	_, unused := findNoopNodes(nodes)
+	if len(unused) != 0 {
+		t.Fatalf("set_param read by another set_param must not be reported unused, got: %+v", unused)
+	}
+}
+
 // A prefix must not count: data.result_code does not read `result`.
 func TestReferencesVar_NoPrefixFalseNegative(t *testing.T) {
 	if referencesVar("data.result_code = 1;", "result") {

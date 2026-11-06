@@ -144,17 +144,17 @@ You can also use dynamic indices in array access:
 {{array[$.math({{i}}+1)]}}   // Access element at position calculated using math function
 ```
 
-**Note:** There are limitations when trying to dynamically set array indices. For example, using
-`"my_array[{{my_array.length}}]"` to append elements may cause errors. Instead, use a Code Node or
-the full array manipulation approach:
+**Note:** Set Parameters does not evaluate JavaScript, so `.length`, `JSON.stringify`, `concat` or
+`map` inside `{{…}}` do not work. To append an element, keep an explicit index counter and write
+the element with a templated key typed `object`:
 
 ```json
-// To append an element to an array:
-"test_results.tests": "{{JSON.stringify(test_results.tests.concat([{\"name\":\"Test\",\"status\":\"passed\"}]))}}"
-
-// To update a specific element in an array:
-"my_array": "{{JSON.stringify(my_array.map((item, idx) => idx === {{target_index}} ? {...item, updated: true} : item))}}"
+"extra":      { "{{items_out[{{item_idx}}]}}": "{\"name\":\"Test\",\"status\":\"passed\"}" },
+"extra_type": { "{{items_out[{{item_idx}}]}}": "object" }
 ```
+
+See [Dynamic Array Operations Limitation](set-parameters-node.md#dynamic-array-operations-limitation).
+To update fields of an existing element, use a Code Node.
 
 ## Environment Variables
 
@@ -347,8 +347,10 @@ $.filter(fun(x) -> x > 10 end, {{numbers}})        // Returns elements greater t
 
 When using dynamic values, be aware of the following potential issues:
 
-1. **Missing Parameters**: If a referenced parameter doesn't exist, it may result in an empty string
-   or error
+1. **Missing Parameters**: If a referenced parameter doesn't exist, it resolves to `""` for a
+   `string` key and sends the task to the error branch for `number`/`boolean`/`object`/`array` keys.
+   A JSON `null` value is substituted as the string `"null"`. Keys of the same node cannot reference
+   each other. See [Runtime Behaviour](set-parameters-node.md#runtime-behaviour-verified)
 2. **Type Conversion Issues**: Ensure the parameter type in `extra_type` matches the expected type
    after substitution
 3. **Invalid Syntax**: Ensure all curly braces are properly closed and the syntax is correct
@@ -356,9 +358,10 @@ When using dynamic values, be aware of the following potential issues:
 ## Best Practices
 
 1. **Direct Parameter Access**: Use `{{result}}` instead of `{{data.result}}` to access parameters
-2. **Avoid Dynamic Array Indices**: Instead of
-   `"test_results.tests[{{test_results.tests.length}}]"`, use
-   `"test_results.tests": "{{JSON.stringify(test_results.tests.concat([{...}]))}}"`
+2. **Append by an index counter**: Instead of
+   `"test_results.tests[{{test_results.tests.length}}]"`, keep a counter and write
+   `"{{test_results.tests[{{test_idx}}]}}"` (type `object`) — see
+   [Dynamic Array Operations Limitation](set-parameters-node.md#dynamic-array-operations-limitation)
 3. **Type Safety**: Always specify the correct data type in the `extra_type` section
 4. **Error Handling**: Always include an `err_node_id` parameter to handle potential failures
 5. **Validation**: Consider validating parameters before setting them

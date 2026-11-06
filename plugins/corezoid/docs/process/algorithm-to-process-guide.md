@@ -178,18 +178,27 @@ Implement the algorithm's core logic:
 
    - Use Set Parameters nodes for simple transformations
    - Use Code nodes for complex logic
-   - Example Set Parameters configuration:
+   - Example Set Parameters configuration. `$.math` evaluates one operator per expression, and
+     keys of one node do not see each other, so a two-step calculation takes two nodes:
      ```json
      {
        "type": "set_param",
        "extra": {
          "full_name": "{{first_name}} {{last_name}}",
-         "transaction_amount": "$.math({{base_amount}} * (1 + {{tax_rate}}))"
+         "tax_amount": "$.math({{base_amount}}*{{tax_rate}})"
        },
        "extra_type": {
          "full_name": "string",
-         "transaction_amount": "number"
+         "tax_amount": "number"
        }
+     }
+     ```
+     then, in the next Set Parameters node:
+     ```json
+     {
+       "type": "set_param",
+       "extra":      { "transaction_amount": "$.math({{base_amount}}+{{tax_amount}})" },
+       "extra_type": { "transaction_amount": "number" }
      }
      ```
 
