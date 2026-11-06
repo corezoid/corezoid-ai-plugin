@@ -283,7 +283,7 @@ Translating JS:
 
 1. **Adding fields to an existing object.** `data.order = data.order || {}; data.order.status = …` — Set Param keys `{{order.status}}`, `{{order.total}}` in one node do **not** merge: only one of them (the last alphabetically) survives, the rest are silently dropped, and the node still exits via `go`. Treat a single `{{obj.x}}` key over an existing object as unsafe too.
    - Replaceable only if this node **creates** the object from scratch: one key `order`, `extra_type: object`, value = JSON of all fields. Anything previously in the object is lost — confirm nothing earlier in the flow wrote it.
-2. **Fallback to the current value** — `data.x = data.x || 'default'`. Possible as Condition (`x` eq `""`) + Set Param on the empty branch only; if `x` is a nested field, see item 1 → keep Code.
+2. **Fallback to the current value** — `data.x = data.x || 'default'`. Possible as Condition (`x` eq `""`) + Set Param on the empty branch only; if `x` is a nested field, see item 1 → keep Code; if `x` can hold `false`, `0` or `null`, see item 5 → keep Code.
 3. **Operations Set Param lacks**: `.length`, regex, `JSON.parse`/`stringify`, `.map`/`.filter`/`.reduce`, iterating object keys, loops, date libraries, building arrays or tables from lists.
 4. **Too many outcomes** — more than ~5–6 outcomes from different sources would make the diagram unreadable; discuss with the user.
 5. **JS semantics a Condition cannot reproduce.**
