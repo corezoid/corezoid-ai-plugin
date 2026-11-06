@@ -12,7 +12,7 @@ import (
 
 var patchOpsSchema = map[string]interface{}{
 	"type":        "array",
-	"description": "Node edits, applied in order, all or none: {op: \"set\", node, set: {title|description|condition|logics|semaphors|x|y|extra|options|obj_type: value}, unset?: [description|extra|options]} (logics/semaphors replace that node's condition list); {op: \"add\", value: {title, obj_type, condition: {logics, semaphors}, ...}} (no id: one is made); {op: \"remove\", node}. node is a node id or a title no other node has. A logic or semaphore left pointing at a missing node is refused — repoint it in the same patch.",
+	"description": "Node edits, applied in order, all or none: {op: \"set\", node, set: {title|description|condition|logics|semaphors|x|y|extra|options|obj_type: value}, unset?: [description|extra|options]} (logics/semaphors replace that node's condition list); {op: \"add\", value: {title, obj_type, condition: {logics, semaphors}, ...}} (no id: one is made); {op: \"remove\", node}. node is a node id or a title no other node has. A logic or semaphore left pointing at a missing node is refused — repoint it in the same patch. So is a node that keeps its id but changes kind (action ↔ condition, obj_type): a later stage merge fails on it — remove it and add a new node.",
 	"items": map[string]interface{}{
 		"type": "object",
 		"properties": map[string]interface{}{
@@ -159,34 +159,46 @@ func addedTitles(doc map[string]interface{}, ids []string) []string {
 // hostedDraftGuard refuses to deploy over changes someone left undeployed in
 // the editor: every deploy starts by deleting the process's pending version
 // (ProcessJSON → DeleteVersion), so that work would vanish without a word.
-// A process that was never deployed has nothing to lose. discard_draft=true
-// deploys anyway. Fail-closed: a state that cannot be read is not deployed over.
+// A process the server confirms was never deployed has nothing to lose.
+// discard_draft=true deploys anyway. Fail-closed: a state that cannot be read
+// — an error, a process missing from its folder — is not deployed over.
 func hostedDraftGuard(v *Executor, procID int) string {
+	retry := "; retry, or pass discard_draft=true to deploy over them"
 	info, err := v.ShowProcessLifecycle(procID)
 	if err != nil {
-		return fmt.Sprintf("Error: could not read process #%d to check for undeployed changes (%v); retry, or pass discard_draft=true to deploy over them", procID, err)
-	}
-	children, err := v.ListFolder(info.ParentObjID)
-	if err != nil {
-		return fmt.Sprintf("Error: could not list folder #%d to check process #%d for undeployed changes (%v); retry, or pass discard_draft=true to deploy over them", info.ParentObjID, procID, err)
+		return fmt.Sprintf("Error: could not read process #%d to check for undeployed changes (%v)%s", procID, err, retry)
 	}
 	proc, err := v.GetProcessByID(procID)
 	if err != nil {
-		return fmt.Sprintf("Error: could not read process #%d to check for undeployed changes (%v)", procID, err)
+		return fmt.Sprintf("Error: could not read process #%d to check for undeployed changes (%v)%s", procID, err, retry)
 	}
-	lcv, _ := proc["last_confirmed_version"].(float64)
+	if p, _ := proc["proc"].(string); p != "ok" {
+		return fmt.Sprintf("Error: could not read process #%d to check for undeployed changes (%v)%s", procID, proc["description"], retry)
+	}
+	// Only a confirmed "no commits" counts: some installations send
+	// commits.version and no last_confirmed_version for a deployed process.
+	if commitsConfirmedEmpty(proc) {
+		return ""
+	}
+	children, err := v.ListFolder(info.ParentObjID)
+	if err != nil {
+		return fmt.Sprintf("Error: could not list folder #%d to check process #%d for undeployed changes (%v)%s", info.ParentObjID, procID, err, retry)
+	}
 	for _, c := range children {
-		if c.Obj == "conv" && c.ObjID == procID && draftPending(c, lcv) {
+		if c.Obj != "conv" || c.ObjID != procID {
+			continue
+		}
+		if draftPending(c) {
 			return fmt.Sprintf("Error: process #%d has changes made in the editor that are not deployed (draft version %d). Deploying deletes them. Ask the user: deploy them first in Corezoid, or pass discard_draft=true to drop them.", procID, c.Version)
 		}
+		return ""
 	}
-	return ""
+	return fmt.Sprintf("Error: process #%d is not in the listing of its folder #%d, so its undeployed changes cannot be checked%s", procID, info.ParentObjID, retry)
 }
 
-// draftPending: a process deployed before (last_confirmed_version) that the
-// folder list shows undeployed with a draft version.
-func draftPending(c FolderChild, lastConfirmed float64) bool {
-	return !c.IsDeployed && c.Version > 0 && lastConfirmed > 0
+// draftPending: the folder list shows the process undeployed with a draft version.
+func draftPending(c FolderChild) bool {
+	return !c.IsDeployed && c.Version > 0
 }
 
 // patchPushSource is the hosted push source with a compact answer: the new

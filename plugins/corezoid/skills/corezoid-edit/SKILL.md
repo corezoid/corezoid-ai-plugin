@@ -46,7 +46,9 @@ edit those nodes in the file. Without them (a host with no file tools, or the ho
 `patch-process`: ops by node id or title — `{op: "set", node, set: {title|description|logics|semaphors|condition|x|y|extra|options: value}}`,
 `{op: "add", value: {title, obj_type, condition: {logics, semaphors}}}`, `{op: "remove", node}` —
 plus `process: {title, description, params}`. A logic or semaphore left pointing at a missing node
-is refused, so repoint references in the same call. Locally it edits `PROCESS_PATH` and you still
+is refused, so repoint references in the same call. A node that keeps its id but changes kind
+(action ↔ condition, `obj_type`) is refused too — see "Changing a node's kind in place" below: `remove` it,
+`add` the new node without an id, and repoint its incoming links in the same call. Locally it edits `PROCESS_PATH` and you still
 run `push-process`; on the hosted server it deploys through the same gates with the `base` token
 and answers only the changed nodes and the new `base`. It refuses a process with changes made
 in the editor and not deployed — a deploy deletes them: ask the user before passing `discard_draft: true`. On the hosted server read with

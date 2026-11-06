@@ -223,16 +223,77 @@ func TestCheckNodeLinksAsLint(t *testing.T) {
 func TestDraftPending(t *testing.T) {
 	for _, c := range []struct {
 		child FolderChild
-		lcv   float64
 		want  bool
 	}{
-		{FolderChild{IsDeployed: false, Version: 1790000000}, 12, true},
-		{FolderChild{IsDeployed: true}, 12, false},
-		{FolderChild{IsDeployed: false, Version: 1790000000}, 0, false}, // never deployed: nothing to lose
+		{FolderChild{IsDeployed: false, Version: 1790000000}, true},
+		{FolderChild{IsDeployed: true}, false},
+		{FolderChild{IsDeployed: false}, false},
 	} {
-		if got := draftPending(c.child, c.lcv); got != c.want {
-			t.Errorf("%+v lcv %v: %v", c.child, c.lcv, got)
+		if got := draftPending(c.child); got != c.want {
+			t.Errorf("%+v: %v", c.child, got)
 		}
+	}
+}
+
+// A node that keeps its id but changes kind breaks a later stage merge, so the
+// patch refuses it whichever way it is made; other reshapes pass.
+func TestPatchNodeKindChange(t *testing.T) {
+	const code, rpcStub = "68cd3f94e552e8d57009fb0c", "68cd3f94b677ac95d109fb49"
+	cond := `[{"type":"go_if_const","to_node_id":"68cd4683e552e8d5700ce6a0","conditions":[{"param":"a","const":"1","fun":"eq","cast":"string"}]},{"type":"go","to_node_id":"68cd4683e552e8d5700ce6a0"}]`
+	for _, c := range []struct {
+		name, ops, want string // want "" = applied
+	}{
+		{"action to condition by set", `[{"op":"set","node":"Create params","set":{"logics":` + cond + `}}]`, `node ` + code + ` "Create params" changes kind (obj_type 0 action → obj_type 0 condition)`},
+		{"remove and add under the same id", `[{"op":"remove","node":"` + code + `"},{"op":"add","value":{"id":"` + code + `","title":"Check","obj_type":0,"condition":{"logics":` + cond + `}}}]`, "changes kind"},
+		{"obj_type to end", `[{"op":"set","node":"Create params","set":{"obj_type":2}}]`, "obj_type 0 action → obj_type 2 action"},
+		{"one action for another", `[{"op":"set","node":"Configuration","set":{"logics":[{"type":"api_code","lang":"js","src":"data.url='x'","err_node_id":"68cd3f94b677ac95d109fb48"},{"type":"go","to_node_id":"68cd4683e552e8d5700ce6a0"}]}}]`, ""},
+		{"stub mode on", `[{"op":"set","node":"` + rpcStub + `","set":{"obj_type":4}}]`, ""},
+		{"logics dropped to a bare go", `[{"op":"set","node":"Configuration","set":{"logics":[{"type":"go","to_node_id":"68cd4683e552e8d5700ce6a0"}]}}]`, ""},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			p, err := parseProcessPatch(patchArgs(t, c.ops))
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, err = applyProcessPatch(stripeDoc(t), p)
+			if c.want == "" {
+				if err != nil {
+					t.Fatal(err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), c.want) || !strings.Contains(err.Error(), "add the new node without an id") {
+				t.Fatalf("got %v, want %q", err, c.want)
+			}
+		})
+	}
+}
+
+// The way out the refusal names: a new node under a new id, links repointed.
+func TestPatchNodeKindChangeAsNewNode(t *testing.T) {
+	doc := stripeDoc(t)
+	nodes, _ := schemeNodes(doc)
+	var from []string
+	for _, n := range nodes {
+		for _, l := range outlineOf(n).To {
+			if l == "68cd3f94e552e8d57009fb0c" {
+				from = append(from, n["id"].(string))
+			}
+		}
+	}
+	if len(from) == 0 {
+		t.Fatal("sample has no link to Create params")
+	}
+	ops := `[{"op":"remove","node":"Create params"},{"op":"add","value":{"id":"aaaaaaaaaaaaaaaaaaaaaaaa","title":"Check","obj_type":0,"condition":{"logics":[{"type":"go_if_const","to_node_id":"68cd4683e552e8d5700ce6a0","conditions":[]},{"type":"go","to_node_id":"68cd4683e552e8d5700ce6a0"}]}}}`
+	for _, id := range from {
+		ops += `,{"op":"set","node":"` + id + `","set":{"logics":[{"type":"go","to_node_id":"aaaaaaaaaaaaaaaaaaaaaaaa"}]}}`
+	}
+	p, err := parseProcessPatch(patchArgs(t, ops+"]"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := applyProcessPatch(doc, p); err != nil {
+		t.Fatal(err)
 	}
 }
 
