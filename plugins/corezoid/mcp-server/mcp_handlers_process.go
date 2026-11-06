@@ -1012,9 +1012,9 @@ func pushProcessCore(ctx context.Context, v *Executor, procID int, jsonContent s
 
 // handleLintProcess validates a local .conv.json without touching the server.
 func handleLintProcess(_ context.Context, args map[string]interface{}) (string, bool) {
-	filePath, err := resolveProcessPath(args, "process_path")
-	if err != nil {
-		return "Error: " + err.Error(), true
+	filePath, errMsg := resolveLintTarget(args)
+	if errMsg != "" {
+		return errMsg, true
 	}
 	if err := processFileMissingError(filePath); err != nil {
 		return "Error: " + err.Error(), true
@@ -1026,6 +1026,57 @@ func handleLintProcess(_ context.Context, args map[string]interface{}) (string, 
 	}
 	return FormatLintResult(result), false
 }
+
+// lintPulledFilesLimit caps how many candidate files resolveLintTarget lists
+// when a process ID matches more than one pulled copy.
+const lintPulledFilesLimit = 6
+
+// resolveLintTarget picks the local file lint-process reads.
+//
+// Every neighbouring process tool (pull-process, run-task, …) takes a process
+// ID, so models kept calling lint-process with one and burning a turn on the
+// rejection before switching to the pulled file's path. lint-process now
+// accepts process_id too — or a bare number in process_path — and resolves it
+// to the pulled "<ID>_<title>.conv.json" in the workspace. Lint still reads
+// only the local copy; nothing is fetched from the server, so an ID that was
+// never pulled is an error that says to run pull-process first.
+func resolveLintTarget(args map[string]interface{}) (string, string) {
+	pathArg := strings.TrimSpace(optStrArg(args, "process_path"))
+	if pathArg != "" && processIDDigitsRe.MatchString(pathArg) {
+		if raw, ok := args["process_id"]; ok && raw != nil {
+			return "", "Error: pass either process_path or process_id, not both."
+		}
+		args = map[string]interface{}{"process_id": pathArg}
+	}
+	raw, hasID := args["process_id"]
+	if !hasID || raw == nil {
+		fp, err := resolveProcessPath(args, "process_path")
+		if err != nil {
+			return "", "Error: " + err.Error() + ". lint-process reads a local .conv.json file: pass process_path (the file pull-process saved), or process_id to lint the pulled copy of that process."
+		}
+		return fp, ""
+	}
+	id, _, errMsg := resolveProcessID(args, "process_path", "process_id")
+	if errMsg != "" {
+		return "", errMsg
+	}
+	found := findSimilarProcessFiles(fmt.Sprintf("%d_.conv.json", id), lintPulledFilesLimit)
+	switch len(found) {
+	case 0:
+		return "", fmt.Sprintf("Error: no local copy of process %d found. lint-process checks a local .conv.json file and does not fetch from the server — run pull-process with process_id=%d first, then call lint-process with the process_path it returns (or process_id=%d again).", id, id, id)
+	case 1:
+		fp, err := confineToWorkdir(found[0])
+		if err != nil {
+			return "", "Error: " + err.Error()
+		}
+		return fp, ""
+	default:
+		return "", fmt.Sprintf("Error: several local files belong to process %d: %s. Pass the one to lint as process_path.", id, strings.Join(found, ", "))
+	}
+}
+
+// processIDDigitsRe matches a process_path that is really a bare process ID.
+var processIDDigitsRe = regexp.MustCompile(`^\d+$`)
 
 // runTaskDefaultWaitSec is how long run-task waits for the task to reach a
 // final node before reporting it as still in progress. Long enough to ride out
