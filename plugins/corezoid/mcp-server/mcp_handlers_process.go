@@ -361,16 +361,16 @@ func handlePullFolder(ctx context.Context, args map[string]interface{}) (string,
 	// downstream tools resolve context off individual process files.
 	if folderID == 0 {
 		baselineSnapshot := captureWorkspaceBaselineSnapshot(v)
-		skipped, err := downloadWorkspaceRootRecursively(v, dest)
+		pulled, err := downloadWorkspaceRootRecursively(v, dest)
 		if err != nil {
 			return fmt.Sprintf("Error fetching workspace root: %v", err), true
 		}
 		if err := writeWorkspaceProvisionedMarkerIfEmpty(dest); err != nil {
 			logger.Warn("pull-folder: could not write %s marker: %v", workspaceProvisionedMarker, err)
 		}
-		captured := recordPulledBaselines(dest, baselineSnapshot, skipped)
+		rec := recordPulledBaselines(dest, baselineSnapshot, pulled)
 		regenerateLocalCLAUDEMDIfNeeded(ctx)
-		return fmt.Sprintf("Workspace root saved to %s (%d baseline(s) recorded)", dest, captured) + skippedEntriesNote(skipped), false
+		return fmt.Sprintf("Workspace root saved to %s (%s)", dest, baselineSummary(rec)) + baselineFailureNote(rec) + skippedEntriesNote(pulled.skipped), false
 	}
 
 	// Pre-warm project_id cache so push-process never needs an extra API call.
@@ -378,7 +378,7 @@ func handlePullFolder(ctx context.Context, args map[string]interface{}) (string,
 	_, _ = resolveAndCacheProjectID(v)
 
 	baselineSnapshot := captureFolderBaselineSnapshot(v, folderID)
-	skipped, err := downloadStageRecursively(v, folderID, dest)
+	pulled, err := downloadStageRecursively(v, folderID, dest)
 	if err != nil {
 		return fmt.Sprintf("Error fetching folder: %v", err), true
 	}
@@ -392,8 +392,8 @@ func handlePullFolder(ctx context.Context, args map[string]interface{}) (string,
 
 	// Record a pull baseline for every process so push-process can detect a
 	// concurrent server-side change before overwriting it.
-	captured := recordPulledBaselines(dest, baselineSnapshot, skipped)
-	return fmt.Sprintf("Folder %d saved to %s (%d baseline(s) recorded)", folderID, dest, captured) + skippedEntriesNote(skipped), false
+	rec := recordPulledBaselines(dest, baselineSnapshot, pulled)
+	return fmt.Sprintf("Folder %d saved to %s (%s)", folderID, dest, baselineSummary(rec)) + baselineFailureNote(rec) + skippedEntriesNote(pulled.skipped), false
 }
 
 // skippedEntriesNote tells the model which archive entries pull-folder could

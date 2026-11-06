@@ -225,7 +225,7 @@ func TestProcessFileForID_IgnoresStagingCopy(t *testing.T) {
 	if got, want := processFileForID(555), filepath.Join("100_orders", "555_proc.conv.json"); got != want {
 		t.Errorf("processFileForID(555) = %q, want %q", got, want)
 	}
-	n := recordPulledBaselines(".", map[int]baselineEntry{555: {}}, nil)
+	n := recordPulledBaselines(".", map[int]baselineEntry{555: {}}, pullResult{}).recorded
 	if n != 1 {
 		t.Errorf("recordPulledBaselines recorded %d baselines, want 1 (the staging copy must be ignored)", n)
 	}
@@ -240,10 +240,11 @@ func TestDownloadStageRecursively_UnparsableProcessIsSkipped(t *testing.T) {
 		"100_orders.folder/557_broken.conv.json": `{"obj_id":557,`,
 	}))
 
-	skipped, err := downloadStageRecursively(e, 42, dest)
+	pulled, err := downloadStageRecursively(e, 42, dest)
 	if err != nil {
 		t.Fatalf("pull failed: %v", err)
 	}
+	skipped := pulled.skipped
 	if len(skipped) != 1 || skipped[0].processID() != 557 {
 		t.Fatalf("skipped = %v, want the broken process 557", skipped)
 	}
@@ -280,12 +281,12 @@ func TestDownloadStageRecursively_SkippedProcessKeepsLocalCopy(t *testing.T) {
 	e := stageExportServer(t, stageArchiveWith(t, map[string]string{
 		"100_orders.folder/557_broken.conv.json": `{"obj_id":557,`,
 	}))
-	skipped, err := downloadStageRecursively(e, 42, dest)
+	pulled, err := downloadStageRecursively(e, 42, dest)
 	if err != nil {
 		t.Fatalf("pull failed: %v", err)
 	}
 	snapshot := map[int]baselineEntry{555: {ChangeTime: 222}, 557: {ChangeTime: 222}}
-	recordPulledBaselines(dest, snapshot, skipped)
+	recordPulledBaselines(dest, snapshot, pulled)
 
 	if b, err := os.ReadFile(filepath.Join(orders, "557_broken.conv.json")); err != nil || string(b) != local {
 		t.Errorf("local copy of the skipped process = %q, %v; want it kept unchanged", b, err)

@@ -462,50 +462,51 @@ func hoistZipWrapperDirs(root string) error {
 // stage root, so we mirror what the Corezoid UI's root view shows straight
 // into the workspace directory.
 //
-// The returned list names archive entries that could not be written locally
-// (see unzipFile); the rest of the workspace is still saved.
-func downloadWorkspaceRootRecursively(e *Executor, filePath string) ([]skippedEntry, error) {
+// The result names archive entries that could not be written locally (see
+// unzipFile; the rest of the workspace is still saved) and the processes the
+// pull wrote.
+func downloadWorkspaceRootRecursively(e *Executor, filePath string) (pullResult, error) {
 	if err := e.checkCancel(); err != nil {
-		return nil, err
+		return pullResult{}, err
 	}
 
 	items, err := e.ListWorkspaceRoot()
 	if err != nil {
-		return nil, fmt.Errorf("failed to list workspace root: %w", err)
+		return pullResult{}, fmt.Errorf("failed to list workspace root: %w", err)
 	}
 	if len(items) == 0 {
-		return nil, nil
+		return pullResult{}, nil
 	}
 
 	urls, err := e.BatchExportSchemes(items)
 	if err != nil {
-		return nil, fmt.Errorf("failed to batch export workspace root: %w", err)
+		return pullResult{}, fmt.Errorf("failed to batch export workspace root: %w", err)
 	}
 
 	staging, err := newPullStaging(filePath)
 	if err != nil {
-		return nil, err
+		return pullResult{}, err
 	}
 	defer os.RemoveAll(staging)
 
 	var skipped []skippedEntry
 	for i, url := range urls {
 		if err := e.checkCancel(); err != nil {
-			return skipped, err
+			return pullResult{skipped: skipped}, err
 		}
 		data, err := e.fetchDownload(url)
 		if err != nil {
-			return skipped, fmt.Errorf("failed to download %s #%d: %w", items[i].ObjType, items[i].ObjID, err)
+			return pullResult{skipped: skipped}, fmt.Errorf("failed to download %s #%d: %w", items[i].ObjType, items[i].ObjID, err)
 		}
 		zipPath := filepath.Join(staging, fmt.Sprintf(".root_%s_%d.zip", items[i].ObjType, items[i].ObjID))
 		if err := os.WriteFile(zipPath, data, 0644); err != nil {
-			return skipped, fmt.Errorf("failed to write zip: %w", err)
+			return pullResult{skipped: skipped}, fmt.Errorf("failed to write zip: %w", err)
 		}
 		s, unzipErr := unzipFile(zipPath, staging)
 		skipped = append(skipped, s...)
 		os.Remove(zipPath)
 		if unzipErr != nil {
-			return skipped, fmt.Errorf("failed to unzip %s #%d: %w", items[i].ObjType, items[i].ObjID, unzipErr)
+			return pullResult{skipped: skipped}, fmt.Errorf("failed to unzip %s #%d: %w", items[i].ObjType, items[i].ObjID, unzipErr)
 		}
 	}
 
@@ -513,7 +514,7 @@ func downloadWorkspaceRootRecursively(e *Executor, filePath string) ([]skippedEn
 	// {stage,folder,conv,dashboard}_<id>_<ts>.zip wrapper directory. Unwrap
 	// them so folder / conv / dashboard files land directly at the staging root.
 	if err := hoistZipWrapperDirs(staging); err != nil {
-		return skipped, fmt.Errorf("failed to unwrap workspace-root archives: %w", err)
+		return pullResult{skipped: skipped}, fmt.Errorf("failed to unwrap workspace-root archives: %w", err)
 	}
 
 	// Some archives contain inner *.zip files that also need extracting.
@@ -522,7 +523,7 @@ func downloadWorkspaceRootRecursively(e *Executor, filePath string) ([]skippedEn
 	for {
 		files, err := os.ReadDir(staging)
 		if err != nil {
-			return skipped, fmt.Errorf("failed to read directory: %w", err)
+			return pullResult{skipped: skipped}, fmt.Errorf("failed to read directory: %w", err)
 		}
 		var innerZip string
 		for _, f := range files {
@@ -538,22 +539,23 @@ func downloadWorkspaceRootRecursively(e *Executor, filePath string) ([]skippedEn
 		skipped = append(skipped, s...)
 		os.Remove(innerZip)
 		if err != nil {
-			return skipped, fmt.Errorf("failed to unzip %s: %w", filepath.Base(innerZip), err)
+			return pullResult{skipped: skipped}, fmt.Errorf("failed to unzip %s: %w", filepath.Base(innerZip), err)
 		}
 	}
 
 	if err := renameFiles2Folders(staging); err != nil {
-		return skipped, fmt.Errorf("failed to rename files: %w", err)
+		return pullResult{skipped: skipped}, fmt.Errorf("failed to rename files: %w", err)
 	}
 	invalid, err := formatPulledJSON(e, staging)
 	skipped = append(skipped, invalid...)
 	if err != nil {
-		return skipped, fmt.Errorf("failed to format json: %w", err)
+		return pullResult{skipped: skipped}, fmt.Errorf("failed to format json: %w", err)
 	}
-	if err := publishPull(staging, filePath, skipped); err != nil {
-		return skipped, fmt.Errorf("failed to move pulled workspace root into %s: %w", filePath, err)
+	written, err := publishPull(staging, filePath, skipped)
+	if err != nil {
+		return pullResult{skipped: skipped}, fmt.Errorf("failed to move pulled workspace root into %s: %w", filePath, err)
 	}
-	return skipped, nil
+	return pullResult{skipped: skipped, written: written}, nil
 }
 
 // pullPublishMu serialises the final move of a pull into the workspace, so two
@@ -624,7 +626,22 @@ func removeStalePullStaging(filePath string) {
 // into the new tree first, so a skipped process keeps its file and the
 // version it was last synced at, and push-process still detects a server
 // change since then.
-func publishPull(staging, filePath string, skipped []skippedEntry) error {
+//
+// It returns the ids of the processes the pull wrote, read from the staging
+// tree before the move, while it still holds nothing else.
+func publishPull(staging, filePath string, skipped []skippedEntry) (map[int]bool, error) {
+	written := processIDsUnder(staging)
+	return written, publishPullTree(staging, filePath, skipped)
+}
+
+// pullResult is what a folder pull produced: the archive entries it could not
+// write, and the processes whose files it did write.
+type pullResult struct {
+	skipped []skippedEntry
+	written map[int]bool
+}
+
+func publishPullTree(staging, filePath string, skipped []skippedEntry) error {
 	pullPublishMu.Lock()
 	defer pullPublishMu.Unlock()
 	ids := map[int]bool{}
@@ -718,12 +735,12 @@ func keepSkippedProcesses(oldDir, newDir string, ids map[int]bool) error {
 	return nil
 }
 
-// downloadStageRecursively pulls folderID into filePath. The returned list
-// names archive entries that could not be written locally (see unzipFile);
-// the rest of the folder is still saved.
-func downloadStageRecursively(e *Executor, folderID int, filePath string) ([]skippedEntry, error) {
+// downloadStageRecursively pulls folderID into filePath. The result names
+// archive entries that could not be written locally (see unzipFile; the rest
+// of the folder is still saved) and the processes the pull wrote.
+func downloadStageRecursively(e *Executor, folderID int, filePath string) (pullResult, error) {
 	if err := e.checkCancel(); err != nil {
-		return nil, err
+		return pullResult{}, err
 	}
 	// If folderID matches the configured stage root, we know it's a stage —
 	// no need to probe. Otherwise try folder first (common case for sub-folders),
@@ -746,22 +763,22 @@ func downloadStageRecursively(e *Executor, folderID int, filePath string) ([]ski
 		}
 	}
 	if err != nil {
-		return nil, fmt.Errorf("failed to PullZip: %w", err)
+		return pullResult{}, fmt.Errorf("failed to PullZip: %w", err)
 	}
 	staging, err := newPullStaging(filePath)
 	if err != nil {
-		return nil, err
+		return pullResult{}, err
 	}
 	defer os.RemoveAll(staging)
 	zipPath := filepath.Join(staging, "stage.zip")
 	err = os.WriteFile(zipPath, data, 0644)
 	if err != nil {
-		return nil, fmt.Errorf("failed to write file: %v", err)
+		return pullResult{}, fmt.Errorf("failed to write file: %v", err)
 	}
 	skipped, err := unzipFile(zipPath, staging)
 	os.Remove(zipPath)
 	if err != nil {
-		return skipped, fmt.Errorf("failed to unzip: %w", err)
+		return pullResult{skipped: skipped}, fmt.Errorf("failed to unzip: %w", err)
 	}
 
 	// Unzip any inner zip files: stage_<id>_<id>.zip (may be nested)
@@ -769,7 +786,7 @@ func downloadStageRecursively(e *Executor, folderID int, filePath string) ([]ski
 	for {
 		files, err := os.ReadDir(staging)
 		if err != nil {
-			return skipped, fmt.Errorf("failed to read directory: %v", err)
+			return pullResult{skipped: skipped}, fmt.Errorf("failed to read directory: %v", err)
 		}
 		var innerZip string
 		for _, f := range files {
@@ -785,7 +802,7 @@ func downloadStageRecursively(e *Executor, folderID int, filePath string) ([]ski
 		skipped = append(skipped, s...)
 		os.Remove(innerZip)
 		if err != nil {
-			return skipped, fmt.Errorf("failed to unzip %s: %w", filepath.Base(innerZip), err)
+			return pullResult{skipped: skipped}, fmt.Errorf("failed to unzip %s: %w", filepath.Base(innerZip), err)
 		}
 	}
 
@@ -794,16 +811,16 @@ func downloadStageRecursively(e *Executor, folderID int, filePath string) ([]ski
 	// note it is a directory, not a file, because Corezoid's exporter names
 	// the top-level entry after the download filename).
 	if err := hoistZipWrapperDirs(staging); err != nil {
-		return skipped, fmt.Errorf("failed to unwrap stage archive: %w", err)
+		return pullResult{skipped: skipped}, fmt.Errorf("failed to unwrap stage archive: %w", err)
 	}
 
 	// Find .stage directory anywhere up to depth 2: <id>_<name>.stage
 	stageDir, err := findStageDir(staging, 2)
 	if err != nil {
-		return skipped, fmt.Errorf("failed to find stage dir: %v", err)
+		return pullResult{skipped: skipped}, fmt.Errorf("failed to find stage dir: %v", err)
 	}
 	if stageDir == "" {
-		return skipped, fmt.Errorf("stage directory not found (*.stage / *.folder / *.project) in the exported archive")
+		return pullResult{skipped: skipped}, fmt.Errorf("stage directory not found (*.stage / *.folder / *.project) in the exported archive")
 	}
 	// renameFiles2Folders strips the .folder/.project/.stage suffix from
 	// every directory inside the stage. Formatting runs on the stage alone:
@@ -811,22 +828,23 @@ func downloadStageRecursively(e *Executor, folderID int, filePath string) ([]ski
 	// workspace is ours to rewrite.
 	err = renameFiles2Folders(stageDir)
 	if err != nil {
-		return skipped, fmt.Errorf("failed to rename files: %v", err)
+		return pullResult{skipped: skipped}, fmt.Errorf("failed to rename files: %v", err)
 	}
 	invalid, err := formatPulledJSON(e, stageDir)
 	skipped = append(skipped, invalid...)
 	if err != nil {
-		return skipped, fmt.Errorf("failed to format json: %v", err)
+		return pullResult{skipped: skipped}, fmt.Errorf("failed to format json: %v", err)
 	}
 	// Flatten the stage into filePath: move the contents of the
 	// <id>_<name>.{stage,folder,project} directory up so subfolders and the
 	// stage marker JSON land directly at the workspace root. moveContents
 	// overwrites any stale entry at the destination — a re-pull always wins.
-	if err := publishPull(stageDir, filePath, skipped); err != nil {
-		return skipped, fmt.Errorf("failed to flatten stage into workspace: %v", err)
+	written, err := publishPull(stageDir, filePath, skipped)
+	if err != nil {
+		return pullResult{skipped: skipped}, fmt.Errorf("failed to flatten stage into workspace: %v", err)
 	}
 
-	return skipped, nil
+	return pullResult{skipped: skipped, written: written}, nil
 }
 
 func renameFiles2Folders(filePath string) error {
