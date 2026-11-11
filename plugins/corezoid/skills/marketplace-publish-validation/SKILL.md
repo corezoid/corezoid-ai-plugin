@@ -1,6 +1,9 @@
 ---
 name: marketplace-publish-validation
-description: "Corezoid  marketplace pre-publication validator. Standalone skill — no external skill dependencies required. Use this skill whenever the user wants to publish, release, or submit a project or folder to the Corezoid marketplace, or asks to check if a project is ready to publish. Activate on phrases: \"publish to marketplace\", \"готово до публікації\", \"можна публікувати\", \"перевір перед публікацією\", \"validate for marketplace\", \"pre-publish check\", \"marketplace validation\", \"publication readiness\", \"check before publish\", \"submit to marketplace\", \"перевірка публікації\". Also activate when the user asks \"what's blocking publication\" or \"why can't I publish this\"."
+description: >
+  Pre-publication check of a Corezoid project or folder for the Corezoid
+  marketplace. Triggers: "publish to marketplace", "pre-publish check", "перевір
+  перед публікацією", "можна публікувати".
 ---
 
 # Marketplace Publish Validation

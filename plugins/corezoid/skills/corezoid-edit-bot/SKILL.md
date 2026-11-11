@@ -1,6 +1,9 @@
 ---
 name: corezoid-edit-bot
-description: Iteratively edits an already-built messenger bot from corezoid-gen-bot — a Corezoid Communications Orchestrator serving Telegram, Viber, Apple Messages for Business and Facebook Messenger over a backend of Corezoid processes called with api_rpc. Runs a lean plan → confirm → apply → lint → push → smoke-test loop — see "Modes" for plan/execute/deploy. Trigger on "измени/поправь бота", "добавь/убери/переименуй команду", "подключи ещё процесс", "поменяй текст/клавиатуру бота", "добавь язык боту", "добавь шаг в диалог", "бот отвечает пустым/дважды", "почему бот не отвечает", "edit/modify bot", "add command to bot", "wire another process into the bot", "change bot copy", "fix the bot", "задеплой бота", "promote stage", or when the user references PLAN.md/CHANGE.md for a bot. Assumes CWD is the workspace corezoid-gen-bot built (`.corezoid-gen-bot/PLAN.md`, a `*.stage.json` marker, the pulled orchestrator folder). For a Smart Form web app over the same processes use `simulator-app-generator`.
+description: >
+  Edit or fix a messenger bot built by corezoid-gen-bot: commands, copy,
+  keyboards, languages, process wiring, stage deploy. Triggers: "измени бота",
+  "add command to bot", "бот не отвечает".
 ---
 
 # corezoid-edit-bot

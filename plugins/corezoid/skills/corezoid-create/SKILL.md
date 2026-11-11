@@ -1,11 +1,9 @@
 ---
 name: corezoid-create
 description: >
-  Corezoid process creation specialist. Use when the user wants to create a new
-  Corezoid process from scratch, build a new automation flow, or design a new business
-  process. Activate when the user says "create a process", "build a new flow",
-  "new process", "design from scratch", "create an automation", or "add a new process".
-  Not for API connectors — use /corezoid-connector-create.
+  Create a new Corezoid process from scratch: a new automation flow or business
+  process. Triggers: "create a process", "new process", "создай процесс".
+  Single-API connectors: corezoid-connector-create.
 ---
 
 # Create a New Corezoid Process

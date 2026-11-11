@@ -1,13 +1,9 @@
 ---
 name: corezoid-access
 description: >
-  Corezoid access-control specialist. Use when the user wants to share a process,
-  folder, stage or project with another user / group / API key, create or delete
-  a user group, create or rotate an API key, invite an external user, or audit
-  who currently has access to a Corezoid object. Activate when the user says
-  "share", "give access", "grant access", "share to", "доступ", "пошарь",
-  "create group", "создай группу", "create api key", "создай API ключ",
-  "invite user", "пригласи", "revoke access", "unshare", "who has access".
+  Share Corezoid processes, folders, stages or projects; manage groups, API-key
+  users, invites, access audits. Triggers: "share", "give access", "доступ",
+  "пошарь", "create API key", "who has access".
 ---
 
 # Corezoid Access Control

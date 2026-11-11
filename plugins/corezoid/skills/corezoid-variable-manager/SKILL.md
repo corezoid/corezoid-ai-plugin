@@ -1,12 +1,9 @@
 ---
 name: corezoid-variable-manager
 description: >
-  Manages Corezoid environment variables (env_var) — create, list, modify, delete, and
-  use variables in process JSON. Activate when the user mentions "variable", "env var",
-  "environment variable", "secret", "create variable", "list variables", "delete variable",
-  "modify variable", "env_var", "{{env_var", or asks how to store a URL, token, API key,
-  or any constant that should not be hardcoded in a process. Also activate when a process
-  references {{env_var[@name]}} and the variable does not exist yet.
+  Create, list, modify, delete Corezoid env variables (env_var) for URLs,
+  tokens, API keys, secrets, so nothing is hardcoded. Triggers: "env var",
+  "variable", "secret", "{{env_var", "переменная".
 ---
 
 # Corezoid Variable Manager

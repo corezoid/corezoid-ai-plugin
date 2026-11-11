@@ -1,18 +1,9 @@
----
+   ---
 name: corezoid-connector-create
 description: >
-  API connector builder. Use when the user wants a Corezoid process that calls ONE endpoint
-  of ANY HTTP API — external (Stripe, OpenWeather, Google, banks, CRMs), internal
-  (Simulator.Company, own services) or Corezoid itself — built from a text description, a
-  documentation link, an OpenAPI/Swagger file, or a list of endpoints produced while
-  reasoning about a task. Produces an atomic connector: input contract, validation when
-  needed, a single API Call, Reply to Process on every outcome, unified response format,
-  test, and Smart API registration. Activate on: "create a connector", "API connector",
-  "integrate with <API>", "connect to <API>", "wrap this endpoint",
-  "connector from this openapi.yaml", "сделай коннектор", "коннектор к API",
-  "интеграция с", "подключи API", "обёртка над API", "зроби конектор", "конектор до API",
-  "інтеграція з", "підключи API".
-  NOT for processes with business logic or several calls — use /corezoid-create.
+  Build an atomic connector process for ONE endpoint of any HTTP API, from a
+  description, docs or OpenAPI. Triggers: "connector", "коннектор", "інтеграція
+  з", "integrate with". Not for multi-step logic.
 ---
 
 # Create an API Connector Process

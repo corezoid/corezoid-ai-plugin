@@ -1,12 +1,9 @@
 ---
 name: corezoid-project-review
 description: >
-  Corezoid project review and audit specialist. Use when the user wants to
-  review or audit an entire Corezoid project or folder — multiple processes at
-  once. Activate when the user says "review project", "audit project",
-  "review all processes", "audit all processes", "review folder",
-  "review all processes in", "project-wide review", "cross-process analysis",
-  "find issues across processes", "review the whole project", or "audit folder".
+  Audit a whole Corezoid project or folder: many processes and cross-process
+  issues. Triggers: "review project", "audit folder", "review all processes",
+  "ревью проекта".
 ---
 
 # Review a Corezoid Project

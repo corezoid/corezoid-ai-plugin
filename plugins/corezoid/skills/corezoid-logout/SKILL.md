@@ -1,12 +1,8 @@
 ---
 name: corezoid-logout
 description: >
-  Log out of Corezoid: remove saved credentials for the current workspace from
-  `~/.corezoid/config.json`. Activate when the user says "logout", "log out",
-  "sign out", "disconnect", "выйти", "разлогинься", "разлогиниться",
-  "отключись от corezoid", "убери токен", "clear credentials",
-  "remove credentials", "forget account", or otherwise asks to end the
-  Corezoid session for this working directory.
+  Log out of Corezoid: remove saved credentials for the current workspace.
+  Triggers: "logout", "sign out", "выйти", "разлогинься", "clear credentials".
 ---
 
 # Corezoid Logout Skill

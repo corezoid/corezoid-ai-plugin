@@ -1,13 +1,9 @@
 ---
 name: corezoid
 description: >
-  Universal Corezoid assistant. Use when the user asks anything about
-  Corezoid processes, wants to work with process JSON files, mentions process
-  nodes, MCP tools, process validation, or any Corezoid-specific task. Also
-  use when the user mentions "Corezoid", "BPM process", "conv.json",
-  "push process", "run task", or asks for general platform knowledge.
-  This skill provides deep knowledge of the platform model and guides you to
-  use the Corezoid MCP tools correctly.
+  Universal Corezoid entry point: platform model, process JSON (.conv.json),
+  nodes, MCP tools, validation. Use for any Corezoid question or task not
+  covered by a narrower corezoid-* skill.
 ---
 
 # Corezoid Platform Assistant

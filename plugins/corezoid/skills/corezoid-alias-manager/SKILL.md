@@ -1,12 +1,9 @@
 ---
 name: corezoid-alias-manager
 description: >
-  Manages Corezoid aliases — create, list, modify, delete, link/unlink, and use aliases
-  in process JSON. Activate when the user mentions "alias", "short_name", "short name",
-  "create alias", "list aliases", "delete alias", "modify alias", "rename alias",
-  "unlink alias", "link alias", "get callback hash", "conv[@", or asks how to reference
-  a process by name instead of numeric ID. Also activate when reviewing a process that
-  uses numeric conv_id values and the user wants to replace them with aliases.
+  Corezoid process aliases: create, list, modify, delete, link/unlink
+  (short_name, conv[@alias]); callback hash / Direct URL. Triggers: "alias",
+  "short name", "алиас", "callback hash".
 ---
 
 # Corezoid Alias Manager

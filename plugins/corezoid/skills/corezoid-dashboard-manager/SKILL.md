@@ -1,12 +1,9 @@
 ---
 name: corezoid-dashboard-manager
 description: >
-  Creates and manages Corezoid dashboards — adds charts (column, pie, funnel, table), binds metrics
-  to process nodes, configures real-time mode, and sets up drill-down linking between dashboards.
-  Activate whenever a user asks to create a dashboard, add a chart, visualize process metrics,
-  set up reporting for a Corezoid process, configure real-time monitoring, or asks what
-  dashboards or charts exist. Also activate when the user wants to show task counts, completion
-  rates, error rates, or any other process statistics visually in Corezoid.
+  Create and edit Corezoid dashboards: charts (column, pie, funnel, table) bound
+  to process nodes, real-time mode, drill-down. Triggers: "dashboard", "chart",
+  "дашборд", process metrics.
 ---
 
 # Corezoid Dashboard Manager
