@@ -2,8 +2,8 @@
 name: marketplace-publish-validation
 description: >
   Pre-publication check of a Corezoid project or folder for the Corezoid
-  marketplace. Triggers: "publish to marketplace", "pre-publish check", "перевір
-  перед публікацією", "можна публікувати".
+  marketplace.
+disable-model-invocation: true
 ---
 
 # Marketplace Publish Validation
