@@ -1,4 +1,4 @@
-   ---
+---
 name: corezoid-connector-create
 description: >
   Build an atomic connector process for ONE endpoint of any HTTP API, from a
