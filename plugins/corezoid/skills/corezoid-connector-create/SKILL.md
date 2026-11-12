@@ -23,6 +23,11 @@ After a successful test it is registered as a Smart API Connector in Simulator.C
 | one endpoint of any HTTP API, Corezoid API included (or several endpoints → several connectors) | **this skill** |
 | an endpoint that needs files, git or a protocol the API Call node does not support | this skill, the call node is `git_call` (read `/corezoid-gitcall` first) |
 
+**Target is the Corezoid API itself** (`/api/2/json`): the API Call node signs the request —
+the URL ends with the API login, `api_secret_outer` holds the secret, `send_sys: true`,
+`format: ""`, `extra.ops` is a stringified JSON array. Never compute the SHA1 signature in a
+Code node. Read `${CLAUDE_PLUGIN_ROOT}/docs/process/corezoid-api-integration.md` before Step 5.
+
 ## Hard rules (every connector, no exceptions)
 
 1. **One process = one endpoint.** Several operations → several processes, one by one.
@@ -225,6 +230,7 @@ Then do the **Final Step: Update Git Context** exactly as in `/corezoid-create`.
 | `references/registration.md` | Step 10 |
 | `${CLAUDE_PLUGIN_ROOT}/skills/corezoid-create/SKILL.md` | Core rules for nodes and error clusters |
 | `${CLAUDE_PLUGIN_ROOT}/docs/nodes/api-call-node.md` | API Call fields, error tags, semaphores |
+| `${CLAUDE_PLUGIN_ROOT}/docs/process/corezoid-api-integration.md` | Target is the Corezoid API: `api_secret_outer` signing, `ops` payload |
 | `${CLAUDE_PLUGIN_ROOT}/docs/nodes/reply-to-process-node.md` | Reply formats, stringification |
 | `${CLAUDE_PLUGIN_ROOT}/docs/process/process-with-parameters.md` | `params` shape |
 | `${CLAUDE_PLUGIN_ROOT}/docs/variables-guide.md` | Variables |

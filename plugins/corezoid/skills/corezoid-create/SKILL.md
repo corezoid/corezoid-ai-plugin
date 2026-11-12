@@ -206,6 +206,7 @@ Use the `Read` tool to load these files when specific node or validation details
 | `${CLAUDE_PLUGIN_ROOT}/docs/process/error-handling.md` | Error handling patterns |
 | `${CLAUDE_PLUGIN_ROOT}/docs/process/node-positioning-best-practices.md` | Coordinate system and layout guidelines |
 | `${CLAUDE_PLUGIN_ROOT}/docs/variables-guide.md` | Variable naming rules, creation workflow, usage examples |
+| `${CLAUDE_PLUGIN_ROOT}/docs/process/corezoid-api-integration.md` | A node that calls the Corezoid API (`/api/2/json`): `api_secret_outer` signing, `ops` payload |
 
 ## Example Processes
 

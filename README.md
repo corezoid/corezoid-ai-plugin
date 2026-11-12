@@ -29,7 +29,7 @@ The plugin bundles a Go MCP server that exposes Corezoid operations as MCP tools
 | `corezoid-alias-manager`       | "alias", "short name", "rename alias"    | Create, list, modify, delete process aliases      |
 | `corezoid-variable-manager`    | "variable", "env var", "create variable" | Create, list, modify, delete environment variables |
 | `corezoid-connector-create`    | "create a connector", "integrate with <API>", "коннектор к API" | Atomic single-endpoint connector to any HTTP API (external, internal, or Corezoid itself) |
-| `corezoid-api-connector`       | "call Corezoid API", "api/2/json", "api_secret_outer" | Processes that call the Corezoid public API       |
+| `corezoid-api-connector`       | `/corezoid-api-connector` only (Claude Code); otherwise `corezoid-connector-create` | Processes that call the Corezoid public API       |
 | `corezoid-process-optimizer`   | "optimize", "reduce tacts", "improve"    | Merge nodes, clean data flow, add resilience      |
 | `corezoid-describe`            | "update description", "add description", "describe this process" | Set or refresh the description of a process, folder, or project |
 | `corezoid-feedback`            | "report a bug", "this is broken", "send feedback" | Collect and submit bug reports / improvement requests |

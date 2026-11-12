@@ -2,8 +2,8 @@
 name: corezoid-api-connector
 description: >
   Build a Corezoid process that calls the Corezoid public API (/api/2/json) to
-  automate platform objects: nodes, processes, tasks, users. Triggers: "Corezoid
-  API", "api/2/json".
+  automate platform objects: nodes, processes, tasks, users.
+disable-model-invocation: true
 ---
 
 # Corezoid API Connector
