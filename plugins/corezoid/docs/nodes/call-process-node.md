@@ -37,10 +37,11 @@
    - `"all"` sends all current task parameters to the called process; `""` sends only `extra` / `extra_type`.
    - Example: `"group": "all"`
    - **Empty `extra: {}` with `group: ""` sends nothing.** That is valid (lint accepts it) and right
-     only when the called process takes no input. `lint-process` cannot tell whether the callee
-     expected parameters, so check its inputs and list them in `extra` / `extra_type`. Do not
-     switch to `"group": "all"` to "fix" an empty call — it forwards the whole task (tokens,
-     internal fields) into the called process.
+     only when the called process takes no input — verified with `run-task`: the call reaches the
+     callee and its reply comes back, both with a numeric `conv_id` and with an alias. `lint-process`
+     cannot tell whether the callee expected parameters, so check its inputs and list them in
+     `extra` / `extra_type`. Do not switch to `"group": "all"` to "fix" an empty call — it forwards
+     the whole task (tokens, internal fields) into the called process.
 2. **User ID** (Number)
    - User ID for authentication purposes.
    - Example: `"user_id": 56171`

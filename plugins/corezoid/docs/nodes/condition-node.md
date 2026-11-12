@@ -69,6 +69,9 @@ The following functions are allowed in condition expressions:
   { "param": "{{found[0].ref}}", "const": "{{current_ref}}", "fun": "eq", "cast": "string" }
   ```
 - With `cast: "number"`, `more` / `less` on a missing key route to the default path (no error).
+- An empty object compares as the string `"{}"`: `{{data}}` `eq` `{}` (cast string) detects it.
+- A `$.math` result failed `eq` with `cast: "number"` against `"1"`, while `more "0"` on the same
+  value worked. Prefer `more` / `less` for `$.math` results.
 
 ## Error Handling
 
