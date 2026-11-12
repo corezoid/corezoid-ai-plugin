@@ -92,7 +92,6 @@ Each skill is auto-loaded from `.kiro/skills/<name>/SKILL.md`:
 
 - `corezoid` — universal entry point + routing.
 - `corezoid-init` — first-time environment setup.
-- `corezoid-logout` — remove saved Corezoid credentials for the current workspace.
 - `corezoid-create` / `corezoid-edit` — process JSON authoring.
 - `corezoid-lifecycle` — confirm-gated process pause/resume and process/folder moves.
 - `corezoid-review` / `corezoid-project-review` — single-process / whole-project audits.

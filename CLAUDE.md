@@ -80,7 +80,6 @@ plugins/corezoid/
       SKILL.md
       references/                   — Lookup documents (variables guide, env setup)
     corezoid-init/                  — Environment setup, OAuth login, workspace pull
-    corezoid-logout/                — Remove saved Corezoid credentials for the current workspace
     corezoid-create/                — Create a new process from scratch
     corezoid-edit/                  — Modify an existing process
     corezoid-lifecycle/             — Explicitly pause/resume processes and move processes/folders

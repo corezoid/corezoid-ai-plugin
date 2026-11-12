@@ -210,7 +210,6 @@ pull-process(process_id=12345678)
 
 For domain-specific workflows use the specialized skills:
 - `/corezoid-init` — setting up environment and pulling from Corezoid
-- `/corezoid-logout` — remove saved Corezoid credentials for the current workspace
 - `/corezoid-create` — creating a new process from scratch
 - `/corezoid-connector-create` — connector to an API endpoint (one endpoint = one process): any HTTP API — external, internal, or Corezoid itself
 - `/corezoid-edit` — modifying an existing process

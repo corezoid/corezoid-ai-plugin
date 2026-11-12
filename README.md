@@ -12,7 +12,6 @@ The plugin bundles a Go MCP server that exposes Corezoid operations as MCP tools
 |--------------------------------|------------------------------------------|---------------------------------------------------|
 | `corezoid`                     | "Corezoid", "process", "conv.json"       | Full platform overview, all node types, MCP tools |
 | `corezoid-init`                | "set up", "login", "pull workspace"      | OAuth login, workspace pull, environment setup    |
-| `corezoid-logout`              | "logout", "sign out", "disconnect", "выйти" | Remove saved Corezoid credentials for the current workspace |
 | `corezoid-create`              | "create a process", "new process"        | Building processes from scratch                   |
 | `corezoid-edit`                | "edit", "modify", "update" a process     | Modifying existing `.conv.json` files             |
 | `corezoid-lifecycle`           | "pause/resume process", "move process/folder", "сними с паузы", "перемести процесс" | Explicit, confirm-gated process lifecycle and server-side reparenting |
