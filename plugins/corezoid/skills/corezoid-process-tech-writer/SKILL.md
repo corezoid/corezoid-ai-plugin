@@ -1,14 +1,8 @@
 ---
 name: corezoid-process-tech-writer
 description: >
-  Documents a Corezoid process — produces a human-readable Markdown file AND enriches
-  the process JSON with descriptions on every node and parameter. Output is designed for
-  team wikis, internal portals, and future product integration.
-  Activate whenever a user asks to document a process, write docs for a connector,
-  add descriptions to a process, create documentation for a logic, describe what a
-  process does, or any similar phrasing. Also activate when the user shares a process
-  JSON and asks to explain it or make it self-documenting. Always produce BOTH outputs
-  (Markdown file + enriched JSON) — never just one.
+  Document a process: Markdown doc plus JSON with node and parameter
+  descriptions. Triggers: "document this process", "задокументируй".
 ---
 
 # Corezoid Process Tech Writer

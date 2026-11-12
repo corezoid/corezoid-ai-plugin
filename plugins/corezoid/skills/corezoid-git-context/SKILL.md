@@ -1,15 +1,8 @@
 ---
 name: corezoid-git-context
 description: >
-  Analyzes the current session and updates _ext/docs/*.md in the Corezoid git
-  mirror for the active stage. Use after corezoid-edit, corezoid-create, or
-  corezoid-review when the session was substantial (processes deployed, new
-  external dependencies discovered, architectural decisions made, issues found
-  or resolved). Activate when the user says "update context", "save context",
-  "update docs", "push context", "зафіксуй контекст", "збережи контекст",
-  "оновити документацію", "corezoid-git-context", or signals the session is
-  wrapping up after real changes were made to Corezoid. Do NOT activate for
-  purely informational sessions where nothing was deployed.
+  Update _ext/docs/*.md in the git mirror after a session with real deploys or
+  decisions. Triggers: "save context", "збережи контекст".
 ---
 
 # Session Analysis — Update _ext/docs/*.md

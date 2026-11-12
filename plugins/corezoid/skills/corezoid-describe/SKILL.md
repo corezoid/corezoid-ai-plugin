@@ -1,13 +1,8 @@
 ---
 name: corezoid-describe
 description: >
-  Updates or creates the description of a Corezoid process, folder, or project
-  without touching its logic. Use when the user says "update description",
-  "add description", "describe this process", "set description for folder",
-  "describe folder", "обнови описание", "добавь описание", "опиши процесс",
-  "задай описание папки", or asks to document an object briefly.
-  Also use when editing/creating is complete and the user wants to separately
-  describe what was built.
+  Set the short description of a process, folder or project without changing
+  logic. Triggers: "add description", "обнови описание".
 ---
 
 # Update Process / Folder / Project Description

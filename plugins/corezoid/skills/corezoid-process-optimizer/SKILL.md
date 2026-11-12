@@ -1,14 +1,9 @@
 ---
 name: corezoid-process-optimizer
 description: >
-  Optimizes a Corezoid process JSON — reduces tact consumption by merging nodes,
-  cleans data flow, fills missing node titles, adds resilience patterns, and replaces
-  logic-only Code nodes with Condition + Set Parameters.
-  Activate when the user says "optimize", "improve", "reduce tacts", "merge nodes",
-  "clean up process", "what can be improved", "show optimizations", "replace Code node
-  with Set Parameters / Condition", "simplify code nodes", or any phrase
-  implying they want to make a process faster, cheaper, or more readable.
-  Two modes: plan-only (analysis + report, no changes) and auto (plan + execute immediately).
+  Optimize a process: fewer tacts, merged nodes, data flow, resilience, Code →
+  Condition + Set Parameters. Triggers: "optimize", "improve", "clean up
+  process".
 ---
 
 # Corezoid Process Optimizer

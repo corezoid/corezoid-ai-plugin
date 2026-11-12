@@ -1,12 +1,8 @@
 ---
 name: corezoid-state-diagram-create
 description: >
-  Corezoid state diagram creation specialist. Use when the user wants to create
-  a new Corezoid state diagram, build a state machine, design a status / lifecycle
-  store, or set up a "state" object with conv_type "state". Activate when the
-  user says "create a state diagram", "build a state machine", "new state diagram",
-  "design states", "track status", "user lifecycle", "состояния", "стейт диаграмма",
-  "создать state diagram", or mentions storing state-by-ref between processes.
+  New state diagram (conv_type "state"): state machine, status store by ref.
+  Triggers: "state diagram", "стейт диаграмма", "track status".
 ---
 
 # Create a New Corezoid State Diagram

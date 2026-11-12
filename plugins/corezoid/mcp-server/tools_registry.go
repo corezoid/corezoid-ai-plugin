@@ -524,7 +524,7 @@ var coreToolDefs = []mcpTool{
 	},
 	{
 		Name:        "logout",
-		Description: "Remove saved Corezoid credentials from disk.",
+		Description: "Log out: delete the entry for the current directory in ~/.corezoid/config.json (token or API key, workspace, stage, git settings). Entries of other directories and the .stage.json file stay. Tell the user the result in their language, including the browser SSO warning. To reconnect, call login.",
 		Annotations: toolHints(hintMutates, hintSafe, hintIdempotent, hintLocal),
 		InputSchema: map[string]interface{}{
 			"type":       "object",

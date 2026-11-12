@@ -1,11 +1,9 @@
 ---
 name: corezoid-create
 description: >
-  Corezoid process creation specialist. Use when the user wants to create a new
-  Corezoid process from scratch, build a new automation flow, or design a new business
-  process. Activate when the user says "create a process", "build a new flow",
-  "new process", "design from scratch", "create an automation", or "add a new process".
-  Not for API connectors — use /corezoid-connector-create.
+  Create a new process from scratch. Triggers: "create a process", "new
+  process", "создай процесс". One-endpoint connectors:
+  corezoid-connector-create.
 ---
 
 # Create a New Corezoid Process
@@ -208,6 +206,7 @@ Use the `Read` tool to load these files when specific node or validation details
 | `${CLAUDE_PLUGIN_ROOT}/docs/process/error-handling.md` | Error handling patterns |
 | `${CLAUDE_PLUGIN_ROOT}/docs/process/node-positioning-best-practices.md` | Coordinate system and layout guidelines |
 | `${CLAUDE_PLUGIN_ROOT}/docs/variables-guide.md` | Variable naming rules, creation workflow, usage examples |
+| `${CLAUDE_PLUGIN_ROOT}/docs/process/corezoid-api-integration.md` | A node that calls the Corezoid API (`/api/2/json`): `api_secret_outer` signing, `ops` payload; login and secret stay in variables |
 
 ## Example Processes
 

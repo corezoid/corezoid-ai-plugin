@@ -1,12 +1,10 @@
 ---
 name: corezoid-api-connector
 description: >
-  Corezoid API connector specialist. Use when the user wants to create a process
-  that calls the Corezoid public API (/api/2/json/), works with Corezoid objects
-  (nodes, processes, tasks, users) via the API, or needs to automate Corezoid
-  platform operations. Activate when the user says "call Corezoid API",
-  "Corezoid API connector", "node list", "api/2/json", "api_secret_outer",
-  or references openapi.corezoid.com operations.
+  Build a process that calls the Corezoid public API (/api/2/json). Run only
+  via /corezoid-api-connector; for Corezoid API connectors use
+  corezoid-connector-create.
+disable-model-invocation: true
 ---
 
 # Corezoid API Connector

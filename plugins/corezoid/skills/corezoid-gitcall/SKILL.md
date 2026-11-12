@@ -1,14 +1,8 @@
 ---
 name: corezoid-gitcall
 description: >
-  Corezoid Git Call node specialist — run custom code (Python, Go, Java, PHP,
-  JavaScript, Clojure, Lisp, Prolog, or a custom Dockerfile) as a step inside a
-  process. Use when the user needs logic that plain nodes cannot do: parsing
-  files, using external libraries, cryptography, building email/attachments, or
-  any custom runtime. Activate on "git call", "gitcall", "run my code",
-  "parse a file", "use a library", "custom code node", "python/go/php in a
-  process", or "why does push-process hang on git_call". Load this skill only
-  when the task is actually about git_call — it is not needed for ordinary flows.
+  Git Call node: custom code (Python, Go, JS, PHP, Java, Dockerfile) as a
+  process step. Triggers: "git call", "run my code", git_call push hangs.
 ---
 
 # Corezoid Git Call

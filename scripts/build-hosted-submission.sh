@@ -18,7 +18,7 @@ URL="https://mcp.corezoid.com/mcp"
 # Also left out: skills whose core tools the hosted server does not offer —
 # variables (create/modify/delete-variable), aliases (create-alias), state
 # diagrams (create-state-diagram) and the bot editor (orchestrator, snapshots).
-EXCLUDE_SKILLS=(corezoid-init corezoid-logout corezoid-git-context corezoid-node-layout corezoid-retro corezoid-feedback marketplace-publish-validation corezoid-gen-bot
+EXCLUDE_SKILLS=(corezoid-init corezoid-git-context corezoid-node-layout corezoid-retro corezoid-feedback marketplace-publish-validation corezoid-gen-bot
   corezoid-edit-bot corezoid-variable-manager corezoid-alias-manager corezoid-state-diagram-create)
 
 VERSION="$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["version"])' "$SRC/.codex-plugin/plugin.json")"

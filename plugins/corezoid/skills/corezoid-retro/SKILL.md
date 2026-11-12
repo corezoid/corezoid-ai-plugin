@@ -1,17 +1,8 @@
 ---
 name: corezoid-retro
 description: >
-  Corezoid session retrospective specialist. Analyzes the finished (or ending)
-  session of Corezoid work and turns what was learned into concrete,
-  ready-to-apply updates — workspace CLAUDE.md entries, feedback reports to the
-  Corezoid team, permission allowlist entries, personal memory. Routes each
-  finding to the right scope and applies nothing without explicit user
-  confirmation. The goal: every session makes the next one smarter. Use when
-  the user says "retro", "retrospective", "what did we learn", "capture
-  learnings", "update CLAUDE.md from this session", "session retrospective",
-  "ретро", "что мы узнали", "зафиксируй выводы", or signals the session is
-  wrapping up and wants to keep the takeaways. Do not trigger on a mere
-  summary request that transfers nothing into files or configs.
+  End-of-session retrospective: route learnings to CLAUDE.md, team feedback,
+  permissions or memory. Triggers: "retro", "ретро", "что мы узнали".
 ---
 
 # Run a Corezoid Session Retrospective

@@ -1,15 +1,9 @@
 ---
 name: corezoid-lifecycle
 description: >
-  Safely pauses, resumes, or moves existing Corezoid processes and folders.
-  Use only when the user explicitly asks to pause/unpause/resume/activate a
-  process or to move/relocate/reorganize a specific process or folder. Trigger
-  on "pause process", "resume process", "move process", "move folder",
-  "поставь процесс на паузу", "сними с паузы", "возобнови процесс",
-  "перемести процесс", "перемести папку", "перенеси процесс", or
-  "перенеси папку". Do not activate merely because a review, edit, cleanup,
-  or refactor is in progress; those are not authorization to mutate lifecycle
-  or location.
+  Pause, resume or move processes and folders, only on explicit request.
+  Triggers: "pause/resume process", "move process/folder", "поставь на паузу",
+  "перемести процесс".
 ---
 
 # Corezoid Lifecycle and Move Operations

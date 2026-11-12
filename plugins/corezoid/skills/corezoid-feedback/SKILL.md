@@ -1,24 +1,9 @@
 ---
 name: corezoid-feedback
 description: >
-  Collects and submits bug reports, improvement requests, and quality signals
-  about the Corezoid plugin to the Corezoid team. Activate in two cases:
-
-  1. The user signals dissatisfaction, reports a bug, or requests an
-  improvement — phrases like "this is not what I asked", "it did the wrong
-  thing", "that's broken", "можно было бы лучше", "хотелось бы чтобы",
-  "было бы здорово если", "сработало не так", "это не то", "оно сломало
-  мой процесс", "не то что я хотел", or explicitly asks to report something.
-
-  2. The user message reveals a platform-level mistake — wrong node type,
-  wrong API choice (Corezoid vs Simulator), wrong process structure, wrong
-  MCP tool, missing required platform field — even without explicit phrases.
-  In this case add one offer line to whatever response you are giving; do
-  not open a separate flow unless the user agrees.
-
-  Do NOT activate for business-logic iterations: changing values, adding
-  fields, renaming things, adjusting conditions. These are normal user-driven
-  changes, not platform issues.
+  Report plugin bugs/ideas to the Corezoid team. After a platform mistake
+  (wrong node type or MCP tool, Simulator vs Corezoid API) offer it in one
+  line; not for business logic.
 ---
 
 # Corezoid Feedback Skill

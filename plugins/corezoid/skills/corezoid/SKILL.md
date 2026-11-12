@@ -1,13 +1,8 @@
 ---
 name: corezoid
 description: >
-  Universal Corezoid assistant. Use when the user asks anything about
-  Corezoid processes, wants to work with process JSON files, mentions process
-  nodes, MCP tools, process validation, or any Corezoid-specific task. Also
-  use when the user mentions "Corezoid", "BPM process", "conv.json",
-  "push process", "run task", or asks for general platform knowledge.
-  This skill provides deep knowledge of the platform model and guides you to
-  use the Corezoid MCP tools correctly.
+  Corezoid basics: platform model, .conv.json, nodes, MCP tools, validation.
+  Use for any Corezoid task that no narrower corezoid-* skill covers.
 ---
 
 # Corezoid Platform Assistant
@@ -214,7 +209,6 @@ pull-process(process_id=12345678)
 
 For domain-specific workflows use the specialized skills:
 - `/corezoid-init` — setting up environment and pulling from Corezoid
-- `/corezoid-logout` — remove saved Corezoid credentials for the current workspace
 - `/corezoid-create` — creating a new process from scratch
 - `/corezoid-connector-create` — connector to an API endpoint (one endpoint = one process): any HTTP API — external, internal, or Corezoid itself
 - `/corezoid-edit` — modifying an existing process
@@ -228,7 +222,7 @@ For domain-specific workflows use the specialized skills:
 - `/corezoid-alias-manager` — creating, listing, modifying, deleting, and using aliases
 - `/corezoid-variable-manager` — creating, listing, modifying, deleting variables (visible/secret, raw/json)
 - `/corezoid-process-optimizer` — reduce tacts (merge nodes), clean data flow, fill names, add semaphors
-- `/corezoid-api-connector` — build processes that call the Corezoid public API (`/api/2/json/`) using `api_secret_outer`
+- `/corezoid-api-connector` — *user-run only (Claude cannot invoke it; for Corezoid API requests use `/corezoid-connector-create`)* — build processes that call the Corezoid public API (`/api/2/json/`) using `api_secret_outer`
 - `/corezoid-retro` — end-of-session retrospective: extract learnings (failed→fixed push deltas, data-shape surprises, corrections) and route them to workspace CLAUDE.md, team feedback, settings, or personal memory with user confirmation
 - `/corezoid-describe` — update or create the description of a process, folder, or project without editing its logic
 - `/corezoid-git-context` — after a substantial session: analyse changes and update `_ext/docs/*.md` in the git mirror

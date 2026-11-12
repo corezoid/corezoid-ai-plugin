@@ -1,11 +1,8 @@
 ---
 name: corezoid-init
 description: >
-  Corezoid environment setup specialist. Use when the user wants to connect to
-  Corezoid, set up credentials, authenticate, pull a project, configure the
-  environment, or start working with a Corezoid project for the first time.
-  Activate when the user says "init", "setup", "connect to corezoid", "login",
-  "pull workspace", "configure environment", or "get started".
+  Connect to Corezoid: login (OAuth or API key), workspace and stage, project
+  pull. Triggers: "init", "setup", "login", "connect to corezoid".
 ---
 
 # Initialize Corezoid Environment

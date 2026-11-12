@@ -1,13 +1,8 @@
 ---
 name: corezoid-state-diagram-edit
 description: >
-  Corezoid state diagram editing specialist. Use when the user wants to modify,
-  update, or fix an existing Corezoid state diagram — add or remove a state, change
-  a transition, add a side effect on transition, fix the wiring of an api_callback
-  state node, or rework transitions. Activate when the user says "edit a state
-  diagram", "add a state", "remove a state", "change transitions", "fix state
-  diagram", "update state machine", "поправить state diagram", "изменить состояния",
-  or refers to modifying a .conv.json with conv_type "state".
+  Modify a state diagram: states, transitions, side effects, api_callback
+  wiring. Triggers: "edit state diagram", "add a state".
 ---
 
 # Edit an Existing Corezoid State Diagram

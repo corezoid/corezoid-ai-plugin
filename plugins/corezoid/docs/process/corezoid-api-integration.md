@@ -1,6 +1,7 @@
 # Corezoid API Integration — full pattern reference
 
-Reference doc for the `corezoid-api-connector` skill. It describes, in detail, how
+Reference doc for the `corezoid-api-connector` skill; `corezoid-connector-create` and
+`corezoid-create` take only the signing and the `ops` payload from it. It describes, in detail, how
 to build a Corezoid process that calls the **Corezoid public API**
 (`/api/2/json/`) with a native **API Call node** — no Code node, no manual SHA1.
 

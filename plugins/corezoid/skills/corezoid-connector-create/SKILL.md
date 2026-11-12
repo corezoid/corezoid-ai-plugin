@@ -1,18 +1,9 @@
 ---
 name: corezoid-connector-create
 description: >
-  API connector builder. Use when the user wants a Corezoid process that calls ONE endpoint
-  of ANY HTTP API — external (Stripe, OpenWeather, Google, banks, CRMs), internal
-  (Simulator.Company, own services) or Corezoid itself — built from a text description, a
-  documentation link, an OpenAPI/Swagger file, or a list of endpoints produced while
-  reasoning about a task. Produces an atomic connector: input contract, validation when
-  needed, a single API Call, Reply to Process on every outcome, unified response format,
-  test, and Smart API registration. Activate on: "create a connector", "API connector",
-  "integrate with <API>", "connect to <API>", "wrap this endpoint",
-  "connector from this openapi.yaml", "сделай коннектор", "коннектор к API",
-  "интеграция с", "подключи API", "обёртка над API", "зроби конектор", "конектор до API",
-  "інтеграція з", "підключи API".
-  NOT for processes with business logic or several calls — use /corezoid-create.
+  Atomic connector process for ONE endpoint of any HTTP API (Corezoid
+  /api/2/json too), from docs or OpenAPI. Triggers: "connector", "коннектор",
+  "інтеграція з". Not multi-step.
 ---
 
 # Create an API Connector Process
@@ -31,6 +22,14 @@ After a successful test it is registered as a Smart API Connector in Simulator.C
 | a process with business logic, several calls, orchestration | `/corezoid-create` — stop here |
 | one endpoint of any HTTP API, Corezoid API included (or several endpoints → several connectors) | **this skill** |
 | an endpoint that needs files, git or a protocol the API Call node does not support | this skill, the call node is `git_call` (read `/corezoid-gitcall` first) |
+
+**Target is the Corezoid API itself** (`/api/2/json`): the API Call node signs the request —
+the URL ends with the API login, `api_secret_outer` holds the secret, `send_sys: true`,
+`format: ""`, `extra.ops` is a stringified JSON array. Never compute the SHA1 signature in a
+Code node. Take only the signing and the `ops` payload from
+`${CLAUDE_PLUGIN_ROOT}/docs/process/corezoid-api-integration.md`; the rest follows this skill:
+login and secret in variables, not input params; `debug_info: true`; a Reply on every path;
+named result fields.
 
 ## Hard rules (every connector, no exceptions)
 
@@ -234,6 +233,7 @@ Then do the **Final Step: Update Git Context** exactly as in `/corezoid-create`.
 | `references/registration.md` | Step 10 |
 | `${CLAUDE_PLUGIN_ROOT}/skills/corezoid-create/SKILL.md` | Core rules for nodes and error clusters |
 | `${CLAUDE_PLUGIN_ROOT}/docs/nodes/api-call-node.md` | API Call fields, error tags, semaphores |
+| `${CLAUDE_PLUGIN_ROOT}/docs/process/corezoid-api-integration.md` | Target is the Corezoid API: `api_secret_outer` signing, `ops` payload (its process shape does not apply here) |
 | `${CLAUDE_PLUGIN_ROOT}/docs/nodes/reply-to-process-node.md` | Reply formats, stringification |
 | `${CLAUDE_PLUGIN_ROOT}/docs/process/process-with-parameters.md` | `params` shape |
 | `${CLAUDE_PLUGIN_ROOT}/docs/variables-guide.md` | Variables |

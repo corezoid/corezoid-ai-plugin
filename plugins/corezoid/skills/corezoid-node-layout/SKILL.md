@@ -1,19 +1,8 @@
 ---
 name: corezoid-node-layout
 description: >
-  Auto-arrange the nodes of a Corezoid process into a clean, readable layout —
-  a vertical top-to-bottom business flow with error handling railed off to the
-  right and no overlapping nodes. Use it AUTOMATICALLY on every process YOU
-  built or assembled, as the last step before push-process — never hand-place
-  coordinates by eye (eyeballed grids overlap the moment nodes are taller than
-  the step). Also reach for it whenever the user says a process is unreadable,
-  tangled, ugly, a mess, or that nodes sit on top of each other, or asks to
-  "arrange", "lay out", "tidy up", "make readable", "fix positions", "clean
-  the diagram", "remove the overlaps" — or their equivalents in any language
-  the user speaks. Do NOT silently
-  re-arrange a process the user already positioned — see the "When you MAY
-  re-layout" rules in the body. It changes x/y coordinates only — never
-  collapse/expand state, edges, logic, conv_id, aliases or node types.
+  Auto-arrange node x/y before pushing a process you built, or when asked to
+  arrange nodes or fix overlaps. Never re-layout user-positioned ones.
 ---
 
 # Auto-Layout Corezoid Process Nodes

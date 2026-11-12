@@ -1,11 +1,8 @@
 ---
 name: corezoid-edit
 description: >
-  Corezoid process editing specialist. Use when the user wants to modify, update,
-  or fix an existing Corezoid process, add or remove nodes, change node behavior,
-  add an API call, fix an error, or update process logic. Activate when the user
-  says "edit a process", "modify", "update", "fix", "add a node", "change
-  behavior", "add a call", "remove a node", or "update the logic".
+  Modify an existing process: add/remove nodes, change logic, fix errors.
+  Triggers: "edit process", "fix", "add a node", "поправь процесс".
 ---
 
 # Edit an Existing Corezoid Process

@@ -58,7 +58,7 @@ CI (`.github/workflows/ci.yml`) also runs:
 - Version sync across all seven release files: `plugins/corezoid/.claude-plugin/plugin.json`, `plugins/corezoid/.codex-plugin/plugin.json`, `plugins/corezoid/.kiro-plugin/plugin.json`, the root `plugin.json` (agent-plugins manifest), `.claude-plugin/marketplace.json`, `.agents/plugins/marketplace.json`, and `POWER.md`.
 - License consistency (must be MIT) across the Claude, Codex, and two marketplace manifests.
 - Markdown link check.
-- Skills-list sync (`scripts/check-skills-sync.py`): the skill directories under `plugins/corezoid/skills/` must match the lists in `CLAUDE.md`, `README.md`, and `POWER.md`.
+- Skills-list sync (`scripts/check-skills-sync.py`): the skill directories under `plugins/corezoid/skills/` must match the lists in `CLAUDE.md`, `README.md`, and `POWER.md`. The same script checks each `SKILL.md` frontmatter: `---` on the first line, `name` equal to the directory, and a non-empty `description` of at most 200 characters, because descriptions load into every session.
 
 `.mcp.kiro.json` and the Kiro manifest's `license` field are **not** checked by CI — their consistency is enforced only at release time via `RELEASE_CHECKLIST.md` and `PUBLISHING.md`.
 
@@ -80,7 +80,6 @@ plugins/corezoid/
       SKILL.md
       references/                   — Lookup documents (variables guide, env setup)
     corezoid-init/                  — Environment setup, OAuth login, workspace pull
-    corezoid-logout/                — Remove saved Corezoid credentials for the current workspace
     corezoid-create/                — Create a new process from scratch
     corezoid-edit/                  — Modify an existing process
     corezoid-lifecycle/             — Explicitly pause/resume processes and move processes/folders

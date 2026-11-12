@@ -1,6 +1,9 @@
 ---
 name: corezoid-gen-bot
-description: Generates a multi-platform messenger bot (Telegram, Viber, Apple Messages for Business, Facebook Messenger) on Corezoid from a set of EXISTING Corezoid processes plus a description of the desired bot. Use when the user has a working Corezoid backend (process ids, a folder id, or pulled .conv.json files) and wants it reachable from a chat. Runs in phases via subcommands plan/execute/refresh — see the "Modes" section. Trigger on "сделай бота из этих процессов", "сгенерируй бота", "бот на базе процессов корезоид", "telegram/viber/fbmessenger bot from corezoid processes", "corezoid gen bot", "оберни процессы в бота", "создай оркестратор коммуникаций", "communications orchestrator", "згенеруй бота з цих процесів", and on "execute plan" / "погнали" / "refresh plan" when a `.corezoid-gen-bot/` directory is present. For a Smart Form web app over the same processes use `simulator-app-generator`; to change a bot that already exists use `edit-bot`.
+description: >
+  Messenger bot (Telegram, Viber, Apple, FB) over existing processes.
+  Triggers: "сгенерируй бота", "bot from processes"; "погнали"/"execute plan"
+  in .corezoid-gen-bot/.
 ---
 
 # corezoid-gen-bot

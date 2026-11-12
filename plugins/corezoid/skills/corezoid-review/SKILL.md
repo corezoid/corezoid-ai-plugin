@@ -1,11 +1,8 @@
 ---
 name: corezoid-review
 description: >
-  Corezoid process review and audit specialist. Use when the user wants to
-  analyze, review, audit, or improve an existing Corezoid process. Activate
-  when the user says "review a process", "analyze", "check", "audit", "find
-  issues", "explain this process", "what's wrong with", "optimize", or
-  "check for hardcoded values".
+  Review one process: issues, hardcoded values, what it does. Triggers:
+  "review process", "audit", "what's wrong with", "проверь процесс".
 ---
 
 # Review a Corezoid Process
