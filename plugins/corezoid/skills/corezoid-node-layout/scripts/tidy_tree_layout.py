@@ -3,6 +3,9 @@ import json, sys, collections, copy, secrets, re
 ARGS = [a for a in sys.argv[1:] if not a.startswith('--')]
 SPLIT_ERRORS = '--split-errors' in sys.argv[1:]
 FIX_SETPARAM_ERRORS = '--fix-setparam-errors' in sys.argv[1:]
+# rule 21 report: --check-setparam-errors prints a WARNING per Set Parameters that cannot fail that owns an
+# error path; off by default.
+CHECK_SETPARAM_ERRORS = '--check-setparam-errors' in sys.argv[1:]
 # --fix-final-icons: rule 27 -- set End icons by title (error-like word -> error, else success)
 FIX_FINAL_ICONS = '--fix-final-icons' in sys.argv[1:]
 # --vertical: no horizontal rows at all (rules 1/22/23 off) -- one vertical trunk, on user request
@@ -25,7 +28,24 @@ if _before is not None or _ids is not None:
 PATH = ARGS[0]
 
 with open(PATH) as f:
-    d = json.load(f)
+    _raw = f.read()
+d = json.loads(_raw)
+# Go's encoder escapes & < > as \u0026 \u003c \u003e; some writers don't. Keep whichever the input used.
+_ESCAPE_HTML = not any(ch in _raw for ch in '&<>')
+
+
+
+def save():
+    """Write like pull-process (Go json.MarshalIndent: 2-space indent, no trailing newline) so a
+    layout run changes only the touched lines of a git-tracked .conv.json, not the whole file."""
+    out = json.dumps(d, ensure_ascii=False, indent=2)
+    if _ESCAPE_HTML:
+        for ch, esc in (('&', '\\u0026'), ('<', '\\u003c'), ('>', '\\u003e'),
+                        ('\u2028', '\\u2028'), ('\u2029', '\\u2029')):
+            out = out.replace(ch, esc)
+    with open(PATH, 'w') as f:
+        f.write(out)
+
 
 nodes = d['scheme']['nodes']
 by_id = {n['id']: n for n in nodes}
@@ -159,13 +179,25 @@ def is_set_param_node(n):
     return 'set_param' in types and all(t in ('set_param', 'go') for t in types)
 
 
-def string_only_set_param(n):
-    # Rule 21 covers only Set Parameters whose keys are all strings: a string key never fails
-    # (missing source -> ""), so an error path there is dead weight. With an object/array/number
-    # key the error exit is a real check (e.g. a config object that is missing -> "Config is missing"),
-    # so such a node may keep its own error cluster.
-    return all(t == 'string' for lg in n['condition']['logics'] if lg.get('type') == 'set_param'
-               for t in (lg.get('extra_type') or {}).values())
+_FAILING_VALUE = re.compile(r'\$\.|conv\[')
+
+
+def cannot_fail_set_param(n):
+    # Rule 21 covers only Set Parameters that cannot fail: every key is a string AND every value is
+    # a literal and/or plain {{path}} references (a missing path renders as ""). A built-in function
+    # ($.math, $.date, $.sha1_hex, $.unixtime, ...) can fail on a bad argument even in a string key,
+    # and a state-diagram read (conv[...]) can be denied -- such nodes keep their own error path,
+    # as do nodes with an object/array/number key (a missing or malformed source fails there).
+    for lg in n['condition']['logics']:
+        if lg.get('type') != 'set_param':
+            continue
+        types, extra = lg.get('extra_type') or {}, lg.get('extra') or {}
+        for k, v in extra.items():
+            if types.get(k) != 'string' or not isinstance(v, str) or _FAILING_VALUE.search(v):
+                return False
+        if any(t != 'string' for t in types.values()):
+            return False
+    return True
 
 
 # ---- rule 27: every End carries an icon -- `error` when its title says so, else `success` ----
@@ -200,7 +232,7 @@ def incoming_count(t):
 
 
 for _n in list(nodes):
-    if not is_set_param_node(_n) or not string_only_set_param(_n):
+    if not is_set_param_node(_n) or not cannot_fail_set_param(_n):
         continue
     _go = default_go_of(_n)
     for _lg in _n['condition']['logics']:
@@ -211,8 +243,9 @@ for _n in list(nodes):
         _what = (f"has its own error cluster {by_id[_t].get('title')!r}" if _cluster is not None
                  else f"error exit jumps to {by_id[_t].get('title')!r} while `go` leads to {by_id[_go].get('title')!r}")
         if not FIX_SETPARAM_ERRORS:
-            print(f"WARNING (rule 21): Set Parameters {_n.get('title')!r} {_what} -- its error exit must "
-                  f"go where `go` goes (rerun with --fix-setparam-errors)")
+            if CHECK_SETPARAM_ERRORS:
+                print(f"WARNING (rule 21): Set Parameters {_n.get('title')!r} {_what} -- its error exit must "
+                      f"go where `go` goes (rerun with --fix-setparam-errors)")
             continue
         _lg['err_node_id'] = _go
         if by_id[_go].get('obj_type') == 0:
@@ -1029,16 +1062,14 @@ def apply_incremental():
         extra['modeForm'] = 'expand' if will_expand(nid) else 'collapse'
         by_id[nid]['extra'] = json.dumps(extra, ensure_ascii=False)
         print('new:', by_id[nid].get('title'), extra['modeForm'], by_id[nid]['x'], by_id[nid]['y'])
-    with open(PATH, 'w') as f:
-        json.dump(d, f, ensure_ascii=False, separators=(',', ':'))
+    save()
 
 
 if ONLY_NEW:
     if not NEW:
         print('no new nodes -- nothing to place')
         # structural fixes (--fix-setparam-errors / --split-errors) must still be saved
-        with open(PATH, 'w') as f:
-            json.dump(d, f, ensure_ascii=False, separators=(',', ':'))
+        save()
     else:
         apply_incremental()
     sys.exit(0)
@@ -1069,5 +1100,4 @@ if span_x > 20000 or span_y > 20000:
     print(f'WARNING: canvas span exceeds Corezoid limit (width={span_x}, height={span_y}, limit=20000 each). '
           'Do NOT shrink the constants -- split this process into sub-processes (see SKILL.md).')
 
-with open(PATH, 'w') as f:
-    json.dump(d, f, ensure_ascii=False, separators=(',', ':'))
+save()

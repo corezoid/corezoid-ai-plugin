@@ -190,25 +190,32 @@ default-`go` edge as dispatcher spine only when *both* ends are router-shaped.
     starts `GAP` below the row and belongs to A (the success path), even when
     BFS met it via B first. Also covers two condition branches that rejoin at
     one node. A lone fallback without a success sibling is a rule-15 bypass.
-21. **A string-only Set Parameters never owns an error path.** Its
-    `err_node_id` goes exactly where its `go` goes ("ignore and continue") — no
-    `Reply error` + End cluster of its own, no error exit that jumps further
-    down the flow (that skips steps — a real bug).
-    - **Scope:** only Set Parameters whose keys are all `string` (`extra_type`).
-      A string key never fails (missing source → `""`), so its error path is dead
-      weight. A key of type `object`/`array`/`number` fails on a missing or
-      malformed source — there the error exit is a real check and may keep its
-      own cluster; the script skips such nodes (and rule 6 treats them as forks).
-    - The script prints `WARNING (rule 21)` per violating node;
-      `--fix-setparam-errors` rewires the error exit to the `go` target and
+21. **A Set Parameters that cannot fail does not need an error path** (opt-in
+    style rule, never applied by default). Its `err_node_id` may go exactly where
+    its `go` goes ("ignore and continue") instead of a `Reply error` + End
+    cluster of its own; an error exit that jumps further down the flow skips
+    steps and is usually a bug.
+    - **Scope — "cannot fail" is narrow:** every key is `string` (`extra_type`)
+      *and* every value is a literal and/or plain `{{path}}` references (a
+      missing path renders as `""`). Out of scope, keep their error path:
+      a key of type `object`/`array`/`number` (a missing or malformed source
+      fails), any built-in function in the value (`$.math`, `$.date`,
+      `$.sha1_hex`, `$.unixtime`, … — they fail on a bad argument even in a
+      string key), and state-diagram reads (`conv[…]` — can be denied or
+      missing). See `docs/nodes/set-parameters-node.md` for the failure modes.
+    - `--check-setparam-errors` prints `WARNING (rule 21)` per node in scope that
+      owns an error path. It is a style note, not an error: nothing is printed
+      without the flag.
+    - `--fix-setparam-errors` rewires the error exit to the `go` target and
       deletes cluster nodes nobody references any more (`fix:` / `removed
-      orphan` lines — a structural change, so on an existing process only as
-      part of an edit the user asked for).
+      orphan` lines — a structural change, so only when the user asked for it).
+      The `go` target then also receives an error edge; if it is a plain node
+      (`obj_type: 0`) the flag sets it to `obj_type: 3`, the type the editor
+      uses for a node with incoming error edges (otherwise the UI offers
+      "convert to new format").
     - `CHECK (rule 21)`: a fallback that rejoins *further down* than its success
       step does. Sometimes intended (the skipped nodes need the step's data), so
       it is a question, not an error.
-    - When writing nodes by hand, apply this directly. The `go` target then also
-      receives an error edge, so it must be `obj_type: 3` (the fix flag sets it).
 22. **A horizontal row is packed, and the router chain always stays the row.**
     On a dispatcher spine the default `go` to the next router is primary even
     when a matched branch is bigger. Each row node is placed at the first x

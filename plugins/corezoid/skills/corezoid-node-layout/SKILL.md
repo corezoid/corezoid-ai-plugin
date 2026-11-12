@@ -201,9 +201,11 @@ differ by *source* (different fields/buttons/events), build a chain of
 single-condition routers — one `go_if_const` per node, default `go` to the
 next router — not one condition node with N unrelated `go_if_const`. Keep one
 condition node only when the branches are values of the *same* source and
-reconverge below. Every call gets its own error Reply + End pair.
+reconverge below. Every call (Call a Process / API Call) gets its own error
+Reply + End pair; a Set Parameters that cannot fail is not a call — see rule 21.
 
-**How to run** (rewrites the file in place; without the structural flags only
+**How to run** (needs `python3`; rewrites the file in place, 2-space indented like
+`pull-process`, so only touched lines diff; without the structural flags only
 `x`, `y` and `extra.modeForm` change):
 
 ```bash
@@ -211,7 +213,8 @@ S="${CLAUDE_PLUGIN_ROOT}/skills/corezoid-node-layout/scripts/tidy_tree_layout.py
 python3 "$S" <file.conv.json>                        # full layout (new process / explicit request)
 python3 "$S" <file> --only-new <before.conv.json>    # place only nodes absent from <before> (rule 19)
 python3 "$S" <file> --only-new <before> --nodes=<id1>,<id2>   # + existing nodes whose wiring changed
-python3 "$S" <file> --fix-setparam-errors            # rule 21: string-only Set Parameters error exit -> its go target
+python3 "$S" <file> --check-setparam-errors          # rule 21: report Set Parameters that cannot fail but own an error path
+python3 "$S" <file> --fix-setparam-errors            # rule 21: rewire those error exits to the go target (structural)
 python3 "$S" <file> --split-errors                   # rule 11: give each source its own copy of a shared error cluster
 python3 "$S" <file> --fix-final-icons                # rule 27: set empty/wrong End icons (error / success) by title
 python3 "$S" <file> --vertical                       # only on request: one vertical trunk, no horizontal rows
@@ -239,7 +242,7 @@ re-layout and needs the same explicit request as `layout-process`.
 | Line | Meaning / action |
 |---|---|
 | `row: A -> B -> …` | a horizontal row of checks was found (rule 23) — sanity-check it |
-| `WARNING (rule 21)` | a string-only Set Parameters owns an error path — `--fix-setparam-errors` (structural) |
+| `WARNING (rule 21)` | only with `--check-setparam-errors`: a Set Parameters that cannot fail owns an error path — a style note; `--fix-setparam-errors` only if the user wants it (structural) |
 | `CHECK (rule 21)` | a fallback rejoins further down than its success step — a question, maybe intended |
 | `WARNING (rule 27)` | an End has an empty icon or an error-titled End is not `error` — `--fix-final-icons` |
 | `split:` / `fix:` / `removed orphan` | structural changes — review before pushing |
