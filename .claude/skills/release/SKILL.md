@@ -120,7 +120,7 @@ python3 -m json.tool plugins/corezoid/.kiro-plugin/plugin.json >/dev/null
 python3 -m json.tool plugin.json >/dev/null
 ```
 
-Then regenerate the discovery files. Do it after the bump, because `public/llms.txt` carries the version:
+Then regenerate the discovery files. Their content does not depend on the version; the step picks up skill and tool changes that landed since they were last generated, and leaves the files unchanged when there are none:
 
 ```bash
 python3 scripts/generate-discovery.py

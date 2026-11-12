@@ -62,7 +62,7 @@ CI (`.github/workflows/ci.yml`) also runs:
 
 `.mcp.kiro.json` and the Kiro manifest's `license` field are **not** checked by CI — their consistency is enforced only at release time via `RELEASE_CHECKLIST.md` and `PUBLISHING.md`.
 
-To regenerate the machine-readable discovery files (`public/llms.txt`, `public/.well-known/skills/index.json`) — the release commit does this after the version bump. The release workflow regenerates them too, but only attaches them to the GitHub Release; it does not commit them, so the copies on `main` are only as fresh as the last release commit:
+To regenerate the machine-readable discovery files (`public/llms.txt`, `public/.well-known/skills/index.json`) — the release commit does this. The release workflow regenerates them too, but only attaches them to the GitHub Release; it does not commit them, so the copies on `main` are only as fresh as the last release commit:
 
 ```bash
 python3 scripts/generate-discovery.py

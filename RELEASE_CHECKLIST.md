@@ -26,7 +26,7 @@ Use this before tagging a public release.
 ## Content
 
 - [ ] `CHANGELOG.md` has an entry for the new version.
-- [ ] `public/llms.txt` and `public/.well-known/skills/index.json` are regenerated with `python3 scripts/generate-discovery.py` after the version bump and committed. `release.yml` attaches its own copies to the GitHub Release but does not commit them, and `llms.txt` links to `main`.
+- [ ] `public/llms.txt` and `public/.well-known/skills/index.json` are regenerated with `python3 scripts/generate-discovery.py` and committed. `release.yml` attaches its own copies to the GitHub Release but does not commit them, and `llms.txt` links to `main`.
 - [ ] `README.md` install commands reference `corezoid/corezoid-ai-plugin`.
 - [ ] No local test processes (`*.conv.json`) are tracked in git.
 
