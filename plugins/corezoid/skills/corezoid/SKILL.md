@@ -1,8 +1,8 @@
 ---
 name: corezoid
 description: >
-  Start here for any Corezoid task: platform model, .conv.json, nodes, MCP
-  tools, validation. Routes to the right corezoid-* skill.
+  Corezoid basics: platform model, .conv.json, nodes, MCP tools, validation.
+  Use for any Corezoid task that no narrower corezoid-* skill covers.
 ---
 
 # Corezoid Platform Assistant

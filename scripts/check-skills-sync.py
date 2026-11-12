@@ -48,21 +48,28 @@ MAX_DESCRIPTION_CHARS = 200
 
 
 def parse_description(frontmatter):
-    """Return the description value, folding a `>`/`|` block into one line."""
+    """Return the description value as one line.
+
+    Folds a block scalar (`>`, `|`, with any chomping/indent indicator) and a
+    plain or quoted scalar that continues on indented lines, so the length
+    check sees the whole value.
+    """
     lines = frontmatter.split("\n")
     for i, line in enumerate(lines):
         m = re.match(r"description:\s*(.*)$", line)
         if not m:
             continue
         value = m.group(1).strip()
-        if value in (">", "|", ">-", "|-"):
-            block = []
-            for nxt in lines[i + 1:]:
-                if nxt and not nxt[0].isspace():
-                    break
-                block.append(nxt.strip())
-            return " ".join(part for part in block if part)
-        return value.strip("\"'")
+        rest = []
+        for nxt in lines[i + 1:]:
+            if nxt and not nxt[0].isspace():
+                break
+            rest.append(nxt.strip())
+        if re.fullmatch(r"[>|][0-9+-]*", value):
+            parts = rest
+        else:
+            parts = [value] + rest
+        return " ".join(part for part in parts if part).strip("\"'")
     return None
 
 

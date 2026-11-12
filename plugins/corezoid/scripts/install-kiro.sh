@@ -285,7 +285,8 @@ FRONTMATTER
 - Sharing processes/folders, managing groups or API keys → `corezoid-access.md`
 - Managing environment variables / `{{env_var[@name]}}` references → `corezoid-variable-manager.md`
 - Creating, listing, or linking process aliases (`short_name`) → `corezoid-alias-manager.md`
-- Building a Corezoid-API-calling connector process → `corezoid-api-connector.md`
+- A connector to one endpoint of any HTTP API, the Corezoid API included → `corezoid-connector-create.md`
+- The user explicitly asks for `corezoid-api-connector` → `corezoid-api-connector.md`
 - Writing custom code in a Git Call node (Python, Go, PHP, ...) → `corezoid-gitcall.md`
 - Updating a process/folder/project description only → `corezoid-describe.md`
 - Reporting a bug or improvement to the Corezoid team → `corezoid-feedback.md`

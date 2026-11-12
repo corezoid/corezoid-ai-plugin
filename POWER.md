@@ -2,7 +2,7 @@
 name: corezoid
 displayName: Corezoid
 version: 3.13.0
-description: Corezoid Actor Engine assistant. Exposes the Corezoid REST API as MCP tools (`convctl`) plus 27 skills covering process creation, editing, lifecycle operations, review, validation, dashboards, state diagrams, variables, access, layout, docs, and custom-code git_call. Ships JSON schemas and per-node-type documentation for all 24 Corezoid node types.
+description: Corezoid Actor Engine assistant. Exposes the Corezoid REST API as MCP tools (`convctl`) plus 26 skills covering process creation, editing, lifecycle operations, review, validation, dashboards, state diagrams, variables, access, layout, docs, and custom-code git_call. Ships JSON schemas and per-node-type documentation for all 24 Corezoid node types.
 author:
   name: Corezoid
   url: https://corezoid.com
@@ -106,7 +106,7 @@ Each skill is auto-loaded from `.kiro/skills/<name>/SKILL.md`:
 - `corezoid-variable-manager` — env vars and `{{env_var[@name]}}` references.
 - `corezoid-alias-manager` — process aliases.
 - `corezoid-connector-create` — atomic single-endpoint connector to any HTTP API (external, internal, or Corezoid itself).
-- `corezoid-api-connector` — external API wrap templates.
+- `corezoid-api-connector` — processes that call the Corezoid public API; only on explicit request (connectors go to `corezoid-connector-create`).
 - `corezoid-gitcall` — custom code (Python/Go/Java/PHP/JS/…) as a `git_call` step.
 - `corezoid-retro` — end-of-session retrospective; routes learnings to CLAUDE.md, feedback, settings, or memory.
 - `corezoid-feedback` — bug reports and quality signals to the Corezoid team.

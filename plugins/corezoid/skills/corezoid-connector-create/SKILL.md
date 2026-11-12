@@ -26,7 +26,10 @@ After a successful test it is registered as a Smart API Connector in Simulator.C
 **Target is the Corezoid API itself** (`/api/2/json`): the API Call node signs the request —
 the URL ends with the API login, `api_secret_outer` holds the secret, `send_sys: true`,
 `format: ""`, `extra.ops` is a stringified JSON array. Never compute the SHA1 signature in a
-Code node. Read `${CLAUDE_PLUGIN_ROOT}/docs/process/corezoid-api-integration.md` before Step 5.
+Code node. Take only the signing and the `ops` payload from
+`${CLAUDE_PLUGIN_ROOT}/docs/process/corezoid-api-integration.md`; the rest follows this skill:
+login and secret in variables, not input params; `debug_info: true`; a Reply on every path;
+named result fields.
 
 ## Hard rules (every connector, no exceptions)
 
@@ -230,7 +233,7 @@ Then do the **Final Step: Update Git Context** exactly as in `/corezoid-create`.
 | `references/registration.md` | Step 10 |
 | `${CLAUDE_PLUGIN_ROOT}/skills/corezoid-create/SKILL.md` | Core rules for nodes and error clusters |
 | `${CLAUDE_PLUGIN_ROOT}/docs/nodes/api-call-node.md` | API Call fields, error tags, semaphores |
-| `${CLAUDE_PLUGIN_ROOT}/docs/process/corezoid-api-integration.md` | Target is the Corezoid API: `api_secret_outer` signing, `ops` payload |
+| `${CLAUDE_PLUGIN_ROOT}/docs/process/corezoid-api-integration.md` | Target is the Corezoid API: `api_secret_outer` signing, `ops` payload (its process shape does not apply here) |
 | `${CLAUDE_PLUGIN_ROOT}/docs/nodes/reply-to-process-node.md` | Reply formats, stringification |
 | `${CLAUDE_PLUGIN_ROOT}/docs/process/process-with-parameters.md` | `params` shape |
 | `${CLAUDE_PLUGIN_ROOT}/docs/variables-guide.md` | Variables |
