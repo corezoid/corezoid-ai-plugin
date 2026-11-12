@@ -157,6 +157,13 @@ $.date(%y-%m-%d+1-%h:%i:%s)      // Adds 1 day to the current date
 
 - The format string can include any characters; only the format specifiers are replaced
 - To add or subtract from date components, append +N or -N to the format specifier
+- Verified behaviour:
+  - Only the lowercase specifiers above work; `%Y`, `%H`, `%M` stay in the output literally.
+    `$.date(%y%m%d)` → `20261106`
+  - The result is in the **server's local time zone**, not UTC
+  - Offsets carry over: `%m-10` in November gives `01`, `%y.%m-23` gives the previous year's month
+  - `{{var}}` inside `$.date(...)` is not substituted (`%m+{{n}}` does not work). Build the format
+    string in a previous node (`fmt` = `%y.%m-{{n}}`) and use `$.date({{fmt}})`
 
 #### `$.unixtime(format)`
 
@@ -177,6 +184,12 @@ $.unixtime(format)
 ```
 $.unixtime(%y-%m-%d %h:%i:%s)    // Returns the Unix timestamp for the specified date
 ```
+
+**Parsing a date (verified):** `$.unixtime({{text}})` parses only `YYYY-MM-DD HH:MM:SS` with leading
+zeros. A value such as `2026-11-4 09:00:00` silently returns the **current** time — no error
+branch, so validate or pad the date first. In `$.unixtime(%y-%m-%d 09:00:00)` the date comes from
+the server's local time zone (as in `$.date`), while the time written in the string is read as
+UTC.
 
 **Current time:** `$.unixtime()` without arguments returns the current Unix time in seconds — but
 only when it is the **whole value** of a key typed `number` (also in a Reply node `res_data`).
@@ -207,6 +220,11 @@ $.base64_encode(string)
 $.base64_encode(hello)           // Returns: "aGVsbG8="
 $.base64_encode({{username}})    // Encodes the 'username' parameter
 ```
+
+Verified: the argument can be several templates (`$.base64_encode({{head}}{{body}})`) and a large
+value (~45 KB of HTML). Non-ASCII text is encoded as UTF-8, and quotes, commas, brackets and line
+breaks inside the substituted values do not break the argument. The same holds for the hash
+functions below.
 
 #### `$.md5(string)`
 
@@ -247,6 +265,11 @@ $.md5_hex({{password}})          // Hashes the 'password' parameter
 
 Calculates the SHA-1 hash of a string, returning either the raw binary result or the hexadecimal
 representation.
+
+Verified: `$.sha1_hex({{ts}}{{secret}}{{body}}{{secret}})` hashes the concatenated text correctly
+even when `body` is a JSON string with quotes and commas — enough to sign a Corezoid API request
+without a Code node. Build `body` and `ts` in one node and the signature in the next one (keys of
+one node do not see each other).
 
 #### `$.sha224(string)` and `$.sha224_hex(string)`
 
@@ -470,6 +493,16 @@ end, {{records}})                                          // Keeps only records
     `proplists:get_value(<<"key">>, Item, Default)`
   - To test "is the result non-empty", use a Condition on `{{result[0].id}}` `eq ""` (a missing
     element resolves to `""`, see the Condition node docs)
+  - **`{{var}}` inside `fun … end` is not substituted.** `$.filter(fun(L) -> L =/= <<"{{id}}">> end,
+    {{arr}})` compares with the literal text `{{id}}` and silently keeps every element. Only
+    constants work inside the function; `$.filter({{fun_var}}, …)` and a whole expression from a
+    variable go to the error branch. To remove an element by a value from the task, find its index
+    with a Condition loop (`{{arr[{{i}}].value}}` `eq` `{{id}}`), blank it with a `string` key
+    `{{arr[{{i}}]}}` = `""`, then drop blanks:
+    `$.filter(fun(X) -> X =/= <<>> andalso X =/= null end, {{arr}})`
+  - Object elements are proplists: `L.value`, `maps:get`, `is_map` go to the error branch — use
+    `proplists:get_value`
+  - A missing array (`{{nokey.items}}`) sends an `array` key to the error branch
 
 ## Function Nesting
 

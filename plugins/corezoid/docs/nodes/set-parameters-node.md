@@ -308,7 +308,10 @@ them survives, with no error. Build the object with **one** key of type `object`
 "extra_type": { "view": "object" }
 ```
 
-To add fields to an object that already exists in the task, use a Code node.
+A **single** key with a dynamic field name, `{{view.{{field}}}}`, is the exception: it adds or
+replaces that one field and keeps the other fields of `view` (if `view` does not exist, it is
+created). Two or more such keys in one node lose fields as above. To add several fields to an
+object that already exists in the task, use a Code node.
 
 **Missing fields.** A reference to a field that is not in the task resolves to `""` when the key
 type is `string`, and the node goes to `go`. For `number`, `boolean`, `object` and `array` keys the
@@ -329,13 +332,19 @@ silently not set (for example, an API call later sends an empty body). Correct:
 ```
 
 String values substituted inside quotes are escaped correctly (quotes and backslashes in the value
-keep the JSON valid).
+keep the JSON valid). The same escaping means a JSON **fragment** cannot be built as a string and
+spliced in: with `part` = `,"title":"{{title}}"` (a `string` key), the object template
+`{"data":{{data}}{{part}}}` gets `\"title\"` and fails with `set_param_wrong_convert_param`.
+Unquoted substitution works only for values that are objects, arrays, numbers or booleans. A body
+with optional keys needs one full template per combination, or a Code node.
 
 **Values read from a state diagram are not re-rendered.** If a value read with
 `{{conv[@sd-alias].ref[key].field}}` contains `{{x}}`, it comes back verbatim even when `x` exists in
 the task — so templates can be stored in a state diagram. A nested lookup with a dynamic key works,
 including keys with spaces: `{{conv[@sd-alias].ref[dict].titles.{{code}}}}` (string type) gives `""`
 for an unknown key and goes to `go`; with type `object` a missing ref goes to the error branch.
+Reading a state diagram of **another stage** (`{{conv[<id>].ref[...]}}`) fails with
+`access_denied` ("It's not allowed to get task between stages") — keep a copy in the same stage.
 
 ## Node Patterns
 
