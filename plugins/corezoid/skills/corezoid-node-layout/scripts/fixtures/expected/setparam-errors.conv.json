@@ -1,0 +1,375 @@
+{
+  "obj_type": 1,
+  "obj_id": 0,
+  "title": "Synthetic set parameters errors",
+  "description": "",
+  "status": "active",
+  "params": [],
+  "ref_mask": true,
+  "conv_type": "process",
+  "scheme": {
+    "nodes": [
+      {
+        "id": "e00000000000000000000001",
+        "obj_type": 1,
+        "condition": {
+          "logics": [
+            {
+              "type": "go",
+              "to_node_id": "e00000000000000000000002"
+            }
+          ],
+          "semaphors": []
+        },
+        "title": "Start",
+        "description": "",
+        "x": -56,
+        "y": -551,
+        "extra": "{\"modeForm\": \"collapse\", \"icon\": \"\"}",
+        "options": null
+      },
+      {
+        "id": "e00000000000000000000002",
+        "obj_type": 0,
+        "condition": {
+          "logics": [
+            {
+              "type": "set_param",
+              "extra": {
+                "name": "{{body.name}}",
+                "label": "item {{body.id}}"
+              },
+              "extra_type": {
+                "name": "string",
+                "label": "string"
+              },
+              "err_node_id": "e0000000000000000000000a"
+            },
+            {
+              "type": "go",
+              "to_node_id": "e00000000000000000000003"
+            }
+          ],
+          "semaphors": []
+        },
+        "title": "Copy fields (plain strings)",
+        "description": "",
+        "x": -156,
+        "y": -459,
+        "extra": "{\"modeForm\": \"expand\", \"icon\": \"\"}",
+        "options": null
+      },
+      {
+        "id": "e0000000000000000000000a",
+        "obj_type": 0,
+        "condition": {
+          "logics": [
+            {
+              "type": "api_rpc_reply",
+              "mode": "key_value",
+              "res_data": {
+                "status": "error"
+              },
+              "res_data_type": {
+                "status": "string"
+              },
+              "throw_exception": false
+            },
+            {
+              "type": "go",
+              "to_node_id": "e0000000000000000000000b"
+            }
+          ],
+          "semaphors": []
+        },
+        "title": "Reply error — copy",
+        "description": "",
+        "x": 100,
+        "y": -459,
+        "extra": "{\"modeForm\": \"collapse\", \"icon\": \"\"}",
+        "options": null
+      },
+      {
+        "id": "e0000000000000000000000b",
+        "obj_type": 2,
+        "condition": {
+          "logics": [],
+          "semaphors": []
+        },
+        "title": "Error — copy",
+        "description": "",
+        "x": 128,
+        "y": -371,
+        "extra": "{\"modeForm\": \"collapse\", \"icon\": \"error\"}",
+        "options": null
+      },
+      {
+        "id": "e00000000000000000000003",
+        "obj_type": 0,
+        "condition": {
+          "logics": [
+            {
+              "type": "set_param",
+              "extra": {
+                "delay": "$.math({{delay}}*2)"
+              },
+              "extra_type": {
+                "delay": "string"
+              },
+              "err_node_id": "e0000000000000000000000c"
+            },
+            {
+              "type": "go",
+              "to_node_id": "e00000000000000000000004"
+            }
+          ],
+          "semaphors": []
+        },
+        "title": "Compute delay ($.math in a string)",
+        "description": "",
+        "x": -156,
+        "y": -254,
+        "extra": "{\"modeForm\": \"expand\", \"icon\": \"\"}",
+        "options": null
+      },
+      {
+        "id": "e0000000000000000000000c",
+        "obj_type": 0,
+        "condition": {
+          "logics": [
+            {
+              "type": "api_rpc_reply",
+              "mode": "key_value",
+              "res_data": {
+                "status": "error"
+              },
+              "res_data_type": {
+                "status": "string"
+              },
+              "throw_exception": false
+            },
+            {
+              "type": "go",
+              "to_node_id": "e0000000000000000000000d"
+            }
+          ],
+          "semaphors": []
+        },
+        "title": "Reply error — compute",
+        "description": "",
+        "x": 100,
+        "y": -254,
+        "extra": "{\"modeForm\": \"collapse\", \"icon\": \"\"}",
+        "options": null
+      },
+      {
+        "id": "e0000000000000000000000d",
+        "obj_type": 2,
+        "condition": {
+          "logics": [],
+          "semaphors": []
+        },
+        "title": "Error — compute",
+        "description": "",
+        "x": 128,
+        "y": -166,
+        "extra": "{\"modeForm\": \"collapse\", \"icon\": \"error\"}",
+        "options": null
+      },
+      {
+        "id": "e00000000000000000000004",
+        "obj_type": 0,
+        "condition": {
+          "logics": [
+            {
+              "type": "set_param",
+              "extra": {
+                "url": "{{conv[@config].ref[config].api_url}}"
+              },
+              "extra_type": {
+                "url": "string"
+              },
+              "err_node_id": "e0000000000000000000000e"
+            },
+            {
+              "type": "go",
+              "to_node_id": "e00000000000000000000005"
+            }
+          ],
+          "semaphors": []
+        },
+        "title": "Read config (state diagram)",
+        "description": "",
+        "x": -156,
+        "y": -49,
+        "extra": "{\"modeForm\": \"expand\", \"icon\": \"\"}",
+        "options": null
+      },
+      {
+        "id": "e0000000000000000000000e",
+        "obj_type": 0,
+        "condition": {
+          "logics": [
+            {
+              "type": "api_rpc_reply",
+              "mode": "key_value",
+              "res_data": {
+                "status": "error"
+              },
+              "res_data_type": {
+                "status": "string"
+              },
+              "throw_exception": false
+            },
+            {
+              "type": "go",
+              "to_node_id": "e0000000000000000000000f"
+            }
+          ],
+          "semaphors": []
+        },
+        "title": "Reply error — config",
+        "description": "",
+        "x": 100,
+        "y": -49,
+        "extra": "{\"modeForm\": \"collapse\", \"icon\": \"\"}",
+        "options": null
+      },
+      {
+        "id": "e0000000000000000000000f",
+        "obj_type": 2,
+        "condition": {
+          "logics": [],
+          "semaphors": []
+        },
+        "title": "Error — config",
+        "description": "",
+        "x": 128,
+        "y": 39,
+        "extra": "{\"modeForm\": \"collapse\", \"icon\": \"error\"}",
+        "options": null
+      },
+      {
+        "id": "e00000000000000000000005",
+        "obj_type": 0,
+        "condition": {
+          "logics": [
+            {
+              "type": "set_param",
+              "extra": {
+                "request": "{\"id\":\"{{body.id}}\"}"
+              },
+              "extra_type": {
+                "request": "object"
+              },
+              "err_node_id": "e00000000000000000000010"
+            },
+            {
+              "type": "go",
+              "to_node_id": "e00000000000000000000006"
+            }
+          ],
+          "semaphors": []
+        },
+        "title": "Build request (object key)",
+        "description": "",
+        "x": -156,
+        "y": 156,
+        "extra": "{\"modeForm\": \"expand\", \"icon\": \"\"}",
+        "options": null
+      },
+      {
+        "id": "e00000000000000000000010",
+        "obj_type": 0,
+        "condition": {
+          "logics": [
+            {
+              "type": "api_rpc_reply",
+              "mode": "key_value",
+              "res_data": {
+                "status": "error"
+              },
+              "res_data_type": {
+                "status": "string"
+              },
+              "throw_exception": false
+            },
+            {
+              "type": "go",
+              "to_node_id": "e00000000000000000000011"
+            }
+          ],
+          "semaphors": []
+        },
+        "title": "Reply error — request",
+        "description": "",
+        "x": 100,
+        "y": 156,
+        "extra": "{\"modeForm\": \"collapse\", \"icon\": \"\"}",
+        "options": null
+      },
+      {
+        "id": "e00000000000000000000011",
+        "obj_type": 2,
+        "condition": {
+          "logics": [],
+          "semaphors": []
+        },
+        "title": "Error — request",
+        "description": "",
+        "x": 128,
+        "y": 244,
+        "extra": "{\"modeForm\": \"collapse\", \"icon\": \"error\"}",
+        "options": null
+      },
+      {
+        "id": "e00000000000000000000006",
+        "obj_type": 0,
+        "condition": {
+          "logics": [
+            {
+              "type": "api_rpc_reply",
+              "mode": "key_value",
+              "res_data": {
+                "status": "ok"
+              },
+              "res_data_type": {
+                "status": "string"
+              },
+              "throw_exception": false
+            },
+            {
+              "type": "go",
+              "to_node_id": "e00000000000000000000007"
+            }
+          ],
+          "semaphors": []
+        },
+        "title": "Reply success",
+        "description": "",
+        "x": -156,
+        "y": 361,
+        "extra": "{\"modeForm\": \"expand\", \"icon\": \"\"}",
+        "options": null
+      },
+      {
+        "id": "e00000000000000000000007",
+        "obj_type": 2,
+        "condition": {
+          "logics": [],
+          "semaphors": []
+        },
+        "title": "Success",
+        "description": "",
+        "x": -56,
+        "y": 551,
+        "extra": "{\"modeForm\": \"collapse\", \"icon\": \"success\"}",
+        "options": null
+      }
+    ],
+    "web_settings": [
+      [],
+      []
+    ]
+  }
+}

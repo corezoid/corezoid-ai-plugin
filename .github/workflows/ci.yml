@@ -222,6 +222,9 @@ jobs:
       - name: Lint run.sh (syntax check)
         run: sh -n plugins/corezoid/mcp-server/run.sh
 
+      - name: tidy-tree layout golden tests (corezoid-node-layout)
+        run: python3 plugins/corezoid/skills/corezoid-node-layout/scripts/test_tidy_tree_layout.py
+
   docs:
     name: Docs link check
     runs-on: ubuntu-latest
