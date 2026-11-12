@@ -122,7 +122,7 @@ var coreToolDefs = []mcpTool{
 	},
 	{
 		Name:        "push-process",
-		Description: "Validate and deploy a process file to Corezoid. Runs lint-process first; deploy-breaking findings block, advisory ones do not. Also blocks when the process changed on the server since pull, reporting local edits, server changes, true overlap and the last known author — resolve by re-pulling, by merge=true (writes a reviewable local 3-way merge plus a .pre-merge backup without deploying), or by overwrite_server_change=true after being shown that report. force=true is the generic-lint override ONLY: it never waives the concurrency gate, never confirms Stub Mode, and never bypasses structural lint findings (broken links, old-format nodes, self-referencing api_copy/api_rpc) — those describe an invalid graph the server rejects and must be fixed in the design. A pre-push snapshot is always attempted for existing processes; overwriting never-compared live state (overwrite_server_change or adopt_existing) without one, or when the snapshot call itself failed, is refused unless allow_no_snapshot=true AND the stage resolves as mutable and non-production-like — that combination is irreversible, so the flag is ignored on immutable, production-like or unresolvable stages, including installations whose API has no snapshot object at all. Never-deployed processes are exempt. A server-state fetch failing for anything but a genuine 'not found' also blocks, since the deploy is about to call that same API. Active Call Process Stub Mode (obj_type:4) is warning-only on a resolved mutable non-production-like stage; immutable/prod/unknown stages require allow_active_stub_mode=true after explicit confirmation. Every waived gate is reported in the push result, not only the server log. The file's root title and description are deployed too, so a stale file renames or re-describes the process the same way it overwrites the scheme. The server regenerates node IDs and rewrites the local file with the canonical scheme, so reference nodes by title and re-read the file after push.",
+		Description: "Validate (lint-process) and deploy a process file to Corezoid. Gates, each reported when it blocks or is waived: (1) Lint: deploy-breaking findings block, advisory ones do not; force=true overrides generic findings only, never structural ones (broken links, old-format nodes, self-referencing api_copy/api_rpc), which must be fixed in the design. (2) Server change since pull: the report lists local edits, server changes, overlap and the last author; re-pull, use merge=true, or pass overwrite_server_change=true after that report was shown. If the server state cannot be read, or the process was deleted since the pull, the push blocks and no flag waives it: retry or re-pull. (3) Snapshot: one is attempted before an existing process is overwritten (installations without snapshots skip it, and the result says so). If it fails, or overwrite_server_change/adopt_existing would overwrite live state without one, the push needs allow_no_snapshot=true, honoured only on a resolved mutable stage that is not production-like; a process in another stage or workspace blocks regardless. Never-deployed processes are exempt. (4) Active Call Process Stub Mode (obj_type:4): a warning on a resolved mutable stage that is not production-like; immutable, production-like or unresolved stages need allow_active_stub_mode=true after explicit confirmation. The root title and description deploy too, so a stale file renames the process. The server regenerates node IDs and rewrites the local file: reference nodes by title and re-read the file after push.",
 		Annotations: toolHints(hintMutates, hintDestructive, hintNonIdempotent, hintOpenWorld),
 		InputSchema: map[string]interface{}{
 			"type": "object",
@@ -137,27 +137,27 @@ var coreToolDefs = []mcpTool{
 				},
 				"force": map[string]interface{}{
 					"type":        "boolean",
-					"description": "Deploy despite generic blocking lint findings. LINT ONLY: does not overwrite a concurrent server change (use overwrite_server_change), confirm active Stub Mode (allow_active_stub_mode) or waive the snapshot requirement (allow_no_snapshot). Advisory findings never block. Does NOT bypass pre-deployment validation errors such as self-referencing api_copy/api_rpc nodes — fix those in the design. Default false.",
+					"description": "Deploy despite generic blocking lint findings. LINT ONLY: it does not override a server change (overwrite_server_change), confirm Stub Mode (allow_active_stub_mode), waive the snapshot (allow_no_snapshot), or bypass structural findings. Default false.",
 				},
 				"overwrite_server_change": map[string]interface{}{
 					"type":        "boolean",
-					"description": "Deploy over a process that changed on the server since your pull, dropping those changes. Pass it only in reply to the block report describing what would be lost — never speculatively, never as a default: set ahead of time it authorises overwriting a concurrent change nobody has seen. Unlike force (which overrides lint findings) this overrides another person's edit. Refused when no pre-push snapshot exists unless allow_no_snapshot=true is also passed (never-deployed processes are exempt). Default false.",
+					"description": "Deploy over a server change made since your pull, dropping it. It overrides another person's edit: pass it only in reply to the block report that showed what would be lost, never ahead of time or by default. Without a pre-push snapshot it also needs allow_no_snapshot=true (never-deployed processes are exempt). Default false.",
 				},
 				"allow_active_stub_mode": map[string]interface{}{
 					"type":        "boolean",
-					"description": "Explicitly allow deploying active Call Process Stub Mode (obj_type:4) when the target stage is immutable, production-like, or cannot be resolved. Use only after confirming that temporary mock replies are intentionally being deployed.",
+					"description": "Deploy active Call Process Stub Mode (obj_type:4) to an immutable, production-like or unresolved stage. Pass it only after the user confirmed that these temporary mock replies are meant to be deployed.",
 				},
 				"merge": map[string]interface{}{
 					"type":        "boolean",
-					"description": "On a concurrent-change conflict, perform a 3-way merge: preserve the original as <process>.pre-merge and graft non-conflicting server node/process-field changes into the local file for review (does not deploy). Values changed differently on both sides are kept as yours and listed to resolve. Default false.",
+					"description": "On a server-change block, write a 3-way merge into the local file for review instead of deploying: the original is kept as <process>.pre-merge, non-conflicting server node and process-field changes are grafted in, and values changed on both sides stay yours and are listed. Default false.",
 				},
 				"allow_no_snapshot": map[string]interface{}{
 					"type":        "boolean",
-					"description": "Deploy over an existing process although no pre-push snapshot could be taken — project_id/stage_id unresolvable, or the CreateSnapshot call itself failed — i.e. accept that the overwritten version cannot be restored. Honoured ONLY on a stage that resolves and is mutable; refused on immutable, production-like or unresolvable ones. Where force and overwrite_server_change override findings or a shown conflict, this waives the ability to undo; combining it with overwrite_server_change or adopt_existing is the deliberate way to make an irreversible overwrite. Prefer fixing the workspace config (corezoid-init) or retrying once the API recovers. Default false.",
+					"description": "Deploy over an existing process although no pre-push snapshot could be taken (project/stage unresolved, or the snapshot call failed): the overwritten version cannot be restored. Ignored unless the stage resolves as mutable and not production-like. Prefer fixing the workspace config (corezoid-init) or retrying once the API recovers. Default false.",
 				},
 				"adopt_existing": map[string]interface{}{
 					"type":        "boolean",
-					"description": "Deploy a file that has no pull baseline over a process that already has a deployed version — overwriting server state without knowing what it contains. Use only when the local file is deliberately authoritative (an import or a restored copy); otherwise pull-process first so real conflicts surface. Not needed for never-deployed processes. Where force and overwrite_server_change resolve a conflict you were shown, this declares you do not know what is on the server. Refused when no pre-push snapshot exists unless allow_no_snapshot=true is also passed (a never-deployed process is exempt). Default false.",
+					"description": "Deploy a file with no pull baseline over a process that already has a deployed version, overwriting server state you have not seen. Only when the local file is deliberately authoritative (an import, a restored copy); otherwise pull-process first so real conflicts surface. Not needed for never-deployed processes. Without a pre-push snapshot it also needs allow_no_snapshot=true. Default false.",
 				},
 			},
 			"required": []string{"process_path"},
@@ -205,18 +205,18 @@ var coreToolDefs = []mcpTool{
 	},
 	{
 		Name:        "lint-process",
-		Description: "Validate a local process file (no server call — pull-process first; pass process_path or process_id). Reports orphaned nodes, noop conditions, unused set_params, passthrough escalations, shared error clusters (an error node fed by several different failing nodes — each needs its own Reply/Error cluster), old-format nodes (obj_type:0 err_node_id targets, or action logic mixed with go_if_const — the UI would force-convert the process), finals reachable without api_rpc_reply in a process that replies elsewhere (an RPC caller would hang), nodes whose logics do not end with a default go and time semaphors under the 30s server minimum (both reject the deploy), literal non-string values in api_rpc_reply res_data (a scheme shape that hangs the server commit on push), active Call Process Stub Mode nodes (obj_type:4) that bypass the real called process, self-referencing api_copy/api_rpc nodes (valid in the Corezoid UI but always blocked by push-process — force=true does not bypass this), and git_call (api_git) usage (advisory: ~60s execution deadline, 50 MB/0.1 CPU shared defaults, ephemeral local storage — see the corezoid-gitcall skill).",
+		Description: "Check a local process file without calling the server (pull-process first; pass process_path or process_id). Findings that block push-process include an invalid or old-format graph, schema errors, logics without a default go, semaphors under 30 s, finals that skip api_rpc_reply while other paths reply, literal non-string values in api_rpc_reply res_data/extra, incomplete params or Call Process extra/extra_type, self-referencing api_copy/api_rpc, and active Stub Mode on production-like stages. Advisory: orphaned, no-op or passthrough nodes, unused set_params, shared error clusters, git_call limits (see the corezoid-gitcall skill). Each finding explains itself; push-process runs this first.",
 		Annotations: toolHints(hintReadOnly, hintSafe, hintIdempotent, hintLocal),
 		InputSchema: map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
 				"process_path": map[string]interface{}{
 					"type":        "string",
-					"description": "Path to the local process .conv.json file (the one pull-process saved). Relative paths resolve against the project root (the server's working directory), not the directory of a previously opened file; absolute paths inside the project root are accepted too. Give either this or process_id.",
+					"description": "Path to the local .conv.json, relative to the project root (not to a previously opened file) or absolute inside it. Give this or process_id.",
 				},
 				"process_id": map[string]interface{}{
 					"type":        "integer",
-					"description": "Numeric process ID — lints the local pulled copy <ID>_<title>.conv.json found in the workspace. Lint never fetches from the server: run pull-process first if the process has no local copy.",
+					"description": "Process ID: lints the pulled copy <ID>_<title>.conv.json in the workspace. Never fetches from the server.",
 				},
 			},
 		},
@@ -246,18 +246,18 @@ var coreToolDefs = []mcpTool{
 	},
 	{
 		Name:        "run-task",
-		Description: "Run a task on an already-deployed Corezoid process (without re-deploying) and wait for it to reach a final node. Never commits or deploys, so it needs only run access and works on immutable stages; if the deployed node list is unreadable the task is still sent, just reported without node names. Identify the target with EXACTLY ONE of process_path (a local .conv.json) or process_id (the numeric ID, as in show-task/list-task-history) — process_id needs no local file, so it works in hosts with no process repository; passing both is rejected as ambiguous. Polls up to wait_sec (default 30), so tasks crossing async nodes (api, api_rpc, db_call, delay) still return their final result. On timeout returns success with Status: in progress and the node the task is on — expected on state, callback, delay and storage nodes; on any other node the summary flags that step as slow or stuck — plus TaskRef/TaskID for follow-up via list-task-history. wait_sec 0 creates the task without waiting. The platform checks every data value against the type of the process input parameter it fills (the \"params\" list of the .conv.json): read those types first and send numbers and booleans unquoted and arrays/objects as nested JSON, not strings. With process_path, obvious mismatches (\"5\" for a number, 5 for a string) are converted to the deployed types and reported; a rejected task lists the expected types. Task data over 4 KB is not echoed: the summary lists its size and keys — read it with show-task rather than re-running.",
+		Description: "Run a task on a deployed process and wait for it to reach a final node. Never deploys, so run access is enough and immutable stages work. Pass exactly one of process_path or process_id. Waits up to wait_sec, also across async nodes (api, api_rpc, db_call, delay). At the deadline the result is still a success: Status in progress, the current node (flagged as slow or stuck unless it is a state, callback, delay or storage node) and TaskRef/TaskID for list-task-history; if the task was never found by then, check list-task-history before re-running. Each data value must have the type of the process param it fills (the \"params\" list of the .conv.json); with process_path, obvious mismatches are converted and reported, and a rejected task lists the expected types. Data over 4 KB is summarised by size and keys: read it with show-task instead of re-running. If the deployed node list cannot be read, the task still runs, the wait is capped at 5 s and the reported data may not be final.",
 		Annotations: toolHints(hintMutates, hintDestructive, hintNonIdempotent, hintOpenWorld), // runs the process: its side effects are arbitrary
 		InputSchema: map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
 				"process_path": map[string]interface{}{
 					"type":        []string{"string", "null"},
-					"description": "Relative path to the process JSON file. Omit and pass process_id instead when there is no local process repository (e.g. a host console with no filesystem). Mutually exclusive with process_id.",
+					"description": "Relative path to the process JSON file. Omit it and pass process_id when there is no local file.",
 				},
 				"process_id": map[string]interface{}{
 					"type":        []string{"integer", "null"},
-					"description": "Corezoid process (conv) ID, > 0. Alternative to process_path — use this to run a task without a local .conv.json file, without a preceding pull-process. Mutually exclusive with process_path.",
+					"description": "Process (conv) ID, > 0, as in show-task/list-task-history. Needs no local file and no pull-process.",
 				},
 				"data": map[string]interface{}{
 					"type":        "string",
@@ -265,11 +265,11 @@ var coreToolDefs = []mcpTool{
 				},
 				"ref": map[string]interface{}{
 					"type":        "string",
-					"description": "Optional custom task ref (lookup key, not a guaranteed idempotency key — duplicate-ref behavior depends on the target process/state-diagram). Use this to create a task with a specific, lookup-able ref — e.g. matching an external ID a downstream process keys off of. If omitted, an auto-generated ref (\"<unix_ts>_<rand>\") is used, same as before.",
+					"description": "Optional task ref: a lookup key, such as an external ID a downstream process keys off. Not an idempotency key: duplicate refs behave as the target process decides. Default: auto-generated.",
 				},
 				"wait_sec": map[string]interface{}{
 					"type":        "integer",
-					"description": "How long to wait (seconds) for the task to reach a final node before reporting it as in progress. Default 30, max 600. Raise it for processes with slow external calls or delay nodes. 0 = fire-and-forget: create the task and return its ref without waiting (state diagrams, long async flows).",
+					"description": "Seconds to wait for a final node. Default 30, max 600; raise it for slow external calls or delays. 0 = create the task and return its ref without waiting (state diagrams, long async flows).",
 				},
 				"mode":             runTaskModeSchema,
 				"fields":           runTaskFieldsSchema,
