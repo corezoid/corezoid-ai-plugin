@@ -2,35 +2,35 @@
   "skills": [
     {
       "name": "corezoid",
-      "description": "Universal Corezoid assistant. Use when the user asks anything about Corezoid processes, wants to work with process JSON files, mentions process nodes, MCP tools, process validation, or any Corezoid-specific task. Also use when the user mentions \"Corezoid\", \"BPM process\", \"conv.json\", \"push process\", \"run task\", or asks for general platform knowledge. This skill provides deep knowledge of the platform model and guides you to use the Corezoid MCP tools correctly.",
+      "description": "Corezoid basics: platform model, .conv.json, nodes, MCP tools, validation. Use for any Corezoid task that no narrower corezoid-* skill covers.",
       "files": [
         "https://raw.githubusercontent.com/corezoid/corezoid-ai-plugin/main/plugins/corezoid/skills/corezoid/SKILL.md"
       ]
     },
     {
       "name": "corezoid-access",
-      "description": "Corezoid access-control specialist. Use when the user wants to share a process, folder, stage or project with another user / group / API key, create or delete a user group, create or rotate an API key, invite an external user, or audit who currently has access to a Corezoid object. Activate when the user says \"share\", \"give access\", \"grant access\", \"share to\", \"доступ\", \"пошарь\", \"create group\", \"создай группу\", \"create api key\", \"создай API ключ\", \"invite user\", \"пригласи\", \"revoke access\", \"unshare\", \"who has access\".",
+      "description": "Share processes, folders, stages, projects; groups, API-key users, invites, access audit. Triggers: \"share\", \"доступ\", \"пошарь\", \"create API key\".",
       "files": [
         "https://raw.githubusercontent.com/corezoid/corezoid-ai-plugin/main/plugins/corezoid/skills/corezoid-access/SKILL.md"
       ]
     },
     {
       "name": "corezoid-alias-manager",
-      "description": "Manages Corezoid aliases — create, list, modify, delete, link/unlink, and use aliases in process JSON. Activate when the user mentions \"alias\", \"short_name\", \"short name\", \"create alias\", \"list aliases\", \"delete alias\", \"modify alias\", \"rename alias\", \"unlink alias\", \"link alias\", \"get callback hash\", \"conv[@\", or asks how to reference a process by name instead of numeric ID. Also activate when reviewing a process that uses numeric conv_id values and the user wants to replace them with aliases.",
+      "description": "Process aliases (short_name, conv[@alias]): create, list, modify, delete, link; callback hash / Direct URL. Triggers: \"alias\", \"алиас\".",
       "files": [
         "https://raw.githubusercontent.com/corezoid/corezoid-ai-plugin/main/plugins/corezoid/skills/corezoid-alias-manager/SKILL.md"
       ]
     },
     {
       "name": "corezoid-api-connector",
-      "description": "Corezoid API connector specialist. Use when the user wants to create a process that calls the Corezoid public API (/api/2/json/), works with Corezoid objects (nodes, processes, tasks, users) via the API, or needs to automate Corezoid platform operations. Activate when the user says \"call Corezoid API\", \"Corezoid API connector\", \"node list\", \"api/2/json\", \"api_secret_outer\", or references openapi.corezoid.com operations.",
+      "description": "Build a process that calls the Corezoid public API (/api/2/json). Run only via /corezoid-api-connector; for Corezoid API connectors use corezoid-connector-create.",
       "files": [
         "https://raw.githubusercontent.com/corezoid/corezoid-ai-plugin/main/plugins/corezoid/skills/corezoid-api-connector/SKILL.md"
       ]
     },
     {
       "name": "corezoid-connector-create",
-      "description": "API connector builder. Use when the user wants a Corezoid process that calls ONE endpoint of ANY HTTP API — external (Stripe, OpenWeather, Google, banks, CRMs), internal (Simulator.Company, own services) or Corezoid itself — built from a text description, a documentation link, an OpenAPI/Swagger file, or a list of endpoints produced while reasoning about a task. Produces an atomic connector: input contract, validation when needed, a single API Call, Reply to Process on every outcome, unified response format, test, and Smart API registration. Activate on: \"create a connector\", \"API connector\", \"integrate with <API>\", \"connect to <API>\", \"wrap this endpoint\", \"connector from this openapi.yaml\", \"сделай коннектор\", \"коннектор к API\", \"интеграция с\", \"подключи API\", \"обёртка над API\", \"зроби конектор\", \"конектор до API\", \"інтеграція з\", \"підключи API\". NOT for processes with business logic or several calls — use /corezoid-create.",
+      "description": "Atomic connector process for ONE endpoint of any HTTP API (Corezoid /api/2/json too), from docs or OpenAPI. Triggers: \"connector\", \"коннектор\", \"інтеграція з\". Not multi-step.",
       "files": [
         "https://raw.githubusercontent.com/corezoid/corezoid-ai-plugin/main/plugins/corezoid/skills/corezoid-connector-create/SKILL.md",
         "https://raw.githubusercontent.com/corezoid/corezoid-ai-plugin/main/plugins/corezoid/skills/corezoid-connector-create/references/contract-template.md",
@@ -42,35 +42,35 @@
     },
     {
       "name": "corezoid-create",
-      "description": "Corezoid process creation specialist. Use when the user wants to create a new Corezoid process from scratch, build a new automation flow, or design a new business process. Activate when the user says \"create a process\", \"build a new flow\", \"new process\", \"design from scratch\", \"create an automation\", or \"add a new process\". Not for API connectors — use /corezoid-connector-create.",
+      "description": "Create a new process from scratch. Triggers: \"create a process\", \"new process\", \"создай процесс\". One-endpoint connectors: corezoid-connector-create.",
       "files": [
         "https://raw.githubusercontent.com/corezoid/corezoid-ai-plugin/main/plugins/corezoid/skills/corezoid-create/SKILL.md"
       ]
     },
     {
       "name": "corezoid-dashboard-manager",
-      "description": "Creates and manages Corezoid dashboards — adds charts (column, pie, funnel, table), binds metrics to process nodes, configures real-time mode, and sets up drill-down linking between dashboards. Activate whenever a user asks to create a dashboard, add a chart, visualize process metrics, set up reporting for a Corezoid process, configure real-time monitoring, or asks what dashboards or charts exist. Also activate when the user wants to show task counts, completion rates, error rates, or any other process statistics visually in Corezoid.",
+      "description": "Dashboards and charts bound to process nodes, real-time, drill-down. Triggers: \"dashboard\", \"chart\", \"дашборд\", process metrics.",
       "files": [
         "https://raw.githubusercontent.com/corezoid/corezoid-ai-plugin/main/plugins/corezoid/skills/corezoid-dashboard-manager/SKILL.md"
       ]
     },
     {
       "name": "corezoid-describe",
-      "description": "Updates or creates the description of a Corezoid process, folder, or project without touching its logic. Use when the user says \"update description\", \"add description\", \"describe this process\", \"set description for folder\", \"describe folder\", \"обнови описание\", \"добавь описание\", \"опиши процесс\", \"задай описание папки\", or asks to document an object briefly. Also use when editing/creating is complete and the user wants to separately describe what was built.",
+      "description": "Set the short description of a process, folder or project without changing logic. Triggers: \"add description\", \"обнови описание\".",
       "files": [
         "https://raw.githubusercontent.com/corezoid/corezoid-ai-plugin/main/plugins/corezoid/skills/corezoid-describe/SKILL.md"
       ]
     },
     {
       "name": "corezoid-edit",
-      "description": "Corezoid process editing specialist. Use when the user wants to modify, update, or fix an existing Corezoid process, add or remove nodes, change node behavior, add an API call, fix an error, or update process logic. Activate when the user says \"edit a process\", \"modify\", \"update\", \"fix\", \"add a node\", \"change behavior\", \"add a call\", \"remove a node\", or \"update the logic\".",
+      "description": "Modify an existing process: add/remove nodes, change logic, fix errors. Triggers: \"edit process\", \"fix\", \"add a node\", \"поправь процесс\".",
       "files": [
         "https://raw.githubusercontent.com/corezoid/corezoid-ai-plugin/main/plugins/corezoid/skills/corezoid-edit/SKILL.md"
       ]
     },
     {
       "name": "corezoid-edit-bot",
-      "description": "Iteratively edits an already-built messenger bot from corezoid-gen-bot — a Corezoid Communications Orchestrator serving Telegram, Viber, Apple Messages for Business and Facebook Messenger over a backend of Corezoid processes called with api_rpc. Runs a lean plan → confirm → apply → lint → push → smoke-test loop — see \"Modes\" for plan/execute/deploy. Trigger on \"измени/поправь бота\", \"добавь/убери/переименуй команду\", \"подключи ещё процесс\", \"поменяй текст/клавиатуру бота\", \"добавь язык боту\", \"добавь шаг в диалог\", \"бот отвечает пустым/дважды\", \"почему бот не отвечает\", \"edit/modify bot\", \"add command to bot\", \"wire another process into the bot\", \"change bot copy\", \"fix the bot\", \"задеплой бота\", \"promote stage\", or when the user references PLAN.md/CHANGE.md for a bot. Assumes CWD is the workspace corezoid-gen-bot built (`.corezoid-gen-bot/PLAN.md`, a `*.stage.json` marker, the pulled orchestrator folder). For a Smart Form web app over the same processes use `simulator-app-generator`.",
+      "description": "Edit or fix a bot built by corezoid-gen-bot: commands, copy, keyboards, languages, wiring, deploy. Triggers: \"измени бота\", \"бот не отвечает\".",
       "files": [
         "https://raw.githubusercontent.com/corezoid/corezoid-ai-plugin/main/plugins/corezoid/skills/corezoid-edit-bot/SKILL.md",
         "https://raw.githubusercontent.com/corezoid/corezoid-ai-plugin/main/plugins/corezoid/skills/corezoid-edit-bot/references/change_kinds.md",
@@ -85,14 +85,14 @@
     },
     {
       "name": "corezoid-feedback",
-      "description": "Collects and submits bug reports, improvement requests, and quality signals about the Corezoid plugin to the Corezoid team. Activate in two cases:",
+      "description": "Report plugin bugs/ideas to the Corezoid team. After a platform mistake (wrong node type or MCP tool, Simulator vs Corezoid API) offer it in one line; not for business logic.",
       "files": [
         "https://raw.githubusercontent.com/corezoid/corezoid-ai-plugin/main/plugins/corezoid/skills/corezoid-feedback/SKILL.md"
       ]
     },
     {
       "name": "corezoid-gen-bot",
-      "description": "Generates a multi-platform messenger bot (Telegram, Viber, Apple Messages for Business, Facebook Messenger) on Corezoid from a set of EXISTING Corezoid processes plus a description of the desired bot. Use when the user has a working Corezoid backend (process ids, a folder id, or pulled .conv.json files) and wants it reachable from a chat. Runs in phases via subcommands plan/execute/refresh — see the \"Modes\" section. Trigger on \"сделай бота из этих процессов\", \"сгенерируй бота\", \"бот на базе процессов корезоид\", \"telegram/viber/fbmessenger bot from corezoid processes\", \"corezoid gen bot\", \"оберни процессы в бота\", \"создай оркестратор коммуникаций\", \"communications orchestrator\", \"згенеруй бота з цих процесів\", and on \"execute plan\" / \"погнали\" / \"refresh plan\" when a `.corezoid-gen-bot/` directory is present. For a Smart Form web app over the same processes use `simulator-app-generator`; to change a bot that already exists use `edit-bot`.",
+      "description": "Messenger bot (Telegram, Viber, Apple, FB) over existing processes. Triggers: \"сгенерируй бота\", \"bot from processes\"; \"погнали\"/\"execute plan\" in .corezoid-gen-bot/.",
       "files": [
         "https://raw.githubusercontent.com/corezoid/corezoid-ai-plugin/main/plugins/corezoid/skills/corezoid-gen-bot/SKILL.md",
         "https://raw.githubusercontent.com/corezoid/corezoid-ai-plugin/main/plugins/corezoid/skills/corezoid-gen-bot/references/command_patterns.md",
@@ -109,105 +109,98 @@
     },
     {
       "name": "corezoid-git-context",
-      "description": "Analyzes the current session and updates _ext/docs/*.md in the Corezoid git mirror for the active stage. Use after corezoid-edit, corezoid-create, or corezoid-review when the session was substantial (processes deployed, new external dependencies discovered, architectural decisions made, issues found or resolved). Activate when the user says \"update context\", \"save context\", \"update docs\", \"push context\", \"зафіксуй контекст\", \"збережи контекст\", \"оновити документацію\", \"corezoid-git-context\", or signals the session is wrapping up after real changes were made to Corezoid. Do NOT activate for purely informational sessions where nothing was deployed.",
+      "description": "Update _ext/docs/*.md in the git mirror after a session with real deploys or decisions. Triggers: \"save context\", \"збережи контекст\".",
       "files": [
         "https://raw.githubusercontent.com/corezoid/corezoid-ai-plugin/main/plugins/corezoid/skills/corezoid-git-context/SKILL.md"
       ]
     },
     {
       "name": "corezoid-gitcall",
-      "description": "Corezoid Git Call node specialist — run custom code (Python, Go, Java, PHP, JavaScript, Clojure, Lisp, Prolog, or a custom Dockerfile) as a step inside a process. Use when the user needs logic that plain nodes cannot do: parsing files, using external libraries, cryptography, building email/attachments, or any custom runtime. Activate on \"git call\", \"gitcall\", \"run my code\", \"parse a file\", \"use a library\", \"custom code node\", \"python/go/php in a process\", or \"why does push-process hang on git_call\". Load this skill only when the task is actually about git_call — it is not needed for ordinary flows.",
+      "description": "Git Call node: custom code (Python, Go, JS, PHP, Java, Dockerfile) as a process step. Triggers: \"git call\", \"run my code\", git_call push hangs.",
       "files": [
         "https://raw.githubusercontent.com/corezoid/corezoid-ai-plugin/main/plugins/corezoid/skills/corezoid-gitcall/SKILL.md"
       ]
     },
     {
       "name": "corezoid-init",
-      "description": "Corezoid environment setup specialist. Use when the user wants to connect to Corezoid, set up credentials, authenticate, pull a project, configure the environment, or start working with a Corezoid project for the first time. Activate when the user says \"init\", \"setup\", \"connect to corezoid\", \"login\", \"pull workspace\", \"configure environment\", or \"get started\".",
+      "description": "Connect to Corezoid: login (OAuth or API key), workspace and stage, project pull. Triggers: \"init\", \"setup\", \"login\", \"connect to corezoid\".",
       "files": [
         "https://raw.githubusercontent.com/corezoid/corezoid-ai-plugin/main/plugins/corezoid/skills/corezoid-init/SKILL.md"
       ]
     },
     {
       "name": "corezoid-lifecycle",
-      "description": "Safely pauses, resumes, or moves existing Corezoid processes and folders. Use only when the user explicitly asks to pause/unpause/resume/activate a process or to move/relocate/reorganize a specific process or folder. Trigger on \"pause process\", \"resume process\", \"move process\", \"move folder\", \"поставь процесс на паузу\", \"сними с паузы\", \"возобнови процесс\", \"перемести процесс\", \"перемести папку\", \"перенеси процесс\", or \"перенеси папку\". Do not activate merely because a review, edit, cleanup, or refactor is in progress; those are not authorization to mutate lifecycle or location.",
+      "description": "Pause, resume or move processes and folders, only on explicit request. Triggers: \"pause/resume process\", \"move process/folder\", \"поставь на паузу\", \"перемести процесс\".",
       "files": [
         "https://raw.githubusercontent.com/corezoid/corezoid-ai-plugin/main/plugins/corezoid/skills/corezoid-lifecycle/SKILL.md"
       ]
     },
     {
-      "name": "corezoid-logout",
-      "description": "Log out of Corezoid: remove saved credentials for the current workspace from `~/.corezoid/config.json`. Activate when the user says \"logout\", \"log out\", \"sign out\", \"disconnect\", \"выйти\", \"разлогинься\", \"разлогиниться\", \"отключись от corezoid\", \"убери токен\", \"clear credentials\", \"remove credentials\", \"forget account\", or otherwise asks to end the Corezoid session for this working directory.",
-      "files": [
-        "https://raw.githubusercontent.com/corezoid/corezoid-ai-plugin/main/plugins/corezoid/skills/corezoid-logout/SKILL.md"
-      ]
-    },
-    {
       "name": "corezoid-node-layout",
-      "description": "Auto-arrange the nodes of a Corezoid process into a clean, readable layout — a vertical top-to-bottom business flow with error handling railed off to the right and no overlapping nodes. Use it AUTOMATICALLY on every process YOU built or assembled, as the last step before push-process — never hand-place coordinates by eye (eyeballed grids overlap the moment nodes are taller than the step). Also reach for it whenever the user says a process is unreadable, tangled, ugly, a mess, or that nodes sit on top of each other, or asks to \"arrange\", \"lay out\", \"tidy up\", \"make readable\", \"fix positions\", \"clean the diagram\", \"remove the overlaps\" — or their equivalents in any language the user speaks. Do NOT silently re-arrange a process the user already positioned — see the \"When you MAY re-layout\" rules in the body. It changes x/y coordinates only — never collapse/expand state, edges, logic, conv_id, aliases or node types.",
+      "description": "Auto-arrange node x/y before pushing a process you built, or when asked to arrange nodes or fix overlaps. Never re-layout user-positioned ones.",
       "files": [
         "https://raw.githubusercontent.com/corezoid/corezoid-ai-plugin/main/plugins/corezoid/skills/corezoid-node-layout/SKILL.md"
       ]
     },
     {
       "name": "corezoid-process-optimizer",
-      "description": "Optimizes a Corezoid process JSON — reduces tact consumption by merging nodes, cleans data flow, fills missing node titles, and adds resilience patterns. Activate when the user says \"optimize\", \"improve\", \"reduce tacts\", \"merge nodes\", \"clean up process\", \"what can be improved\", \"show optimizations\", or any phrase implying they want to make a process faster, cheaper, or more readable. Two modes: plan-only (analysis + report, no changes) and auto (plan + execute immediately).",
+      "description": "Optimize a process: fewer tacts, merged nodes, data flow, resilience, Code → Condition + Set Parameters. Triggers: \"optimize\", \"improve\", \"clean up process\".",
       "files": [
         "https://raw.githubusercontent.com/corezoid/corezoid-ai-plugin/main/plugins/corezoid/skills/corezoid-process-optimizer/SKILL.md"
       ]
     },
     {
       "name": "corezoid-process-tech-writer",
-      "description": "Documents a Corezoid process — produces a human-readable Markdown file AND enriches the process JSON with descriptions on every node and parameter. Output is designed for team wikis, internal portals, and future product integration. Activate whenever a user asks to document a process, write docs for a connector, add descriptions to a process, create documentation for a logic, describe what a process does, or any similar phrasing. Also activate when the user shares a process JSON and asks to explain it or make it self-documenting. Always produce BOTH outputs (Markdown file + enriched JSON) — never just one.",
+      "description": "Document a process: Markdown doc plus JSON with node and parameter descriptions. Triggers: \"document this process\", \"задокументируй\".",
       "files": [
         "https://raw.githubusercontent.com/corezoid/corezoid-ai-plugin/main/plugins/corezoid/skills/corezoid-process-tech-writer/SKILL.md"
       ]
     },
     {
       "name": "corezoid-project-review",
-      "description": "Corezoid project review and audit specialist. Use when the user wants to review or audit an entire Corezoid project or folder — multiple processes at once. Activate when the user says \"review project\", \"audit project\", \"review all processes\", \"audit all processes\", \"review folder\", \"review all processes in\", \"project-wide review\", \"cross-process analysis\", \"find issues across processes\", \"review the whole project\", or \"audit folder\".",
+      "description": "Audit a whole project or folder across processes. Triggers: \"review project\", \"audit folder\", \"ревью проекта\".",
       "files": [
         "https://raw.githubusercontent.com/corezoid/corezoid-ai-plugin/main/plugins/corezoid/skills/corezoid-project-review/SKILL.md"
       ]
     },
     {
       "name": "corezoid-retro",
-      "description": "Corezoid session retrospective specialist. Analyzes the finished (or ending) session of Corezoid work and turns what was learned into concrete, ready-to-apply updates — workspace CLAUDE.md entries, feedback reports to the Corezoid team, permission allowlist entries, personal memory. Routes each finding to the right scope and applies nothing without explicit user confirmation. The goal: every session makes the next one smarter. Use when the user says \"retro\", \"retrospective\", \"what did we learn\", \"capture learnings\", \"update CLAUDE.md from this session\", \"session retrospective\", \"ретро\", \"что мы узнали\", \"зафиксируй выводы\", or signals the session is wrapping up and wants to keep the takeaways. Do not trigger on a mere summary request that transfers nothing into files or configs.",
+      "description": "End-of-session retrospective: route learnings to CLAUDE.md, team feedback, permissions or memory. Triggers: \"retro\", \"ретро\", \"что мы узнали\".",
       "files": [
         "https://raw.githubusercontent.com/corezoid/corezoid-ai-plugin/main/plugins/corezoid/skills/corezoid-retro/SKILL.md"
       ]
     },
     {
       "name": "corezoid-review",
-      "description": "Corezoid process review and audit specialist. Use when the user wants to analyze, review, audit, or improve an existing Corezoid process. Activate when the user says \"review a process\", \"analyze\", \"check\", \"audit\", \"find issues\", \"explain this process\", \"what's wrong with\", \"optimize\", or \"check for hardcoded values\".",
+      "description": "Review one process: issues, hardcoded values, what it does. Triggers: \"review process\", \"audit\", \"what's wrong with\", \"проверь процесс\".",
       "files": [
         "https://raw.githubusercontent.com/corezoid/corezoid-ai-plugin/main/plugins/corezoid/skills/corezoid-review/SKILL.md"
       ]
     },
     {
       "name": "corezoid-state-diagram-create",
-      "description": "Corezoid state diagram creation specialist. Use when the user wants to create a new Corezoid state diagram, build a state machine, design a status / lifecycle store, or set up a \"state\" object with conv_type \"state\". Activate when the user says \"create a state diagram\", \"build a state machine\", \"new state diagram\", \"design states\", \"track status\", \"user lifecycle\", \"состояния\", \"стейт диаграмма\", \"создать state diagram\", or mentions storing state-by-ref between processes.",
+      "description": "New state diagram (conv_type \"state\"): state machine, status store by ref. Triggers: \"state diagram\", \"стейт диаграмма\", \"track status\".",
       "files": [
         "https://raw.githubusercontent.com/corezoid/corezoid-ai-plugin/main/plugins/corezoid/skills/corezoid-state-diagram-create/SKILL.md"
       ]
     },
     {
       "name": "corezoid-state-diagram-edit",
-      "description": "Corezoid state diagram editing specialist. Use when the user wants to modify, update, or fix an existing Corezoid state diagram — add or remove a state, change a transition, add a side effect on transition, fix the wiring of an api_callback state node, or rework transitions. Activate when the user says \"edit a state diagram\", \"add a state\", \"remove a state\", \"change transitions\", \"fix state diagram\", \"update state machine\", \"поправить state diagram\", \"изменить состояния\", or refers to modifying a .conv.json with conv_type \"state\".",
+      "description": "Modify a state diagram: states, transitions, side effects, api_callback wiring. Triggers: \"edit state diagram\", \"add a state\".",
       "files": [
         "https://raw.githubusercontent.com/corezoid/corezoid-ai-plugin/main/plugins/corezoid/skills/corezoid-state-diagram-edit/SKILL.md"
       ]
     },
     {
       "name": "corezoid-variable-manager",
-      "description": "Manages Corezoid environment variables (env_var) — create, list, modify, delete, and use variables in process JSON. Activate when the user mentions \"variable\", \"env var\", \"environment variable\", \"secret\", \"create variable\", \"list variables\", \"delete variable\", \"modify variable\", \"env_var\", \"{{env_var\", or asks how to store a URL, token, API key, or any constant that should not be hardcoded in a process. Also activate when a process references {{env_var[@name]}} and the variable does not exist yet.",
+      "description": "Env variables (env_var) for URLs, tokens, API keys, secrets: create, list, modify, delete. Triggers: \"env var\", \"variable\", \"secret\", \"переменная\".",
       "files": [
         "https://raw.githubusercontent.com/corezoid/corezoid-ai-plugin/main/plugins/corezoid/skills/corezoid-variable-manager/SKILL.md"
       ]
     },
     {
       "name": "marketplace-publish-validation",
-      "description": "Corezoid  marketplace pre-publication validator. Standalone skill — no external skill dependencies required. Use this skill whenever the user wants to publish, release, or submit a project or folder to the Corezoid marketplace, or asks to check if a project is ready to publish. Activate on phrases: \"publish to marketplace\", \"готово до публікації\", \"можна публікувати\", \"перевір перед публікацією\", \"validate for marketplace\", \"pre-publish check\", \"marketplace validation\", \"publication readiness\", \"check before publish\", \"submit to marketplace\", \"перевірка публікації\". Also activate when the user asks \"what's blocking publication\" or \"why can't I publish this\".",
+      "description": "Pre-publication check of a project or folder for the Corezoid marketplace. Triggers: \"publish to marketplace\", \"можна публікувати\".",
       "files": [
         "https://raw.githubusercontent.com/corezoid/corezoid-ai-plugin/main/plugins/corezoid/skills/marketplace-publish-validation/SKILL.md"
       ]

@@ -92,7 +92,7 @@ git tag vX.Y.Z
 git push origin vX.Y.Z
 ```
 
-The `release.yml` workflow fires automatically on any `v*` tag. It cross-compiles the MCP server, generates SHA-256 checksums, regenerates `public/` via `python3 scripts/generate-discovery.py`, and creates a GitHub Release whose body is the matching `CHANGELOG.md` section. `POWER.md` is attached so kiro.dev/powers can resolve the Power manifest from the tag.
+The `release.yml` workflow fires automatically on any `v*` tag. It cross-compiles the MCP server, generates SHA-256 checksums, regenerates `public/` via `python3 scripts/generate-discovery.py` for the release assets (it does not commit them — the release commit carries the regenerated copies for `main`), and creates a GitHub Release whose body is the matching `CHANGELOG.md` section. `POWER.md` is attached so kiro.dev/powers can resolve the Power manifest from the tag.
 
 ## 6. Install from GitHub
 

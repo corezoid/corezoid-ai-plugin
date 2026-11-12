@@ -120,6 +120,14 @@ python3 -m json.tool plugins/corezoid/.kiro-plugin/plugin.json >/dev/null
 python3 -m json.tool plugin.json >/dev/null
 ```
 
+Then regenerate the discovery files. Do it after the bump, because `public/llms.txt` carries the version:
+
+```bash
+python3 scripts/generate-discovery.py
+```
+
+`release.yml` regenerates them too, but it only attaches its copies to the GitHub Release and never commits them. `llms.txt` links to the copies on `main`, and those drifted from v3.8.1 to v3.13.0, still listing a removed skill and missing `patch-process`, because no release step wrote them.
+
 ### Phase 5 — Confirm with the user
 
 Goal: nothing is committed without explicit go-ahead.
@@ -147,7 +155,9 @@ git add CHANGELOG.md \
         plugin.json \
         .claude-plugin/marketplace.json \
         .agents/plugins/marketplace.json \
-        POWER.md
+        POWER.md \
+        public/llms.txt \
+        public/.well-known/skills/index.json
 # Plus any other files the user explicitly approved in Phase 1.
 ```
 

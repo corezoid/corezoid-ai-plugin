@@ -4,33 +4,32 @@
 
 ## Skills
 
-- [corezoid](https://raw.githubusercontent.com/corezoid/corezoid-ai-plugin/main/plugins/corezoid/skills/corezoid/SKILL.md): Universal Corezoid assistant
-- [corezoid-access](https://raw.githubusercontent.com/corezoid/corezoid-ai-plugin/main/plugins/corezoid/skills/corezoid-access/SKILL.md): Corezoid access-control specialist
-- [corezoid-alias-manager](https://raw.githubusercontent.com/corezoid/corezoid-ai-plugin/main/plugins/corezoid/skills/corezoid-alias-manager/SKILL.md): Manages Corezoid aliases — create, list, modify, delete, link/unlink, and use aliases in process JSON
-- [corezoid-api-connector](https://raw.githubusercontent.com/corezoid/corezoid-ai-plugin/main/plugins/corezoid/skills/corezoid-api-connector/SKILL.md): Corezoid API connector specialist
-- [corezoid-connector-create](https://raw.githubusercontent.com/corezoid/corezoid-ai-plugin/main/plugins/corezoid/skills/corezoid-connector-create/SKILL.md): API connector builder
-- [corezoid-create](https://raw.githubusercontent.com/corezoid/corezoid-ai-plugin/main/plugins/corezoid/skills/corezoid-create/SKILL.md): Corezoid process creation specialist
-- [corezoid-dashboard-manager](https://raw.githubusercontent.com/corezoid/corezoid-ai-plugin/main/plugins/corezoid/skills/corezoid-dashboard-manager/SKILL.md): Creates and manages Corezoid dashboards — adds charts (column, pie, funnel, table), binds metrics to process nodes, configures real-time mode, and sets up drill-down linking between dashboards
-- [corezoid-describe](https://raw.githubusercontent.com/corezoid/corezoid-ai-plugin/main/plugins/corezoid/skills/corezoid-describe/SKILL.md): Updates or creates the description of a Corezoid process, folder, or project without touching its logic
-- [corezoid-edit](https://raw.githubusercontent.com/corezoid/corezoid-ai-plugin/main/plugins/corezoid/skills/corezoid-edit/SKILL.md): Corezoid process editing specialist
-- [corezoid-edit-bot](https://raw.githubusercontent.com/corezoid/corezoid-ai-plugin/main/plugins/corezoid/skills/corezoid-edit-bot/SKILL.md): Iteratively edits an already-built messenger bot from corezoid-gen-bot — a Corezoid Communications Orchestrator serving Telegram, Viber, Apple Messages for Business and Facebook Messenger over a backend of Corezoid processes called with api_rpc
-- [corezoid-feedback](https://raw.githubusercontent.com/corezoid/corezoid-ai-plugin/main/plugins/corezoid/skills/corezoid-feedback/SKILL.md): Collects and submits bug reports, improvement requests, and quality signals about the Corezoid plugin to the Corezoid team
-- [corezoid-gen-bot](https://raw.githubusercontent.com/corezoid/corezoid-ai-plugin/main/plugins/corezoid/skills/corezoid-gen-bot/SKILL.md): Generates a multi-platform messenger bot (Telegram, Viber, Apple Messages for Business, Facebook Messenger) on Corezoid from a set of EXISTING Corezoid processes plus a description of the desired bot
-- [corezoid-git-context](https://raw.githubusercontent.com/corezoid/corezoid-ai-plugin/main/plugins/corezoid/skills/corezoid-git-context/SKILL.md): Analyzes the current session and updates _ext/docs/*.md in the Corezoid git mirror for the active stage
-- [corezoid-gitcall](https://raw.githubusercontent.com/corezoid/corezoid-ai-plugin/main/plugins/corezoid/skills/corezoid-gitcall/SKILL.md): Corezoid Git Call node specialist — run custom code (Python, Go, Java, PHP, JavaScript, Clojure, Lisp, Prolog, or a custom Dockerfile) as a step inside a process
-- [corezoid-init](https://raw.githubusercontent.com/corezoid/corezoid-ai-plugin/main/plugins/corezoid/skills/corezoid-init/SKILL.md): Corezoid environment setup specialist
-- [corezoid-lifecycle](https://raw.githubusercontent.com/corezoid/corezoid-ai-plugin/main/plugins/corezoid/skills/corezoid-lifecycle/SKILL.md): Safely pauses, resumes, or moves existing Corezoid processes and folders
-- [corezoid-logout](https://raw.githubusercontent.com/corezoid/corezoid-ai-plugin/main/plugins/corezoid/skills/corezoid-logout/SKILL.md): Log out of Corezoid: remove saved credentials for the current workspace from `~/.corezoid/config.json`
-- [corezoid-node-layout](https://raw.githubusercontent.com/corezoid/corezoid-ai-plugin/main/plugins/corezoid/skills/corezoid-node-layout/SKILL.md): Auto-arrange the nodes of a Corezoid process into a clean, readable layout — a vertical top-to-bottom business flow with error handling railed off to the right and no overlapping nodes
-- [corezoid-process-optimizer](https://raw.githubusercontent.com/corezoid/corezoid-ai-plugin/main/plugins/corezoid/skills/corezoid-process-optimizer/SKILL.md): Optimizes a Corezoid process JSON — reduces tact consumption by merging nodes, cleans data flow, fills missing node titles, and adds resilience patterns
-- [corezoid-process-tech-writer](https://raw.githubusercontent.com/corezoid/corezoid-ai-plugin/main/plugins/corezoid/skills/corezoid-process-tech-writer/SKILL.md): Documents a Corezoid process — produces a human-readable Markdown file AND enriches the process JSON with descriptions on every node and parameter
-- [corezoid-project-review](https://raw.githubusercontent.com/corezoid/corezoid-ai-plugin/main/plugins/corezoid/skills/corezoid-project-review/SKILL.md): Corezoid project review and audit specialist
-- [corezoid-retro](https://raw.githubusercontent.com/corezoid/corezoid-ai-plugin/main/plugins/corezoid/skills/corezoid-retro/SKILL.md): Corezoid session retrospective specialist
-- [corezoid-review](https://raw.githubusercontent.com/corezoid/corezoid-ai-plugin/main/plugins/corezoid/skills/corezoid-review/SKILL.md): Corezoid process review and audit specialist
-- [corezoid-state-diagram-create](https://raw.githubusercontent.com/corezoid/corezoid-ai-plugin/main/plugins/corezoid/skills/corezoid-state-diagram-create/SKILL.md): Corezoid state diagram creation specialist
-- [corezoid-state-diagram-edit](https://raw.githubusercontent.com/corezoid/corezoid-ai-plugin/main/plugins/corezoid/skills/corezoid-state-diagram-edit/SKILL.md): Corezoid state diagram editing specialist
-- [corezoid-variable-manager](https://raw.githubusercontent.com/corezoid/corezoid-ai-plugin/main/plugins/corezoid/skills/corezoid-variable-manager/SKILL.md): Manages Corezoid environment variables (env_var) — create, list, modify, delete, and use variables in process JSON
-- [marketplace-publish-validation](https://raw.githubusercontent.com/corezoid/corezoid-ai-plugin/main/plugins/corezoid/skills/marketplace-publish-validation/SKILL.md): Corezoid  marketplace pre-publication validator
+- [corezoid](https://raw.githubusercontent.com/corezoid/corezoid-ai-plugin/main/plugins/corezoid/skills/corezoid/SKILL.md): Corezoid basics: platform model, .conv.json, nodes, MCP tools, validation
+- [corezoid-access](https://raw.githubusercontent.com/corezoid/corezoid-ai-plugin/main/plugins/corezoid/skills/corezoid-access/SKILL.md): Share processes, folders, stages, projects; groups, API-key users, invites, access audit
+- [corezoid-alias-manager](https://raw.githubusercontent.com/corezoid/corezoid-ai-plugin/main/plugins/corezoid/skills/corezoid-alias-manager/SKILL.md): Process aliases (short_name, conv[@alias]): create, list, modify, delete, link; callback hash / Direct URL
+- [corezoid-api-connector](https://raw.githubusercontent.com/corezoid/corezoid-ai-plugin/main/plugins/corezoid/skills/corezoid-api-connector/SKILL.md): Build a process that calls the Corezoid public API (/api/2/json)
+- [corezoid-connector-create](https://raw.githubusercontent.com/corezoid/corezoid-ai-plugin/main/plugins/corezoid/skills/corezoid-connector-create/SKILL.md): Atomic connector process for ONE endpoint of any HTTP API (Corezoid /api/2/json too), from docs or OpenAPI
+- [corezoid-create](https://raw.githubusercontent.com/corezoid/corezoid-ai-plugin/main/plugins/corezoid/skills/corezoid-create/SKILL.md): Create a new process from scratch
+- [corezoid-dashboard-manager](https://raw.githubusercontent.com/corezoid/corezoid-ai-plugin/main/plugins/corezoid/skills/corezoid-dashboard-manager/SKILL.md): Dashboards and charts bound to process nodes, real-time, drill-down
+- [corezoid-describe](https://raw.githubusercontent.com/corezoid/corezoid-ai-plugin/main/plugins/corezoid/skills/corezoid-describe/SKILL.md): Set the short description of a process, folder or project without changing logic
+- [corezoid-edit](https://raw.githubusercontent.com/corezoid/corezoid-ai-plugin/main/plugins/corezoid/skills/corezoid-edit/SKILL.md): Modify an existing process: add/remove nodes, change logic, fix errors
+- [corezoid-edit-bot](https://raw.githubusercontent.com/corezoid/corezoid-ai-plugin/main/plugins/corezoid/skills/corezoid-edit-bot/SKILL.md): Edit or fix a bot built by corezoid-gen-bot: commands, copy, keyboards, languages, wiring, deploy
+- [corezoid-feedback](https://raw.githubusercontent.com/corezoid/corezoid-ai-plugin/main/plugins/corezoid/skills/corezoid-feedback/SKILL.md): Report plugin bugs/ideas to the Corezoid team
+- [corezoid-gen-bot](https://raw.githubusercontent.com/corezoid/corezoid-ai-plugin/main/plugins/corezoid/skills/corezoid-gen-bot/SKILL.md): Messenger bot (Telegram, Viber, Apple, FB) over existing processes
+- [corezoid-git-context](https://raw.githubusercontent.com/corezoid/corezoid-ai-plugin/main/plugins/corezoid/skills/corezoid-git-context/SKILL.md): Update _ext/docs/*.md in the git mirror after a session with real deploys or decisions
+- [corezoid-gitcall](https://raw.githubusercontent.com/corezoid/corezoid-ai-plugin/main/plugins/corezoid/skills/corezoid-gitcall/SKILL.md): Git Call node: custom code (Python, Go, JS, PHP, Java, Dockerfile) as a process step
+- [corezoid-init](https://raw.githubusercontent.com/corezoid/corezoid-ai-plugin/main/plugins/corezoid/skills/corezoid-init/SKILL.md): Connect to Corezoid: login (OAuth or API key), workspace and stage, project pull
+- [corezoid-lifecycle](https://raw.githubusercontent.com/corezoid/corezoid-ai-plugin/main/plugins/corezoid/skills/corezoid-lifecycle/SKILL.md): Pause, resume or move processes and folders, only on explicit request
+- [corezoid-node-layout](https://raw.githubusercontent.com/corezoid/corezoid-ai-plugin/main/plugins/corezoid/skills/corezoid-node-layout/SKILL.md): Auto-arrange node x/y before pushing a process you built, or when asked to arrange nodes or fix overlaps
+- [corezoid-process-optimizer](https://raw.githubusercontent.com/corezoid/corezoid-ai-plugin/main/plugins/corezoid/skills/corezoid-process-optimizer/SKILL.md): Optimize a process: fewer tacts, merged nodes, data flow, resilience, Code → Condition + Set Parameters
+- [corezoid-process-tech-writer](https://raw.githubusercontent.com/corezoid/corezoid-ai-plugin/main/plugins/corezoid/skills/corezoid-process-tech-writer/SKILL.md): Document a process: Markdown doc plus JSON with node and parameter descriptions
+- [corezoid-project-review](https://raw.githubusercontent.com/corezoid/corezoid-ai-plugin/main/plugins/corezoid/skills/corezoid-project-review/SKILL.md): Audit a whole project or folder across processes
+- [corezoid-retro](https://raw.githubusercontent.com/corezoid/corezoid-ai-plugin/main/plugins/corezoid/skills/corezoid-retro/SKILL.md): End-of-session retrospective: route learnings to CLAUDE.md, team feedback, permissions or memory
+- [corezoid-review](https://raw.githubusercontent.com/corezoid/corezoid-ai-plugin/main/plugins/corezoid/skills/corezoid-review/SKILL.md): Review one process: issues, hardcoded values, what it does
+- [corezoid-state-diagram-create](https://raw.githubusercontent.com/corezoid/corezoid-ai-plugin/main/plugins/corezoid/skills/corezoid-state-diagram-create/SKILL.md): New state diagram (conv_type "state"): state machine, status store by ref
+- [corezoid-state-diagram-edit](https://raw.githubusercontent.com/corezoid/corezoid-ai-plugin/main/plugins/corezoid/skills/corezoid-state-diagram-edit/SKILL.md): Modify a state diagram: states, transitions, side effects, api_callback wiring
+- [corezoid-variable-manager](https://raw.githubusercontent.com/corezoid/corezoid-ai-plugin/main/plugins/corezoid/skills/corezoid-variable-manager/SKILL.md): Env variables (env_var) for URLs, tokens, API keys, secrets: create, list, modify, delete
+- [marketplace-publish-validation](https://raw.githubusercontent.com/corezoid/corezoid-ai-plugin/main/plugins/corezoid/skills/marketplace-publish-validation/SKILL.md): Pre-publication check of a project or folder for the Corezoid marketplace
 
 ## MCP Tools
 
@@ -69,13 +68,13 @@ The plugin bundles a Go MCP server (`convctl`) with these tools:
 - **find-principal**: Search users, groups or API keys in the workspace by substring (action of `cz-access`)
 - **get-chart**: Get a single chart with its series data (action of `cz-dashboards`)
 - **get-dashboard**: Get a Corezoid dashboard with its charts and series (action of `cz-dashboards`)
-- **get-node-stat**: Return time-series statistics (in/out counts) for a node over a time range. node_id is the ID shown in the Corezoid UI archive URL (/diagram/{node_id}/archive). ops[0]['data'] contains [{"date":"YYYY-MM-DD","in":N,"out":M}] for non-zero buckets. ops[0]['title'] is the node title (action of `cz-tasks`)
+- **get-node-stat**: Return time-series statistics (in/out counts) for a node over a time range — the last 24 hours unless start/end are given. node_id is the ID shown in the Corezoid UI archive URL (/diagram/{node_id}/archive). ops[0]['data'] contains [{"date":"YYYY-MM-DD","in":N,"out":M}] for non-zero buckets. ops[0]['title'] is the node title (action of `cz-tasks`)
 - **get-snapshot**: Get one snapshot's node list, as it existed at snapshot time, for diffing against the current process (action of `cz-snapshots`)
 - **git-pull-context**: Clone or pull the Corezoid git mirror for the current workspace into .git-context/. Requires git_url, api_login, and api_secret to be set in the current Folder in ~/.corezoid/config.json (action of `cz-git-context`)
 - **git-push-context**: Commit and push local _ext/ changes to the Corezoid git mirror (action of `cz-git-context`)
 - **invite-user**: Invite an external email to the workspace AND share a process/folder/stage/project with them in one call (action of `cz-access`)
 - **layout-process**: Auto-arrange a process's node coordinates into a clean, readable layout (waterfall for simple trees, layered+error-rail for meshes, aligned table/star grids for region bundles)
-- **lint-process**: Validate process structure
+- **lint-process**: Check a local process file without calling the server (pull-process first; pass process_path or process_id)
 - **list-aliases**: List the aliases (short_name -> target process) defined in a Corezoid project's stage (action of `cz-structure`)
 - **list-api-keys**: List API keys visible in the current workspace (action of `cz-access`)
 - **list-folders**: List the immediate children of a Corezoid folder (subfolders + processes + state diagrams) (action of `cz-structure`)
@@ -90,7 +89,7 @@ The plugin bundles a Go MCP server (`convctl`) with these tools:
 - **list-variables**: List all environment variables (env_var) in the current Corezoid stage: short_name, obj_id, data_type (raw/json), env_var_type (visible/secret), title, value and change time (action of `cz-variables`)
 - **list-workspaces**: Return the list of Corezoid workspaces (companies) available to the authenticated user (action of `cz-structure`)
 - **login**: Authenticate with Corezoid
-- **logout**: Remove saved Corezoid credentials from disk
+- **logout**: Log out: delete the entry for the current directory in ~/.corezoid/config.json (token or API key, workspace, stage, git settings)
 - **modify-api-key**: Update title and/or description of an existing API key (action of `cz-access`)
 - **modify-chart**: Modify an existing Corezoid chart (action of `cz-dashboards`)
 - **modify-folder**: Rename a Corezoid folder and/or update its description (action of `cz-structure`)
@@ -100,14 +99,15 @@ The plugin bundles a Go MCP server (`convctl`) with these tools:
 - **modify-variable**: Modify a Corezoid environment variable in the current stage: its value, description (display title), data_type (raw/json), and/or rename it (new_name) (action of `cz-variables`)
 - **move-folder**: Move (reparent) one existing NORMAL Corezoid folder to another folder in the configured workspace, preserving its folder ID and descendants; NOT copy, import, or deploy (action of `cz-structure`)
 - **move-process**: Move (reparent) one existing Corezoid process/state diagram to another folder in the configured workspace, preserving its object ID and graph; NOT copy, import, or deploy (action of `cz-structure`)
+- **patch-process**: Change a few nodes of a pulled process file in place, by node id or title, instead of rewriting the file or sending the whole JSON as push-process content: ops set/add/remove and process keys
 - **pause-process**: Pause one Corezoid process without changing or deploying its graph
 - **pull-folder**: Recursively export all processes from a Corezoid folder/stage to a local directory
 - **pull-process**: Export a single Corezoid process definitions to a JSON file
-- **push-process**: Validate and deploy a process file to Corezoid
+- **push-process**: Validate (lint-process) and deploy a process file to Corezoid
 - **read-context-file**: Read a file from .git-context/ of the current workspace (git mirror local copy) (action of `cz-git-context`)
 - **remove-from-group**: Remove a user from a group (action of `cz-access`)
 - **resume-process**: Resume (activate) one paused/debug Corezoid process without changing or deploying its graph
-- **run-task**: Run a task on an already-deployed Corezoid process (without re-deploying) and wait for it to reach a final node
+- **run-task**: Run a task on a deployed process and wait for it to reach a final node
 - **send-feedback**: Submit user feedback about plugin behavior to Corezoid
 - **set-dashboard-layout**: Save chart positions on a dashboard grid (action of `cz-dashboards`)
 - **set-stage-immutable**: Set a stage's immutable (read-only) flag (action of `cz-structure`)
