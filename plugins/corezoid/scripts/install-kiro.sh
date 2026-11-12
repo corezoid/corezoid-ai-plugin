@@ -140,6 +140,14 @@ run_workspace_install() {
     find "$dst" -name '*.md.bak' -type f -delete
   done
 
+  # 4) Skills removed from the plugin. The loop above only replaces skills
+  #    that still exist, so a workspace installed by an older version would
+  #    keep these. Removed by name, so other skills in .kiro/skills/ stay.
+  #    Append a skill here when its directory is deleted.
+  for name in corezoid-stage-scan corezoid-logout; do
+    rm -rf "$KIRO_DIR/skills/$name"
+  done
+
   echo "Installed corezoid plugin into: $KIRO_DIR"
   echo "Open this workspace in Kiro and the corezoid MCP server, skills, and steering will be picked up."
   echo "Reference-doc paths in skills were resolved to: $PLUGIN_ROOT"

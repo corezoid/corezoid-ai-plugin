@@ -168,7 +168,7 @@ Changes to node structure or lint rules may require refreshing MCP-server golden
 - `plugins/corezoid/mcp-server/testdata/golden/layout_*.json` — layout coordinates. Regenerate with `go test -run TestLayoutGolden -update ./...`.
 - `plugins/corezoid/mcp-server/testdata/golden/lint_*.txt` — lint output. Regenerate with `go test -run TestFormatLintResult_Golden -update ./...`.
 
-When adding a new skill, also update this file's Architecture section, the skills table in `README.md`, and the Kiro skill list in `POWER.md`. CI (`scripts/check-skills-sync.py`) fails the build if any list diverges from the actual directory.
+When adding a new skill, also update this file's Architecture section, the skills table in `README.md`, and the Kiro skill list in `POWER.md`. CI (`scripts/check-skills-sync.py`) fails the build if any list diverges from the actual directory. When removing a skill, also add its name to the removed-skills loop in `plugins/corezoid/scripts/install-kiro.sh`, or a reinstalled Kiro workspace keeps the old copy.
 ## Bug/improvement reporting rule (Corezoid plugin)
 
 When responding to a user message that signals a **platform-level mistake** — wrong node type, wrong API choice (Corezoid vs Simulator), wrong process structure, wrong MCP tool, missing required platform field — add one line to your response, adapted to the context:
