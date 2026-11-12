@@ -1,9 +1,8 @@
 ---
 name: corezoid-gitcall
 description: >
-  Git Call node: custom code (Python, Go, Java, PHP, JS, Dockerfile) as a
-  process step for parsing, libraries, crypto. Triggers: "git call", "run my
-  code", "custom code node", push hangs on git_call.
+  Git Call node: custom code (Python, Go, JS, PHP, Java, Dockerfile) as a
+  process step. Triggers: "git call", "run my code", git_call push hangs.
 ---
 
 # Corezoid Git Call

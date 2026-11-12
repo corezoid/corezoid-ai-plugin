@@ -1,9 +1,9 @@
 ---
 name: corezoid-feedback
 description: >
-  Report plugin bugs/ideas to the Corezoid team. After a platform mistake (wrong
-  node type or MCP tool, Corezoid vs Simulator API) offer it in one line; no
-  flow unless asked. Not for business logic.
+  Report plugin bugs/ideas to the Corezoid team. After a platform mistake
+  (wrong node type or MCP tool, Simulator vs Corezoid API) offer it in one
+  line; not for business logic.
 ---
 
 # Corezoid Feedback Skill

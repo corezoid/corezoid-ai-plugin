@@ -1,9 +1,8 @@
 ---
 name: corezoid-init
 description: >
-  Connect to Corezoid: OAuth login or API key, workspace and stage selection,
-  project pull, first-time setup. Triggers: "init", "setup", "login", "connect
-  to corezoid", "pull workspace".
+  Connect to Corezoid: login (OAuth or API key), workspace and stage, project
+  pull. Triggers: "init", "setup", "login", "connect to corezoid".
 ---
 
 # Initialize Corezoid Environment

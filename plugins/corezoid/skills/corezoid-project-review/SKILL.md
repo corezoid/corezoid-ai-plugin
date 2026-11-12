@@ -1,9 +1,8 @@
 ---
 name: corezoid-project-review
 description: >
-  Audit a whole Corezoid project or folder: many processes and cross-process
-  issues. Triggers: "review project", "audit folder", "review all processes",
-  "ревью проекта".
+  Audit a whole project or folder across processes. Triggers: "review
+  project", "audit folder", "ревью проекта".
 ---
 
 # Review a Corezoid Project

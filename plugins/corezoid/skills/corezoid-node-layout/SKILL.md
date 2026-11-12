@@ -1,9 +1,8 @@
 ---
 name: corezoid-node-layout
 description: >
-  Auto-arrange x/y of Corezoid process nodes into a clean layout. Use before
-  pushing a process you built, or when the user asks to arrange nodes or fix
-  overlaps. Never re-layout user-positioned ones.
+  Auto-arrange node x/y before pushing a process you built, or when asked to
+  arrange nodes or fix overlaps. Never re-layout user-positioned ones.
 ---
 
 # Auto-Layout Corezoid Process Nodes

@@ -1,9 +1,9 @@
 ---
 name: corezoid-process-optimizer
 description: >
-  Optimize a Corezoid process: fewer tacts, merged nodes, clean data flow,
-  resilience, Code → Condition + Set Parameters. Triggers: "optimize",
-  "improve", "clean up process", "оптимизируй".
+  Optimize a process: fewer tacts, merged nodes, data flow, resilience, Code →
+  Condition + Set Parameters. Triggers: "optimize", "improve", "clean up
+  process".
 ---
 
 # Corezoid Process Optimizer

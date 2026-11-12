@@ -1,9 +1,8 @@
 ---
 name: corezoid
 description: >
-  Universal Corezoid entry point: platform model, process JSON (.conv.json),
-  nodes, MCP tools, validation. Use for any Corezoid question or task not
-  covered by a narrower corezoid-* skill.
+  Start here for any Corezoid task: platform model, .conv.json, nodes, MCP
+  tools, validation. Routes to the right corezoid-* skill.
 ---
 
 # Corezoid Platform Assistant

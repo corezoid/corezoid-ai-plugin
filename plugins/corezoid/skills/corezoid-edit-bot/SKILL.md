@@ -1,9 +1,8 @@
 ---
 name: corezoid-edit-bot
 description: >
-  Edit or fix a messenger bot built by corezoid-gen-bot: commands, copy,
-  keyboards, languages, process wiring, stage deploy. Triggers: "измени бота",
-  "add command to bot", "бот не отвечает".
+  Edit or fix a bot built by corezoid-gen-bot: commands, copy, keyboards,
+  languages, wiring, deploy. Triggers: "измени бота", "бот не отвечает".
 ---
 
 # corezoid-edit-bot

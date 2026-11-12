@@ -1,9 +1,9 @@
 ---
 name: corezoid-create
 description: >
-  Create a new Corezoid process from scratch: a new automation flow or business
-  process. Triggers: "create a process", "new process", "создай процесс".
-  Single-API connectors: corezoid-connector-create.
+  Create a new process from scratch. Triggers: "create a process", "new
+  process", "создай процесс". One-endpoint connectors:
+  corezoid-connector-create.
 ---
 
 # Create a New Corezoid Process

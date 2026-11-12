@@ -1,9 +1,8 @@
 ---
 name: corezoid-describe
 description: >
-  Set or refresh the short description of a Corezoid process, folder or project
-  without changing logic. Triggers: "add description", "describe this process",
-  "обнови описание", "опиши процесс".
+  Set the short description of a process, folder or project without changing
+  logic. Triggers: "add description", "обнови описание".
 ---
 
 # Update Process / Folder / Project Description

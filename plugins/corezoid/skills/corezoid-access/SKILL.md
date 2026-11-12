@@ -1,9 +1,8 @@
 ---
 name: corezoid-access
 description: >
-  Share Corezoid processes, folders, stages or projects; manage groups, API-key
-  users, invites, access audits. Triggers: "share", "give access", "доступ",
-  "пошарь", "create API key", "who has access".
+  Share processes, folders, stages, projects; groups, API-key users, invites,
+  access audit. Triggers: "share", "доступ", "пошарь", "create API key".
 ---
 
 # Corezoid Access Control

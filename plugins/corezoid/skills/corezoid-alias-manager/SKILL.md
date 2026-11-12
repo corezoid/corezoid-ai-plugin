@@ -1,9 +1,8 @@
 ---
 name: corezoid-alias-manager
 description: >
-  Corezoid process aliases: create, list, modify, delete, link/unlink
-  (short_name, conv[@alias]); callback hash / Direct URL. Triggers: "alias",
-  "short name", "алиас", "callback hash".
+  Process aliases (short_name, conv[@alias]): create, list, modify, delete,
+  link; callback hash / Direct URL. Triggers: "alias", "алиас".
 ---
 
 # Corezoid Alias Manager

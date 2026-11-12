@@ -1,9 +1,9 @@
 ---
 name: corezoid-connector-create
 description: >
-  Build an atomic connector process for ONE endpoint of any HTTP API, from a
-  description, docs or OpenAPI. Triggers: "connector", "коннектор", "інтеграція
-  з", "integrate with". Not for multi-step logic.
+  Atomic connector process for ONE endpoint of any HTTP API (Corezoid
+  /api/2/json too), from docs or OpenAPI. Triggers: "connector", "коннектор",
+  "інтеграція з". Not multi-step.
 ---
 
 # Create an API Connector Process

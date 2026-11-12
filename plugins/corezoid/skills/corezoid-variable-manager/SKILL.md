@@ -1,9 +1,8 @@
 ---
 name: corezoid-variable-manager
 description: >
-  Create, list, modify, delete Corezoid env variables (env_var) for URLs,
-  tokens, API keys, secrets, so nothing is hardcoded. Triggers: "env var",
-  "variable", "secret", "{{env_var", "переменная".
+  Env variables (env_var) for URLs, tokens, API keys, secrets: create, list,
+  modify, delete. Triggers: "env var", "variable", "secret", "переменная".
 ---
 
 # Corezoid Variable Manager

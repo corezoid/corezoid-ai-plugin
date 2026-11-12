@@ -1,9 +1,8 @@
 ---
 name: corezoid-process-tech-writer
 description: >
-  Document a Corezoid process: a Markdown doc plus process JSON enriched with
-  node and parameter descriptions. Triggers: "document this process", "write
-  docs", "задокументируй процесс".
+  Document a process: Markdown doc plus JSON with node and parameter
+  descriptions. Triggers: "document this process", "задокументируй".
 ---
 
 # Corezoid Process Tech Writer

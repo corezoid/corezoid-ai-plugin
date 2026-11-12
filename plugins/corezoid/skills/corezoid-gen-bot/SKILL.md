@@ -1,9 +1,9 @@
 ---
 name: corezoid-gen-bot
 description: >
-  Generate a messenger bot (Telegram, Viber, Apple, FB) over existing Corezoid
-  processes. Triggers: "сгенерируй бота", "bot from processes"; "execute plan",
-  "погнали" if .corezoid-gen-bot/ exists.
+  Messenger bot (Telegram, Viber, Apple, FB) over existing processes.
+  Triggers: "сгенерируй бота", "bot from processes"; "погнали"/"execute plan"
+  in .corezoid-gen-bot/.
 ---
 
 # corezoid-gen-bot

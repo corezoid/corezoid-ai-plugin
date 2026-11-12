@@ -1,9 +1,8 @@
 ---
 name: corezoid-state-diagram-edit
 description: >
-  Modify an existing Corezoid state diagram: add or remove states, change
-  transitions, side effects, api_callback wiring. Triggers: "edit state
-  diagram", "add a state", "изменить состояния".
+  Modify a state diagram: states, transitions, side effects, api_callback
+  wiring. Triggers: "edit state diagram", "add a state".
 ---
 
 # Edit an Existing Corezoid State Diagram

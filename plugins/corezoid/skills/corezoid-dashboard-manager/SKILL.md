@@ -1,9 +1,8 @@
 ---
 name: corezoid-dashboard-manager
 description: >
-  Create and edit Corezoid dashboards: charts (column, pie, funnel, table) bound
-  to process nodes, real-time mode, drill-down. Triggers: "dashboard", "chart",
-  "дашборд", process metrics.
+  Dashboards and charts bound to process nodes, real-time, drill-down.
+  Triggers: "dashboard", "chart", "дашборд", process metrics.
 ---
 
 # Corezoid Dashboard Manager

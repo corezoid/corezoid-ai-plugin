@@ -1,9 +1,8 @@
 ---
 name: corezoid-review
 description: >
-  Review and audit one Corezoid process: find issues and hardcoded values,
-  explain what it does. Triggers: "review process", "audit", "what's wrong
-  with", "explain this process", "проверь процесс".
+  Review one process: issues, hardcoded values, what it does. Triggers:
+  "review process", "audit", "what's wrong with", "проверь процесс".
 ---
 
 # Review a Corezoid Process

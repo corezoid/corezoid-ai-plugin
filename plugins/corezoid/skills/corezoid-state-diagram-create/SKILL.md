@@ -1,9 +1,8 @@
 ---
 name: corezoid-state-diagram-create
 description: >
-  Create a new Corezoid state diagram (conv_type "state"): a state machine or
-  status/lifecycle store by ref. Triggers: "state diagram", "state machine",
-  "стейт диаграмма", "track status".
+  New state diagram (conv_type "state"): state machine, status store by ref.
+  Triggers: "state diagram", "стейт диаграмма", "track status".
 ---
 
 # Create a New Corezoid State Diagram

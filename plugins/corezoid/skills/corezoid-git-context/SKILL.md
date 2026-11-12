@@ -1,9 +1,8 @@
 ---
 name: corezoid-git-context
 description: >
-  Update _ext/docs/*.md in the Corezoid git mirror after a session with real
-  deploys or decisions. Triggers: "update context", "save context", "збережи
-  контекст", "оновити документацію".
+  Update _ext/docs/*.md in the git mirror after a session with real deploys or
+  decisions. Triggers: "save context", "збережи контекст".
 ---
 
 # Session Analysis — Update _ext/docs/*.md

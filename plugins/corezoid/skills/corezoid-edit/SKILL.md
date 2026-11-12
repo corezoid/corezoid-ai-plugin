@@ -1,9 +1,8 @@
 ---
 name: corezoid-edit
 description: >
-  Modify an existing Corezoid process: add or remove nodes, change logic, add an
-  API call, fix errors. Triggers: "edit process", "fix", "add a node", "измени
-  процесс", "поправь процесс".
+  Modify an existing process: add/remove nodes, change logic, fix errors.
+  Triggers: "edit process", "fix", "add a node", "поправь процесс".
 ---
 
 # Edit an Existing Corezoid Process

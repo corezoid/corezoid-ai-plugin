@@ -1,9 +1,8 @@
 ---
 name: corezoid-retro
 description: >
-  End-of-session retrospective for Corezoid work: route learnings to CLAUDE.md,
-  team feedback, permissions or memory, with confirmation. Triggers: "retro",
-  "what did we learn", "ретро".
+  End-of-session retrospective: route learnings to CLAUDE.md, team feedback,
+  permissions or memory. Triggers: "retro", "ретро", "что мы узнали".
 ---
 
 # Run a Corezoid Session Retrospective

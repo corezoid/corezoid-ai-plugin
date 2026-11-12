@@ -1,9 +1,9 @@
 ---
 name: corezoid-lifecycle
 description: >
-  Pause, resume, or move Corezoid processes and folders, only when the user
-  explicitly asks. Triggers: "pause/resume process", "move process/folder",
-  "поставь на паузу", "перемести процесс".
+  Pause, resume or move processes and folders, only on explicit request.
+  Triggers: "pause/resume process", "move folder", "поставь на паузу",
+  "перемести".
 ---
 
 # Corezoid Lifecycle and Move Operations
