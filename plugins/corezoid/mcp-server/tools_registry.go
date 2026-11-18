@@ -408,7 +408,7 @@ var coreToolDefs = []mcpTool{
 	},
 	{
 		Name:        "deploy-stage",
-		Description: "Deploy (promote) one stage's processes onto another within a Corezoid project — e.g. develop → production. Wraps the admin obj_scheme compare+merge behind the UI's \"Deploy\" button (/api/2/compare, /api/2/merge). DESTRUCTIVE, and irreversible on an immutable target. SAFETY: apply=false (default) is a dry-run showing only the diff and any conflicts — nothing is deployed. To deploy you MUST first get the user's explicit confirmation of the exact source→target, then call with apply=true AND confirm=\"<source_stage_id>-><target_stage_id>\". Never deploy without the user confirming. The merge is asynchronous; this tool waits for it to finish over the progress WebSocket.",
+		Description: "Deploy (promote) one stage's processes onto another within a Corezoid project — e.g. develop → production. Wraps the admin obj_scheme compare+merge behind the UI's \"Deploy\" button (/api/2/compare, /api/2/merge). DESTRUCTIVE, and irreversible on an immutable target. SAFETY: apply=false (default) is a dry-run showing only the diff and any conflicts — nothing is deployed. To deploy you MUST first get the user's explicit confirmation of the exact source→target, then call with apply=true AND confirm=\"<source_stage_id>-><target_stage_id>\". Never deploy without the user confirming. The merge is asynchronous; this tool waits for it to finish over the progress WebSocket. The source can instead be a scheme file from another installation: upload it with cz-structure upload-scheme and pass the returned source_scheme_id (confirm is then \"scheme:<scheme_id>-><target_stage_id>\").",
 		Annotations: toolHints(hintMutates, hintDestructive, hintNonIdempotent, hintOpenWorld),
 		InputSchema: map[string]interface{}{
 			"type": "object",
@@ -419,7 +419,11 @@ var coreToolDefs = []mcpTool{
 				},
 				"source_stage_id": map[string]interface{}{
 					"type":        "integer",
-					"description": "Stage to deploy FROM (the source of truth, e.g. develop).",
+					"description": "Stage to deploy FROM (the source of truth, e.g. develop). Omit when source_scheme_id is given.",
+				},
+				"source_scheme_id": map[string]interface{}{
+					"type":        "string",
+					"description": "Instead of source_stage_id: the scheme_id returned by cz-structure upload-scheme — merges an exported file (e.g. from another installation) into the target stage.",
 				},
 				"target_stage_id": map[string]interface{}{
 					"type":        "integer",
@@ -435,10 +439,10 @@ var coreToolDefs = []mcpTool{
 				},
 				"confirm": map[string]interface{}{
 					"type":        "string",
-					"description": "Required when apply=true: must equal \"<source_stage_id>-><target_stage_id>\" (e.g. \"684083->684082\"). Guards against accidental and wrong-stage deploys.",
+					"description": "Required when apply=true: must equal \"<source_stage_id>-><target_stage_id>\" (e.g. \"684083->684082\"), or \"scheme:<source_scheme_id>-><target_stage_id>\" for a merge from file. Guards against accidental and wrong-stage deploys.",
 				},
 			},
-			"required": []string{"project_id", "source_stage_id", "target_stage_id", "company_id"},
+			"required": []string{"project_id", "target_stage_id", "company_id"},
 		},
 	},
 	{

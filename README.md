@@ -297,7 +297,7 @@ Tools come in two shapes. The ones below are advertised individually — they ca
 | `run-task` | Send a task to a deployed process, by `process_path` or `process_id` (no local file needed). Task data over 4 KB is left out (size and keys only) unless you pass `fields` or `mode: "full"` |
 | `pause-process` | Preview and explicitly pause a process so Corezoid rejects new tasks |
 | `resume-process` | Preview and explicitly reactivate a paused/debug process |
-| `deploy-stage` | Deploy/promote one stage onto another (develop→production); dry-run by default, requires explicit confirm to apply |
+| `deploy-stage` | Deploy/promote one stage onto another (develop→production), or merge an uploaded scheme file into a stage (`source_scheme_id` from `upload-scheme`); dry-run by default, requires explicit confirm to apply |
 | `create-communications-orchestrator` | Build a multi-platform messenger robot (Telegram / Facebook Messenger / Viber / Apple Messages) — queues the `bot_wizzard` build, polls it every 3s up to 10 times, and returns the generated `folder_url` or the wizard's error. Irreversible, so it builds only with `apply=true` plus the confirm token its `apply=false` dry-run prints |
 | `send-feedback` | Submit feedback about plugin behavior (returns ticket id) |
 
@@ -347,6 +347,8 @@ Workspaces, projects, stages, folders, and moving objects between them.
 | `modify-project` | Update a project's title, short_name and/or description |
 | `delete-project` | Move a project to the recycle bin (Trash) |
 | `list-stages` | List stages in a workspace |
+| `create-stage` | Create a stage in an existing project |
+| `upload-scheme` | Upload an exported `.zip`/`.json` as a merge source for a stage (the API form of "Merge from file", e.g. DEV → PROD across installations); returns `scheme_id` for `deploy-stage` `source_scheme_id` |
 | `list-aliases` | List aliases (short_name → target conv_id) in a project's stage; `short_name` filters to one exact match |
 | `set-stage-immutable` | Make a stage read-only (immutable) or editable; immutable stages are the only valid deploy targets; requires explicit confirm |
 | `list-folders` | List immediate children of a folder (no disk I/O) |
@@ -446,7 +448,7 @@ Claude Code / Codex
         ├── Auth          login, logout
         ├── Workspace     list-workspaces, list-stages, list-projects,
         │                 create-project, modify-project, delete-project, show-project,
-        │                 deploy-stage, set-stage-immutable
+        │                 create-stage, upload-scheme, deploy-stage, set-stage-immutable
         ├── Processes     pull-process, pull-folder, push-process, patch-process, lint-process, layout-process,
         │                 clean-process, create-process, create-state-diagram, create-folder,
         │                 create-alias, create-variable,
