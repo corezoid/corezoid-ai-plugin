@@ -28,9 +28,20 @@ func handleDeployStage(ctx context.Context, args map[string]interface{}) (string
 	if err != nil {
 		return "Error: " + err.Error(), true
 	}
-	sourceStage, err := intArg(args, "source_stage_id")
-	if err != nil {
-		return "Error: " + err.Error(), true
+	// The source is either another stage of the project (source_stage_id) or a
+	// scheme file uploaded with upload-scheme (source_scheme_id) — the latter
+	// is the API form of the UI's "Merge from file", used to move a stage
+	// between two Corezoid installations.
+	schemeID := strings.TrimSpace(optStrArg(args, "source_scheme_id"))
+	_, hasSourceStage := args["source_stage_id"]
+	if schemeID != "" && hasSourceStage {
+		return "Error: pass either source_stage_id or source_scheme_id, not both.", true
+	}
+	sourceStage := 0
+	if schemeID == "" {
+		if sourceStage, err = intArg(args, "source_stage_id"); err != nil {
+			return "Error: " + err.Error() + " (or pass source_scheme_id from upload-scheme)", true
+		}
 	}
 	targetStage, err := intArg(args, "target_stage_id")
 	if err != nil {
@@ -43,8 +54,16 @@ func handleDeployStage(ctx context.Context, args map[string]interface{}) (string
 	apply := boolishArg(args, "apply")
 	confirm, _ := args["confirm"].(string)
 
-	if sourceStage == targetStage {
+	if schemeID == "" && sourceStage == targetStage {
 		return "Error: source_stage_id and target_stage_id must differ.", true
+	}
+	// srcRef/srcType are what compare/merge take as obj_to_id/obj_to_type;
+	// srcLabel names the source in every message and in the confirm token.
+	var srcRef any = sourceStage
+	srcType, srcLabel, srcConfirm := "stage", fmt.Sprintf("stage %d", sourceStage), fmt.Sprintf("%d", sourceStage)
+	if schemeID != "" {
+		srcRef, srcType = schemeID, "scheme"
+		srcLabel, srcConfirm = fmt.Sprintf("uploaded scheme %s", schemeID), "scheme:"+schemeID
 	}
 
 	v := NewValidator(ctx, 0)
@@ -64,12 +83,15 @@ func handleDeployStage(ctx context.Context, args map[string]interface{}) (string
 	// Corezoid also only merges FROM a deployed stage. A source with undeployed
 	// changes fails the merge with the opaque "You have to merge only from
 	// deployed stage" — so check up front and explain what to do instead.
-	_, srcUndeployed, sTitle, _, serr := v.stageInfo(sourceStage, projectID)
-	if serr != nil {
-		return "Error (checking source stage): " + serr.Error(), true
-	}
-	if srcUndeployed > 0 {
-		return fmt.Sprintf("⛔ Source stage %d (%q) has %d undeployed change(s). Corezoid only merges FROM a deployed stage — publish the source first (the \"Deploy\" action on that stage in the Corezoid UI), then retry the deploy.", sourceStage, sTitle, srcUndeployed), true
+	// An uploaded scheme file has no deploy state, so the check is for stages only.
+	if schemeID == "" {
+		_, srcUndeployed, sTitle, _, serr := v.stageInfo(sourceStage, projectID)
+		if serr != nil {
+			return "Error (checking source stage): " + serr.Error(), true
+		}
+		if srcUndeployed > 0 {
+			return fmt.Sprintf("⛔ Source stage %d (%q) has %d undeployed change(s). Corezoid only merges FROM a deployed stage — publish the source first (the \"Deploy\" action on that stage in the Corezoid UI), then retry the deploy.", sourceStage, sTitle, srcUndeployed), true
+		}
 	}
 
 	// 1) compare: what differs between target and source.
@@ -78,8 +100,8 @@ func handleDeployStage(ctx context.Context, args map[string]interface{}) (string
 		"obj":         "obj_scheme",
 		"obj_id":      targetStage,
 		"obj_type":    "stage",
-		"obj_to_id":   sourceStage,
-		"obj_to_type": "stage",
+		"obj_to_id":   srcRef,
+		"obj_to_type": srcType,
 		"diff_status": true,
 		"project_id":  projectID,
 		"company_id":  companyID,
@@ -101,9 +123,9 @@ func handleDeployStage(ctx context.Context, args map[string]interface{}) (string
 		return "Error (compare): " + derr, true
 	}
 
-	summary, conflicts, removed := formatDeployDiff(list, sourceStage, targetStage)
+	summary, conflicts, removed := formatDeployDiffFrom(list, srcLabel, targetStage)
 	if len(list) == 0 {
-		return fmt.Sprintf("Nothing to deploy — stage %d is already in sync with stage %d.", targetStage, sourceStage), false
+		return fmt.Sprintf("Nothing to deploy — stage %d is already in sync with %s.", targetStage, srcLabel), false
 	}
 
 	// Defensive: Corezoid's stage merge is a one-way overwrite (source wins) and
@@ -119,13 +141,13 @@ func handleDeployStage(ctx context.Context, args map[string]interface{}) (string
 	// This merge OVERWRITES the target with the source's version for every listed
 	// object (source wins) — Corezoid offers no conflict resolution, so this diff
 	// IS the safety surface the user must review.
-	overwriteNote := fmt.Sprintf("\n\n⚠ This OVERWRITES stage %d (target) with stage %d (source) for every listed object — source wins.", targetStage, sourceStage)
+	overwriteNote := fmt.Sprintf("\n\n⚠ This OVERWRITES stage %d (target) with %s (source) for every listed object — source wins.", targetStage, srcLabel)
 	if removed > 0 {
 		overwriteNote += fmt.Sprintf("\n⚠ %d object(s) exist only in the target and will be DELETED from it.", removed)
 	}
 	// The exact confirmation phrase for THIS source→target. Encoding both stage
 	// ids means a confirm can never be reused for a different (wrong) deploy.
-	wantConfirm := fmt.Sprintf("%d->%d", sourceStage, targetStage)
+	wantConfirm := fmt.Sprintf("%s->%d", srcConfirm, targetStage)
 
 	// apply=false is a safe dry-run: show the diff, deploy nothing.
 	if !apply {
@@ -147,8 +169,8 @@ func handleDeployStage(ctx context.Context, args map[string]interface{}) (string
 		"obj":         "obj_scheme",
 		"obj_id":      targetStage,
 		"obj_type":    "stage",
-		"obj_to_id":   sourceStage,
-		"obj_to_type": "stage",
+		"obj_to_id":   srcRef,
+		"obj_to_type": srcType,
 		"apply_mode":  true,
 		"company_id":  companyID,
 	}}
@@ -176,8 +198,8 @@ func handleDeployStage(ctx context.Context, args map[string]interface{}) (string
 			// timeout is not, and its reason must never be swallowed.
 			verified, vmsg := deployVerifyByCompare(v, cmpOps)
 			if !verified {
-				out := fmt.Sprintf("⚠ Deploy result UNCONFIRMED for stage %d → stage %d.\nWebSocket: %v\nCompare after merge: %s\n(The merge may still be running server-side — re-run with apply=false; an empty diff means it completed.)",
-					sourceStage, targetStage, werr, vmsg)
+				out := fmt.Sprintf("⚠ Deploy result UNCONFIRMED for %s → stage %d.\nWebSocket: %v\nCompare after merge: %s\n(The merge may still be running server-side — re-run with apply=false; an empty diff means it completed.)",
+					srcLabel, targetStage, werr, vmsg)
 				if progressLog != "" {
 					out += "\n\nProgress:\n" + progressLog
 				}
@@ -190,7 +212,7 @@ func handleDeployStage(ctx context.Context, args map[string]interface{}) (string
 			}
 		}
 	}
-	out := fmt.Sprintf("✅ Deployed stage %d → stage %d.%s\n\n%s", sourceStage, targetStage, waitNote, summary)
+	out := fmt.Sprintf("✅ Deployed %s → stage %d.%s\n\n%s", srcLabel, targetStage, waitNote, summary)
 	if progressLog != "" {
 		out += "\n\nProgress:\n" + progressLog
 	}
@@ -453,6 +475,12 @@ func deployOpProc(resp map[string]interface{}) string {
 // "removed" has never been observed in the API; it is kept only for backward
 // compatibility in case some Corezoid version emits it for the deleted case.
 func formatDeployDiff(list []map[string]interface{}, source, target int) (summary string, conflicts []string, removed int) {
+	return formatDeployDiffFrom(list, fmt.Sprintf("stage %d", source), target)
+}
+
+// formatDeployDiffFrom is formatDeployDiff with the source named by a label —
+// "stage 684083" or "uploaded scheme <id>" for a merge from file.
+func formatDeployDiffFrom(list []map[string]interface{}, source string, target int) (summary string, conflicts []string, removed int) {
 	type item struct{ title, objType, status string }
 	items := make([]item, 0, len(list))
 	counts := map[string]int{}
@@ -482,7 +510,7 @@ func formatDeployDiff(list []map[string]interface{}, source, target int) (summar
 	})
 
 	var sb strings.Builder
-	sb.WriteString(fmt.Sprintf("Diff: stage %d (source) → stage %d (target) — %d object(s):\n", source, target, len(list)))
+	sb.WriteString(fmt.Sprintf("Diff: %s (source) → stage %d (target) — %d object(s):\n", source, target, len(list)))
 	order := make([]string, 0, len(counts))
 	for k := range counts {
 		order = append(order, k)

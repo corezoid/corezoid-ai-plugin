@@ -406,6 +406,72 @@ var collapsedToolRegistry = []mcpTool{
 		},
 	},
 	{
+		Name:        "create-stage",
+		Description: "Create a stage (environment) in an EXISTING Corezoid project. create-project can add stages only together with a new project. Returns the new stage_id.",
+		Annotations: toolHints(hintMutates, hintSafe, hintNonIdempotent, hintOpenWorld),
+		InputSchema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"company_id": map[string]interface{}{
+					"type":        "string",
+					"description": "Workspace (company) ID the project belongs to. Defaults to the workspace selected at login; workspace_id is accepted as an alias.",
+				},
+				"workspace_id": map[string]interface{}{
+					"type":        "string",
+					"description": "Alias for company_id (the name login and list-workspaces use).",
+				},
+				"project_id": map[string]interface{}{
+					"type":        "integer",
+					"description": "Project ID (obj_id) to add the stage to",
+				},
+				"title": map[string]interface{}{
+					"type":        "string",
+					"description": "Stage title, e.g. develop, preprod, production",
+				},
+				"short_name": map[string]interface{}{
+					"type":        "string",
+					"description": "Stage short name (used in URLs and aliases). If omitted the server derives one.",
+				},
+				"description": map[string]interface{}{
+					"type":        "string",
+					"description": "Optional stage description",
+				},
+				"immutable": map[string]interface{}{
+					"type":        "boolean",
+					"description": "true = read-only stage (only deploy/merge can change it — the only valid deploy target). Default false.",
+				},
+			},
+			"required": []string{"project_id", "title"},
+		},
+	},
+	{
+		Name:        "upload-scheme",
+		Description: "Upload an exported scheme file (.zip or .json from a Corezoid export/pull, inside the working directory) as a merge source for a target stage — the API form of the UI's \"Merge from file\", used to move a stage between installations (e.g. DEV → PROD). Changes nothing yet: returns a scheme_id to pass to deploy-stage as source_scheme_id (dry-run first, then confirmed apply). Needs an OAuth session; the target must be immutable for the merge.",
+		Annotations: toolHints(hintMutates, hintSafe, hintNonIdempotent, hintOpenWorld),
+		InputSchema: map[string]interface{}{
+			"type": "object",
+			"properties": map[string]interface{}{
+				"file_path": map[string]interface{}{
+					"type":        "string",
+					"description": "Path to the exported .zip or .json, relative to the working directory (absolute paths inside it are accepted)",
+				},
+				"target_stage_id": map[string]interface{}{
+					"type":        "integer",
+					"description": "Stage the file will be merged INTO",
+				},
+				"project_id": map[string]interface{}{
+					"type":        "integer",
+					"description": "Project of the target stage",
+				},
+				"company_id": map[string]interface{}{
+					"type":        "string",
+					"description": "Workspace (company) ID. Defaults to the workspace selected at login.",
+				},
+			},
+			"required": []string{"file_path", "target_stage_id"},
+		},
+	},
+	{
 		Name:        "modify-project",
 		Description: "Update a Corezoid project's title, short_name and/or description. At least one of title/short_name/description must be provided.",
 		Annotations: toolHints(hintMutates, hintSafe, hintIdempotent, hintOpenWorld),

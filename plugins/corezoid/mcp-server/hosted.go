@@ -64,7 +64,7 @@ const (
 // which a public connector should not collect in chat. It stays local.
 var hostedAllowedTools = map[string]struct{}{
 	"add-chart": {}, "add-to-group": {},
-	"create-dashboard": {}, "create-group": {}, "create-project": {},
+	"create-dashboard": {}, "create-group": {}, "create-project": {}, "create-stage": {},
 	"delete-api-key": {}, "delete-folder": {}, "delete-group": {},
 	"delete-process": {}, "delete-project": {}, "delete-task": {},
 	"deploy-stage": {}, "find-principal": {}, "get-chart": {},

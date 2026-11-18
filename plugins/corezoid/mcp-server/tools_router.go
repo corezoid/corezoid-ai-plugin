@@ -81,6 +81,8 @@ var toolRouters = []toolRouter{
 			{"modify-project", "rename a project / change short_name or description"},
 			{"delete-project", "move a project to Trash (destructive)"},
 			{"list-stages", "stages (environments) of a project"},
+			{"create-stage", "create a stage in an existing project"},
+			{"upload-scheme", "upload an exported .zip/.json as a merge source for a stage; returns scheme_id for deploy-stage source_scheme_id"},
 			{"list-aliases", "aliases (short_name -> target conv_id) defined in a project's stage; short_name filters to one"},
 			{"set-stage-immutable", "set/clear a stage's immutable flag (needs confirm)"},
 			{"list-folders", "immediate children of a folder: subfolders, processes, state diagrams"},

@@ -1,5 +1,10 @@
 # Changelog
 
+## [Unreleased]
+
+- Feat(mcp): `cz-structure create-stage` creates a stage in an existing project; `create-project` could add stages only together with a new project.
+- Feat(mcp): merge from file, the API form of the UI's "Merge from file", which moves a stage between two Corezoid installations (e.g. DEV → PROD). `cz-structure upload-scheme` uploads an exported `.zip`/`.json` from the working directory to `/api/2/upload` (`type=merge`) and returns a `scheme_id`; `deploy-stage` takes it as `source_scheme_id` instead of `source_stage_id` and runs the same dry-run compare and confirmed merge (`obj_to_type=scheme`, confirm `scheme:<scheme_id>-><target_stage_id>`). The target must be immutable, as for any deploy. `upload-scheme` needs an OAuth session: Corezoid answers an API-key signed upload with "access denied". It is local only, as it reads a file; `create-stage` is also offered in hosted mode.
+
 ## [3.14.0]
 
 - Security: Go raised from 1.26.10 to 1.27.4 (`go.mod`, `docs/Troubleshooting.md`) for GO-2026-6859 in `net/http`, which `govulncheck` reports on the 3.13.0 binaries — and hosted mode serves HTTP to the internet (#281). Release binaries are built with it; the `go run` fallback in `run.sh` now needs Go 1.27.4 or a toolchain download.
